@@ -14,8 +14,20 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthSignUpRouteImport } from './routes/_auth/sign-up'
 import { Route as AuthSignInRouteImport } from './routes/_auth/sign-in'
+import { Route as AppUsersRouteImport } from './routes/_app/users'
+import { Route as AppInvitationsRouteImport } from './routes/_app/invitations'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
+import { Route as AppSettingsBrandingRouteImport } from './routes/_app/settings/branding'
+import { Route as AppSecuritySessionsRouteImport } from './routes/_app/security/sessions'
+import { Route as AppSecurityAuditLogsRouteImport } from './routes/_app/security/audit-logs'
+import { Route as AppOrganizationsTenantsRouteImport } from './routes/_app/organizations/tenants'
+import { Route as AppDeveloperWebhooksRouteImport } from './routes/_app/developer/webhooks'
+import { Route as AppAccessRolesRouteImport } from './routes/_app/access/roles'
+import { Route as AppSettingsWorkspaceGeneralRouteImport } from './routes/_app/settings/workspace/general'
+import { Route as AppAuthConnectionsOidcRouteImport } from './routes/_app/auth/connections/oidc'
+import { Route as AppAuthApiMachineIdentitiesRouteImport } from './routes/_app/auth/api/machine-identities'
+import { Route as AppAuthApiKeysRouteImport } from './routes/_app/auth/api/keys'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/_auth',
@@ -40,6 +52,16 @@ const AuthSignInRoute = AuthSignInRouteImport.update({
   path: '/sign-in',
   getParentRoute: () => AuthRoute,
 } as any)
+const AppUsersRoute = AppUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInvitationsRoute = AppInvitationsRouteImport.update({
+  id: '/invitations',
+  path: '/invitations',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -50,20 +72,96 @@ const AppSplatRoute = AppSplatRouteImport.update({
   path: '/$',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsBrandingRoute = AppSettingsBrandingRouteImport.update({
+  id: '/settings/branding',
+  path: '/settings/branding',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSecuritySessionsRoute = AppSecuritySessionsRouteImport.update({
+  id: '/security/sessions',
+  path: '/security/sessions',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSecurityAuditLogsRoute = AppSecurityAuditLogsRouteImport.update({
+  id: '/security/audit-logs',
+  path: '/security/audit-logs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOrganizationsTenantsRoute = AppOrganizationsTenantsRouteImport.update({
+  id: '/organizations/tenants',
+  path: '/organizations/tenants',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDeveloperWebhooksRoute = AppDeveloperWebhooksRouteImport.update({
+  id: '/developer/webhooks',
+  path: '/developer/webhooks',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccessRolesRoute = AppAccessRolesRouteImport.update({
+  id: '/access/roles',
+  path: '/access/roles',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsWorkspaceGeneralRoute =
+  AppSettingsWorkspaceGeneralRouteImport.update({
+    id: '/settings/workspace/general',
+    path: '/settings/workspace/general',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppAuthConnectionsOidcRoute = AppAuthConnectionsOidcRouteImport.update({
+  id: '/auth/connections/oidc',
+  path: '/auth/connections/oidc',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAuthApiMachineIdentitiesRoute =
+  AppAuthApiMachineIdentitiesRouteImport.update({
+    id: '/auth/api/machine-identities',
+    path: '/auth/api/machine-identities',
+    getParentRoute: () => AppRoute,
+  } as any)
+const AppAuthApiKeysRoute = AppAuthApiKeysRouteImport.update({
+  id: '/auth/api/keys',
+  path: '/auth/api/keys',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/$': typeof AppSplatRoute
   '/dashboard': typeof AppDashboardRoute
+  '/invitations': typeof AppInvitationsRoute
+  '/users': typeof AppUsersRoute
   '/sign-in': typeof AuthSignInRoute
   '/sign-up': typeof AuthSignUpRoute
+  '/access/roles': typeof AppAccessRolesRoute
+  '/developer/webhooks': typeof AppDeveloperWebhooksRoute
+  '/organizations/tenants': typeof AppOrganizationsTenantsRoute
+  '/security/audit-logs': typeof AppSecurityAuditLogsRoute
+  '/security/sessions': typeof AppSecuritySessionsRoute
+  '/settings/branding': typeof AppSettingsBrandingRoute
+  '/auth/api/keys': typeof AppAuthApiKeysRoute
+  '/auth/api/machine-identities': typeof AppAuthApiMachineIdentitiesRoute
+  '/auth/connections/oidc': typeof AppAuthConnectionsOidcRoute
+  '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/$': typeof AppSplatRoute
   '/dashboard': typeof AppDashboardRoute
+  '/invitations': typeof AppInvitationsRoute
+  '/users': typeof AppUsersRoute
   '/sign-in': typeof AuthSignInRoute
   '/sign-up': typeof AuthSignUpRoute
+  '/access/roles': typeof AppAccessRolesRoute
+  '/developer/webhooks': typeof AppDeveloperWebhooksRoute
+  '/organizations/tenants': typeof AppOrganizationsTenantsRoute
+  '/security/audit-logs': typeof AppSecurityAuditLogsRoute
+  '/security/sessions': typeof AppSecuritySessionsRoute
+  '/settings/branding': typeof AppSettingsBrandingRoute
+  '/auth/api/keys': typeof AppAuthApiKeysRoute
+  '/auth/api/machine-identities': typeof AppAuthApiMachineIdentitiesRoute
+  '/auth/connections/oidc': typeof AppAuthConnectionsOidcRoute
+  '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -72,14 +170,60 @@ export interface FileRoutesById {
   '/_auth': typeof AuthRouteWithChildren
   '/_app/$': typeof AppSplatRoute
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/invitations': typeof AppInvitationsRoute
+  '/_app/users': typeof AppUsersRoute
   '/_auth/sign-in': typeof AuthSignInRoute
   '/_auth/sign-up': typeof AuthSignUpRoute
+  '/_app/access/roles': typeof AppAccessRolesRoute
+  '/_app/developer/webhooks': typeof AppDeveloperWebhooksRoute
+  '/_app/organizations/tenants': typeof AppOrganizationsTenantsRoute
+  '/_app/security/audit-logs': typeof AppSecurityAuditLogsRoute
+  '/_app/security/sessions': typeof AppSecuritySessionsRoute
+  '/_app/settings/branding': typeof AppSettingsBrandingRoute
+  '/_app/auth/api/keys': typeof AppAuthApiKeysRoute
+  '/_app/auth/api/machine-identities': typeof AppAuthApiMachineIdentitiesRoute
+  '/_app/auth/connections/oidc': typeof AppAuthConnectionsOidcRoute
+  '/_app/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/$' | '/dashboard' | '/sign-in' | '/sign-up'
+  fullPaths:
+    | '/'
+    | '/$'
+    | '/dashboard'
+    | '/invitations'
+    | '/users'
+    | '/sign-in'
+    | '/sign-up'
+    | '/access/roles'
+    | '/developer/webhooks'
+    | '/organizations/tenants'
+    | '/security/audit-logs'
+    | '/security/sessions'
+    | '/settings/branding'
+    | '/auth/api/keys'
+    | '/auth/api/machine-identities'
+    | '/auth/connections/oidc'
+    | '/settings/workspace/general'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$' | '/dashboard' | '/sign-in' | '/sign-up'
+  to:
+    | '/'
+    | '/$'
+    | '/dashboard'
+    | '/invitations'
+    | '/users'
+    | '/sign-in'
+    | '/sign-up'
+    | '/access/roles'
+    | '/developer/webhooks'
+    | '/organizations/tenants'
+    | '/security/audit-logs'
+    | '/security/sessions'
+    | '/settings/branding'
+    | '/auth/api/keys'
+    | '/auth/api/machine-identities'
+    | '/auth/connections/oidc'
+    | '/settings/workspace/general'
   id:
     | '__root__'
     | '/'
@@ -87,8 +231,20 @@ export interface FileRouteTypes {
     | '/_auth'
     | '/_app/$'
     | '/_app/dashboard'
+    | '/_app/invitations'
+    | '/_app/users'
     | '/_auth/sign-in'
     | '/_auth/sign-up'
+    | '/_app/access/roles'
+    | '/_app/developer/webhooks'
+    | '/_app/organizations/tenants'
+    | '/_app/security/audit-logs'
+    | '/_app/security/sessions'
+    | '/_app/settings/branding'
+    | '/_app/auth/api/keys'
+    | '/_app/auth/api/machine-identities'
+    | '/_app/auth/connections/oidc'
+    | '/_app/settings/workspace/general'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -134,6 +290,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthSignInRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_app/users': {
+      id: '/_app/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof AppUsersRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/invitations': {
+      id: '/_app/invitations'
+      path: '/invitations'
+      fullPath: '/invitations'
+      preLoaderRoute: typeof AppInvitationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/dashboard': {
       id: '/_app/dashboard'
       path: '/dashboard'
@@ -148,17 +318,111 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSplatRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings/branding': {
+      id: '/_app/settings/branding'
+      path: '/settings/branding'
+      fullPath: '/settings/branding'
+      preLoaderRoute: typeof AppSettingsBrandingRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/security/sessions': {
+      id: '/_app/security/sessions'
+      path: '/security/sessions'
+      fullPath: '/security/sessions'
+      preLoaderRoute: typeof AppSecuritySessionsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/security/audit-logs': {
+      id: '/_app/security/audit-logs'
+      path: '/security/audit-logs'
+      fullPath: '/security/audit-logs'
+      preLoaderRoute: typeof AppSecurityAuditLogsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/organizations/tenants': {
+      id: '/_app/organizations/tenants'
+      path: '/organizations/tenants'
+      fullPath: '/organizations/tenants'
+      preLoaderRoute: typeof AppOrganizationsTenantsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/developer/webhooks': {
+      id: '/_app/developer/webhooks'
+      path: '/developer/webhooks'
+      fullPath: '/developer/webhooks'
+      preLoaderRoute: typeof AppDeveloperWebhooksRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/access/roles': {
+      id: '/_app/access/roles'
+      path: '/access/roles'
+      fullPath: '/access/roles'
+      preLoaderRoute: typeof AppAccessRolesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings/workspace/general': {
+      id: '/_app/settings/workspace/general'
+      path: '/settings/workspace/general'
+      fullPath: '/settings/workspace/general'
+      preLoaderRoute: typeof AppSettingsWorkspaceGeneralRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/auth/connections/oidc': {
+      id: '/_app/auth/connections/oidc'
+      path: '/auth/connections/oidc'
+      fullPath: '/auth/connections/oidc'
+      preLoaderRoute: typeof AppAuthConnectionsOidcRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/auth/api/machine-identities': {
+      id: '/_app/auth/api/machine-identities'
+      path: '/auth/api/machine-identities'
+      fullPath: '/auth/api/machine-identities'
+      preLoaderRoute: typeof AppAuthApiMachineIdentitiesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/auth/api/keys': {
+      id: '/_app/auth/api/keys'
+      path: '/auth/api/keys'
+      fullPath: '/auth/api/keys'
+      preLoaderRoute: typeof AppAuthApiKeysRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppSplatRoute: typeof AppSplatRoute
   AppDashboardRoute: typeof AppDashboardRoute
+  AppInvitationsRoute: typeof AppInvitationsRoute
+  AppUsersRoute: typeof AppUsersRoute
+  AppAccessRolesRoute: typeof AppAccessRolesRoute
+  AppDeveloperWebhooksRoute: typeof AppDeveloperWebhooksRoute
+  AppOrganizationsTenantsRoute: typeof AppOrganizationsTenantsRoute
+  AppSecurityAuditLogsRoute: typeof AppSecurityAuditLogsRoute
+  AppSecuritySessionsRoute: typeof AppSecuritySessionsRoute
+  AppSettingsBrandingRoute: typeof AppSettingsBrandingRoute
+  AppAuthApiKeysRoute: typeof AppAuthApiKeysRoute
+  AppAuthApiMachineIdentitiesRoute: typeof AppAuthApiMachineIdentitiesRoute
+  AppAuthConnectionsOidcRoute: typeof AppAuthConnectionsOidcRoute
+  AppSettingsWorkspaceGeneralRoute: typeof AppSettingsWorkspaceGeneralRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppSplatRoute: AppSplatRoute,
   AppDashboardRoute: AppDashboardRoute,
+  AppInvitationsRoute: AppInvitationsRoute,
+  AppUsersRoute: AppUsersRoute,
+  AppAccessRolesRoute: AppAccessRolesRoute,
+  AppDeveloperWebhooksRoute: AppDeveloperWebhooksRoute,
+  AppOrganizationsTenantsRoute: AppOrganizationsTenantsRoute,
+  AppSecurityAuditLogsRoute: AppSecurityAuditLogsRoute,
+  AppSecuritySessionsRoute: AppSecuritySessionsRoute,
+  AppSettingsBrandingRoute: AppSettingsBrandingRoute,
+  AppAuthApiKeysRoute: AppAuthApiKeysRoute,
+  AppAuthApiMachineIdentitiesRoute: AppAuthApiMachineIdentitiesRoute,
+  AppAuthConnectionsOidcRoute: AppAuthConnectionsOidcRoute,
+  AppSettingsWorkspaceGeneralRoute: AppSettingsWorkspaceGeneralRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

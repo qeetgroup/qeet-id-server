@@ -6,6 +6,17 @@ export {
   AvatarGroupCount,
   AvatarImage,
 } from "./components/ui/avatar"
+export { Badge, badgeVariants } from "./components/ui/badge"
+export {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./components/ui/table"
 export {
   Breadcrumb,
   BreadcrumbEllipsis,

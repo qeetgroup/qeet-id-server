@@ -157,18 +157,18 @@ For module-level context and gap analysis, see:
 | # | Screen | Status | File / Location |
 |---|---|:-:|---|
 | H1 | Organization Overview / Home | ✅ | [src/routes/_app/dashboard.tsx](../frontend/apps/qeetid-admin/src/routes/_app/dashboard.tsx) (mocked data) |
-| H2 | Users — list / search / filter / edit | 🔴 | Catch-all placeholder |
+| H2 | Users — list + create (search / edit pending) | 🟡 | [src/routes/_app/users.tsx](../frontend/apps/qeetid-admin/src/routes/_app/users.tsx) |
 | H3 | Roles & permissions | 🔴 | Same |
 | H4 | Applications (OAuth clients) | 🔴 | Same |
 | H5 | SSO connection configuration | 🔴 | Same |
 | H6 | SCIM provisioning configuration | 🔴 | Same |
 | H7 | MFA policy + password policy | 🔴 | Same |
-| H8 | Branding customization | 🔴 | Same |
+| H8 | Branding customization | ✅ | [src/routes/_app/settings/branding.tsx](../frontend/apps/qeetid-admin/src/routes/_app/settings/branding.tsx) — full form + live preview |
 | H9 | Email template customization | 🔴 | Same |
-| H10 | Audit log viewer | 🔴 | Same |
-| H11 | Webhook configuration | 🔴 | Same |
-| H12 | API key management | 🔴 | Same |
-| H13 | Team & admin management | 🔴 | Same |
+| H10 | Audit log viewer | ✅ | [src/routes/_app/security/audit-logs.tsx](../frontend/apps/qeetid-admin/src/routes/_app/security/audit-logs.tsx) — paginated + filters |
+| H11 | Webhook configuration | ✅ | [src/routes/_app/developer/webhooks.tsx](../frontend/apps/qeetid-admin/src/routes/_app/developer/webhooks.tsx) — list + create + test + disable |
+| H12 | API key management | ✅ | [src/routes/_app/auth/api/keys.tsx](../frontend/apps/qeetid-admin/src/routes/_app/auth/api/keys.tsx) — list + create with one-time secret reveal + revoke |
+| H13 | Team & admin management | 🟡 | Invitations live at [src/routes/_app/invitations.tsx](../frontend/apps/qeetid-admin/src/routes/_app/invitations.tsx); members tab pending |
 | H14 | Usage / analytics dashboard | 🔴 | Same |
 | H15 | Billing dashboard with plan management | 🔴 | Same |
 | H16 | Compliance documents library | 🔴 | Same |

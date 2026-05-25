@@ -244,24 +244,24 @@ Reference: [Admin Dashboard Design Specification](https://github.com/qeetgroup/q
 | Organization Overview / Home | ✅ | [src/routes/_app/dashboard.tsx](../frontend/apps/qeetid-admin/src/routes/_app/dashboard.tsx) — KPI cards, login activity chart, login methods pie, MFA adoption, failed logins. **All data is mocked**, not API-backed. |
 | Users Index | 🔴 | Placeholder via `/_app/$` catch-all. |
 | User Detail | 🔴 | Same. |
-| Roles Index | 🔴 | Same. |
+| Roles Index | ✅ | [src/routes/_app/access/roles.tsx](../frontend/apps/qeetid-admin/src/routes/_app/access/roles.tsx) — roles list + create + per-role permission grant/revoke against `/v1/permissions` and `/v1/roles/{id}/permissions/{permId}`. |
 | Role Editor | 🔴 | Same. |
-| SSO Connections (SAML/OIDC) Index | 🔴 | Same. |
+| SSO Connections (SAML/OIDC) Index | 🟡 | OIDC half done at [src/routes/_app/auth/connections/oidc.tsx](../frontend/apps/qeetid-admin/src/routes/_app/auth/connections/oidc.tsx). SAML pending (backend P0-5). |
 | SAML Setup Wizard (5-step) | 🔴 | Same. |
 | SCIM Configuration | 🔴 | Same. |
-| Audit Log Viewer | 🔴 | Same. Backend `/v1/tenants/{id}/audit` exists. |
+| Audit Log Viewer | ✅ | [src/routes/_app/security/audit-logs.tsx](../frontend/apps/qeetid-admin/src/routes/_app/security/audit-logs.tsx) — paginated table with action / resource-type / actor filters wired to `GET /v1/tenants/{id}/audit`. |
 | MFA Policy Configuration | 🔴 | Same. Backend `/policy` endpoints exist. |
 | Password Policy | 🔴 | Same. |
 | Security Events Dashboard | 🔴 | Same. |
-| Applications (OAuth clients) Index | 🔴 | Same. Backend OIDC client endpoints exist. |
-| Application Detail | 🔴 | Same. |
-| Webhooks Index & Detail | 🔴 | Same. Backend exists. |
-| API Keys Management | 🔴 | Same. Backend exists. |
-| Branding & Customization | 🔴 | Same. Backend `/branding` endpoints exist. |
+| Applications (OAuth clients) Index | ✅ | [src/routes/_app/auth/connections/oidc.tsx](../frontend/apps/qeetid-admin/src/routes/_app/auth/connections/oidc.tsx) — list + register (public / confidential, redirect URIs, scopes) + delete. Client secret revealed once for confidential clients. |
+| Application Detail | 🟡 | Inline in the list table for now; per-app detail page deferred. |
+| Webhooks Index & Detail | ✅ | [src/routes/_app/developer/webhooks.tsx](../frontend/apps/qeetid-admin/src/routes/_app/developer/webhooks.tsx) — list, create (with event-picker), test, disable. Delivery-history detail tab still TBD. |
+| API Keys Management | ✅ | [src/routes/_app/auth/api/keys.tsx](../frontend/apps/qeetid-admin/src/routes/_app/auth/api/keys.tsx) — list, create (with one-time raw-secret reveal + copy), scopes / expiry inputs, revoke. |
+| Branding & Customization | ✅ | [src/routes/_app/settings/branding.tsx](../frontend/apps/qeetid-admin/src/routes/_app/settings/branding.tsx) — GET / PUT `/v1/tenants/{id}/branding` with logo, primary/secondary color pickers, custom domain, email-from identity, and live sign-in card preview. |
 | Custom Domain Setup (4-step) | 🔴 | Same. |
 | Email Template Editor | 🔴 | Same. |
 | Team & Admin Roles | 🔴 | Same. |
-| Tenant Profile Settings | 🔴 | Same. Backend `/tenants/{id}` PATCH exists. |
+| Tenant Profile Settings | ✅ | [src/routes/_app/settings/workspace/general.tsx](../frontend/apps/qeetid-admin/src/routes/_app/settings/workspace/general.tsx) — name / plan / region / status editor against `PATCH /v1/tenants/{id}`. Slug is shown as immutable. |
 | Billing Dashboard | 🔴 | Same. No backend either. |
 | Plan Upgrade Flow | 🔴 | Same. |
 | Compliance Documents | 🔴 | Same. |
