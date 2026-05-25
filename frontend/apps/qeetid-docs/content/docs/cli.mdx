@@ -1,0 +1,102 @@
+---
+title: CLI
+description: Provision tenants, rotate keys, replay events, and tunnel webhooks from your terminal.
+icon: Terminal
+---
+
+The `qee` CLI is the fastest way to manage Qeetid outside the dashboard. It wraps the
+same API the SDKs use, with auth handled by your machine's keychain.
+
+## Install
+
+```bash title="terminal"
+# macOS / Linux (Homebrew)
+brew install qeetid/tap/qee
+
+# macOS / Linux (curl)
+curl -sSL https://qeetid.com/install.sh | sh
+
+# Windows
+winget install qeetid.qee
+
+# npm (any platform)
+pnpm dlx @qeetid/cli --help
+```
+
+## First-time setup
+
+```bash
+qee login
+```
+
+Opens a browser, asks you to confirm, and writes credentials to your OS keychain. They
+never touch disk in plain text.
+
+## Common commands
+
+```bash
+# List tenants
+qee tenants list
+
+# Create a tenant
+qee tenants create --slug acme --name "Acme, Inc." --residency eu
+
+# Invite a user
+qee users invite alex@acme.com --tenant acme --role admin
+
+# Rotate a secret key
+qee keys rotate --tenant acme
+
+# Stream the audit log live
+qee audit tail --tenant acme
+
+# Replay a failed webhook
+qee webhooks replay --subscription wsub_xxx --since 1h
+```
+
+## Local webhook tunnel
+
+For local development:
+
+```bash
+qee dev --forward http://localhost:3000/api/qeetid/webhooks
+```
+
+This opens an ephemeral tunnel signed with your CLI credentials and forwards Qeetid's
+test events to your local server. Tear it down with `Ctrl+C`; nothing persists.
+
+## Profiles
+
+If you work across multiple Qeetid accounts (e.g. personal + work):
+
+```bash
+qee config set-profile work
+qee tenants list --profile work
+
+# Or set the env var
+QEETID_PROFILE=work qee audit tail
+```
+
+## Shell completions
+
+```bash
+qee completion bash > /etc/bash_completion.d/qee
+qee completion zsh > "${fpath[1]}/_qee"
+qee completion fish > ~/.config/fish/completions/qee.fish
+```
+
+## Scripting
+
+Every command supports `--json` for machine-readable output. Combine with `jq`:
+
+```bash
+qee tenants list --json | jq '.[] | select(.residency=="eu") | .slug'
+```
+
+## Help
+
+```bash
+qee --help
+qee tenants --help
+qee tenants create --help
+```

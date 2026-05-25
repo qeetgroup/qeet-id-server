@@ -1,0 +1,146 @@
+---
+title: RBAC & ABAC
+description: Roles, permissions, group assignments, and attribute policies — all with hot-path checks under 30 ms.
+icon: Users
+---
+
+Qeetid's authorization model has two layers:
+
+- **RBAC** (role-based) — the fast, simple layer most apps need.
+- **ABAC** (attribute-based) — the policy layer for the cases RBAC can't express.
+
+You can use either, both, or neither.
+
+## Permissions
+
+A **permission** is a string in the form `action` or `resource:action`. Examples:
+
+```
+billing:read
+billing:write
+members:invite
+analytics:export
+*:read
+```
+
+Wildcards (`*`) are supported on either side of the colon. We recommend a flat
+namespace — fancy hierarchies are seductive but rarely worth the maintenance cost.
+
+```ts
+await qee.permissions.create({
+  tenant: "acme",
+  name: "billing:write",
+  description: "Modify billing settings and invoices",
+});
+```
+
+## Roles
+
+A **role** bundles permissions. Roles are tenant-scoped.
+
+```ts
+await qee.roles.create({
+  tenant: "acme",
+  name: "billing-admin",
+  permissions: ["billing:read", "billing:write", "billing:invoice"],
+});
+```
+
+## Assigning roles
+
+To **users**:
+
+```ts
+await qee.roles.assign({
+  tenant: "acme",
+  user: "usr_abc",
+  role: "billing-admin",
+  expiresAt: "2026-12-31T23:59:59Z", // optional
+});
+```
+
+To **groups**:
+
+```ts
+await qee.roles.assignToGroup({
+  tenant: "acme",
+  group: "finance-team",
+  role: "billing-admin",
+});
+```
+
+## The hot path: checking permission
+
+The single most important question your app asks: **can this user do this thing?**
+
+```ts
+const can = await qee.can({
+  user: session.userId,
+  action: "billing:write",
+  resource: `org:${session.tenantId}`,
+});
+
+if (!can.allowed) throw new Forbidden();
+```
+
+Performance characteristics:
+
+- **Cached at the edge** with a 30-second TTL.
+- **Proactively invalidated** when a role assignment changes.
+- **Sub-30 ms p99** worldwide.
+
+## Bulk checks
+
+For UI rendering, batch your checks:
+
+```ts
+const checks = await qee.canAll({
+  user: session.userId,
+  resource: `org:${session.tenantId}`,
+  actions: ["billing:read", "billing:write", "members:invite"],
+});
+
+// checks.billing:read.allowed → boolean
+```
+
+## ABAC: attribute policies
+
+When RBAC isn't enough — e.g. "only billing admins of the EU region can access EU customer
+data" — write a policy:
+
+```ts
+await qee.policies.create({
+  tenant: "acme",
+  name: "eu-billing-isolation",
+  when: { resource: "customer:*", action: "billing:write" },
+  rule: `user.attributes.region == resource.attributes.region`,
+});
+```
+
+Policies are evaluated alongside RBAC. A user must have the required **permission**
+AND satisfy any matching **policy** to be allowed.
+
+## Inspecting why a check failed
+
+```ts
+const can = await qee.can({
+  /* ... */
+});
+
+if (!can.allowed) {
+  console.log(can.reason);
+  // → { type: "missing_permission", missing: "billing:write" }
+  // or
+  // → { type: "policy_denied", policy: "eu-billing-isolation" }
+}
+```
+
+## Audit
+
+Every `can()` and `canAll()` call is recorded — successes and failures — for audit. You
+can disable this per-tenant if you don't want to pay for the write volume.
+
+<Callout type="info">
+  Permission checks are **read-only and side-effect-free**. The audit log is the only externally
+  observable trace, and even it is async.
+</Callout>

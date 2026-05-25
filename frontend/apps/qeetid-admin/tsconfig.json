@@ -1,0 +1,9 @@
+{
+  "extends": "@qeetid/tsconfig/react-vite.json",
+  "include": ["**/*.ts", "**/*.tsx"],
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}

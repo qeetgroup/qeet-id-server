@@ -1,0 +1,113 @@
+---
+title: Errors
+description: Error shape, codes, and idiomatic handling per language.
+---
+
+Every Qeetid API error has the same shape:
+
+```json
+{
+  "error": "rate_limited",
+  "message": "Too many sign-in attempts from this address.",
+  "statusCode": 429,
+  "requestId": "req_01HXG…",
+  "retryAfter": 27
+}
+```
+
+## Status code map
+
+| Code | Meaning                                 |
+| ---- | --------------------------------------- |
+| 400  | Malformed request                       |
+| 401  | Missing or invalid auth                 |
+| 403  | Authenticated but lacking permission    |
+| 404  | Resource doesn't exist                  |
+| 409  | Conflict (e.g. duplicate slug)          |
+| 422  | Validation error (see `fields` in body) |
+| 429  | Rate-limited                            |
+| 451  | Tenant residency violation              |
+| 500  | Server error (retry with backoff)       |
+| 503  | Service unavailable (regional issue)    |
+
+## Common error codes
+
+| `error`                  | When                                             |
+| ------------------------ | ------------------------------------------------ |
+| `invalid_credentials`    | Wrong password, expired link, etc. — generic.    |
+| `mfa_required`           | Sign-in succeeded but MFA hasn't been completed. |
+| `mfa_failed`             | Wrong MFA code or factor mismatch.               |
+| `account_locked`         | Too many failed attempts.                        |
+| `account_disabled`       | Admin disabled this account.                     |
+| `tenant_disabled`        | Tenant in soft-delete grace period.              |
+| `email_in_use`           | Sign-up with already-registered email.           |
+| `passkey_not_registered` | No passkey on file for this user.                |
+| `rate_limited`           | Hit a rate limit. See `retryAfter`.              |
+| `validation_failed`      | Body validation failed. See `fields`.            |
+| `permission_denied`      | RBAC or policy denied the action.                |
+| `not_found`              | Resource ID doesn't exist.                       |
+| `idempotency_conflict`   | Re-used Idempotency-Key with different body.     |
+
+## Handling errors
+
+### TypeScript
+
+```ts
+import { QeetidError, RateLimitError, MfaRequiredError } from "@qeetid/sdk";
+
+try {
+  await qee.signIn({
+    /* ... */
+  });
+} catch (e) {
+  if (e instanceof MfaRequiredError) {
+    // Render MFA challenge
+  } else if (e instanceof RateLimitError) {
+    // Show retry-after
+  } else if (e instanceof QeetidError) {
+    // Generic handling
+  } else {
+    throw e;
+  }
+}
+```
+
+### Go
+
+```go
+session, err := qee.Sessions.Validate(ctx, cookieValue)
+var rate qeetid.RateLimitError
+switch {
+case errors.As(err, &rate):
+    // rate.RetryAfter
+case errors.Is(err, qeetid.ErrInvalidCredentials):
+    // ...
+}
+```
+
+### Python
+
+```python
+from qeetid import QeetidError, RateLimitError, MFARequiredError
+
+try:
+    qee.sign_in(method="email-password", email=email, password=password)
+except MFARequiredError:
+    # ...
+except RateLimitError as e:
+    sleep(e.retry_after)
+except QeetidError:
+    # ...
+```
+
+## Retry guidance
+
+| Status / code           | Retry?      | Strategy                             |
+| ----------------------- | ----------- | ------------------------------------ |
+| 5xx / `network_error`   | Yes         | Exponential backoff (1s, 2s, 4s, 8s) |
+| 429                     | Yes         | Honor `retryAfter`                   |
+| 4xx (other)             | No          | Surface the error to the user        |
+| Idempotency-Key replays | Always safe | Same key returns same response       |
+
+Always include an `Idempotency-Key` on writes that come from user actions — it makes
+network retries safe by construction.

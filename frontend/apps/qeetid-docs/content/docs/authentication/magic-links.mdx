@@ -1,0 +1,49 @@
+---
+title: Magic links
+description: Passwordless sign-in via single-use email links. Great for low-friction onboarding.
+---
+
+Magic links email a one-time URL that signs the user in when clicked. Best for:
+
+- B2B onboarding where users hate creating passwords.
+- Re-auth flows ("Confirm your identity to change billing").
+- Recovery flows when the user has forgotten their password.
+
+## Enable
+
+```ts
+await qee.tenants.updateConfiguration("acme", {
+  authentication: {
+    magicLinks: { enabled: true, expiresIn: "10m" },
+  },
+});
+```
+
+## Send a magic link
+
+```ts
+import { useSignIn } from "@qeetid/react";
+
+const { signInWithMagicLink } = useSignIn();
+
+await signInWithMagicLink({
+  email: "alex@acme.com",
+  redirectTo: "/dashboard",
+});
+```
+
+The link is **single-use** and **bound to the originating session** — opening it on a
+different device won't work unless you opt into `crossDevice: true`.
+
+## Customizing the email
+
+Templates live under [Branding → Email templates](/docs/branding/email-templates). The
+default template uses your tenant's primary color and logo.
+
+## Security
+
+- **Single-use.** Once clicked, the token is invalidated.
+- **Short-lived.** Default 10 minutes; configurable down to 1 minute.
+- **Replay-protected.** Re-issuing a magic link for the same address invalidates the
+  previous one.
+- **Rate-limited.** Per IP, per email, per tenant — with abuse detection.

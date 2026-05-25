@@ -1,0 +1,132 @@
+---
+title: Python SDK
+description: Sync and async Python clients, type-checked with pydantic.
+---
+
+`qeetid` is the official Python SDK. Both sync and async clients are shipped; the
+async one is built on `httpx` + `anyio`.
+
+## Install
+
+```bash title="terminal"
+pip install qeetid
+# or
+uv add qeetid
+```
+
+## Initialize
+
+```python title="auth.py"
+import os
+from qeetid import Qeetid
+
+qee = Qeetid(secret_key=os.environ["QEETID_SECRET_KEY"])
+```
+
+Async client:
+
+```python
+from qeetid import AsyncQeetid
+
+qee = AsyncQeetid(secret_key=os.environ["QEETID_SECRET_KEY"])
+```
+
+## Validate a session
+
+```python
+session = qee.sessions.validate(cookie_value)
+if session is None:
+    raise Unauthorized()
+```
+
+Async:
+
+```python
+session = await qee.sessions.validate(cookie_value)
+```
+
+## Check a permission
+
+```python
+ok = qee.can(
+    user=session.user_id,
+    action="billing:write",
+    resource=f"org:{session.tenant_id}",
+)
+if not ok:
+    raise Forbidden()
+```
+
+## FastAPI middleware
+
+```python title="dependencies.py"
+from fastapi import Depends, Header, HTTPException, Request
+from qeetid import AsyncQeetid
+
+qee = AsyncQeetid(secret_key=os.environ["QEETID_SECRET_KEY"])
+
+async def current_session(request: Request):
+    token = request.cookies.get("qee_session")
+    if not token:
+        raise HTTPException(status_code=401)
+    session = await qee.sessions.validate(token)
+    if session is None:
+        raise HTTPException(status_code=401)
+    return session
+```
+
+Then in a route:
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/me")
+async def me(session = Depends(current_session)):
+    return {"user": session.user_id}
+```
+
+## Django middleware
+
+```python title="qeetid_middleware.py"
+from django.http import HttpResponseUnauthorized
+from qeetid import Qeetid
+
+qee = Qeetid(secret_key=os.environ["QEETID_SECRET_KEY"])
+
+class QeetidMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        token = request.COOKIES.get("qee_session")
+        request.session_obj = qee.sessions.validate(token) if token else None
+        return self.get_response(request)
+```
+
+## Errors
+
+```python
+from qeetid import QeetidError, RateLimitError, InvalidCredentialsError
+
+try:
+    qee.users.create(email="alex@acme.com")
+except InvalidCredentialsError:
+    ...
+except RateLimitError as e:
+    print(f"Retry after {e.retry_after}s")
+except QeetidError as e:
+    print(e.message)
+```
+
+## Type hints
+
+The SDK ships with full type hints and validates responses with pydantic:
+
+```python
+from qeetid.types import User, Session, Tenant
+
+def display(user: User) -> str:
+    return f"{user.profile.display_name} <{user.email}>"
+```

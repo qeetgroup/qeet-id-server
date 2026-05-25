@@ -1,0 +1,124 @@
+---
+title: Go SDK
+description: Context-aware Go client with zero allocations on the hot path.
+---
+
+`github.com/qeetid/qeetid-go` is the official Go SDK. It's the same client we use in
+Qeetid's internal services.
+
+## Install
+
+```bash title="terminal"
+go get github.com/qeetid/qeetid-go
+```
+
+## Initialize
+
+```go title="main.go"
+package main
+
+import (
+    "context"
+    "log"
+    "os"
+
+    "github.com/qeetid/qeetid-go"
+)
+
+func main() {
+    qee, err := qeetid.New(qeetid.Config{
+        SecretKey: os.Getenv("QEETID_SECRET_KEY"),
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    _ = qee
+}
+```
+
+## Validate a session
+
+```go
+session, err := qee.Sessions.Validate(ctx, cookieValue)
+if err != nil {
+    return err
+}
+if session == nil {
+    return ErrUnauthorized
+}
+```
+
+## Check a permission
+
+```go
+ok, err := qee.Can(ctx, qeetid.PermissionCheck{
+    User:     session.UserID,
+    Action:   "billing:write",
+    Resource: "org:" + session.TenantID,
+})
+if err != nil || !ok {
+    return ErrForbidden
+}
+```
+
+## HTTP middleware
+
+```go title="middleware.go"
+func RequireAuth(qee *qeetid.Client) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            c, _ := r.Cookie("qee_session")
+            if c == nil {
+                http.Error(w, "unauthorized", 401)
+                return
+            }
+            session, err := qee.Sessions.Validate(r.Context(), c.Value)
+            if err != nil || session == nil {
+                http.Error(w, "unauthorized", 401)
+                return
+            }
+            ctx := qeetid.WithSession(r.Context(), session)
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    }
+}
+```
+
+## gRPC interceptor
+
+```go
+import "github.com/qeetid/qeetid-go/grpc"
+
+s := grpc.NewServer(
+    grpc.UnaryInterceptor(qeetidgrpc.UnaryServerInterceptor(qee)),
+)
+```
+
+The interceptor extracts the session token from metadata, validates it, and injects
+the session into the request context.
+
+## Errors
+
+```go
+session, err := qee.Sessions.Validate(ctx, cookieValue)
+var rate qeetid.RateLimitError
+switch {
+case errors.As(err, &rate):
+    // rate.RetryAfter
+case errors.Is(err, qeetid.ErrInvalidCredentials):
+    // Generic creds error
+}
+```
+
+## Observability
+
+```go
+qee, err := qeetid.New(qeetid.Config{
+    SecretKey: os.Getenv("QEETID_SECRET_KEY"),
+    Tracer:    otel.Tracer("my-service"),
+    Metrics:   otel.Meter("my-service"),
+})
+```
+
+Every method instrument with OpenTelemetry spans and metrics named under
+`qeetid.client.*`.

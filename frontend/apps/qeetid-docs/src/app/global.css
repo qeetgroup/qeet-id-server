@@ -1,0 +1,205 @@
+@import "tailwindcss";
+
+/* Brings Cal Sans @font-face declarations + design tokens used by web/admin. */
+@import "@qeetid/ui/styles.css";
+
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Brand: bind Fumadocs's primary to @qeetid/ui's --primary so docs match web/admin in both modes. */
+:root,
+.dark {
+  --color-fd-primary: var(--primary);
+}
+
+/* Tailwind tokens — Fira Code for code, Cal Sans for everything else (via @qeetid/ui). */
+@theme inline {
+  --font-mono: var(--font-fira-code), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --animate-marquee: marquee var(--marquee-duration, 40s) linear infinite;
+  --animate-shimmer: shimmer 2.8s linear infinite;
+  --animate-aurora-slow: aurora-slow 22s ease-in-out infinite;
+  --animate-float-soft: float-soft 7s ease-in-out infinite;
+  --animate-border-beam: border-beam calc(var(--beam-duration, 6) * 1s) infinite linear;
+  --animate-fade-up: fade-up 0.8s cubic-bezier(0.21, 0.47, 0.32, 0.98) both;
+  --animate-fade-in: fade-in 0.8s cubic-bezier(0.21, 0.47, 0.32, 0.98) both;
+  --animate-scale-in: scale-in 0.7s cubic-bezier(0.21, 0.47, 0.32, 0.98) both;
+  --animate-grid-pan: grid-pan 24s linear infinite;
+  --animate-hero-grid: hero-grid 30s linear infinite;
+  --animate-hero-scan: hero-scan 9s ease-in-out infinite;
+  --animate-ripple: ripple var(--duration, 2s) ease calc(var(--i, 0) * 0.2s) infinite;
+  --animate-signal-flow: signal-flow 9s linear infinite;
+}
+
+/* Apply the @qeetid/ui font tokens that web/admin use. */
+body {
+  font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+[data-slot="docs-title"] {
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-variant-ligatures: contextual;
+  font-feature-settings:
+    "calt" 1,
+    "ss01" 1,
+    "ss02" 1,
+    "ss03" 1;
+}
+
+/* Keyframes */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% - var(--marquee-gap, 2rem)));
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+@keyframes aurora-slow {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translate3d(40px, -30px, 0) scale(1.06);
+    opacity: 0.75;
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes border-beam {
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes grid-pan {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 64px 64px;
+  }
+}
+
+@keyframes hero-grid {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 56px 56px;
+  }
+}
+
+@keyframes hero-scan {
+  0%,
+  100% {
+    transform: translateX(-18%);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translateX(18%);
+    opacity: 0.72;
+  }
+}
+
+@keyframes ripple {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+
+@keyframes signal-flow {
+  0% {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.65;
+  }
+  80% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateX(72px);
+    opacity: 0;
+  }
+}

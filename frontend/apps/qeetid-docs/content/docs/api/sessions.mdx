@@ -1,0 +1,120 @@
+---
+title: Sessions
+description: Create, validate, list, and revoke sessions.
+---
+
+The Sessions API is backed by `svc-session` (Elixir/Phoenix). It powers every
+authenticated request in your app.
+
+## Create a session
+
+`POST /v1/sessions`
+
+You typically don't call this directly — the sign-in flow does it for you. Use it for
+custom flows like delegated auth.
+
+```bash
+curl -X POST https://api.qeetid.com/v1/sessions \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{
+    "user": "usr_abc",
+    "ttl": "7d",
+    "metadata": { "ip": "203.0.113.42" }
+  }'
+```
+
+Response:
+
+```json
+{
+  "id": "ses_01HXG…",
+  "token": "qee_ses_…",
+  "userId": "usr_abc",
+  "tenantId": "ten_acme",
+  "expiresAt": "2026-05-28T09:24:18Z"
+}
+```
+
+## Validate a session
+
+`GET /internal/sessions/{id}/validate`
+
+The hot path. Cached at the edge.
+
+```bash
+curl https://api.qeetid.com/internal/sessions/ses_01HXG.../validate \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+Response (valid session):
+
+```json
+{
+  "status": "valid",
+  "session": {
+    "id": "ses_01HXG…",
+    "userId": "usr_abc",
+    "tenantId": "ten_acme",
+    "expiresAt": "2026-05-28T09:24:18Z",
+    "lastSeenAt": "2026-05-21T09:24:18Z"
+  },
+  "user": {
+    /* … */
+  }
+}
+```
+
+Response (revoked or expired):
+
+```json
+{
+  "status": "expired",
+  "reason": "revoked"
+}
+```
+
+## Revoke a session
+
+`DELETE /v1/sessions/{id}`
+
+Propagates cluster-wide within ~30 seconds (instant on the originating node).
+
+```bash
+curl -X DELETE https://api.qeetid.com/v1/sessions/ses_01HXG... \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+## Revoke all sessions for a user
+
+`POST /v1/users/{userId}/sessions/revoke-all`
+
+Useful for "sign me out everywhere" or admin force-logout.
+
+```bash
+curl -X POST https://api.qeetid.com/v1/users/usr_abc/sessions/revoke-all \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+## List a user's sessions
+
+`GET /v1/users/{userId}/sessions`
+
+Returns each session with metadata (IP, user agent, location, last seen).
+
+```bash
+curl https://api.qeetid.com/v1/users/usr_abc/sessions \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+## Exchange for a stateless JWT
+
+`POST /v1/sessions/{id}/jwt`
+
+```bash
+curl -X POST https://api.qeetid.com/v1/sessions/ses_01HXG.../jwt \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{"ttl":"5m"}'
+```
+
+The returned JWT is signed with a tenant-scoped key (rotate via the dashboard). Verify
+with the JWKS endpoint at `https://api.qeetid.com/.well-known/{tenant}/jwks.json`.

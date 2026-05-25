@@ -1,0 +1,149 @@
+---
+title: Quickstart
+description: Ship a working sign-in flow in under fifteen minutes — no credit card, no servers to spin up.
+icon: Zap
+---
+
+This guide gets you to your first authenticated user. You'll install the SDK, configure
+a tenant, render a sign-in page, and protect a route. Estimated time: **12 minutes**.
+
+<Callout type="info">
+  Prefer to copy a working repo? Grab the [Next.js
+  starter](https://github.com/qeetid/starter-nextjs) — it includes everything below plus
+  dashboards, billing, and webhooks.
+</Callout>
+
+## 1. Create a tenant
+
+Sign up at [qeetid.com](https://qeetid.com), then create a tenant from the dashboard.
+You'll get a **publishable key** (`qee_pub_…`) for the browser and a **secret key**
+(`qee_sec_…`) for the server.
+
+```bash title="terminal"
+# or: create via API
+curl -X POST https://api.qeetid.com/v1/organizations \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -d '{"slug":"acme","name":"Acme, Inc."}'
+```
+
+## 2. Install the SDK
+
+<Tabs items={['pnpm', 'npm', 'yarn', 'bun']}>
+
+```bash tab="pnpm"
+pnpm add @qeetid/sdk @qeetid/react
+```
+
+```bash tab="npm"
+npm install @qeetid/sdk @qeetid/react
+```
+
+```bash tab="yarn"
+yarn add @qeetid/sdk @qeetid/react
+```
+
+```bash tab="bun"
+bun add @qeetid/sdk @qeetid/react
+```
+
+</Tabs>
+
+## 3. Configure your environment
+
+```bash title=".env.local"
+NEXT_PUBLIC_QEETID_KEY=qee_pub_xxxxxxxxxxxxxxxxxxx
+QEETID_SECRET_KEY=qee_sec_xxxxxxxxxxxxxxxxxxx
+QEETID_TENANT=acme
+```
+
+## 4. Wrap your app
+
+```tsx title="app/layout.tsx"
+import { QeetidProvider } from "@qeetid/react";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <QeetidProvider
+          publishableKey={process.env.NEXT_PUBLIC_QEETID_KEY!}
+          tenant={process.env.NEXT_PUBLIC_QEETID_TENANT}
+        >
+          {children}
+        </QeetidProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+## 5. Add a sign-in page
+
+```tsx title="app/sign-in/page.tsx"
+import { QeetidSignIn } from "@qeetid/react";
+
+export default function Page() {
+  return (
+    <main className="grid min-h-screen place-items-center">
+      <QeetidSignIn methods={["passkey", "google", "email"]} redirectTo="/dashboard" />
+    </main>
+  );
+}
+```
+
+That's it for the client. The component handles the rest: passkey enrollment, MFA challenges,
+account recovery, and session persistence.
+
+## 6. Protect a route
+
+On the server, validate the session cookie and load the current user:
+
+```ts title="lib/auth.ts"
+import { Qeetid } from "@qeetid/sdk";
+import { cookies } from "next/headers";
+
+const qee = new Qeetid({ secretKey: process.env.QEETID_SECRET_KEY! });
+
+export async function currentUser() {
+  const token = cookies().get("qee_session")?.value;
+  if (!token) return null;
+  const session = await qee.sessions.validate(token);
+  return session?.user ?? null;
+}
+```
+
+Then gate any server component:
+
+```tsx title="app/dashboard/page.tsx"
+import { redirect } from "next/navigation";
+import { currentUser } from "@/lib/auth";
+
+export default async function DashboardPage() {
+  const user = await currentUser();
+  if (!user) redirect("/sign-in");
+  return <h1>Welcome, {user.profile.displayName}</h1>;
+}
+```
+
+## What you just shipped
+
+- ✅ Passkey-first sign-in with Google + email fallback
+- ✅ Server-side session validation with cluster-wide revocation
+- ✅ A protected dashboard route
+
+## Next steps
+
+<Cards>
+  <Card icon="Fingerprint" title="Enable MFA" href="/docs/mfa">
+    Add TOTP, SMS, and step-up auth on sensitive actions.
+  </Card>
+  <Card icon="Users" title="Configure roles" href="/docs/rbac">
+    Create roles, permissions, and policies for your tenant.
+  </Card>
+  <Card icon="Building" title="Add SSO" href="/docs/authentication/sso">
+    Connect Okta, Azure AD, or any SAML/OIDC provider in five minutes.
+  </Card>
+  <Card icon="Plug" title="Webhooks" href="/docs/webhooks">
+    React to user lifecycle events from Kafka or HTTP.
+  </Card>
+</Cards>

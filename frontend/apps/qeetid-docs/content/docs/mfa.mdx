@@ -1,0 +1,125 @@
+---
+title: MFA
+description: TOTP, SMS, email OTP, WebAuthn, and recovery codes — with policy-based enforcement and step-up auth.
+icon: Fingerprint
+---
+
+Multi-factor authentication in Qeetid isn't a checkbox — it's a system. You can enforce
+factors per role, per resource, or per action, and require **step-up** on sensitive
+operations like billing or admin changes.
+
+## Factors
+
+| Factor             | Notes                                                                   |
+| ------------------ | ----------------------------------------------------------------------- |
+| **TOTP**           | Standard authenticator apps. 6 digits, 30-second windows.               |
+| **WebAuthn**       | Hardware keys (YubiKey) or device-bound passkeys used as a second step. |
+| **SMS**            | Lower assurance — recommended as fallback, not primary.                 |
+| **Email OTP**      | Useful when SMS is unavailable.                                         |
+| **Recovery codes** | One-time codes for account recovery.                                    |
+
+## Enable MFA for a tenant
+
+```ts
+await qee.tenants.updateConfiguration("acme", {
+  mfa: {
+    enabled: true,
+    requireFor: ["all-users"], // or "admins-only" | "custom"
+    factors: ["totp", "webauthn", "sms"],
+    recoveryCodes: { enabled: true, count: 10 },
+  },
+});
+```
+
+## Enrollment flow
+
+The drop-in component handles enrollment automatically after sign-in if the user has no
+factors set up:
+
+```tsx
+<QeetidMFAEnrollment factors={["totp", "webauthn"]} />
+```
+
+Or drive it yourself:
+
+```ts
+import { useMFA } from "@qeetid/react";
+
+const { startEnrollment, completeEnrollment } = useMFA();
+
+const { qrCode, secret } = await startEnrollment({ factor: "totp" });
+// Show QR to user; collect 6-digit code
+await completeEnrollment({ factor: "totp", code });
+```
+
+## Challenge flow
+
+When a sign-in requires MFA, the server returns `mfa_required` with a list of available
+factors. The component renders the right UI; with hooks, you drive it yourself:
+
+```ts
+import { useSignIn } from "@qeetid/react";
+
+const result = await signIn({ method: "email-password", email, password });
+if (result.status === "mfa_required") {
+  await challenge({ factor: "totp", code });
+}
+```
+
+## Step-up auth
+
+Some actions deserve a fresh proof of identity — even mid-session. Step-up requires the
+user to **re-challenge** an MFA factor without losing the session:
+
+```ts
+import { useStepUp } from "@qeetid/react";
+
+const { stepUp } = useStepUp();
+
+async function deleteAccount() {
+  const proof = await stepUp({ factor: "webauthn" });
+  await fetch("/api/account", {
+    method: "DELETE",
+    headers: { "X-Qeetid-Step-Up": proof.token },
+  });
+}
+```
+
+Your server can require the `X-Qeetid-Step-Up` header on sensitive endpoints:
+
+```ts
+const proof = await qee.stepUp.validate(req.headers["x-qeetid-step-up"]);
+if (!proof || proof.olderThan("5m")) throw new ProofRequired();
+```
+
+## Recovery
+
+Recovery codes are issued during enrollment. Each is single-use; users can regenerate
+the set at any time.
+
+```ts
+// On the server (e.g. a /recover route)
+await qee.users.recoverWithCode(userId, code);
+```
+
+For lost-everything scenarios, tenant admins can revoke all MFA factors for a user from
+the dashboard, forcing re-enrollment on next sign-in.
+
+<Callout type="warn">
+  Don't use SMS as the only factor. It's vulnerable to SIM-swap attacks. Use it as a fallback
+  alongside TOTP or WebAuthn.
+</Callout>
+
+## Policy: requiring MFA for specific actions
+
+```ts
+await qee.policies.create({
+  tenant: "acme",
+  name: "billing-mfa",
+  when: { resource: "billing:*" },
+  require: { mfaWithin: "5m" },
+});
+```
+
+If a user tries to call a `billing:*` endpoint without a recent MFA proof, the server
+returns `mfa_required` and the client triggers step-up.

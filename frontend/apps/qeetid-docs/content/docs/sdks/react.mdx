@@ -1,0 +1,118 @@
+---
+title: React SDK
+description: Hooks and drop-in components for sign-in, MFA, account portals, and tenant management.
+---
+
+`@qeetid/react` is the official React SDK. It wraps `@qeetid/sdk` with hooks, context,
+and a set of headless + styled components.
+
+## Install
+
+```bash title="terminal"
+pnpm add @qeetid/sdk @qeetid/react
+```
+
+## Wrap your app
+
+```tsx title="app/layout.tsx"
+import { QeetidProvider } from "@qeetid/react";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <QeetidProvider publishableKey={process.env.NEXT_PUBLIC_QEETID_KEY!} tenant="acme">
+      {children}
+    </QeetidProvider>
+  );
+}
+```
+
+## Drop-in components
+
+| Component                    | What it does                                        |
+| ---------------------------- | --------------------------------------------------- |
+| `<QeetidSignIn />`          | Sign-in page with all enabled methods               |
+| `<QeetidSignUp />`          | Sign-up with email verification                     |
+| `<QeetidMFAEnrollment />`   | MFA factor enrollment UI                            |
+| `<QeetidMFAChallenge />`    | MFA challenge UI                                    |
+| `<QeetidAccount />`         | Full account portal (profile + security + sessions) |
+| `<QeetidAccountSecurity />` | Security settings (MFA, passkeys)                   |
+| `<QeetidAccountSessions />` | Active session list with revoke                     |
+| `<QeetidTenantSwitcher />`  | Multi-tenant org switcher                           |
+| `<QeetidUserButton />`      | Avatar + dropdown for top-bar                       |
+| `<QeetidOrgInvite />`       | Invite member form                                  |
+
+## Hooks
+
+```tsx
+import {
+  useUser,
+  useSession,
+  useSignIn,
+  useSignUp,
+  useSignOut,
+  useMFA,
+  useStepUp,
+  useTenants,
+  usePermissions,
+} from "@qeetid/react";
+
+function Header() {
+  const { user, isLoaded } = useUser();
+  const signOut = useSignOut();
+
+  if (!isLoaded) return null;
+  if (!user) return <a href="/sign-in">Sign in</a>;
+
+  return <button onClick={() => signOut()}>Sign out {user.profile.displayName}</button>;
+}
+```
+
+## Guarded routes
+
+```tsx title="app/dashboard/layout.tsx"
+import { Protect } from "@qeetid/react";
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <Protect fallback="/sign-in" requirePermission="dashboard:read">
+      {children}
+    </Protect>
+  );
+}
+```
+
+`Protect` validates the session and (optionally) checks a permission. It renders a
+loading state during validation and redirects on failure.
+
+## Theming
+
+```tsx
+<QeetidProvider
+  publishableKey="..."
+  appearance={{
+    baseTheme: "dark",
+    variables: { colorPrimary: "#FF5C2E", borderRadius: "12px" },
+    elements: { signInRoot: "shadow-2xl" },
+  }}
+>
+  {children}
+</QeetidProvider>
+```
+
+Every styled component has a documented `elements` keys for fine-grained overrides.
+See [Custom UI](/docs/authentication/custom-ui) for the full guide.
+
+## SSR
+
+All hooks and `<Protect>` work with React Server Components via the `@qeetid/react/server`
+entry:
+
+```tsx title="app/dashboard/page.tsx"
+import { currentUser } from "@qeetid/react/server";
+
+export default async function Page() {
+  const user = await currentUser();
+  if (!user) redirect("/sign-in");
+  return <h1>Welcome {user.profile.displayName}</h1>;
+}
+```

@@ -1,0 +1,65 @@
+---
+title: SDKs
+description: Type-safe clients, server middleware, and UI components — generated from the same OpenAPI spec.
+icon: Package
+---
+
+Qeetid SDKs are first-class: same versioning, same release schedule, same support tier.
+All clients are generated from the OpenAPI spec, so the surface area is identical across
+languages.
+
+## Pick your stack
+
+<Cards>
+  <Card title="TypeScript" href="/docs/sdks/typescript">
+    Universal client. Works in Node, Edge, Deno, Bun, browsers.
+  </Card>
+  <Card title="React" href="/docs/sdks/react">
+    Hooks + drop-in components for sign-in, MFA, and account pages.
+  </Card>
+  <Card title="Next.js" href="/docs/sdks/nextjs">
+    App Router middleware, server actions, and route handlers.
+  </Card>
+  <Card title="React Native" href="/docs/sdks/react-native">
+    Native passkey support, secure storage, deep links.
+  </Card>
+  <Card title="Go" href="/docs/sdks/go">
+    Server SDK with context-aware methods and zero allocations on the hot path.
+  </Card>
+  <Card title="Python" href="/docs/sdks/python">
+    Sync and async clients, type-checked with pydantic.
+  </Card>
+  <Card title="Rust" href="/docs/sdks/rust">
+    Tokio-based async client with first-class observability.
+  </Card>
+  <Card title="Node.js" href="/docs/sdks/node">
+    Direct CommonJS support if you can't use TS yet.
+  </Card>
+</Cards>
+
+## What you get in every SDK
+
+- **Type-safe API client** generated from OpenAPI
+- **Session validation** with edge caching
+- **Permission checks** (`can()`, `canAll()`)
+- **Webhook signature verification**
+- **OpenTelemetry traces and metrics**
+- **Idiomatic error types** (no `try { JSON.parse } catch`)
+
+## Versioning
+
+SDKs follow semver. Major versions track the Qeetid platform major; minor and patch
+versions match the OpenAPI spec they were built from.
+
+```
+SDK 1.4.x  ↔  API v1.4.x
+SDK 2.x.x  ↔  API v2.x.x
+```
+
+Breaking changes are announced 90 days in advance via the [changelog](/docs/changelog)
+and the `Sunset` header on deprecated endpoints.
+
+## Reporting issues
+
+Each SDK has its own GitHub repo under [github.com/qeetid](https://github.com/qeetid). File
+issues there. For platform-level bugs, [support@qeetid.com](mailto:support@qeetid.com).

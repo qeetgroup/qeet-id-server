@@ -1,0 +1,113 @@
+@import "@qeetid/ui/styles.css";
+
+@theme inline {
+  /* Override qeetid-ui's --font-mono so code blocks use Fira Code (with ligatures). */
+  --font-mono: var(--font-fira-code), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --animate-marquee: marquee var(--marquee-duration, 40s) linear infinite;
+  --animate-marquee-vertical: marquee-vertical var(--marquee-duration, 40s) linear infinite;
+  --animate-shimmer: shimmer 2.8s linear infinite;
+  --animate-aurora: aurora 18s ease-in-out infinite;
+  --animate-border-beam: border-beam calc(var(--beam-duration, 6) * 1s) infinite linear;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-grid-pan: grid-pan 22s linear infinite;
+  --animate-fade-up: fade-up 0.8s cubic-bezier(0.21, 0.47, 0.32, 0.98) both;
+  --animate-fade-in: fade-in 0.8s cubic-bezier(0.21, 0.47, 0.32, 0.98) both;
+  --animate-scale-in: scale-in 0.7s cubic-bezier(0.21, 0.47, 0.32, 0.98) both;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% - var(--marquee-gap, 2rem)));
+  }
+}
+
+@keyframes marquee-vertical {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(-100% - var(--marquee-gap, 2rem)));
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(30px, -40px, 0) scale(1.05);
+  }
+  66% {
+    transform: translate3d(-20px, 30px, 0) scale(0.95);
+  }
+}
+
+@keyframes border-beam {
+  to {
+    offset-distance: 100%;
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes grid-pan {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 var(--grid-cell, 56px);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

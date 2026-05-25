@@ -1,0 +1,88 @@
+---
+title: API reference
+description: Every Qeetid endpoint, organized by service. All examples are copy-pasteable in curl, TypeScript, Go, and Python.
+icon: Code
+---
+
+The Qeetid REST API uses **JSON over HTTPS**. Every endpoint is versioned under
+`/v1/` and lives at:
+
+```
+https://api.qeetid.com/v1
+```
+
+## Base URL by residency
+
+| Tenant residency | Base URL                          |
+| ---------------- | --------------------------------- |
+| US               | `https://api.qeetid.com/v1`      |
+| EU               | `https://api.eu.qeetid.com/v1`   |
+| APAC             | `https://api.apac.qeetid.com/v1` |
+
+The SDKs route automatically; if you're calling the API directly, hit the right region
+for your tenant.
+
+## Authentication
+
+All requests must include a bearer token:
+
+```bash
+Authorization: Bearer qee_sec_xxxxxxxxxxxxxxxxxxx
+```
+
+There are three key types:
+
+- **Secret keys** (`qee_sec_…`) — server-side, full access.
+- **Publishable keys** (`qee_pub_…`) — client-side, limited access.
+- **Personal access tokens** (`qee_pat_…`) — per-user, scoped permissions.
+
+## Endpoints
+
+<Cards>
+  <Card title="Users" href="/docs/api/users">
+    Create, list, update, delete users. Manage profiles, metadata, and verification.
+  </Card>
+  <Card title="Tenants" href="/docs/api/tenants">
+    Organization lifecycle, branding, configuration, residency.
+  </Card>
+  <Card title="Roles & permissions" href="/docs/api/roles">
+    Role CRUD, assignments, and policy evaluation.
+  </Card>
+  <Card title="Sessions" href="/docs/api/sessions">
+    Create, validate, revoke, and list sessions.
+  </Card>
+  <Card title="Errors" href="/docs/api/errors">
+    Error codes, retry guidance, and idiomatic handling.
+  </Card>
+  <Card title="Pagination" href="/docs/api/pagination">
+    Cursor-based pagination, ordering, and filtering.
+  </Card>
+</Cards>
+
+## Versioning
+
+API versions are reflected in the URL (`/v1`, `/v2`, …) and pinned per-tenant via the
+`Qeetid-Version` header (defaults to your tenant's pinned version). Breaking changes
+get 90 days' notice via the `Sunset` header and a changelog entry.
+
+## Idempotency
+
+Mutating endpoints accept an `Idempotency-Key` header. Repeated requests with the same
+key within 24 hours return the original response — safe to retry on network errors.
+
+```bash
+curl -X POST https://api.qeetid.com/v1/users \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -H "Idempotency-Key: 9c2b5e9f-..." \
+  -d '{"email":"alex@acme.com"}'
+```
+
+## OpenAPI
+
+The full OpenAPI spec is published at:
+
+```
+https://api.qeetid.com/v1/openapi.json
+```
+
+It's the source of truth for every SDK, and you can generate your own clients from it.

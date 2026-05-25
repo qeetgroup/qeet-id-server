@@ -1,0 +1,116 @@
+---
+title: Roles & permissions
+description: Role CRUD, assignments, and the hot-path permission evaluator.
+---
+
+The Roles & Permissions API lives under `svc-rbac`. It includes both the **management
+plane** (create/edit roles) and the **hot path** (evaluate permissions).
+
+## Create a role
+
+`POST /v1/roles`
+
+```bash
+curl -X POST https://api.qeetid.com/v1/roles \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{
+    "tenant": "acme",
+    "name": "billing-admin",
+    "description": "Full billing access",
+    "permissions": ["billing:read", "billing:write", "billing:invoice"]
+  }'
+```
+
+## List roles for a tenant
+
+`GET /v1/roles?tenant=acme`
+
+## Assign a role
+
+`POST /v1/users/{userId}/roles`
+
+```bash
+curl -X POST https://api.qeetid.com/v1/users/usr_abc/roles \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{
+    "tenant": "acme",
+    "role": "billing-admin",
+    "expiresAt": "2026-12-31T23:59:59Z"
+  }'
+```
+
+## Revoke a role
+
+`DELETE /v1/users/{userId}/roles/{roleId}`
+
+## Group assignments
+
+```bash
+# Assign role to group
+curl -X POST https://api.qeetid.com/v1/groups/finance-team/roles \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{"tenant":"acme","role":"billing-admin"}'
+
+# Revoke
+curl -X DELETE https://api.qeetid.com/v1/groups/finance-team/roles/billing-admin \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+## Permission evaluation (hot path)
+
+`POST /internal/permissions/evaluate`
+
+This is the endpoint you call on every request that needs an authorization decision.
+
+```bash
+curl -X POST https://api.qeetid.com/internal/permissions/evaluate \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{
+    "user": "usr_abc",
+    "action": "billing:write",
+    "resource": "org:acme"
+  }'
+```
+
+Response:
+
+```json
+{
+  "allowed": true,
+  "evaluatedAt": "2026-05-21T09:24:18.491Z",
+  "matchedRoles": ["billing-admin"],
+  "matchedPolicies": [],
+  "latencyMs": 28
+}
+```
+
+<Callout type="info">
+  The `/internal/` endpoints are intended for service-to-service traffic and are not rate-limited at
+  the public-API ceiling. They're cached at the edge with a 30-second TTL.
+</Callout>
+
+## Bulk evaluation
+
+`POST /internal/permissions/evaluate/bulk`
+
+```bash
+curl -X POST https://api.qeetid.com/internal/permissions/evaluate/bulk \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{
+    "user": "usr_abc",
+    "resource": "org:acme",
+    "actions": ["billing:read", "billing:write", "members:invite"]
+  }'
+```
+
+Response:
+
+```json
+{
+  "results": {
+    "billing:read": { "allowed": true, "matchedRoles": ["billing-admin"] },
+    "billing:write": { "allowed": true, "matchedRoles": ["billing-admin"] },
+    "members:invite": { "allowed": false, "reason": "missing_permission" }
+  }
+}
+```
