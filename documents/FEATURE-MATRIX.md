@@ -43,7 +43,7 @@ For module-level context and gap analysis, see:
 | B1 | Multi-tenancy with org isolation | ✅ | [backend/internal/tenant/](../backend/internal/tenant/) |
 | B2 | User profile management | ✅ | [backend/internal/user/](../backend/internal/user/) |
 | B3 | User invitation | ✅ | [backend/internal/invite/](../backend/internal/invite/) |
-| B4 | Self-service signup (public endpoint) | 🟡 | Admin-scoped only — needs public route |
+| B4 | Self-service signup (org signup, signup user becomes tenant owner) | ✅ | [backend/internal/auth/service.go](../backend/internal/auth/service.go), [http.go](../backend/internal/auth/http.go) — `POST /v1/auth/signup`. Creates tenant + user + system `owner` role + assignment atomically; auto-login. |
 | B5 | Email verification | ✅ | [backend/internal/verification/](../backend/internal/verification/) |
 | B6 | Phone verification | ✅ | Same |
 | B7 | Password reset (token + email) | ✅ | [backend/internal/recovery/](../backend/internal/recovery/) |

@@ -5,10 +5,12 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
@@ -35,6 +37,31 @@ type LoginInput struct {
 	UserAgent string
 }
 
+type SignupInput struct {
+	Email       string
+	Password    string
+	DisplayName string
+	Tenant      SignupTenantInput
+	IP          string
+	UserAgent   string
+}
+
+type SignupTenantInput struct {
+	Slug   string
+	Name   string
+	Plan   string
+	Region string
+}
+
+// TenantBrief is the small tenant projection returned alongside Signup.
+type TenantBrief struct {
+	ID     uuid.UUID `json:"id"`
+	Slug   string    `json:"slug"`
+	Name   string    `json:"name"`
+	Plan   string    `json:"plan"`
+	Region string    `json:"region"`
+}
+
 type TokenPair struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type"`
@@ -42,6 +69,156 @@ type TokenPair struct {
 	RefreshToken string    `json:"refresh_token"`
 	SessionID    uuid.UUID `json:"session_id"`
 	UserID       uuid.UUID `json:"user_id"`
+}
+
+// Signup is the self-service onboarding endpoint. In one transaction it:
+//
+//  1. Creates a new tenant from the provided slug/name/plan/region.
+//  2. Creates a user under that tenant with a password credential.
+//  3. Creates an "owner" system role for the tenant and grants it every
+//     platform permission currently in rbac.permissions.
+//  4. Assigns the new user to the owner role.
+//  5. Issues an access + refresh token pair so the caller is auto-logged in.
+//
+// The user therefore becomes an admin of the tenant they just signed up
+// for and can manage users, roles, branding, webhooks, etc. without any
+// further bootstrapping.
+//
+// Errors:
+//   - ErrConflict on duplicate tenant slug or duplicate email
+//   - ErrUnprocessable on bad input
+func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user.User, *TenantBrief, error) {
+	hash, err := password.Hash(in.Password)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	plan := strings.TrimSpace(in.Tenant.Plan)
+	if plan == "" {
+		plan = "free"
+	}
+	region := strings.TrimSpace(in.Tenant.Region)
+	if region == "" {
+		region = "us-east-1"
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// 1) Tenant.
+	tenant := &TenantBrief{Slug: strings.TrimSpace(in.Tenant.Slug), Name: in.Tenant.Name, Plan: plan, Region: region}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO tenant.tenants (slug, name, plan, region)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, tenant.Slug, tenant.Name, tenant.Plan, tenant.Region).Scan(&tenant.ID); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, nil, nil, errs.ErrConflict.WithDetail("tenant slug already exists")
+		}
+		return nil, nil, nil, err
+	}
+
+	// 2) User.
+	var displayName any
+	if in.DisplayName != "" {
+		displayName = in.DisplayName
+	}
+	u := &user.User{TenantID: tenant.ID, Email: strings.TrimSpace(in.Email), Status: "active", Metadata: map[string]any{}}
+	if in.DisplayName != "" {
+		dn := in.DisplayName
+		u.DisplayName = &dn
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email, display_name)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at, updated_at
+	`, u.TenantID, u.Email, displayName).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, nil, nil, errs.ErrConflict.WithDetail("email already exists for tenant")
+		}
+		return nil, nil, nil, err
+	}
+
+	// 3) Password credential.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.password_credentials (user_id, password_hash)
+		VALUES ($1, $2)
+	`, u.ID, hash); err != nil {
+		return nil, nil, nil, err
+	}
+
+	// 4) Owner role for this tenant.
+	var roleID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+		VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
+		RETURNING id
+	`, tenant.ID).Scan(&roleID); err != nil {
+		return nil, nil, nil, err
+	}
+
+	// 5) Grant every platform permission to the owner role.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO rbac.role_permissions (role_id, permission_id)
+		SELECT $1, id FROM rbac.permissions
+	`, roleID); err != nil {
+		return nil, nil, nil, err
+	}
+
+	// 6) Assign the user to the owner role.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
+		VALUES ($1, $2, $3)
+	`, u.ID, tenant.ID, roleID); err != nil {
+		return nil, nil, nil, err
+	}
+
+	// 7) Session + access + refresh token, all in the same tx so signup
+	// is fully atomic.
+	sessionID := uuid.New()
+	var ipArg any
+	if in.IP != "" {
+		ipArg = in.IP
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
+		VALUES ($1, $2, $3, NULLIF($4,'')::inet, $5)
+	`, sessionID, u.ID, tenant.ID, ipArg, in.UserAgent); err != nil {
+		return nil, nil, nil, err
+	}
+	access, exp, err := s.tokens.IssueAccess(u.ID, tenant.ID, sessionID, "")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	refreshRaw, refreshHash, err := tokens.NewRefreshToken()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, sessionID, refreshHash, refreshExp); err != nil {
+		return nil, nil, nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, nil, err
+	}
+
+	return &TokenPair{
+		AccessToken:  access,
+		TokenType:    "Bearer",
+		ExpiresAt:    exp,
+		RefreshToken: refreshRaw,
+		SessionID:    sessionID,
+		UserID:       u.ID,
+	}, u, tenant, nil
 }
 
 func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) {

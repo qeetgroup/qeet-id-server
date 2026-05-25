@@ -3,7 +3,7 @@
         test test-backend test-frontend \
         lint typecheck format \
         migrate-up migrate-down migrate-force \
-        db-up db-down db-reset \
+        db-up db-down db-reset db-wipe \
         clean
 
 # ── Defaults ────────────────────────────────────────────────────────────────
@@ -75,7 +75,11 @@ db-up:                      ## Start Postgres via docker compose
 db-down:                    ## Stop Postgres
 	cd backend && docker compose down
 
-db-reset: db-down db-up migrate-up  ## Wipe + restart + remigrate the DB
+db-reset:                   ## Wipe all app data: drop schemas via psql, remigrate from zero
+	cd backend && $(MAKE) db-reset
+
+db-wipe:                    ## Same idea, but uses `migrate down -all` instead of psql (no psql needed)
+	cd backend && $(MAKE) db-wipe
 
 migrate-up:                 ## Apply all pending migrations
 	cd backend && $(MAKE) migrate-up

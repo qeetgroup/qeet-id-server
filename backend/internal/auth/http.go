@@ -17,6 +17,7 @@ type Handler struct {
 }
 
 func (h *Handler) Mount(r chi.Router) {
+	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
 }
@@ -27,6 +28,61 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/auth/sessions", h.listSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
+}
+
+type signupInput struct {
+	Email       string                 `json:"email" validate:"required,email"`
+	Password    string                 `json:"password" validate:"required,min=8,max=256"`
+	DisplayName string                 `json:"display_name" validate:"omitempty,max=200"`
+	Tenant      signupTenantInput      `json:"tenant" validate:"required"`
+}
+
+type signupTenantInput struct {
+	Slug   string `json:"slug" validate:"required,min=2,max=64"`
+	Name   string `json:"name" validate:"required,min=1,max=200"`
+	Plan   string `json:"plan" validate:"omitempty,oneof=free pro enterprise"`
+	Region string `json:"region" validate:"omitempty,max=64"`
+}
+
+func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
+	var in signupInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		return
+	}
+	pair, u, t, err := h.Service.Signup(r.Context(), SignupInput{
+		Email:       in.Email,
+		Password:    in.Password,
+		DisplayName: in.DisplayName,
+		Tenant: SignupTenantInput{
+			Slug:   in.Tenant.Slug,
+			Name:   in.Tenant.Name,
+			Plan:   in.Tenant.Plan,
+			Region: in.Tenant.Region,
+		},
+		IP:        httpx.ClientIP(r),
+		UserAgent: r.UserAgent(),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"user":          u,
+		"tenant":        t,
+		"access_token":  pair.AccessToken,
+		"token_type":    pair.TokenType,
+		"expires_at":    pair.ExpiresAt,
+		"refresh_token": pair.RefreshToken,
+		"session_id":    pair.SessionID,
+		"user_id":       pair.UserID,
+		"tenant_id":     t.ID,
+		"roles":         []string{"owner"},
+	})
 }
 
 type loginInput struct {

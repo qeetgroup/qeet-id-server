@@ -7,7 +7,7 @@ info:
     (tenant, user, auth, rbac). Per-context OpenAPI specs will replace this
     file once each context grows enough surface to warrant its own document.
 servers:
-  - url: http://localhost:4000
+  - url: http://localhost:4001
 paths:
   /healthz:
     get:
@@ -15,6 +15,56 @@ paths:
       responses:
         '200':
           description: ok
+  /v1/auth/signup:
+    post:
+      summary: Public self-service signup. Creates a new tenant + user, makes the user the tenant owner, and auto-logs them in.
+      description: |
+        In one atomic transaction:
+        1. Creates a new tenant from `tenant.slug` / `tenant.name`.
+        2. Creates the user with a password credential.
+        3. Creates a system `owner` role for the tenant and grants every platform permission to it.
+        4. Assigns the user to the owner role.
+        5. Issues an access + refresh token pair.
+
+        The signed-up user becomes an admin of the tenant they just created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, tenant]
+              properties:
+                email:        { type: string, format: email }
+                password:     { type: string, minLength: 8, maxLength: 256 }
+                display_name: { type: string, maxLength: 200 }
+                tenant:
+                  type: object
+                  required: [slug, name]
+                  properties:
+                    slug:   { type: string, minLength: 2, maxLength: 64 }
+                    name:   { type: string, minLength: 1, maxLength: 200 }
+                    plan:   { type: string, enum: [free, pro, enterprise] }
+                    region: { type: string, maxLength: 64 }
+      responses:
+        '201':
+          description: created + token pair
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:          { type: object }
+                  tenant:        { type: object }
+                  access_token:  { type: string }
+                  refresh_token: { type: string }
+                  token_type:    { type: string, example: Bearer }
+                  expires_at:    { type: string, format: date-time }
+                  user_id:       { type: string, format: uuid }
+                  tenant_id:     { type: string, format: uuid }
+                  roles:         { type: array, items: { type: string }, example: [owner] }
+        '409': { description: tenant slug or email already exists }
+        '422': { description: validation failed }
   /v1/auth/login:
     post:
       summary: Issue an access + refresh token pair for a tenant user.
