@@ -30,7 +30,6 @@ func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *S
 }
 
 type LoginInput struct {
-	TenantID  uuid.UUID
 	Email     string
 	Password  string
 	IP        string
@@ -41,16 +40,8 @@ type SignupInput struct {
 	Email       string
 	Password    string
 	DisplayName string
-	Tenant      SignupTenantInput
 	IP          string
 	UserAgent   string
-}
-
-type SignupTenantInput struct {
-	Slug   string
-	Name   string
-	Plan   string
-	Region string
 }
 
 // TenantBrief is the small tenant projection returned alongside Signup.
@@ -73,19 +64,19 @@ type TokenPair struct {
 
 // Signup is the self-service onboarding endpoint. In one transaction it:
 //
-//  1. Creates a new tenant from the provided slug/name/plan/region.
+//  1. Creates an auto-generated "personal" tenant for the user.
 //  2. Creates a user under that tenant with a password credential.
 //  3. Creates an "owner" system role for the tenant and grants it every
 //     platform permission currently in rbac.permissions.
 //  4. Assigns the new user to the owner role.
 //  5. Issues an access + refresh token pair so the caller is auto-logged in.
 //
-// The user therefore becomes an admin of the tenant they just signed up
-// for and can manage users, roles, branding, webhooks, etc. without any
-// further bootstrapping.
+// The signup input is now tenant-less — the user provides only email +
+// password (+ optional display name). They land in their personal tenant
+// and can rename it or create additional ones from the admin UI.
 //
 // Errors:
-//   - ErrConflict on duplicate tenant slug or duplicate email
+//   - ErrConflict on duplicate email (globally unique)
 //   - ErrUnprocessable on bad input
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user.User, *TenantBrief, error) {
 	hash, err := password.Hash(in.Password)
@@ -93,14 +84,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 		return nil, nil, nil, err
 	}
 
-	plan := strings.TrimSpace(in.Tenant.Plan)
-	if plan == "" {
-		plan = "free"
-	}
-	region := strings.TrimSpace(in.Tenant.Region)
-	if region == "" {
-		region = "us-east-1"
-	}
+	personalSlug, personalName := derivePersonalTenant(in.Email, in.DisplayName)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -108,8 +92,8 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	}
 	defer tx.Rollback(ctx)
 
-	// 1) Tenant.
-	tenant := &TenantBrief{Slug: strings.TrimSpace(in.Tenant.Slug), Name: in.Tenant.Name, Plan: plan, Region: region}
+	// 1) Tenant — personal workspace, slug auto-generated, plan = free.
+	tenant := &TenantBrief{Slug: personalSlug, Name: personalName, Plan: "free", Region: "us-east-1"}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.tenants (slug, name, plan, region)
 		VALUES ($1, $2, $3, $4)
@@ -117,7 +101,8 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	`, tenant.Slug, tenant.Name, tenant.Plan, tenant.Region).Scan(&tenant.ID); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return nil, nil, nil, errs.ErrConflict.WithDetail("tenant slug already exists")
+			// Extremely unlikely — slug collision on a 16-char hex suffix.
+			return nil, nil, nil, errs.ErrConflict.WithDetail("personal tenant slug collision; retry")
 		}
 		return nil, nil, nil, err
 	}
@@ -221,8 +206,27 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	}, u, tenant, nil
 }
 
+// derivePersonalTenant generates a slug + name for the auto-created
+// personal workspace. Slug is hex-suffixed so collisions are vanishingly
+// rare; name falls back to the email local-part if no display_name was
+// supplied.
+func derivePersonalTenant(email, displayName string) (slug, name string) {
+	suffix := strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
+	slug = "personal-" + suffix
+	base := strings.TrimSpace(displayName)
+	if base == "" {
+		if at := strings.Index(email, "@"); at > 0 {
+			base = email[:at]
+		} else {
+			base = "user"
+		}
+	}
+	name = base + "'s workspace"
+	return slug, name
+}
+
 func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) {
-	u, err := s.users.GetByEmail(ctx, in.TenantID, in.Email)
+	u, err := s.users.GetByEmailGlobal(ctx, in.Email)
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
 			return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")

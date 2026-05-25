@@ -15,6 +15,7 @@ import { Link } from "@tanstack/react-router";
 import { Apple, Github, Google, Microsoft } from "@thesvg/react";
 import { Loader2Icon } from "lucide-react";
 import type * as React from "react";
+import { useState } from "react";
 
 import { BrandHero } from "./brand-hero";
 
@@ -22,7 +23,6 @@ export type SignupFormValues = {
   email: string;
   password: string;
   display_name: string;
-  tenant: { slug: string; name: string; plan: string };
 };
 
 type SignupFormProps = React.ComponentProps<"div"> & {
@@ -38,6 +38,8 @@ export function SignupForm({
   onSignup,
   ...props
 }: SignupFormProps) {
+  const [mismatch, setMismatch] = useState(false);
+
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card className="overflow-hidden p-0">
@@ -50,33 +52,23 @@ export function SignupForm({
               const password = String(data.get("password") ?? "");
               const confirm = String(data.get("confirm_password") ?? "");
               if (password !== confirm) {
-                // The parent should display this via errorMessage; we
-                // also catch it here so the form doesn't submit a mismatched pair.
-                onSignup?.({
-                  email: "",
-                  password: "",
-                  display_name: "",
-                  tenant: { slug: "", name: "", plan: "free" },
-                });
+                setMismatch(true);
                 return;
               }
+              setMismatch(false);
               onSignup?.({
                 email: String(data.get("email") ?? "").trim(),
                 password,
                 display_name: String(data.get("display_name") ?? "").trim(),
-                tenant: {
-                  slug: String(data.get("tenant_slug") ?? "").trim(),
-                  name: String(data.get("tenant_name") ?? "").trim(),
-                  plan: String(data.get("plan") ?? "free"),
-                },
               });
             }}
           >
             <FieldGroup>
               <div className="flex flex-col items-center gap-2 text-center">
-                <h1 className="text-2xl font-bold">Create your workspace</h1>
+                <h1 className="text-2xl font-bold">Create your account</h1>
                 <p className="text-sm text-balance text-muted-foreground">
-                  You&apos;ll be the owner — full admin access from day one.
+                  We&apos;ll set up a personal workspace for you automatically. You can rename it
+                  or create more later.
                 </p>
               </div>
 
@@ -115,39 +107,12 @@ export function SignupForm({
               </Field>
               <FieldDescription>At least 8 characters.</FieldDescription>
 
-              <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
-                Your workspace
-              </FieldSeparator>
-
-              <Field>
-                <FieldLabel htmlFor="tenant_name">Workspace name</FieldLabel>
-                <Input
-                  id="tenant_name"
-                  name="tenant_name"
-                  type="text"
-                  placeholder="Acme Corp"
-                  required
-                />
-              </Field>
-
-              <Field>
-                <FieldLabel htmlFor="tenant_slug">Workspace slug</FieldLabel>
-                <Input
-                  id="tenant_slug"
-                  name="tenant_slug"
-                  type="text"
-                  pattern="[a-z0-9-]+"
-                  minLength={2}
-                  maxLength={64}
-                  placeholder="acme"
-                  required
-                />
-                <FieldDescription>
-                  Lowercase letters, numbers, and dashes. Used in your tenant URL.
-                </FieldDescription>
-              </Field>
-
-              {errorMessage && (
+              {mismatch && (
+                <Field>
+                  <FieldError>Passwords don&apos;t match.</FieldError>
+                </Field>
+              )}
+              {errorMessage && !mismatch && (
                 <Field>
                   <FieldError>{errorMessage}</FieldError>
                 </Field>
@@ -156,7 +121,7 @@ export function SignupForm({
               <Field>
                 <Button type="submit" disabled={isLoading}>
                   {isLoading && <Loader2Icon className="animate-spin" />}
-                  {isLoading ? "Creating workspace…" : "Create workspace"}
+                  {isLoading ? "Creating account…" : "Create account"}
                 </Button>
               </Field>
 

@@ -17,10 +17,10 @@ For module-level context and gap analysis, see:
 |---|---|:-:|---|
 | A1 | Email + password sign-in | ✅ | [backend/internal/auth/service.go](../backend/internal/auth/service.go) |
 | A2 | Argon2id password hashing | 🟡 | [backend/internal/platform/password/hasher.go](../backend/internal/platform/password/hasher.go) (bcrypt cost 12 — migrate to Argon2id) |
-| A3 | Social login — Google | 🟡 | [backend/internal/social/social.go](../backend/internal/social/social.go) (501 on `/start`) |
-| A4 | Social login — GitHub | 🟡 | Same |
-| A5 | Social login — Microsoft | 🟡 | Same |
-| A6 | Social login — Apple | 🟡 | Same |
+| A3 | Social login — Google | 🟡 | [backend/internal/social/social.go](../backend/internal/social/social.go) (501 on `/start`). Admin config UI at [/auth/social](../frontend/apps/qeetid-admin/src/routes/_app/auth/social.tsx). |
+| A4 | Social login — GitHub | 🟡 | Same — admin UI ready |
+| A5 | Social login — Microsoft | 🟡 | Same — admin UI ready |
+| A6 | Social login — Apple | 🟡 | Same — admin UI ready |
 | A7 | Magic links | ✅ | [backend/internal/recovery/recovery.go](../backend/internal/recovery/recovery.go) |
 | A8 | Email OTP | ✅ | [backend/internal/verification/verification.go](../backend/internal/verification/verification.go) |
 | A9 | Passkeys (WebAuthn/FIDO2) — register | 🔴 | [backend/internal/passkey/passkey.go](../backend/internal/passkey/passkey.go) (501) |
@@ -43,13 +43,13 @@ For module-level context and gap analysis, see:
 | B1 | Multi-tenancy with org isolation | ✅ | [backend/internal/tenant/](../backend/internal/tenant/) |
 | B2 | User profile management | ✅ | [backend/internal/user/](../backend/internal/user/) |
 | B3 | User invitation | ✅ | [backend/internal/invite/](../backend/internal/invite/) |
-| B4 | Self-service signup (org signup, signup user becomes tenant owner) | ✅ | [backend/internal/auth/service.go](../backend/internal/auth/service.go), [http.go](../backend/internal/auth/http.go) — `POST /v1/auth/signup`. Creates tenant + user + system `owner` role + assignment atomically; auto-login. |
+| B4 | Self-service signup (email + password; personal tenant auto-created) | ✅ | [backend/internal/auth/service.go](../backend/internal/auth/service.go) — `POST /v1/auth/signup` body `{email, password, display_name?}`. Personal tenant generated server-side (slug `personal-<hex>`). Email globally unique. |
 | B5 | Email verification | ✅ | [backend/internal/verification/](../backend/internal/verification/) |
 | B6 | Phone verification | ✅ | Same |
 | B7 | Password reset (token + email) | ✅ | [backend/internal/recovery/](../backend/internal/recovery/) |
 | B8 | Account deletion (self-service, 30-day grace) | 🟡 | [backend/internal/gdpr/](../backend/internal/gdpr/) (admin-scoped) |
 | B9 | GDPR data export (JSON/CSV) | 🔴 | — |
-| B10 | GDPR right-to-erasure | 🟡 | Request intake ✅; purge runner scaffolded |
+| B10 | GDPR right-to-erasure | 🟡 | Request intake ✅; admin UI at [/security/compliance/gdpr](../frontend/apps/qeetid-admin/src/routes/_app/security/compliance/gdpr.tsx); purge runner scaffolded |
 | B11 | Consent management | 🔴 | No consent records table |
 | B12 | User groups / hierarchies | ✅ | [backend/internal/group/](../backend/internal/group/) |
 
@@ -66,7 +66,7 @@ For module-level context and gap analysis, see:
 | C5 | Effective permission resolution | ✅ | Same |
 | C6 | Permission-check API | ✅ | `GET /v1/check` |
 | C7 | Permission audit logging | ✅ | [backend/internal/audit/](../backend/internal/audit/) |
-| C8 | Group-based permission inheritance | 🟡 | Group model ✅, inheritance ❌ |
+| C8 | Group-based permission inheritance | 🟡 | Group model + admin UI ([/groups](../frontend/apps/qeetid-admin/src/routes/_app/groups.tsx)) ✅, inheritance into rbac.check ❌ |
 | C9 | Hierarchical role inheritance | 🔴 | Roles are flat |
 
 ---
@@ -162,7 +162,7 @@ For module-level context and gap analysis, see:
 | H4 | Applications (OAuth clients) | 🔴 | Same |
 | H5 | SSO connection configuration | 🔴 | Same |
 | H6 | SCIM provisioning configuration | 🔴 | Same |
-| H7 | MFA policy + password policy | 🔴 | Same |
+| H7 | MFA policy + password policy | 🟡 | TOTP enrollment for current user at [/auth/mfa/totp](../frontend/apps/qeetid-admin/src/routes/_app/auth/mfa/totp.tsx); tenant-level MFA policy screen still pending |
 | H8 | Branding customization | ✅ | [src/routes/_app/settings/branding.tsx](../frontend/apps/qeetid-admin/src/routes/_app/settings/branding.tsx) — full form + live preview |
 | H9 | Email template customization | 🔴 | Same |
 | H10 | Audit log viewer | ✅ | [src/routes/_app/security/audit-logs.tsx](../frontend/apps/qeetid-admin/src/routes/_app/security/audit-logs.tsx) — paginated + filters |

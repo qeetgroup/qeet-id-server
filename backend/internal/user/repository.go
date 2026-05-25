@@ -120,6 +120,18 @@ func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email s
 	return scanUser(row)
 }
 
+// GetByEmailGlobal looks up a user by email across all tenants.
+// Email is enforced globally unique by migration 0022, so this returns
+// at most one row. Used by the tenant-less sign-in flow.
+func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT `+userCols+`
+		FROM "user".users
+		WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+	`, email)
+	return scanUser(row)
+}
+
 func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string) ([]User, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

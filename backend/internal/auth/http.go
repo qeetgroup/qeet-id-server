@@ -31,17 +31,9 @@ func (h *Handler) MountAuthed(r chi.Router) {
 }
 
 type signupInput struct {
-	Email       string                 `json:"email" validate:"required,email"`
-	Password    string                 `json:"password" validate:"required,min=8,max=256"`
-	DisplayName string                 `json:"display_name" validate:"omitempty,max=200"`
-	Tenant      signupTenantInput      `json:"tenant" validate:"required"`
-}
-
-type signupTenantInput struct {
-	Slug   string `json:"slug" validate:"required,min=2,max=64"`
-	Name   string `json:"name" validate:"required,min=1,max=200"`
-	Plan   string `json:"plan" validate:"omitempty,oneof=free pro enterprise"`
-	Region string `json:"region" validate:"omitempty,max=64"`
+	Email       string `json:"email" validate:"required,email"`
+	Password    string `json:"password" validate:"required,min=8,max=256"`
+	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
 func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
@@ -58,14 +50,8 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		Email:       in.Email,
 		Password:    in.Password,
 		DisplayName: in.DisplayName,
-		Tenant: SignupTenantInput{
-			Slug:   in.Tenant.Slug,
-			Name:   in.Tenant.Name,
-			Plan:   in.Tenant.Plan,
-			Region: in.Tenant.Region,
-		},
-		IP:        httpx.ClientIP(r),
-		UserAgent: r.UserAgent(),
+		IP:          httpx.ClientIP(r),
+		UserAgent:   r.UserAgent(),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -86,9 +72,8 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 }
 
 type loginInput struct {
-	TenantID uuid.UUID `json:"tenant_id" validate:"required"`
-	Email    string    `json:"email" validate:"required,email"`
-	Password string    `json:"password" validate:"required,min=1"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=1"`
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +87,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pair, err := h.Service.Login(r.Context(), LoginInput{
-		TenantID:  in.TenantID,
 		Email:     in.Email,
 		Password:  in.Password,
 		IP:        httpx.ClientIP(r),

@@ -19,13 +19,11 @@ import type * as React from "react";
 import { BrandHero } from "./brand-hero";
 
 export type LoginFormValues = {
-  tenant_id: string;
   email: string;
   password: string;
 };
 
 type LoginFormProps = React.ComponentProps<"div"> & {
-  defaultTenantId?: string;
   isLoading?: boolean;
   errorMessage?: string;
   onLogin?: (values: LoginFormValues) => void;
@@ -33,7 +31,6 @@ type LoginFormProps = React.ComponentProps<"div"> & {
 
 export function LoginForm({
   className,
-  defaultTenantId = "",
   isLoading = false,
   errorMessage,
   onLogin,
@@ -49,7 +46,6 @@ export function LoginForm({
               e.preventDefault();
               const data = new FormData(e.currentTarget);
               onLogin?.({
-                tenant_id: String(data.get("tenant_id") ?? "").trim(),
                 email: String(data.get("email") ?? "").trim(),
                 password: String(data.get("password") ?? ""),
               });
@@ -62,21 +58,6 @@ export function LoginForm({
                   Login to your Qeetid admin account
                 </p>
               </div>
-
-              <Field>
-                <FieldLabel htmlFor="tenant_id">Workspace ID</FieldLabel>
-                <Input
-                  id="tenant_id"
-                  name="tenant_id"
-                  type="text"
-                  defaultValue={defaultTenantId}
-                  placeholder="00000000-0000-0000-0000-000000000000"
-                  required
-                />
-                <FieldDescription>
-                  Your tenant UUID. Auto-filled after your last successful sign-in or signup.
-                </FieldDescription>
-              </Field>
 
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>

@@ -241,7 +241,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"jane@acme.test\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Jane Doe\",\n  \"tenant\": {\n    \"slug\": \"acme\",\n    \"name\": \"Acme Corp\",\n    \"plan\": \"free\",\n    \"region\": \"us-east-1\"\n  }\n}"
+              "raw": "{\n  \"email\": \"jane@acme.test\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Jane Doe\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/signup",
@@ -254,7 +254,7 @@
                 "signup"
               ]
             },
-            "description": "Public self-service signup. In ONE transaction the backend:\n\n1. Creates a new tenant from `tenant.slug` + `tenant.name`.\n2. Creates the user with a password credential.\n3. Creates a system `owner` role for the new tenant and grants it every platform permission.\n4. Assigns the user to that owner role.\n5. Issues an access + refresh token pair (auto-login).\n\nThe new user is therefore an **admin of the tenant they just signed up for** \u2014 they can manage users, roles, branding, webhooks, audit, policy, etc. immediately. They can also create additional tenants via `POST /v1/tenants`.\n\n**Errors:**\n- 409 \u2014 tenant slug already exists (pick another) OR email already exists for the tenant\n- 422 \u2014 validation failed (password < 8 chars, slug < 2 chars, invalid email, \u2026)"
+            "description": "Public self-service signup. Takes only `{email, password, display_name?}`. In ONE transaction the backend:\n\n1. Generates a personal tenant for the new user (slug like `personal-<12hex>`, name like `\"Jane's workspace\"`).\n2. Creates the user with a password credential.\n3. Creates a system `owner` role for the personal tenant and grants it every platform permission.\n4. Assigns the user to that owner role.\n5. Issues an access + refresh token pair (auto-login).\n\nThe user can rename their workspace or create more from `Tenants \u2192 New tenant`.\n\n**Email is globally unique** \u2014 same address can't sign up twice across the platform.\n\n**Errors:**\n- 409 \u2014 email already in use\n- 422 \u2014 validation failed (password < 8 chars, invalid email, \u2026)"
           }
         },
         {
@@ -286,7 +286,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"email\": \"admin@example.com\",\n  \"password\": \"Password123!\"\n}"
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"Password123!\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/login",
