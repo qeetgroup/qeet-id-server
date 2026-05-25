@@ -1,0 +1,58 @@
+---
+title: Changelog
+description: What we shipped, week by week.
+icon: Package
+---
+
+We ship every Tuesday. Major changes get a heads-up in this changelog; everything is in
+the [git log](https://github.com/qeetid/qeetid) if you want the firehose.
+
+## 2026-05-20 — SDK 1.4
+
+- **Passkeys conditional UI.** `<QeetidSignIn />` now uses WebAuthn conditional UI on
+  supported browsers — passkey suggestions appear inline next to the email field.
+- **Magic link cross-device flag.** New `crossDevice: boolean` option for opening links
+  on a different device than the one that requested them.
+- **Audit log streaming to Kafka.** New sink type. See [Audit](/docs/audit#streaming-export).
+- **Go SDK 1.4.0.** Adds context propagation for OTel spans. No breaking changes.
+
+## 2026-05-13 — Edge regions
+
+- **5 new regions.** `ap-southeast-2` (Sydney), `sa-east-1` (São Paulo), `me-south-1`
+  (Bahrain), `ca-central-1` (Montreal), and `af-south-1` (Cape Town).
+- **Sub-50 ms p99 sign-in** is now an SLA on Enterprise plans.
+
+## 2026-05-06 — RBAC bulk evaluation
+
+- New `/internal/permissions/evaluate/bulk` endpoint returns multiple decisions in one
+  round trip. Use it for UI rendering where you check several actions at once.
+- SDK shortcut: `qee.canAll({ user, resource, actions: [...] })`.
+
+## 2026-04-29 — Tenant deletion grace period
+
+- Tenant `DELETE` now soft-deletes with a configurable grace period (default 30 days).
+  Restore with `POST /v1/organizations/{id}/restore`.
+- Old behavior available with `?purge=true` for GDPR right-to-erasure flows.
+
+## 2026-04-22 — Step-up auth
+
+- New `useStepUp()` hook in `@qeetid/react`.
+- Server-side validation of step-up proofs via `qee.stepUp.validate(token)`.
+- See [MFA → Step-up auth](/docs/mfa#step-up-auth).
+
+## 2026-04-15 — SCIM 2.0 (Enterprise)
+
+- Full SCIM 2.0 provisioning support for SAML/OIDC connections.
+- Tested with Okta, Azure AD, OneLogin, JumpCloud.
+- See [SSO → Directory sync](/docs/authentication/sso#directory-sync-scim).
+
+## 2026-04-08 — Recovery codes UI
+
+- `<QeetidAccountSecurity />` now renders recovery codes inline with copy + download.
+- Programmatic generation: `qee.users.recoveryCodes.generate(userId, { count: 10 })`.
+
+## 2026-04-01 — Self-hosted GA
+
+- Self-host on Kubernetes with our official Terraform module.
+- Single-binary deployment for smaller workloads.
+- Available on Enterprise contracts.

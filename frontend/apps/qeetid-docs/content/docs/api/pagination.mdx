@@ -1,0 +1,97 @@
+---
+title: Pagination
+description: Cursor-based pagination across every list endpoint.
+---
+
+List endpoints in Qeetid use **cursor-based** pagination. Cursors are opaque, ordered,
+and safe to store.
+
+## Request
+
+```bash
+curl 'https://api.qeetid.com/v1/users?limit=50&cursor=eyJjcmVhdGVkQXQi...' \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+| Param    | Type    | Default | Max |
+| -------- | ------- | ------- | --- |
+| `limit`  | integer | 25      | 100 |
+| `cursor` | string  | null    | —   |
+
+## Response
+
+```json
+{
+  "data": [
+    /* ... 50 records ... */
+  ],
+  "pagination": {
+    "next": "eyJjcmVhdGVkQXQi...",
+    "previous": "eyJjcmVhdGVkQXQiLCJpZCI...",
+    "hasMore": true
+  }
+}
+```
+
+When `hasMore` is `false`, you've reached the end.
+
+## SDK helpers
+
+### TypeScript
+
+```ts
+for await (const user of qee.users.list({ tenant: "acme" })) {
+  // streams pages of 50 by default
+}
+```
+
+### Go
+
+```go
+iter := qee.Users.List(ctx, &qeetid.UserListParams{Tenant: "acme"})
+for iter.Next() {
+  user := iter.Current()
+}
+if err := iter.Err(); err != nil {
+  return err
+}
+```
+
+### Python
+
+```python
+for user in qee.users.list(tenant="acme"):
+    ...
+```
+
+## Ordering
+
+By default, lists are ordered **newest first** by `createdAt`. To order by another
+field, pass `order_by`:
+
+```bash
+curl 'https://api.qeetid.com/v1/users?order_by=email&direction=asc' \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+Supported `order_by`:
+
+- `createdAt` (default)
+- `updatedAt`
+- `email`
+- `lastSignInAt`
+
+## Filtering
+
+Most list endpoints accept filter parameters specific to the resource. See the
+individual API references for the supported filters per endpoint.
+
+```bash
+curl 'https://api.qeetid.com/v1/users?status=active&since=2026-01-01' \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+<Callout type="warn">
+  Cursors include a snapshot of the filter and ordering. Reusing a cursor with different filters
+  returns `cursor_mismatch`. Always pair a cursor with the same query parameters that produced it.
+</Callout>

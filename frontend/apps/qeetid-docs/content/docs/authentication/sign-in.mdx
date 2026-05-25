@@ -1,0 +1,110 @@
+---
+title: Sign-in
+description: Render a sign-in page, validate sessions, and protect routes.
+---
+
+The fastest way to add sign-in is the drop-in component. The longest path is to drive
+the API directly with our headless hooks. Most apps land somewhere in between.
+
+## Drop-in component
+
+```tsx title="app/sign-in/page.tsx"
+import { QeetidSignIn } from "@qeetid/react";
+
+export default function Page() {
+  return (
+    <QeetidSignIn
+      methods={["passkey", "google", "email"]}
+      redirectTo="/dashboard"
+      appearance={{ logo: "/logo.svg", primary: "#FF5C2E" }}
+    />
+  );
+}
+```
+
+| Prop           | Type                   | Description                                         |
+| -------------- | ---------------------- | --------------------------------------------------- |
+| `methods`      | `SignInMethod[]`       | Order matters; first one is the default UI.         |
+| `redirectTo`   | `string`               | Path to navigate after success.                     |
+| `appearance`   | `AppearanceConfig`     | Logo, primary color, border radius.                 |
+| `localization` | `LocalizationConfig`   | Override strings, or pick from 28 built-in locales. |
+| `onSuccess`    | `(user: User) => void` | Fires after sign-in, before redirect.               |
+
+## Headless hook
+
+```tsx
+import { useSignIn } from "@qeetid/react";
+
+function MyForm() {
+  const { signIn, status, error } = useSignIn();
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    await signIn({
+      method: "email-password",
+      email: fd.get("email") as string,
+      password: fd.get("password") as string,
+    });
+  }
+
+  return (
+    <form onSubmit={onSubmit}>
+      <input name="email" type="email" required />
+      <input name="password" type="password" required />
+      <button disabled={status === "loading"}>Sign in</button>
+      {error && <p>{error.message}</p>}
+    </form>
+  );
+}
+```
+
+## Server-side: validate the session
+
+Every request that needs auth should validate the session cookie server-side:
+
+```ts title="lib/auth.ts"
+import { Qeetid } from "@qeetid/sdk";
+import { cookies } from "next/headers";
+
+const qee = new Qeetid({ secretKey: process.env.QEETID_SECRET_KEY! });
+
+export async function currentSession() {
+  const token = cookies().get("qee_session")?.value;
+  if (!token) return null;
+  return qee.sessions.validate(token);
+}
+```
+
+Session validation is **cached at the edge** with a 30-second TTL and proactive invalidation
+on revoke. Expect sub-30ms p99.
+
+<Callout type="warn">
+  Never decode the session cookie client-side. The cookie is `httpOnly` for a reason — it's opaque
+  to JavaScript and validated only on your server.
+</Callout>
+
+## What happens on success
+
+1. A session is created in `svc-session` and persisted.
+2. A `qee_session` cookie is set on your apex domain (configurable).
+3. The user object is returned.
+4. The client redirects to `redirectTo`.
+
+## What happens on failure
+
+| Failure mode      | Error code            | What to do                                    |
+| ----------------- | --------------------- | --------------------------------------------- |
+| Wrong password    | `invalid_credentials` | Show generic error; never reveal which field. |
+| Account locked    | `account_locked`      | Display recovery flow.                        |
+| MFA required      | `mfa_required`        | Render `<QeetidMFAChallenge />`.             |
+| Provider rejected | `provider_error`      | Show provider name and Qeetid support link.  |
+| Network/transient | `network_error`       | Retry with backoff.                           |
+
+## Next
+
+<Cards>
+  <Card title="Sign-up" href="/docs/authentication/sign-up" />
+  <Card title="Passkeys" href="/docs/authentication/passkeys" />
+  <Card title="MFA" href="/docs/mfa" />
+</Cards>

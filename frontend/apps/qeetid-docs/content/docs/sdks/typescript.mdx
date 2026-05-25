@@ -1,0 +1,116 @@
+---
+title: TypeScript SDK
+description: The universal client. Works in Node, Edge, Deno, Bun, and browsers.
+---
+
+`@qeetid/sdk` is the universal TypeScript client. It runs in any modern JavaScript
+runtime and has zero non-optional dependencies.
+
+## Install
+
+```bash title="terminal"
+pnpm add @qeetid/sdk
+```
+
+## Initialize
+
+```ts
+import { Qeetid } from "@qeetid/sdk";
+
+// Server-side (full access)
+const qee = new Qeetid({
+  secretKey: process.env.QEETID_SECRET_KEY!,
+});
+
+// Client-side (browser, edge — publishable key only)
+const qee = new Qeetid({
+  publishableKey: process.env.NEXT_PUBLIC_QEETID_KEY!,
+  tenant: "acme",
+});
+```
+
+## Common patterns
+
+### Validate a session
+
+```ts
+const session = await qee.sessions.validate(cookieValue);
+if (!session) throw new Unauthorized();
+```
+
+### Check a permission
+
+```ts
+const can = await qee.can({
+  user: session.userId,
+  action: "billing:write",
+  resource: `org:${session.tenantId}`,
+});
+```
+
+### Create a user
+
+```ts
+const user = await qee.users.create({
+  email: "alex@acme.com",
+  profile: { displayName: "Alex Chen", locale: "en-US" },
+});
+```
+
+### Issue a magic link
+
+```ts
+await qee.magicLinks.create({
+  email: "alex@acme.com",
+  redirectTo: "https://app.acme.com/dashboard",
+});
+```
+
+## Errors
+
+All SDK methods throw typed errors. Catch them with `instanceof`:
+
+```ts
+import { QeetidError, RateLimitError, InvalidCredentialsError } from "@qeetid/sdk";
+
+try {
+  await qee.signIn({
+    /* ... */
+  });
+} catch (e) {
+  if (e instanceof InvalidCredentialsError) {
+    // Show generic error
+  } else if (e instanceof RateLimitError) {
+    // Show retry-after
+  } else if (e instanceof QeetidError) {
+    // Generic platform error
+  } else {
+    throw e;
+  }
+}
+```
+
+## Runtime support
+
+| Runtime            | Status    | Notes                                         |
+| ------------------ | --------- | --------------------------------------------- |
+| Node 18+           | ✅ Stable |                                               |
+| Bun 1.0+           | ✅ Stable |                                               |
+| Deno 1.40+         | ✅ Stable | `import { Qeetid } from "npm:@qeetid/sdk"`  |
+| Cloudflare Workers | ✅ Stable | `import { Qeetid } from "@qeetid/sdk/edge"` |
+| Vercel Edge        | ✅ Stable | Same as CF Workers                            |
+| Browser            | ✅ Stable | Publishable key only                          |
+
+## Observability
+
+Set `telemetry: true` to emit OpenTelemetry spans for every call:
+
+```ts
+const qee = new Qeetid({
+  secretKey: process.env.QEETID_SECRET_KEY!,
+  telemetry: true,
+});
+```
+
+Spans include trace IDs that match Qeetid's server-side traces, so you can correlate
+client → server requests end-to-end.

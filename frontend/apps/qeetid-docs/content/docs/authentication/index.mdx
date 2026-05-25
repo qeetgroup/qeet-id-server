@@ -1,0 +1,69 @@
+---
+title: Authentication
+description: Sign-in, sign-up, social providers, SAML, OIDC, magic links, and passkeys — all in one configurable flow.
+icon: KeyRound
+---
+
+Qeetid lets you turn auth methods on and off per tenant. The same `<QeetidSignIn />`
+component renders the right UI for whatever you've enabled.
+
+## Supported methods
+
+<Cards>
+  <Card title="Email + password" href="/docs/authentication/sign-in" icon="Mail">
+    Strong defaults: Argon2id, breach checks, optional password rules.
+  </Card>
+  <Card title="Passkeys" href="/docs/authentication/passkeys" icon="Fingerprint">
+    Phishing-resistant WebAuthn passkeys with platform and cross-device support.
+  </Card>
+  <Card title="Magic links" href="/docs/authentication/magic-links" icon="Sparkles">
+    One-click sign-in via email with replay protection.
+  </Card>
+  <Card title="Social providers" href="/docs/authentication/social-providers" icon="Globe">
+    Google, Microsoft, Apple, GitHub, GitLab, Facebook, X.
+  </Card>
+  <Card title="Enterprise SSO" href="/docs/authentication/sso" icon="Building">
+    SAML 2.0, OIDC, Okta, Azure AD, OneLogin, Ping.
+  </Card>
+  <Card title="API tokens" href="/docs/authentication/api-tokens" icon="KeyRound">
+    Personal access tokens with scoped permissions.
+  </Card>
+</Cards>
+
+## The sign-in flow, end-to-end
+
+1. **Client requests sign-in** — `<QeetidSignIn />` calls `POST /v1/sessions/start` with
+   the configured methods.
+2. **Server returns a challenge** — for password it's a form, for passkey it's a WebAuthn
+   `publicKeyCredentialRequestOptions`, for SSO it's a redirect URL.
+3. **User completes the challenge** — the client sends the result back to
+   `POST /v1/sessions/complete`.
+4. **MFA step-up (optional)** — if the tenant requires MFA, the server returns
+   `mfa_required` with available factors. The client renders the appropriate UI.
+5. **Session issued** — Qeetid sets an `httpOnly`, `Secure`, `SameSite=Lax` cookie and
+   returns the user object.
+
+## Choosing methods
+
+The configurable `methods` prop controls **what shows up** and **in what order**:
+
+```tsx
+<QeetidSignIn methods={["passkey", "google", "email"]} />
+```
+
+If a user has previously enrolled a passkey, that becomes the default. Otherwise the
+first method in your list is the default. Users can always click "more options" to switch.
+
+<Callout type="warn">
+  Don't list more than three methods on the primary surface. We've found conversion drops sharply
+  past three options — additional methods belong behind "more options".
+</Callout>
+
+## Customizing the UI
+
+Two paths:
+
+- **Themed component** — pass `theme`, `localization`, and `appearance` to `<QeetidSignIn />`.
+- **Headless hooks** — use `useSignIn()` to drive your own UI.
+
+See [Custom UI](/docs/authentication/custom-ui) for both.

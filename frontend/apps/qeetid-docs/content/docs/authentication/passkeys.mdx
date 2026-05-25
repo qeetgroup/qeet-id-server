@@ -1,0 +1,92 @@
+---
+title: Passkeys
+description: Phishing-resistant sign-in with WebAuthn passkeys. Platform and cross-device, with automatic enrollment hints.
+---
+
+A **passkey** is a cryptographic credential that lives on the user's device (or in a
+synced credential manager like iCloud Keychain). It replaces passwords with something
+phishing-resistant, faster, and easier to use.
+
+## Why passkeys
+
+- **Phishing-resistant.** Bound to the origin; can't be intercepted.
+- **Faster.** A biometric tap, no email round-trip.
+- **Recoverable.** Sync through Apple, Google, or password managers like 1Password.
+
+## Enabling passkeys
+
+In your tenant configuration:
+
+```ts
+await qee.tenants.updateConfiguration("acme", {
+  authentication: {
+    passkeys: { enabled: true, enrollmentHint: "after-sign-in" },
+  },
+});
+```
+
+Or via the dashboard: **Auth → Methods → Passkeys → Enable**.
+
+## Enrollment hint
+
+Qeetid can prompt users to enroll a passkey after they sign in with another method.
+The recommended strategy is **`after-sign-in`** — show a tasteful banner inviting them
+to enroll, but never block their main flow.
+
+```tsx
+import { usePasskeyHint } from "@qeetid/react";
+
+function AfterSignInBanner() {
+  const { canEnroll, enroll, dismiss } = usePasskeyHint();
+  if (!canEnroll) return null;
+  return (
+    <div className="banner">
+      <p>Sign in faster next time with a passkey.</p>
+      <button onClick={enroll}>Add passkey</button>
+      <button onClick={dismiss}>Not now</button>
+    </div>
+  );
+}
+```
+
+## Sign-in with passkey
+
+The drop-in `<QeetidSignIn />` handles this automatically. To drive it yourself:
+
+```ts
+import { useSignIn } from "@qeetid/react";
+
+const { signInWithPasskey } = useSignIn();
+
+await signInWithPasskey({ allowAutoFill: true });
+```
+
+`allowAutoFill: true` enables conditional UI, which lets the OS suggest the user's passkey
+inline next to your username field.
+
+## Cross-device passkeys
+
+If the user's passkey lives on a different device, Qeetid renders a QR code and walks
+them through the hybrid transport flow. No configuration needed — it just works.
+
+<Callout type="warn">
+  Passkeys require HTTPS in production. They will silently fail on HTTP origins. Your local dev
+  environment can use `localhost`.
+</Callout>
+
+## Managing passkeys
+
+Users can list, name, and revoke their passkeys from the account portal:
+
+```tsx
+import { QeetidAccountSecurity } from "@qeetid/react";
+
+<QeetidAccountSecurity />;
+```
+
+Or build your own with the headless API:
+
+```ts
+const passkeys = await qee.users.passkeys.list(userId);
+await qee.users.passkeys.revoke(userId, passkeyId);
+```

@@ -1,0 +1,91 @@
+---
+title: Enterprise SSO
+description: SAML 2.0 and OIDC. Connect Okta, Azure AD, OneLogin, Ping, or any compliant IdP.
+icon: Building
+---
+
+Enterprise SSO connects your customers' identity providers to Qeetid. Once configured,
+their employees can sign in to your app with the credentials they already use everywhere
+else — and you get automatic provisioning, group sync, and centralized revocation.
+
+## Supported protocols
+
+- **SAML 2.0** — the lingua franca of enterprise SSO. Works with Okta, Azure AD,
+  OneLogin, PingIdentity, ADFS, JumpCloud, and any compliant IdP.
+- **OIDC** — for modern providers that support OpenID Connect, including Auth0,
+  Google Workspace, Azure AD (OIDC mode), Okta (OIDC mode).
+- **SCIM 2.0** — for directory sync (provisioning, deprovisioning, group changes).
+
+## Configure a connection
+
+The fastest path is to send your customer to the **Connection Portal**:
+
+```ts
+const portal = await qee.connections.createPortalLink({
+  tenant: "acme",
+  email: "admin@acme.com",
+  redirectTo: "https://app.acme.com/settings/sso?status=done",
+});
+
+// Send portal.url to your customer's admin.
+```
+
+They land on a guided UI that handles certificate exchange, attribute mapping, and
+test flows. When they finish, the connection is live.
+
+## Programmatic configuration
+
+For self-service flows where your customers configure SSO inside your own UI:
+
+```ts
+await qee.connections.create({
+  tenant: "acme",
+  type: "saml",
+  idpMetadataUrl: "https://acme.okta.com/app/exk.../sso/saml/metadata",
+  attributeMapping: {
+    email: "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+    displayName: "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+  },
+});
+```
+
+## Sign-in with SSO
+
+Your sign-in UI gets a new **"Sign in with SSO"** option that asks for the user's
+email, looks up the right IdP, and redirects.
+
+```tsx
+<QeetidSignIn methods={["passkey", "saml", "email"]} />
+```
+
+## Directory sync (SCIM)
+
+For larger customers, enable SCIM so users and groups are provisioned automatically:
+
+```ts
+await qee.connections.enableScim("acme", {
+  endpoint: "https://api.qeetid.com/scim/v2/tenant/acme",
+  // Token is returned once — store it in the IdP.
+});
+```
+
+Once enabled, SCIM-based IdPs can:
+
+- Create new users in Qeetid when they're added to your customer's directory.
+- Update profile fields when they change in the IdP.
+- **Deprovision** users (revoke sessions and disable accounts) when they leave the
+  organization — instantly.
+- Sync groups to Qeetid groups for RBAC.
+
+<Callout type="info">
+  SCIM is included on Enterprise plans. See [Pricing](https://qeetid.com/pricing) for details.
+</Callout>
+
+## Troubleshooting
+
+| Symptom                                  | Likely cause                                        |
+| ---------------------------------------- | --------------------------------------------------- |
+| Loop redirecting between IdP and Qeetid | Clock skew on IdP server. Check NTP.                |
+| `attribute_missing` error                | Attribute mapping doesn't match what the IdP sends. |
+| Users created but groups missing         | SCIM not configured, or group filter excludes them. |
+| Sign-in works but profile is blank       | `attributeMapping.displayName` not set.             |

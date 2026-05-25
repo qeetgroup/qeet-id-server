@@ -1,0 +1,81 @@
+---
+title: Social providers
+description: Sign in with Google, Microsoft, Apple, GitHub, GitLab, and more.
+---
+
+Qeetid ships with OAuth client implementations for the most common social providers.
+You can enable any combination per tenant from the dashboard or via API.
+
+## Supported providers
+
+| Provider    | Identifier  | Notes                                        |
+| ----------- | ----------- | -------------------------------------------- |
+| Google      | `google`    | OAuth 2.0 + OIDC. Refresh token opt-in.      |
+| Microsoft   | `microsoft` | Personal + work + school accounts.           |
+| Apple       | `apple`     | Sign in with Apple, including private relay. |
+| GitHub      | `github`    | Org membership claims supported.             |
+| GitLab      | `gitlab`    | Both gitlab.com and self-hosted.             |
+| Facebook    | `facebook`  | OAuth 2.0.                                   |
+| X (Twitter) | `x`         | OAuth 2.0 with PKCE.                         |
+| LinkedIn    | `linkedin`  | Email + profile scopes only.                 |
+| Discord     | `discord`   | Optional guild membership claims.            |
+| Slack       | `slack`     | Sign in with Slack.                          |
+| Spotify     | `spotify`   | OAuth 2.0.                                   |
+| Twitch      | `twitch`    | OIDC.                                        |
+
+## Enable a provider
+
+```ts
+await qee.providers.enable("acme", {
+  type: "google",
+  clientId: "xxx.apps.googleusercontent.com",
+  clientSecret: "GOCSPX-xxx",
+  scopes: ["openid", "email", "profile"],
+});
+```
+
+Or from the dashboard: **Auth → Social providers → Add**.
+
+## Use in your sign-in UI
+
+The `<QeetidSignIn />` component automatically renders buttons for every enabled provider:
+
+```tsx
+<QeetidSignIn methods={["passkey", "google", "github", "email"]} />
+```
+
+The `methods` array controls **which** providers show up and **in what order**.
+
+## Provisioning JIT users
+
+When a user signs in with a social provider for the first time, Qeetid creates a Qeetid
+ID and populates the profile from the provider's claims. You can map and override fields:
+
+```ts
+await qee.providers.update("acme", "google", {
+  profileMapping: {
+    displayName: "name",
+    locale: "locale",
+    metadata: { externalId: "sub" },
+  },
+});
+```
+
+## Linking providers to existing users
+
+If a user signs in with Google but already exists in Qeetid with the same email,
+Qeetid **links** the Google identity to the existing user (configurable).
+
+```ts
+await qee.tenants.updateConfiguration("acme", {
+  authentication: {
+    accountLinking: "by-verified-email", // default
+  },
+});
+```
+
+Options:
+
+- `"by-verified-email"` — link if the provider verified the email (recommended).
+- `"prompt"` — ask the user to confirm.
+- `"never"` — create a separate user, leave linking to the user from settings.

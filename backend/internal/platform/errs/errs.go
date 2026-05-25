@@ -1,0 +1,50 @@
+// Package errs defines the canonical error vocabulary for qeet-identity.
+// Each error carries a stable code that the HTTP layer maps to a status.
+package errs
+
+import (
+	"errors"
+	"fmt"
+)
+
+type Error struct {
+	Code    string
+	Status  int
+	Message string
+	Detail  string
+}
+
+func (e *Error) Error() string {
+	if e.Detail != "" {
+		return fmt.Sprintf("%s: %s (%s)", e.Code, e.Message, e.Detail)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+func (e *Error) WithDetail(d string) *Error {
+	cp := *e
+	cp.Detail = d
+	return &cp
+}
+
+func New(code string, status int, msg string) *Error {
+	return &Error{Code: code, Status: status, Message: msg}
+}
+
+var (
+	ErrBadRequest    = New("bad_request", 400, "invalid request")
+	ErrUnauthorized  = New("unauthorized", 401, "authentication required")
+	ErrForbidden     = New("forbidden", 403, "permission denied")
+	ErrNotFound      = New("not_found", 404, "resource not found")
+	ErrConflict      = New("conflict", 409, "resource conflict")
+	ErrUnprocessable = New("unprocessable", 422, "request could not be processed")
+	ErrInternal      = New("internal", 500, "internal server error")
+)
+
+func As(err error) *Error {
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	return nil
+}

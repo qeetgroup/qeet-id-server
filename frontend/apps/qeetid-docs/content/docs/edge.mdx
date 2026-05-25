@@ -1,0 +1,66 @@
+---
+title: Edge runtime
+description: Qeetid auth runs at the edge across 30+ regions, with sub-50ms p99 sign-in worldwide.
+icon: Globe
+---
+
+Every Qeetid auth call hits the closest edge node. We run in 30+ regions across all
+major cloud providers, with sub-50ms p99 sign-in worldwide.
+
+## What runs at the edge
+
+- **Session validation** (`POST /v1/sessions/validate`) — the hot path
+- **Permission checks** (`POST /v1/permissions/evaluate`)
+- **Tenant configuration lookups**
+- **JWT verification** for stateless modes
+- **Rate limit enforcement**
+
+## What doesn't run at the edge
+
+- Writes (sign-in, role changes, etc.) — these go to your tenant's region for residency.
+- Audit log writes — to a region-pinned, append-only store.
+- Webhook delivery — to a queue in the tenant's residency region.
+
+This split is intentional. Reads must be fast and global. Writes must be durable and
+residency-compliant.
+
+## Region list
+
+| Cloud  | Regions                                                                                              |
+| ------ | ---------------------------------------------------------------------------------------------------- |
+| AWS    | us-east-1, us-west-2, eu-west-1, eu-central-1, ap-northeast-1, ap-south-1, ap-southeast-1, sa-east-1 |
+| GCP    | us-central1, us-east4, europe-west3, asia-east1, asia-south1                                         |
+| Azure  | eastus, westeurope, japaneast, australiaeast                                                         |
+| Fly.io | ord, fra, syd, gru, hkg, sin, lhr, lax                                                               |
+
+## Cache layers
+
+Qeetid uses three cache layers for hot reads:
+
+1. **Edge SRAM** — 30s TTL, key-scoped to (tenant, user, action).
+2. **Regional Redis** — 60s TTL, with active invalidation.
+3. **Postgres replicas** — strongly consistent fallback.
+
+Cache invalidation is **proactive**: when a role changes, an invalidation event fans
+out to all edge nodes within ~200ms.
+
+## Custom domains and edge
+
+If you use a custom auth domain (e.g. `auth.acme.com`), all requests still hit the
+nearest edge node. The TLS certificate is provisioned per region; we use a privacy-respecting
+sticky-region policy so users typically hit the same node each request.
+
+## SLA
+
+| Plan       | Uptime SLA | Credit                                  |
+| ---------- | ---------- | --------------------------------------- |
+| Free       | None       | —                                       |
+| Pro        | 99.95%     | 10% credit per 0.1% below target        |
+| Enterprise | 99.99%     | Custom; up to 100% monthly fee credited |
+
+Measured against the public status page at [status.qeetid.com](https://status.qeetid.com).
+
+<Callout type="info">
+  Need a private network? Enterprise plans support AWS PrivateLink, Azure Private Endpoint, and GCP
+  Private Service Connect for tenant-to-Qeetid traffic.
+</Callout>

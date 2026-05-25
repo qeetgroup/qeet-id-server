@@ -1,0 +1,51 @@
+{
+  "name": "@qeetid/docs",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev -p 3003",
+    "start": "next start",
+    "postinstall": "fumadocs-mdx",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
+    "check": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs && prettier --check \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
+    "typecheck": "fumadocs-mdx && next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/react": "^3.0.186",
+    "@openrouter/ai-sdk-provider": "^2.9.0",
+    "@qeetid/ui": "workspace:*",
+    "@radix-ui/react-presence": "^1.1.5",
+    "@thesvg/react": "catalog:",
+    "ai": "^6.0.184",
+    "class-variance-authority": "catalog:",
+    "flexsearch": "^0.8.212",
+    "fumadocs-core": "16.8.12",
+    "fumadocs-mdx": "15.0.7",
+    "fumadocs-ui": "16.8.12",
+    "hast-util-to-jsx-runtime": "^2.3.6",
+    "lucide-react": "^1.16.0",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "remark": "^15.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-rehype": "^11.1.2",
+    "tailwind-merge": "catalog:",
+    "unist-util-visit": "^5.1.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@qeetid/tsconfig": "workspace:*",
+    "@tailwindcss/postcss": "catalog:",
+    "@types/hast": "^3.0.4",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "postcss": "^8.5.14",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
+  }
+}

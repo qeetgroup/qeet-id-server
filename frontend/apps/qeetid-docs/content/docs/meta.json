@@ -1,0 +1,27 @@
+{
+  "title": "Documentation",
+  "description": "Auth that fits in your stack",
+  "icon": "BookOpen",
+  "pages": [
+    "index",
+    "quickstart",
+    "concepts",
+    "---Getting started---",
+    "authentication",
+    "mfa",
+    "rbac",
+    "sessions",
+    "multi-tenancy",
+    "---Operations---",
+    "audit",
+    "webhooks",
+    "edge",
+    "rate-limits",
+    "---Build---",
+    "sdks",
+    "api",
+    "cli",
+    "---Updates---",
+    "changelog"
+  ]
+}

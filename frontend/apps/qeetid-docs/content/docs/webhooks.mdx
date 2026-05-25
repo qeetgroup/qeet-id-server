@@ -1,0 +1,108 @@
+---
+title: Webhooks & events
+description: React to identity events in real time over HTTP or Kafka, with at-least-once delivery, retries, and a 30-day replay window.
+icon: PlugZap
+---
+
+Webhooks let your services react to identity events. Every state change in Qeetid can
+fire a webhook — with at-least-once delivery, exponential backoff, and a 30-day replay
+window if your endpoint goes down.
+
+## Subscribe to events
+
+```ts
+const sub = await qee.webhooks.create({
+  tenant: "acme",
+  url: "https://api.acme.com/qeetid/webhooks",
+  events: ["user.created", "user.signed_in", "role.assigned"],
+  secret: "whsec_…",
+});
+```
+
+## Verifying signatures
+
+Every delivery includes a signature header. **Always verify** before processing:
+
+```ts
+import { verifyWebhook } from "@qeetid/sdk";
+
+export async function POST(req: Request) {
+  const body = await req.text();
+  const sig = req.headers.get("x-qeetid-signature")!;
+  const ok = verifyWebhook(body, sig, process.env.QEETID_WEBHOOK_SECRET!);
+  if (!ok) return new Response("Bad signature", { status: 400 });
+  // Process event...
+}
+```
+
+## Available events
+
+| Event                   | Fires when                           |
+| ----------------------- | ------------------------------------ |
+| `user.created`          | A user is created                    |
+| `user.updated`          | Profile or metadata is changed       |
+| `user.email_verified`   | Email verification completes         |
+| `user.phone_verified`   | Phone verification completes         |
+| `user.deleted`          | User is purged                       |
+| `user.signed_in`        | Successful sign-in                   |
+| `user.sign_in_failed`   | Failed sign-in attempt               |
+| `user.signed_out`       | Explicit sign-out                    |
+| `user.mfa.added`        | New MFA factor enrolled              |
+| `user.mfa.removed`      | MFA factor removed                   |
+| `user.password.changed` | Password updated                     |
+| `session.created`       | New session issued                   |
+| `session.revoked`       | Session revoked                      |
+| `tenant.created`        | New tenant                           |
+| `tenant.updated`        | Tenant config changed                |
+| `role.assigned`         | Role assigned to user or group       |
+| `role.revoked`          | Role revoked                         |
+| `invitation.sent`       | Invitation email sent                |
+| `invitation.accepted`   | Invitation accepted                  |
+| `provider.connected`    | A social or SSO connection was added |
+
+## Retry policy
+
+If your endpoint returns a non-2xx status (or times out after 10 seconds), Qeetid
+retries with exponential backoff:
+
+- 1 minute → 5 → 15 → 1h → 6h → 24h (final)
+
+After all retries fail, the event is parked in the **dead-letter queue**. You can replay
+it from the dashboard or via API up to 30 days later.
+
+## Replaying events
+
+```ts
+await qee.webhooks.replay({
+  subscription: "wsub_xxx",
+  events: ["evt_01HXG…", "evt_01HXH…"],
+});
+```
+
+## Kafka delivery (Enterprise)
+
+For high-volume needs, switch from HTTP to Kafka:
+
+```ts
+await qee.webhooks.create({
+  tenant: "acme",
+  type: "kafka",
+  bootstrapServers: "kafka.acme.com:9093",
+  topic: "qeetid-events",
+  authentication: { mechanism: "SCRAM-SHA-512", username, password },
+  events: ["*"],
+});
+```
+
+Kafka delivery is at-least-once with consumer-side de-duplication via the event ID.
+
+## Local dev with the proxy
+
+To receive webhooks on `localhost` during development:
+
+```bash
+qee dev --forward https://api.qeetid.com/webhooks/dev --to http://localhost:3000/api/qeetid/webhooks
+```
+
+This opens an ephemeral tunnel signed with your CLI credentials. Tear it down with
+`Ctrl+C`; nothing persists.

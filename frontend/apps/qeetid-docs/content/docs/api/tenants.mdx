@@ -1,0 +1,116 @@
+---
+title: Tenants
+description: Organization lifecycle, branding, configuration, residency, and admins.
+---
+
+The Tenants API manages organizations. Tenants are the unit of isolation in Qeetid.
+
+## Create a tenant
+
+`POST /v1/organizations`
+
+```bash
+curl -X POST https://api.qeetid.com/v1/organizations \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slug": "acme",
+    "name": "Acme, Inc.",
+    "residency": "eu"
+  }'
+```
+
+### Response
+
+```json
+{
+  "id": "ten_01HXG…",
+  "slug": "acme",
+  "name": "Acme, Inc.",
+  "status": "active",
+  "residency": "eu",
+  "createdAt": "2026-05-21T09:24:18Z"
+}
+```
+
+## List tenants
+
+`GET /v1/organizations`
+
+```bash
+curl 'https://api.qeetid.com/v1/organizations?limit=50' \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN"
+```
+
+## Get a tenant
+
+`GET /v1/organizations/{id}` — accepts both the slug and the canonical ID.
+
+## Update a tenant
+
+`PATCH /v1/organizations/{id}`
+
+```bash
+curl -X PATCH https://api.qeetid.com/v1/organizations/acme \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -d '{"name":"Acme Holdings"}'
+```
+
+## Branding
+
+```bash
+curl -X PATCH https://api.qeetid.com/v1/organizations/acme/branding \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -d '{
+    "logo": "https://acme.com/logo.svg",
+    "primary": "#FF5C2E",
+    "emailSender": "Acme Auth <auth@acme.com>"
+  }'
+```
+
+## Configuration
+
+```bash
+curl -X PATCH https://api.qeetid.com/v1/organizations/acme/configuration \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -d '{
+    "mfa": { "enabled": true, "requireFor": ["all-users"] },
+    "sessions": { "maxAge": "30d", "idleTimeout": "8h" }
+  }'
+```
+
+## Residency
+
+```bash
+curl -X PATCH https://api.qeetid.com/v1/organizations/acme/residency \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -d '{"residency":"eu"}'
+```
+
+<Callout type="warn">
+  Changing residency triggers a data migration ticket. The actual move is asynchronous and takes
+  24–72 hours; the API returns a `migration_id` you can poll.
+</Callout>
+
+## Admins
+
+```bash
+# Add an admin
+curl -X POST https://api.qeetid.com/v1/organizations/acme/admins \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN" \
+  -d '{"user":"usr_abc"}'
+
+# List admins
+curl https://api.qeetid.com/v1/organizations/acme/admins \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN"
+
+# Remove an admin
+curl -X DELETE https://api.qeetid.com/v1/organizations/acme/admins/usr_abc \
+  -H "Authorization: Bearer $QEETID_ADMIN_TOKEN"
+```
+
+## Soft-delete
+
+`DELETE /v1/organizations/{id}` schedules a tenant for deletion after the grace
+period (default 30 days). The tenant is disabled immediately; sign-ins fail with
+`tenant_disabled`. The grace period gives you time to restore if it was an accident.

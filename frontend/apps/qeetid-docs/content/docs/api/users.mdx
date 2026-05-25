@@ -1,0 +1,118 @@
+---
+title: Users
+description: Create, list, update, delete users. Manage profiles, metadata, and verification.
+---
+
+The Users API manages Qeetid IDs. Every endpoint below is rooted under
+`https://api.qeetid.com/v1/users`.
+
+## Create a user
+
+`POST /v1/users`
+
+Idempotent on `email`. Returns the existing user if one is found with the same address.
+
+```bash title="curl"
+curl -X POST https://api.qeetid.com/v1/users \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "alex@acme.com",
+    "profile": { "displayName": "Alex Chen", "locale": "en-US" },
+    "metadata": { "stripeCustomerId": "cus_xxx" }
+  }'
+```
+
+### Request body
+
+| Field        | Type     | Required | Description                          |
+| ------------ | -------- | -------- | ------------------------------------ |
+| `email`      | `string` | yes      | RFC 5321; case-insensitive.          |
+| `phone`      | `string` | no       | E.164.                               |
+| `profile`    | `object` | no       | Display name, locale, timezone, etc. |
+| `metadata`   | `object` | no       | JSONB; up to 64 KiB.                 |
+| `joinTenant` | `string` | no       | Tenant slug to attach this user to.  |
+
+### Response
+
+```json
+{
+  "id": "usr_01HXG…",
+  "email": "alex@acme.com",
+  "emailVerified": false,
+  "profile": { "displayName": "Alex Chen", "locale": "en-US" },
+  "metadata": { "stripeCustomerId": "cus_xxx" },
+  "createdAt": "2026-05-21T09:24:18Z",
+  "updatedAt": "2026-05-21T09:24:18Z"
+}
+```
+
+## Get a user
+
+`GET /v1/users/{id}`
+
+```bash
+curl https://api.qeetid.com/v1/users/usr_01HXG... \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+## List users
+
+`GET /v1/users`
+
+Cursor-paginated. Supports filtering by email, tenant, and date range.
+
+```bash
+curl 'https://api.qeetid.com/v1/users?tenant=acme&limit=50' \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```
+
+## Update profile
+
+`PATCH /v1/users/{id}/profile`
+
+```bash
+curl -X PATCH https://api.qeetid.com/v1/users/usr_01HXG.../profile \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{"displayName":"Alex C.","timezone":"Europe/Paris"}'
+```
+
+## Update metadata
+
+`PATCH /v1/users/{id}/metadata`
+
+```bash
+curl -X PATCH https://api.qeetid.com/v1/users/usr_01HXG.../metadata \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{"plan":"pro","plan_started_at":"2026-05-21"}'
+```
+
+Metadata is merged top-level (one level deep). Use the full PUT endpoint for replace
+semantics.
+
+## Email verification
+
+```bash
+# Request a verification email
+curl -X POST https://api.qeetid.com/v1/users/usr_01HXG.../email-verifications \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+
+# Confirm a token
+curl -X POST https://api.qeetid.com/v1/users/usr_01HXG.../email-verifications/verify \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY" \
+  -d '{"token":"vtk_..."}'
+```
+
+## Delete a user
+
+`DELETE /v1/users/{id}`
+
+This **schedules** a soft-delete. The user is disabled immediately; their data is
+purged after a 30-day grace period (configurable per tenant) unless restored.
+
+To hard-delete immediately (GDPR right to erasure):
+
+```bash
+curl -X DELETE 'https://api.qeetid.com/v1/users/usr_01HXG...?purge=true' \
+  -H "Authorization: Bearer $QEETID_SECRET_KEY"
+```

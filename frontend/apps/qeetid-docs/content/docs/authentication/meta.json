@@ -1,0 +1,5 @@
+{
+  "title": "Authentication",
+  "icon": "KeyRound",
+  "pages": ["index", "sign-in", "sign-up", "passkeys", "magic-links", "social-providers", "sso"]
+}

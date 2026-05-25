@@ -1,0 +1,78 @@
+openapi: 3.1.0
+info:
+  title: qeet-identity
+  version: 0.1.0
+  description: |
+    Identity platform monolith. Endpoints are grouped by bounded context
+    (tenant, user, auth, rbac). Per-context OpenAPI specs will replace this
+    file once each context grows enough surface to warrant its own document.
+servers:
+  - url: http://localhost:4000
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      responses:
+        '200':
+          description: ok
+  /v1/auth/login:
+    post:
+      summary: Issue an access + refresh token pair for a tenant user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id, email, password]
+              properties:
+                tenant_id: { type: string, format: uuid }
+                email:     { type: string, format: email }
+                password:  { type: string }
+      responses:
+        '200': { description: token pair }
+        '401': { description: invalid credentials }
+  /v1/auth/refresh:
+    post:
+      summary: Rotate a refresh token. Reuse triggers session revocation.
+      responses:
+        '200': { description: token pair }
+  /v1/tenants:
+    get:  { summary: List tenants, responses: { '200': { description: ok }, '401': { description: missing token } } }
+    post: { summary: Create tenant, responses: { '201': { description: created } } }
+  /v1/users:
+    get:  { summary: List users in caller's tenant, responses: { '200': { description: ok } } }
+    post: { summary: Create user, responses: { '201': { description: created } } }
+  /v1/check:
+    get:
+      summary: Authorize an action.
+      parameters:
+        - in: query
+          name: user_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: tenant_id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: permission
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed: { type: boolean }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []

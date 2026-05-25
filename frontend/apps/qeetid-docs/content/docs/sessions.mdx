@@ -1,0 +1,129 @@
+---
+title: Sessions
+description: Stateful sessions with cluster-wide revocation, idle timeouts, and per-device inventories for users.
+icon: ShieldCheck
+---
+
+A Qeetid session is the server-validated handle that says "this client is currently
+authenticated." Sessions are stateful by default — you can revoke any session from
+anywhere, instantly, across your entire fleet.
+
+## Lifecycle
+
+```
+sign-in → session.created → (idle... refresh...) → session.revoked
+                              \__ session.expired (max age)
+                              \__ session.revoked  (admin or user)
+```
+
+## Creating a session
+
+You don't usually call this directly — sign-in does it for you. But if you're building
+custom flows:
+
+```ts
+const session = await qee.sessions.create({
+  user: "usr_abc",
+  ttl: "7d",
+  metadata: { ip: req.ip, userAgent: req.headers["user-agent"] },
+});
+// session.token → the cookie value
+```
+
+## Validating a session
+
+```ts
+const session = await qee.sessions.validate(cookieValue);
+if (!session) {
+  // session is expired or revoked — sign the user out
+}
+```
+
+Validation is **cached** with 30-second TTL and **proactively invalidated** on revoke.
+Sub-30ms p99.
+
+## Revoking a session
+
+From your app (user logs themselves out):
+
+```ts
+await qee.sessions.revoke(sessionId);
+```
+
+From the dashboard (admin force-logout):
+
+```
+Settings → Users → [select user] → Sessions → Revoke
+```
+
+From the API for **all** of a user's sessions:
+
+```ts
+await qee.sessions.revokeAll(userId);
+```
+
+Revocation is **cluster-wide** — every edge node will refuse the session within ~30 seconds
+of the revoke call (and immediately for the originating node).
+
+## Idle timeout
+
+Sessions can be configured to expire after a period of inactivity:
+
+```ts
+await qee.tenants.updateConfiguration("acme", {
+  sessions: {
+    maxAge: "30d",
+    idleTimeout: "8h",
+  },
+});
+```
+
+Each successful validation pushes the idle timer forward. You can tune the policy per
+role for higher-privilege users.
+
+## Listing a user's sessions
+
+For your account portal:
+
+```tsx
+<QeetidAccountSessions />
+```
+
+Or:
+
+```ts
+const sessions = await qee.users.sessions.list(userId);
+// Returns metadata: ip, userAgent, lastSeen, location...
+```
+
+Users can revoke any of their own sessions from this UI — instant, no support ticket
+required.
+
+## Stateless JWT (optional)
+
+For edge runtimes or service-to-service auth where you can't reach the session service,
+you can mint a short-lived JWT from a session:
+
+```ts
+const jwt = await qee.sessions.issueJwt(sessionId, { ttl: "5m" });
+```
+
+The JWT is signed with a tenant-scoped key you can rotate at any time. **Don't use this
+as a substitute for sessions** — it's an escape hatch for hot paths where the 30-second
+revocation lag matters less than a database hit.
+
+## Anatomy of a session cookie
+
+The cookie Qeetid sets:
+
+- **Name** — `qee_session` (configurable per tenant).
+- **Value** — opaque token; not a JWT, no claims embedded.
+- **HttpOnly** — yes. Not readable from JavaScript.
+- **Secure** — yes. HTTPS-only (except `localhost`).
+- **SameSite** — `Lax` by default. `Strict` available for higher-security tenants.
+- **Domain** — your apex domain so subdomains share the session.
+
+<Callout type="warn">
+  Never base authorization decisions on cookie presence alone. Always call
+  `qee.sessions.validate(cookie)` to confirm the session is still active.
+</Callout>

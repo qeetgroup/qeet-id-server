@@ -1,0 +1,119 @@
+---
+title: Audit & compliance
+description: Immutable, tamper-evident audit logs streamed to your SIEM. SOC 2, ISO 27001, GDPR, HIPAA — all built in.
+icon: ScrollText
+---
+
+Every state change in Qeetid produces an immutable audit event. The log is append-only,
+tamper-evident, and exportable in formats your security team already uses.
+
+## What's logged
+
+- All sign-in attempts (success and failure)
+- MFA enrollments, challenges, and revocations
+- Role assignments and policy changes
+- Session creation, validation, and revocation
+- Admin actions (configuration changes, member adds/removes)
+- API key issuance and rotation
+- Webhook deliveries
+
+## Event shape
+
+```json
+{
+  "id": "evt_01HXG…",
+  "type": "user.signed_in",
+  "tenant": "acme",
+  "actor": { "type": "user", "id": "usr_abc" },
+  "target": { "type": "session", "id": "ses_xyz" },
+  "metadata": {
+    "ip": "203.0.113.42",
+    "userAgent": "Mozilla/5.0 …",
+    "method": "passkey",
+    "location": "Paris, FR"
+  },
+  "createdAt": "2026-05-21T09:24:18.491Z",
+  "hash": "sha256-...",
+  "previousHash": "sha256-..."
+}
+```
+
+The `hash` chains each event to the previous, making any tampering detectable.
+
+## Querying the log
+
+```ts
+const events = await qee.audit.query({
+  tenant: "acme",
+  filter: {
+    type: ["user.signed_in", "user.signed_out"],
+    actor: "usr_abc",
+    since: "2026-05-01T00:00:00Z",
+  },
+  limit: 100,
+});
+```
+
+## Streaming export
+
+Wire the log into your SIEM in real time. Supported sinks:
+
+- Splunk HEC
+- Datadog Logs
+- Amazon S3 (with periodic flush)
+- Apache Kafka
+- Webhooks (HTTP/HTTPS)
+
+```ts
+await qee.audit.createSink({
+  tenant: "acme",
+  type: "datadog",
+  apiKey: process.env.DATADOG_API_KEY!,
+  region: "us5",
+});
+```
+
+## Compliance frameworks
+
+Qeetid is audited annually against:
+
+| Framework     | Status                  | Report                |
+| ------------- | ----------------------- | --------------------- |
+| SOC 2 Type II | Current                 | Available under NDA   |
+| ISO 27001     | Certified               | Public certificate    |
+| GDPR          | Compliant               | DPA on every contract |
+| HIPAA         | BAA available           | Enterprise plans      |
+| CCPA          | Compliant               | Public DPA            |
+| PCI DSS SAQ-A | Annual self-attestation | N/A (no card data)    |
+
+Report copies are available from your account team under NDA.
+
+## Right to erasure (GDPR Article 17)
+
+Qeetid supports cryptographic deletion for individuals who exercise their right to
+erasure:
+
+```ts
+await qee.users.purge(userId, { reason: "user-request" });
+```
+
+This schedules the user's data for irreversible deletion across all replicas. The
+**audit log** retains a redacted record (no PII) of the deletion for compliance.
+
+## Per-tenant retention
+
+Set how long events are retained:
+
+```ts
+await qee.tenants.updateConfiguration("acme", {
+  audit: {
+    retention: "365d", // up to "forever" on Enterprise
+    redactPII: false,
+  },
+});
+```
+
+<Callout type="warn">
+  Reducing retention is irreversible. Events older than the new retention window are permanently
+  deleted within 24 hours of the configuration change.
+</Callout>

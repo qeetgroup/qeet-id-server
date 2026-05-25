@@ -1,0 +1,119 @@
+---
+title: Multi-tenancy
+description: Hard tenant isolation, per-organization branding, custom domains, and data residency — all built in.
+icon: Building
+---
+
+Qeetid is **multi-tenant by default**. Tenants (called _organizations_) are the unit
+of isolation. Every user, role, session, and audit log belongs to a tenant.
+
+## Why this matters
+
+Most identity platforms bolt multi-tenancy on as an afterthought. Qeetid treats it as
+a first-class concept:
+
+- **Data isolation.** Postgres row-level security + schema isolation. A bug in your app
+  cannot leak data between tenants.
+- **Per-tenant config.** Branding, domains, MFA policy, password rules, allowed
+  providers — all per-tenant.
+- **Per-tenant residency.** Pin a tenant's data to US, EU, or APAC — non-negotiable.
+- **Tenant admins.** A user can be an admin in one tenant and a regular member in another.
+
+## Creating a tenant
+
+```ts
+const tenant = await qee.tenants.create({
+  slug: "acme",
+  name: "Acme, Inc.",
+  residency: "eu",
+});
+```
+
+## Branding
+
+```ts
+await qee.tenants.updateBranding("acme", {
+  logo: "https://acme.com/logo.svg",
+  favicon: "https://acme.com/favicon.ico",
+  primary: "#FF5C2E",
+  backgroundColor: "#FAFAFA",
+  emailSender: "Acme Auth <auth@acme.com>",
+});
+```
+
+These propagate to:
+
+- The hosted sign-in page (`auth.qeetid.com/acme`)
+- All emails Qeetid sends on behalf of the tenant
+- Embedded UI components (`<QeetidSignIn />` reads from branding automatically)
+
+## Custom domains
+
+Want sign-in to live at `auth.acme.com` instead of `auth.qeetid.com/acme`? Add a
+custom domain:
+
+```ts
+await qee.tenants.addDomain("acme", { domain: "auth.acme.com" });
+```
+
+You'll get back a CNAME record to add to DNS. Once verified, Qeetid provisions a TLS
+certificate via ACME (no action needed from you).
+
+## Data residency
+
+Each tenant pins to a region. Data **never leaves** the region:
+
+```ts
+await qee.tenants.updateResidency("acme", "eu");
+```
+
+- **`us`** — N. Virginia + Oregon, multi-AZ.
+- **`eu`** — Frankfurt + Ireland, multi-AZ.
+- **`apac`** — Tokyo + Singapore, multi-AZ.
+
+Once set, residency cannot be changed without a migration ticket — moving data between
+regions is a regulated, audit-tracked operation.
+
+## Switching tenants in your app
+
+If your product lets users belong to multiple tenants, build a tenant switcher:
+
+```tsx
+import { useTenants } from "@qeetid/react";
+
+function TenantSwitcher() {
+  const { tenants, currentTenant, switchTenant } = useTenants();
+  return (
+    <select value={currentTenant?.slug} onChange={(e) => switchTenant(e.target.value)}>
+      {tenants.map((t) => (
+        <option key={t.slug} value={t.slug}>
+          {t.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+```
+
+Switching issues a new session scoped to the target tenant. The previous session is
+revoked.
+
+## Admins
+
+Tenant admins are users with the `tenant:admin` role inside that tenant. They can:
+
+- Invite and remove members
+- Manage roles and permissions
+- Configure SSO, MFA, branding
+- View the tenant audit log
+- Read (but not edit) other admins
+
+```ts
+await qee.tenants.addAdmin("acme", "usr_abc");
+await qee.tenants.removeAdmin("acme", "usr_abc");
+```
+
+<Callout type="info">
+  The user who created the tenant is automatically the first admin. There's always at least one
+  admin — you can't remove the last one.
+</Callout>

@@ -1,0 +1,15 @@
+{
+  "title": "SDKs",
+  "icon": "Package",
+  "pages": [
+    "index",
+    "typescript",
+    "react",
+    "go",
+    "python",
+    "rust",
+    "node",
+    "nextjs",
+    "react-native"
+  ]
+}

@@ -1,0 +1,89 @@
+---
+title: Rate limits
+description: Sensible defaults plus per-tenant tuning. Adaptive limits on auth endpoints with abuse detection.
+icon: Gauge
+---
+
+Qeetid enforces rate limits to protect both your users and your tenant. The defaults
+are conservative and almost never trip; if you need more headroom, contact your account
+team.
+
+## Limit categories
+
+| Category             | Default limit     | Window | Notes                            |
+| -------------------- | ----------------- | ------ | -------------------------------- |
+| Sign-in attempts     | 10 per identifier | 1m     | Adaptive — drops with risk score |
+| Magic links          | 3 per identifier  | 5m     | Per recipient email              |
+| MFA challenges       | 5 per session     | 5m     | Forces step-back to sign-in      |
+| Password reset       | 3 per identifier  | 10m    | Per email                        |
+| Session validate     | 2,000 per token   | 1m     | Cached responses don't count     |
+| Permission checks    | 50,000 per token  | 1m     | Cached responses don't count     |
+| Generic API (writes) | 100 per token     | 1m     | Per API key                      |
+| Generic API (reads)  | 1,000 per token   | 1m     | Per API key                      |
+| Webhook delivery     | unlimited         | —      | Bounded by backoff               |
+
+## Response shape
+
+When a request exceeds a limit, Qeetid responds with **`429 Too Many Requests`** and
+two headers:
+
+```
+Retry-After: 27
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1716280018
+```
+
+The body:
+
+```json
+{
+  "error": "rate_limited",
+  "message": "Too many sign-in attempts from this address. Try again in 27 seconds.",
+  "retryAfter": 27
+}
+```
+
+## Adaptive limits
+
+Sign-in and MFA endpoints have **adaptive** limits — the effective ceiling drops if
+risk signals fire:
+
+- Multiple recent failures from the same IP
+- Tor/proxy/VPN indicators (configurable)
+- Known-breached credentials
+- Impossible-travel against the user's recent sign-ins
+- New device + first-time access to a privileged action
+
+The user sees the same `429` response. Internally, a `risk.elevated` event fires that
+you can react to via webhook.
+
+## Custom limits
+
+Bump or shrink limits per tenant from the dashboard or API:
+
+```ts
+await qee.tenants.updateRateLimits("acme", {
+  "sign-in.attempts": { limit: 20, window: "1m" },
+  "api.writes": { limit: 500, window: "1m" },
+});
+```
+
+Limits cannot be raised beyond the plan ceiling. See [Pricing](https://qeetid.com/pricing) for plan
+limits.
+
+## Bypass list
+
+For your own service-to-service traffic from known IPs, add a bypass:
+
+```ts
+await qee.tenants.addBypass("acme", {
+  type: "ip",
+  values: ["203.0.113.0/24"],
+  scope: ["api.reads", "api.writes"],
+});
+```
+
+<Callout type="warn">
+  Don't add bypasses for sign-in or MFA endpoints. The rate limits there exist to protect users from
+  credential-stuffing attacks against your tenant.
+</Callout>

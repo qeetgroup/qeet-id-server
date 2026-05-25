@@ -1,0 +1,85 @@
+---
+title: Sign-up
+description: Create new users, verify their email and phone, and onboard them into the right tenant.
+---
+
+Sign-up creates a new **user** (and, optionally, attaches them to a **tenant**). The
+default flow asks for email + password, sends a verification challenge, and lands them
+in your app once verified.
+
+## Drop-in component
+
+```tsx title="app/sign-up/page.tsx"
+import { QeetidSignUp } from "@qeetid/react";
+
+export default function Page() {
+  return (
+    <QeetidSignUp
+      requireEmailVerification
+      onSignUp={async (user) => {
+        // Optional: hook into your CRM, Stripe, etc.
+        await fetch("/api/onboarding", { method: "POST" });
+      }}
+      redirectTo="/welcome"
+    />
+  );
+}
+```
+
+## API: create a user
+
+```ts
+await qee.users.create({
+  email: "alex@acme.com",
+  profile: { displayName: "Alex Chen", locale: "en-US" },
+  // Optional: attach to an existing tenant on creation
+  joinTenant: "acme",
+});
+```
+
+This is **idempotent**: calling twice with the same email returns the same user. If you
+need to detect duplicates, check `created` on the response.
+
+## Email verification
+
+By default, sign-ups send a verification email with a one-time token. The user can also
+trigger re-verification from their account settings.
+
+```ts
+// Request a new verification email
+await qee.users.requestEmailVerification(userId);
+
+// Confirm a token (usually called via your /verify route)
+await qee.users.verifyEmail(userId, token);
+```
+
+<Callout type="info">
+  Email templates live under [Branding → Templates](/docs/branding/email-templates). You can
+  customize sender, subject, body, and supported languages.
+</Callout>
+
+## Phone verification
+
+```ts
+await qee.users.requestPhoneVerification(userId, "+15551234567");
+await qee.users.verifyPhone(userId, code);
+```
+
+Phone OTP is rate-limited per number and per IP, with abuse detection on top.
+
+## Inviting users
+
+If your product is multi-tenant, you usually want to **invite** users into a tenant
+rather than letting them self-sign-up.
+
+```ts
+await qee.invitations.send({
+  tenant: "acme",
+  email: "new-hire@acme.com",
+  role: "member",
+  redirectTo: "https://app.acme.com/welcome",
+});
+```
+
+The invitation email contains a single-use link. Accepting it creates the user (if
+needed) and assigns them the specified role inside the tenant.
