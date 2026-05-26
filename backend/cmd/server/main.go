@@ -16,6 +16,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/qeetgroup/qeet-identity/internal/apikey"
+	"github.com/qeetgroup/qeet-identity/internal/analytics"
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/auth"
 	"github.com/qeetgroup/qeet-identity/internal/branding"
@@ -111,6 +112,7 @@ func main() {
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
 	auditVerifier := audit.NewVerifier(pool)
+	analyticsReader := analytics.NewReader(pool)
 
 	startedAt := time.Now()
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
@@ -139,6 +141,7 @@ func main() {
 		Policy:        &policy.Handler{Repo: policyRepo},
 		GDPR:          &gdpr.Handler{Service: gdprService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
+		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		OIDC:          &oidc.Handler{Service: oidcService},
 		Passkey:       &passkey.Handler{Service: passkeyService},
 		Social:        &social.Handler{Service: socialService},

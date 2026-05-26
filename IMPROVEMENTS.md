@@ -31,9 +31,11 @@ Items shipped during the implementation pass, grouped by area. ✅ closes the it
 - ✅ **§2.4 Granular `/healthz` vs `/readyz`** — new `platform/health` package; readiness 2 s timeout + DB ping; per-check breakdown body. 5 tests.
 - ✅ **§2.5 Graceful shutdown audit + in-flight tracking** — `httpx.InFlight` atomic counter; main.go shutdown emits audit row (`system.shutdown`) with `duration_ms` / `in_flight_at_signal` / `dropped_requests`. WaitGroup-tracked workers. 3 tests.
 - ✅ **§3.1 Missing indexes** — migration 0024 adds 5 indexes (audit by actor, active sessions, password-reset / magic-link expiry, webhook-deliveries hot path).
+- ✅ **§4.8 Analytics endpoints (overview)** — new `internal/analytics/` module with `GET /v1/tenants/{tenantID}/analytics/overview`. Single payload covers MAU + logins-today + MFA-adoption + failed-logins-24h KPIs (each with delta-pct), 14-day trend series (users / logins / mfa-new / fails), 14-day login-activity grouped by method, 30-day login-methods mix, MFA-methods adoption (TOTP + Recovery Codes for now), and 24h failed-logins hourly buckets. Cross-tenant guard on the handler. 7 raw-SQL projections drawing from `auth.sessions`, `audit.events`, `auth.mfa_totp`, `"user".users`. `auth.IssuePair` threaded with a `method` arg (`password` / `magic_link` / `invite_accept`) and now writes an `auth.login_succeeded` audit row inside the session-insert tx so analytics has a provenance source. 2 tests on the JSON shape + pct-change.
 
 ### Frontend (admin)
 
+- ✅ **§7.1 Dashboard wired to real APIs** — all mocked arrays gone. The dashboard now calls `useAnalyticsOverview()` (one TanStack Query, `staleTime: 60s`, 404-tolerant fallback to empty shape) which hits the new `/analytics/overview` endpoint. Loading state shows skeletons; error state shows a single card with the message; per-chart empty states render a small "no data yet" sliver so the dashboard works the day after install and lights up as data accumulates. Method/MFA colour fills resolved through helper functions so adding a new method doesn't require a chart rewrite.
 - ✅ **§7.2 Sign-in wired to `/v1/auth/login`** (already done; doc was stale). Added a working `/forgot-password` route + fixed the dead "Forgot your password?" link.
 - ✅ **§7.6 Success toasts on every mutation** — `MutationCache.onSuccess` toast (opt-out via `meta.silent`, override via `meta.successMessage` / `successDescription`). Seeded on 5 high-visibility screens.
 - ✅ **§7.10 Audit log CSV/JSON export** — Export dropdown in audit-logs page; honours current filters; cap 10 000 rows.
@@ -73,6 +75,7 @@ Items shipped during the implementation pass, grouped by area. ✅ closes the it
 
 - ✅ **§11.5 Comparison pages** — `/compare` index + `/compare/{auth0,clerk,workos,stytch}` driven by a shared `<ComparisonPage>` component + per-competitor data file. Side-by-side fact sheets, sectioned ✓/✕/partial feature table, honesty disclaimer, CTA strip. Linked from the site footer.
 - ✅ **§11.2 SEO audit + structured data** — `app/robots.ts` + `app/sitemap.ts` (14 routes) + dynamic 1200×630 `app/opengraph-image.tsx`; root-layout `metadataBase` rounded out with canonical, Twitter card, robots directives, locale, keywords; `<OrganizationJsonLd>` + `<SoftwareApplicationJsonLd>` site-wide; `<WebSiteJsonLd>` + `<ProductJsonLd>` on home; `<BreadcrumbJsonLd>` on every comparison page. All JSON-LD payloads XSS-escape `<` per Next.js guidance. `pnpm build` clean: 17 routes prerendered including `/robots.txt`, `/sitemap.xml`, `/opengraph-image`.
+- ✅ **§11.3 Interactive pricing calculator** — new client island `<PricingCalculator>` on `/pricing` between the tier cards and the comparison table. Log-scale MAU slider (100 → 1M), editable numeric input synced both ways, 4 preset jumps (1K / 10K / 100K / 1M). Live recommended plan (Free / Pro / Enterprise) + monthly + annualised total + per-tier breakdown line. `pnpm build` still prerenders `/pricing` statically (the client island hydrates separately).
 
 ---
 
@@ -301,7 +304,7 @@ Items shipped during the implementation pass, grouped by area. ✅ closes the it
 - **Why:** Differentiator for security-conscious mid-market customers. Webhookable.
 - **Where:** New module `backend/internal/anomaly/`; reads recent `auth.sessions` + login events; emits `security.anomaly_detected` outbox events.
 
-### 4.8 — `[P2]` Customer-facing analytics endpoints
+### ~~4.8 — Customer-facing analytics endpoints~~ ✅ Done (overview endpoint)
 
 - **Why:** Today the dashboard charts are mocked. Real analytics enables in-app dashboards without forcing customers to ship logs to Datadog.
 - **Where:** New module `backend/internal/analytics/`. Endpoints `GET /v1/tenants/{id}/analytics/logins`, `/mfa-adoption`, `/active-users`, `/failed-logins`. Backed by hourly snapshots in a `analytics.*` schema.
@@ -407,7 +410,7 @@ These are post-v1.0 per the roadmap but worth scoping now:
 
 These items target the screens already implemented (sign-in/up, dashboard, branding, audit logs, API keys, OAuth clients, webhooks, roles, tenant settings, MFA TOTP enrollment, GDPR admin, groups, invitations).
 
-### 7.1 — `[P1]` Wire dashboard to real APIs (currently mocked)
+### ~~7.1 — Wire dashboard to real APIs~~ ✅ Done
 
 - **Where:** [frontend/apps/qeetid-admin/src/routes/_app/dashboard.tsx](./frontend/apps/qeetid-admin/src/routes/_app/dashboard.tsx) — replace fixture data with the analytics endpoints (depends on §4.8).
 - **Done when:** Login chart, MFA adoption, failed-logins all read live data.
@@ -598,7 +601,7 @@ Add these to [frontend/packages/qeetid-ui/](./frontend/packages/qeetid-ui/) and 
 
 - **Where:** Add `robots.txt`, dynamic `sitemap.xml`, dynamic OG-image generator, Schema.org `Organization` + `Product` JSON-LD in [frontend/apps/qeetid-web/src/app/layout.tsx](./frontend/apps/qeetid-web/src/app/layout.tsx).
 
-### 11.3 — `[P2]` Interactive pricing calculator
+### ~~11.3 — Interactive pricing calculator~~ ✅ Done
 
 - **Where:** [frontend/apps/qeetid-web/src/app/(marketing)/pricing/](./frontend/apps/qeetid-web/src/app/\(marketing\)/pricing/) — MAU slider + plan calculator.
 

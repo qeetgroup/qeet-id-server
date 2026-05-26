@@ -8,6 +8,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/qeetgroup/qeet-identity/internal/analytics"
 	"github.com/qeetgroup/qeet-identity/internal/apikey"
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/auth"
@@ -49,6 +50,7 @@ type Deps struct {
 	Policy       *policy.Handler
 	GDPR         *gdpr.Handler
 	Audit        *audit.Handler
+	Analytics    *analytics.Handler
 	OIDC         *oidc.Handler
 	Passkey      *passkey.Handler
 	Social       *social.Handler
@@ -129,6 +131,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Policy.Mount(r)
 			d.GDPR.Mount(r)
 			d.Audit.Mount(r)
+			d.Analytics.Mount(r)
 			d.OIDC.Mount(r)
 			d.Passkey.Mount(r)
 			d.Social.Mount(r)
