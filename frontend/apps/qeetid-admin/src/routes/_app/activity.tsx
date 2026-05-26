@@ -12,6 +12,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetid/ui";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -79,8 +80,8 @@ function ActivityPage() {
               <TableBody>
                 {eventsQ.data.items.map((e) => (
                   <TableRow key={e.id}>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleString()}
+                    <TableCell>
+                      <TimeSince value={e.created_at} className="font-mono text-xs" />
                     </TableCell>
                     <TableCell>
                       <Badge variant="muted">{e.actor_type}</Badge>

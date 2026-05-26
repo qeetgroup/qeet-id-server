@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
@@ -31,6 +32,8 @@ type Service struct {
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, issuer: issuer}
 }
+
+func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 type Principal struct {
 	ID         uuid.UUID  `json:"id"`
@@ -48,7 +51,7 @@ type CreateInput struct {
 	Scopes      []string  `json:"scopes"`
 }
 
-func (s *Service) Create(ctx context.Context, in CreateInput) (*Principal, string, error) {
+func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Principal, string, error) {
 	raw, _, err := codes.URLToken()
 	if err != nil {
 		return nil, "", err
@@ -58,7 +61,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Principal, strin
 		return nil, "", err
 	}
 	var p Principal
-	err = s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, tenant_id, name, scopes, disabled_at, created_at
@@ -90,15 +93,23 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, er
 	return out, nil
 }
 
-func (s *Service) Disable(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `UPDATE auth.service_principals SET disabled_at = NOW() WHERE id = $1`, id)
+// Disable marks a service principal disabled. Returns the (tenantID,
+// name) for the audit row so the caller doesn't have to re-query.
+func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, string, error) {
+	var tenantID uuid.UUID
+	var name string
+	err := tx.QueryRow(ctx, `
+		UPDATE auth.service_principals SET disabled_at = NOW()
+		WHERE id = $1 AND disabled_at IS NULL
+		RETURNING tenant_id, name
+	`, id).Scan(&tenantID, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", errs.ErrNotFound
+	}
 	if err != nil {
-		return err
+		return uuid.Nil, "", err
 	}
-	if ct.RowsAffected() == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
+	return tenantID, name, nil
 }
 
 type TokenResponse struct {
@@ -164,7 +175,7 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 			ID:        uuid.NewString(),
 		},
 	}
-	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.issuer.Secret())
+	signed, err := s.issuer.Sign(claims)
 	if err != nil {
 		return nil, fmt.Errorf("sign: %w", err)
 	}
@@ -201,14 +212,56 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/oauth/token", h.tokenEndpoint)
 }
 
+// auditActor mirrors the helper used in rbac/mfa.
+func auditActor(r *http.Request) (*uuid.UUID, string) {
+	pp := httpx.PrincipalFromCtx(r.Context())
+	if pp == nil {
+		return nil, "system"
+	}
+	at := pp.ActorType
+	if at == "" {
+		at = "user"
+	}
+	return pp.UserID, at
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	p, secret, err := h.Service.Create(r.Context(), in)
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	p, secret, err := h.Service.Create(ctx, tx, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	tenantID := p.TenantID
+	resID := p.ID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "service_principal.created",
+		ResourceType: "service_principal",
+		ResourceID:   &resID,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": p.Name, "scopes": p.Scopes},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -240,7 +293,36 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Disable(r.Context(), id); err != nil {
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	tenantID, name, err := h.Service.Disable(ctx, tx, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	resID := id
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "service_principal.disabled",
+		ResourceType: "service_principal",
+		ResourceID:   &resID,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": name},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

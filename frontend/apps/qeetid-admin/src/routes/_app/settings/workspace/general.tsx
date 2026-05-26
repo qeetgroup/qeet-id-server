@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
   Skeleton,
+  TimeSince,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -173,7 +174,7 @@ function WorkspaceGeneralPage() {
                   <code className="block break-all rounded-md border bg-muted px-3 py-2 text-xs">{draft.id ?? "—"}</code>
                   <p className="mt-4 text-xs text-muted-foreground">
                     Created{" "}
-                    {draft.created_at ? new Date(draft.created_at).toLocaleString() : "—"}
+                    {draft.created_at ? <TimeSince value={draft.created_at} className="text-xs" /> : "—"}
                   </p>
                 </CardContent>
               </Card>

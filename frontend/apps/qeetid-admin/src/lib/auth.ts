@@ -50,6 +50,22 @@ export function useLogin() {
   });
 }
 
+/**
+ * Kick off a password-reset email. Endpoint returns 200 regardless of
+ * whether the email exists (constant-time no-leak design), so the
+ * caller can unconditionally show "check your inbox" UX. The mutation
+ * is marked silent so failures don't surface a toast — surfacing a
+ * "user not found" error would defeat the enumeration-protection
+ * design of the endpoint.
+ */
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (in_: { email: string }) =>
+      api<void>("/v1/auth/forgot-password", { method: "POST", body: in_, anonymous: true }),
+    meta: { silent: true },
+  });
+}
+
 type SignupInput = {
   email: string;
   password: string;
@@ -100,6 +116,79 @@ export function useTenantId(): string | null {
 /** Whether the user has a stored access token. Read synchronously for guards. */
 export function isAuthenticated(): boolean {
   return !!tokenStore.get();
+}
+
+// ---------------------------------------------------------------------------
+// JWT introspection
+//
+// We never trust the JWT payload for authorization decisions (the server
+// re-validates on every request). We DO read it client-side to drive
+// UX-only signals — e.g. the impersonation banner, which checks for the
+// RFC 8693 `act` claim and surfaces who the admin is acting as.
+// ---------------------------------------------------------------------------
+
+function base64UrlDecode(s: string): string {
+  let b = s.replace(/-/g, "+").replace(/_/g, "/");
+  while (b.length % 4) b += "=";
+  try {
+    return atob(b);
+  } catch {
+    return "";
+  }
+}
+
+interface AccessClaims {
+  /** RFC 8693 actor claim — present iff this token was issued by an
+   *  impersonation grant. `sub` identifies the admin doing the acting. */
+  act?: {
+    sub?: string;
+    email?: string;
+    display_name?: string;
+  };
+  sub?: string;
+  email?: string;
+  tenant_id?: string;
+  exp?: number;
+  [k: string]: unknown;
+}
+
+function decodeAccessToken(): AccessClaims | null {
+  const raw = tokenStore.get();
+  if (!raw) return null;
+  const parts = raw.split(".");
+  if (parts.length !== 3) return null;
+  const payload = base64UrlDecode(parts[1]);
+  if (!payload) return null;
+  try {
+    return JSON.parse(payload) as AccessClaims;
+  } catch {
+    return null;
+  }
+}
+
+export interface ImpersonationActor {
+  /** The user being impersonated (the `sub` of the current token). */
+  targetSubject: string;
+  /** The admin doing the impersonating. */
+  actorSubject: string;
+  actorEmail?: string;
+  actorDisplayName?: string;
+}
+
+/**
+ * Returns the impersonation context if the current access token was
+ * issued via an impersonation grant (RFC 8693 `act` claim present),
+ * otherwise null. UI-only signal — server is the source of truth.
+ */
+export function useImpersonationActor(): ImpersonationActor | null {
+  const claims = decodeAccessToken();
+  if (!claims?.act?.sub || !claims.sub) return null;
+  return {
+    targetSubject: claims.sub,
+    actorSubject: claims.act.sub,
+    actorEmail: claims.act.email,
+    actorDisplayName: claims.act.display_name,
+  };
 }
 
 type Me = {

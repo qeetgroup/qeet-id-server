@@ -5,7 +5,6 @@ import {
   ChartColumnIcon,
   CreditCardIcon,
   FingerprintIcon,
-  GalleryVerticalEndIcon,
   GaugeIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
@@ -20,7 +19,6 @@ import {
   ShieldAlertIcon,
   ShieldCheckIcon,
   ShieldIcon,
-  SparklesIcon,
   UsersIcon,
   UsersRoundIcon,
   WebhookIcon,
@@ -40,24 +38,6 @@ export type NavGroup = {
   label: string;
   items: NavItem[];
 };
-
-export type Team = {
-  name: string;
-  logo: ReactNode;
-  plan: string;
-};
-
-export type CurrentUser = {
-  name: string;
-  email: string;
-  avatar: string;
-};
-
-export const teams: Team[] = [
-  { name: "Qeet Group", logo: <GalleryVerticalEndIcon />, plan: "Enterprise" },
-  { name: "Acme Corp.", logo: <Building2Icon />, plan: "Growth" },
-  { name: "Sandbox", logo: <SparklesIcon />, plan: "Free" },
-];
 
 export const navGroups: NavGroup[] = [
   {
@@ -211,12 +191,6 @@ export const navGroups: NavGroup[] = [
     ],
   },
 ];
-
-export const currentUser: CurrentUser = {
-  name: "shadcn",
-  email: "m@example.com",
-  avatar: "/avatars/shadcn.jpg",
-};
 
 export type NavTitleLookup = {
   group?: string;

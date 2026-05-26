@@ -10,6 +10,8 @@ import {
   FieldLabel,
   FieldSeparator,
   Input,
+  PasswordStrengthMeter,
+  scorePassword,
 } from "@qeetid/ui";
 import { Link } from "@tanstack/react-router";
 import { Apple, Github, Google, Microsoft } from "@thesvg/react";
@@ -39,6 +41,8 @@ export function SignupForm({
   ...props
 }: SignupFormProps) {
   const [mismatch, setMismatch] = useState(false);
+  const [password, setPassword] = useState("");
+  const passwordScore = scorePassword(password);
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
@@ -92,7 +96,16 @@ export function SignupForm({
               <Field className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="password">Password</FieldLabel>
-                  <Input id="password" name="password" type="password" minLength={8} required />
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
+                    minLength={8}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    aria-describedby="password-strength"
+                  />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="confirm_password">Confirm</FieldLabel>
@@ -105,6 +118,17 @@ export function SignupForm({
                   />
                 </Field>
               </Field>
+              {password.length > 0 && (
+                <PasswordStrengthMeter
+                  value={password}
+                  className="mt-1"
+                  feedback={
+                    passwordScore < 3
+                      ? ["Use 12+ characters mixing upper/lower case, digits, and symbols."]
+                      : undefined
+                  }
+                />
+              )}
               <FieldDescription>At least 8 characters.</FieldDescription>
 
               {mismatch && (

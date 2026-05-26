@@ -25,15 +25,17 @@ import {
   SheetHeader,
   SheetTitle,
   Skeleton,
+  StatusPill,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetid/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -84,7 +86,12 @@ function InvitationsPage() {
         description="Invite teammates by email. They get a one-time link that creates their account and assigns the chosen role on acceptance."
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+            >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               Refresh
             </Button>
@@ -98,11 +105,17 @@ function InvitationsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Invitations</CardTitle>
-          <CardDescription>{listQ.data?.items?.length ?? 0} invitation{listQ.data?.items?.length === 1 ? "" : "s"}</CardDescription>
+          <CardDescription>
+            {listQ.data?.items?.length ?? 0} invitation{listQ.data?.items?.length === 1 ? "" : "s"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {listQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="space-y-3 p-4">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
           ) : listQ.isError ? (
             <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
           ) : !listQ.data?.items?.length ? (
@@ -125,17 +138,21 @@ function InvitationsPage() {
               <TableBody>
                 {listQ.data.items.map((i) => {
                   const roleName = rolesQ.data?.items.find((r) => r.id === i.role_id)?.name ?? "—";
-                  const variant =
-                    i.status === "accepted" ? "success" :
-                    i.status === "pending" ? "warning" :
-                    "destructive";
                   return (
                     <TableRow key={i.id}>
                       <TableCell className="font-medium">{i.email}</TableCell>
-                      <TableCell><Badge variant="muted">{roleName}</Badge></TableCell>
-                      <TableCell><Badge variant={variant}>{i.status}</Badge></TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(i.expires_at).toLocaleDateString()}</TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(i.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        <Badge variant="muted">{roleName}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <StatusPill status={i.status} />
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={i.expires_at} />
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={i.created_at} />
+                      </TableCell>
                       <TableCell className="text-right">
                         <Button
                           variant="ghost"
@@ -176,7 +193,13 @@ type CreateInviteSheetProps = {
   onCreated: () => void;
 };
 
-function CreateInviteSheet({ open, onOpenChange, tenantId, roles, onCreated }: CreateInviteSheetProps) {
+function CreateInviteSheet({
+  open,
+  onOpenChange,
+  tenantId,
+  roles,
+  onCreated,
+}: CreateInviteSheetProps) {
   const [roleId, setRoleId] = useState<string>("");
   const createM = useMutation({
     mutationFn: (body: { tenant_id: string; email: string; role_id?: string }) =>
@@ -206,7 +229,8 @@ function CreateInviteSheet({ open, onOpenChange, tenantId, roles, onCreated }: C
           <SheetHeader>
             <SheetTitle>Send invitation</SheetTitle>
             <SheetDescription>
-              The invitee gets an email with a one-time link. They set their password during acceptance.
+              The invitee gets an email with a one-time link. They set their password during
+              acceptance.
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
@@ -218,16 +242,26 @@ function CreateInviteSheet({ open, onOpenChange, tenantId, roles, onCreated }: C
               <Field>
                 <FieldLabel>Role</FieldLabel>
                 <Select value={roleId} onValueChange={setRoleId}>
-                  <SelectTrigger><SelectValue placeholder="No role (basic member)" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="No role (basic member)" />
+                  </SelectTrigger>
                   <SelectContent>
                     {roles.map((r) => (
-                      <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <FieldDescription>Assigned automatically when the invite is accepted.</FieldDescription>
+                <FieldDescription>
+                  Assigned automatically when the invite is accepted.
+                </FieldDescription>
               </Field>
-              {createM.error && <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>}
+              {createM.error && (
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">

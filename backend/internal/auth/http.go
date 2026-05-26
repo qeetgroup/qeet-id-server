@@ -113,7 +113,12 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
 		return
 	}
-	pair, err := h.Service.Refresh(r.Context(), in.RefreshToken)
+	pair, err := h.Service.Refresh(r.Context(), RefreshInput{
+		RefreshToken: in.RefreshToken,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

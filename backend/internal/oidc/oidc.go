@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
@@ -56,7 +57,11 @@ type CreateClientInput struct {
 	Scopes         []string  `json:"scopes"`
 }
 
-func (s *Service) RegisterClient(ctx context.Context, in CreateClientInput) (*Client, string, error) {
+// Pool exposes the connection pool so handlers can begin their own
+// transactions that wrap an OIDC mutation and its audit row.
+func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClientInput) (*Client, string, error) {
 	if in.Type == "" {
 		in.Type = "confidential"
 	}
@@ -82,7 +87,7 @@ func (s *Service) RegisterClient(ctx context.Context, in CreateClientInput) (*Cl
 		secretHash = &hash
 	}
 	var c Client
-	err := s.pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		INSERT INTO auth.oidc_clients (
 			tenant_id, client_id, client_secret_hash, type, name,
 			redirect_uris, post_logout_uris, grant_types, scopes
@@ -258,7 +263,7 @@ func (s *Service) signIDToken(userID, tenantID uuid.UUID, audience, nonce string
 	if nonce != "" {
 		claims["nonce"] = nonce
 	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.issuer.Secret())
+	return s.issuer.Sign(claims)
 }
 
 func contains(haystack []string, needle string) bool {
@@ -299,8 +304,52 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	c, secret, err := h.Service.RegisterClient(r.Context(), in)
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	c, secret, err := h.Service.RegisterClient(ctx, tx, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var actorID *uuid.UUID
+	actorType := "system"
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID = p.UserID
+		if p.ActorType != "" {
+			actorType = p.ActorType
+		} else {
+			actorType = "user"
+		}
+	}
+	tenantID := c.TenantID
+	resourceID := c.ID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "oidc.client_registered",
+		ResourceType: "oidc_client",
+		ResourceID:   &resourceID,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata: map[string]any{
+			"client_id":   c.ClientID,
+			"type":        c.Type,
+			"name":        c.Name,
+			"grant_types": c.GrantTypes,
+			"scopes":      c.Scopes,
+		},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

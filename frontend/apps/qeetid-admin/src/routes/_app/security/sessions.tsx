@@ -1,18 +1,19 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  Skeleton,
+  DataState,
+  StatusPill,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -72,18 +73,16 @@ function SessionsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {sessionsQ.isLoading ? (
-            <div className="space-y-3 p-4">
-              {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-            </div>
-          ) : sessionsQ.isError ? (
-            <div className="p-6 text-sm text-destructive">{(sessionsQ.error as Error).message}</div>
-          ) : !sessionsQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <ShieldIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No sessions recorded.</p>
-            </div>
-          ) : (
+          <DataState
+            isLoading={sessionsQ.isLoading}
+            isError={sessionsQ.isError}
+            error={sessionsQ.error}
+            isEmpty={!sessionsQ.data?.items?.length}
+            emptyIcon={ShieldIcon}
+            emptyTitle="No sessions recorded."
+            skeletonRows={3}
+          >
+            {sessionsQ.data && (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -103,14 +102,14 @@ function SessionsPage() {
                       {s.user_agent ?? "—"}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{s.ip ?? "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(s.created_at).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {new Date(s.last_seen_at).toLocaleString()}
+                    <TableCell>
+                      <TimeSince value={s.created_at} />
                     </TableCell>
                     <TableCell>
-                      {s.revoked_at ? <Badge variant="destructive">Revoked</Badge> : <Badge variant="success">Active</Badge>}
+                      <TimeSince value={s.last_seen_at} />
+                    </TableCell>
+                    <TableCell>
+                      <StatusPill status={s.revoked_at ? "revoked" : "active"} />
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -128,7 +127,8 @@ function SessionsPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
+            )}
+          </DataState>
         </CardContent>
       </Card>
     </div>

@@ -1,17 +1,23 @@
 // Package group provides org/team hierarchy inside a tenant. Permissions
 // granted at group level are out of scope for this iteration (RBAC stays
 // user-level); the data model captures the shape ahead of need.
+//
+// Mutating methods take a pgx.Tx so handlers can wrap the mutation +
+// audit row in a single transaction.
 package group
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
@@ -33,6 +39,8 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool}
 }
 
+func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
 type CreateInput struct {
 	TenantID    uuid.UUID  `json:"tenant_id"`
 	ParentID    *uuid.UUID `json:"parent_id"`
@@ -40,9 +48,9 @@ type CreateInput struct {
 	Description string     `json:"description"`
 }
 
-func (s *Service) Create(ctx context.Context, in CreateInput) (*Group, error) {
+func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Group, error) {
 	var g Group
-	err := s.pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.groups (tenant_id, parent_id, name, description)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, tenant_id, parent_id, name, description, created_at
@@ -74,27 +82,33 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error)
 	return out, nil
 }
 
-func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.groups WHERE id = $1`, id)
+// Delete returns the (tenantID, name) of the deleted group so the caller
+// has the data for the audit row without an extra read.
+func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, string, error) {
+	var tenantID uuid.UUID
+	var name string
+	err := tx.QueryRow(ctx, `
+		DELETE FROM tenant.groups WHERE id = $1 RETURNING tenant_id, name
+	`, id).Scan(&tenantID, &name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", errs.ErrNotFound
+	}
 	if err != nil {
-		return err
+		return uuid.Nil, "", err
 	}
-	if ct.RowsAffected() == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
+	return tenantID, name, nil
 }
 
-func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `
+func (s *Service) AddMember(ctx context.Context, tx pgx.Tx, groupID, userID, tenantID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO tenant.group_members (group_id, user_id, tenant_id)
 		VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
 	`, groupID, userID, tenantID)
 	return err
 }
 
-func (s *Service) RemoveMember(ctx context.Context, groupID, userID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `
+func (s *Service) RemoveMember(ctx context.Context, tx pgx.Tx, groupID, userID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
 		DELETE FROM tenant.group_members WHERE group_id = $1 AND user_id = $2
 	`, groupID, userID)
 	return err
@@ -145,14 +159,55 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/groups/{id}/members", h.listMembers)
 }
 
+func auditActor(r *http.Request) (*uuid.UUID, string) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil {
+		return nil, "system"
+	}
+	at := p.ActorType
+	if at == "" {
+		at = "user"
+	}
+	return p.UserID, at
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	g, err := h.Service.Create(r.Context(), in)
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	g, err := h.Service.Create(ctx, tx, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	tid := g.TenantID
+	rid := g.ID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "group.created",
+		ResourceType: "group",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": g.Name, "parent_id": g.ParentID},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -179,7 +234,36 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id); err != nil {
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	tenantID, name, err := h.Service.Delete(ctx, tx, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	rid := id
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "group.deleted",
+		ResourceType: "group",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": name},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -202,7 +286,36 @@ func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("tenant scope required"))
 		return
 	}
-	if err := h.Service.AddMember(r.Context(), id, uid, *p.TenantID); err != nil {
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Service.AddMember(ctx, tx, id, uid, *p.TenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	tid := *p.TenantID
+	rid := id
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "group.member_added",
+		ResourceType: "group",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"user_id": uid},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -220,7 +333,40 @@ func (h *Handler) removeMember(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	if err := h.Service.RemoveMember(r.Context(), id, uid); err != nil {
+	p := httpx.PrincipalFromCtx(r.Context())
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Service.RemoveMember(ctx, tx, id, uid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	var tid *uuid.UUID
+	if p != nil {
+		tid = p.TenantID
+	}
+	rid := id
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "group.member_removed",
+		ResourceType: "group",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"user_id": uid},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

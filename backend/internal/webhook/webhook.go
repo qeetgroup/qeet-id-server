@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
@@ -49,19 +50,21 @@ func NewService(pool *pgxpool.Pool) *Service {
 	}
 }
 
+func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
 type CreateInput struct {
 	TenantID uuid.UUID `json:"tenant_id"`
 	URL      string    `json:"url"`
 	Events   []string  `json:"events"`
 }
 
-func (s *Service) Create(ctx context.Context, in CreateInput) (*Subscription, error) {
+func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
 	secret, _, err := codes.URLToken()
 	if err != nil {
 		return nil, err
 	}
 	var sub Subscription
-	err = s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, events)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, tenant_id, url, events, disabled_at, created_at
@@ -109,15 +112,23 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Subscription, error) 
 	return &sub, nil
 }
 
-func (s *Service) Disable(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `UPDATE tenant.webhook_subscriptions SET disabled_at = NOW() WHERE id = $1`, id)
+// Disable marks the subscription disabled and returns the (tenantID, url)
+// so the caller doesn't have to re-query for the audit row.
+func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, string, error) {
+	var tenantID uuid.UUID
+	var url string
+	err := tx.QueryRow(ctx, `
+		UPDATE tenant.webhook_subscriptions SET disabled_at = NOW()
+		WHERE id = $1 AND disabled_at IS NULL
+		RETURNING tenant_id, url
+	`, id).Scan(&tenantID, &url)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", errs.ErrNotFound
+	}
 	if err != nil {
-		return err
+		return uuid.Nil, "", err
 	}
-	if ct.RowsAffected() == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
+	return tenantID, url, nil
 }
 
 // Enqueue persists a delivery for every matching subscription.
@@ -283,6 +294,18 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/webhooks/{id}/test", h.test)
 }
 
+func auditActor(r *http.Request) (*uuid.UUID, string) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil {
+		return nil, "system"
+	}
+	at := p.ActorType
+	if at == "" {
+		at = "user"
+	}
+	return p.UserID, at
+}
+
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -293,8 +316,37 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("tenant_id and url required"))
 		return
 	}
-	sub, err := h.Service.Create(r.Context(), in)
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	sub, err := h.Service.Create(ctx, tx, in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	tid := sub.TenantID
+	rid := sub.ID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "webhook.subscription_created",
+		ResourceType: "webhook_subscription",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"url": sub.URL, "events": sub.Events},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -321,7 +373,36 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Disable(r.Context(), id); err != nil {
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	tenantID, url, err := h.Service.Disable(ctx, tx, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	rid := id
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "webhook.subscription_disabled",
+		ResourceType: "webhook_subscription",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"url": url},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

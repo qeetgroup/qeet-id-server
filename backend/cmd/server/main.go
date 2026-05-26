@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/oidc"
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
 	"github.com/qeetgroup/qeet-identity/internal/platform/db"
+	"github.com/qeetgroup/qeet-identity/internal/platform/health"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 	"github.com/qeetgroup/qeet-identity/internal/platform/logger"
 	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
@@ -70,7 +72,7 @@ func main() {
 	} else {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(slog.New(logger.NewRedactingHandler(handler)))
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -108,6 +110,12 @@ func main() {
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
+	auditVerifier := audit.NewVerifier(pool)
+
+	startedAt := time.Now()
+	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
+	healthHandler.AddReadiness("db", health.PingDB(pool))
+	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
 	passkeyService := passkey.NewService(pool)
 	socialService := social.NewService(pool)
@@ -130,25 +138,37 @@ func main() {
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
 		GDPR:          &gdpr.Handler{Service: gdprService},
-		Audit:         &audit.Handler{Reader: auditReader},
+		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		OIDC:          &oidc.Handler{Service: oidcService},
 		Passkey:       &passkey.Handler{Service: passkeyService},
 		Social:        &social.Handler{Service: socialService},
 		Group:         &group.Handler{Service: groupService},
+		Health:        healthHandler,
+		InFlight:      inFlight,
 
 		AuthVerifier:   verifier,
 		AllowedOrigins: cfg.AllowedOrigins(),
 		ServiceName:    cfg.ServiceName,
 		ServiceEnv:     cfg.ServiceEnv,
-		StartedAt:      time.Now(),
+		StartedAt:      startedAt,
 	}
 
 	router := httpapi.NewRouter(deps)
 
 	outboxDispatcher := outbox.NewDispatcher(pool, outbox.LogPublisher{}, 2*time.Second, 50)
-	go outboxDispatcher.Run(rootCtx)
-	go webhookService.RunDispatcher(rootCtx)
-	go gdprService.Run(rootCtx)
+
+	var workerWG sync.WaitGroup
+	startWorker := func(name string, run func(context.Context)) {
+		workerWG.Add(1)
+		go func() {
+			defer workerWG.Done()
+			run(rootCtx)
+			slog.Info("worker stopped", "name", name)
+		}()
+	}
+	startWorker("outbox", outboxDispatcher.Run)
+	startWorker("webhook", webhookService.RunDispatcher)
+	startWorker("gdpr", gdprService.Run)
 
 	srv := &stdhttp.Server{
 		Addr:         ":" + cfg.HTTPPort,
@@ -165,10 +185,60 @@ func main() {
 	}()
 
 	<-rootCtx.Done()
-	slog.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownStart := time.Now()
+	inFlightAtSignal := inFlight.Count()
+	slog.Info("shutdown initiated", "in_flight", inFlightAtSignal)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("shutdown", "err", err)
+		slog.Error("http shutdown", "err", err)
+	}
+
+	workerDone := make(chan struct{})
+	go func() {
+		workerWG.Wait()
+		close(workerDone)
+	}()
+	select {
+	case <-workerDone:
+	case <-shutdownCtx.Done():
+		slog.Warn("worker drain timed out", "in_flight", inFlight.Count())
+	}
+
+	dropped := inFlight.Count()
+	duration := time.Since(shutdownStart)
+	slog.Info("shutdown complete",
+		"duration_ms", duration.Milliseconds(),
+		"in_flight_at_signal", inFlightAtSignal,
+		"dropped_requests", dropped,
+	)
+
+	// Best-effort audit row summarising the shutdown. If the DB is already
+	// unhealthy we log and exit cleanly anyway.
+	auditCtx, auditCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer auditCancel()
+	if tx, err := pool.Begin(auditCtx); err == nil {
+		err := audit.Record(auditCtx, tx, audit.Event{
+			ActorType:    "system",
+			Action:       "system.shutdown",
+			ResourceType: "system",
+			Metadata: map[string]any{
+				"service":             cfg.ServiceName,
+				"env":                 cfg.ServiceEnv,
+				"duration_ms":         duration.Milliseconds(),
+				"in_flight_at_signal": inFlightAtSignal,
+				"dropped_requests":    dropped,
+			},
+		})
+		if err != nil {
+			slog.Warn("audit shutdown", "err", err)
+			_ = tx.Rollback(auditCtx)
+		} else if err := tx.Commit(auditCtx); err != nil {
+			slog.Warn("audit shutdown commit", "err", err)
+		}
+	} else {
+		slog.Warn("audit shutdown begin tx", "err", err)
 	}
 }

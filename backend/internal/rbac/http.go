@@ -7,6 +7,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
@@ -30,6 +31,20 @@ func (h *Handler) Mount(r chi.Router) {
 
 	r.Get("/users/{userID}/tenants/{tenantID}/permissions", h.effective)
 	r.Get("/check", h.check)
+}
+
+// auditActor extracts the calling principal's user id (or nil if the
+// request is unauthenticated, e.g. system caller).
+func auditActor(r *http.Request) (*uuid.UUID, string) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil {
+		return nil, "system"
+	}
+	at := p.ActorType
+	if at == "" {
+		at = "user"
+	}
+	return p.UserID, at
 }
 
 func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
@@ -75,8 +90,36 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
 		return
 	}
-	role, err := h.Repo.CreateRole(r.Context(), tid, in.Name, in.Description, false)
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	role, err := h.Repo.CreateRole(ctx, tx, tid, in.Name, in.Description, false)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	rid := role.ID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "role.created",
+		ResourceType: "role",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"name": role.Name, "is_system": role.IsSystem},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -94,7 +137,34 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
-	if err := h.Repo.GrantPermission(r.Context(), roleID, permID); err != nil {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Repo.GrantPermission(ctx, tx, roleID, permID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	rid := roleID
+	if err := audit.Record(ctx, tx, audit.Event{
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "role.permission_granted",
+		ResourceType: "role",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"permission_id": permID},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -112,7 +182,34 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid permID"))
 		return
 	}
-	if err := h.Repo.RevokePermission(r.Context(), roleID, permID); err != nil {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Repo.RevokePermission(ctx, tx, roleID, permID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	rid := roleID
+	if err := audit.Record(ctx, tx, audit.Event{
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "role.permission_revoked",
+		ResourceType: "role",
+		ResourceID:   &rid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"permission_id": permID},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -139,7 +236,35 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil && p.UserID != nil {
 		grantedBy = p.UserID
 	}
-	if err := h.Repo.AssignRole(r.Context(), uid, tid, rid, grantedBy); err != nil {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Repo.AssignRole(ctx, tx, uid, tid, rid, grantedBy); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	target := uid
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "role.assigned",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"role_id": rid},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -162,7 +287,35 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
 		return
 	}
-	if err := h.Repo.UnassignRole(r.Context(), uid, tid, rid); err != nil {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Repo.UnassignRole(ctx, tx, uid, tid, rid); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	target := uid
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "role.unassigned",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"role_id": rid},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

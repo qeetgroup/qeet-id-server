@@ -13,11 +13,22 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
 	"github.com/qeetgroup/qeet-identity/internal/platform/password"
 )
+
+// AuditCtx carries the per-request client context recovery handlers
+// thread into the service so the audit row can attribute the action.
+// These flows have no authenticated principal (they're token-based)
+// so the actor for the audit row is the user being acted upon.
+type AuditCtx struct {
+	IP        string
+	UserAgent string
+	RequestID string
+}
 
 type Service struct {
 	pool       *pgxpool.Pool
@@ -65,7 +76,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, em
 	})
 }
 
-func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string) error {
+func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
 	if len(newPassword) < 8 {
 		return errs.ErrUnprocessable.WithDetail("password too short")
 	}
@@ -115,6 +126,20 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`, userID); err != nil {
 		return err
 	}
+	target := userID
+	if err := audit.Record(ctx, tx, audit.Event{
+		ActorUserID:  &target,
+		ActorType:    "system",
+		Action:       "auth.password_reset_confirmed",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           ac.IP,
+		UserAgent:    ac.UserAgent,
+		RequestID:    ac.RequestID,
+		Metadata:     map[string]any{"sessions_revoked": true},
+	}); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -146,7 +171,7 @@ type MagicLinkResult struct {
 // ConsumeMagicLink marks the link used and returns the (user, tenant) pair
 // the caller should mint a session for. Returns ErrNotFound if no user
 // exists for the email (auto-provision is left to a higher layer).
-func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string) (*MagicLinkResult, error) {
+func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac AuditCtx) (*MagicLinkResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -186,6 +211,21 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string) (*Magic
 		return nil, errs.ErrNotFound.WithDetail("no user for email")
 	}
 	if _, err := tx.Exec(ctx, `UPDATE auth.magic_links SET used_at = NOW() WHERE id = $1`, id); err != nil {
+		return nil, err
+	}
+	tid := tenantID
+	target := userID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  &target,
+		ActorType:    "system",
+		Action:       "auth.magic_link_consumed",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           ac.IP,
+		UserAgent:    ac.UserAgent,
+		RequestID:    ac.RequestID,
+	}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

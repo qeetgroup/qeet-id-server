@@ -1,6 +1,10 @@
 // Package rbac models permissions, per-tenant roles, role->permission
 // bindings, and user assignments. The Check endpoint is the hot path
 // callers use to authorize an action.
+//
+// Mutating methods take a pgx.Tx so the caller (HTTP handler) can wrap
+// the mutation plus its audit row in a single transaction. Read methods
+// use the pool directly.
 package rbac
 
 import (
@@ -39,8 +43,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-func (r *Repository) UpsertPermission(ctx context.Context, key, desc string) (*Permission, error) {
-	row := r.pool.QueryRow(ctx, `
+// Pool exposes the connection pool so handlers can begin their own
+// transactions that wrap an RBAC mutation and its audit row.
+func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
+
+func (r *Repository) UpsertPermission(ctx context.Context, tx pgx.Tx, key, desc string) (*Permission, error) {
+	row := tx.QueryRow(ctx, `
 		INSERT INTO rbac.permissions (key, description)
 		VALUES ($1, $2)
 		ON CONFLICT (key) DO UPDATE SET description = EXCLUDED.description
@@ -70,8 +78,8 @@ func (r *Repository) ListPermissions(ctx context.Context) ([]Permission, error) 
 	return out, nil
 }
 
-func (r *Repository) CreateRole(ctx context.Context, tenantID uuid.UUID, name, desc string, isSystem bool) (*Role, error) {
-	row := r.pool.QueryRow(ctx, `
+func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name, desc string, isSystem bool) (*Role, error) {
+	row := tx.QueryRow(ctx, `
 		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, tenant_id, name, description, is_system, created_at
@@ -109,8 +117,8 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	return out, nil
 }
 
-func (r *Repository) GrantPermission(ctx context.Context, roleID, permID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *Repository) GrantPermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO rbac.role_permissions (role_id, permission_id)
 		VALUES ($1, $2)
 		ON CONFLICT DO NOTHING
@@ -118,15 +126,15 @@ func (r *Repository) GrantPermission(ctx context.Context, roleID, permID uuid.UU
 	return err
 }
 
-func (r *Repository) RevokePermission(ctx context.Context, roleID, permID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *Repository) RevokePermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
 		DELETE FROM rbac.role_permissions WHERE role_id = $1 AND permission_id = $2
 	`, roleID, permID)
 	return err
 }
 
-func (r *Repository) AssignRole(ctx context.Context, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
 		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
 		VALUES ($1, $2, $3, $4)
 		ON CONFLICT DO NOTHING
@@ -134,8 +142,8 @@ func (r *Repository) AssignRole(ctx context.Context, userID, tenantID, roleID uu
 	return err
 }
 
-func (r *Repository) UnassignRole(ctx context.Context, userID, tenantID, roleID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
 		DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3
 	`, userID, tenantID, roleID)
 	return err
@@ -187,7 +195,8 @@ func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID 
 }
 
 // SeedBuiltins ensures the platform permissions + per-tenant default
-// roles exist. Idempotent; safe to call on every boot.
+// roles exist. Idempotent; safe to call on every boot. Manages its own
+// transaction since it isn't invoked from an HTTP handler.
 func (r *Repository) SeedBuiltins(ctx context.Context) error {
 	builtins := []struct{ Key, Desc string }{
 		{"tenant.read", "Read tenant configuration"},
@@ -198,10 +207,15 @@ func (r *Repository) SeedBuiltins(ctx context.Context) error {
 		{"role.write", "Manage roles and assignments"},
 		{"audit.read", "Read audit events"},
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	for _, b := range builtins {
-		if _, err := r.UpsertPermission(ctx, b.Key, b.Desc); err != nil {
+		if _, err := r.UpsertPermission(ctx, tx, b.Key, b.Desc); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }

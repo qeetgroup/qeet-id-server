@@ -1,7 +1,6 @@
 import {
   Avatar,
   AvatarFallback,
-  AvatarImage,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -12,20 +11,42 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  Skeleton,
   useSidebar,
 } from "@qeetid/ui";
+import { Link } from "@tanstack/react-router";
 import {
   BadgeCheckIcon,
-  BellIcon,
   ChevronsUpDownIcon,
   CreditCardIcon,
+  KeyRoundIcon,
+  Loader2Icon,
   LogOutIcon,
-  SparklesIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
-import type { CurrentUser } from "@/config/navigation";
 
-export function NavUser({ user }: { user: CurrentUser }) {
+import { useLogout, useMe } from "@/lib/auth";
+
+function initials(name: string) {
+  return (
+    name
+      .split(/[\s@.]+/)
+      .map((p) => p[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?"
+  );
+}
+
+export function NavUser() {
   const { isMobile } = useSidebar();
+  const meQ = useMe();
+  const logout = useLogout();
+
+  const name = meQ.data?.display_name || meQ.data?.email?.split("@")[0] || "—";
+  const email = meQ.data?.email ?? "";
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -34,12 +55,20 @@ export function NavUser({ user }: { user: CurrentUser }) {
             render={<SidebarMenuButton size="lg" className="aria-expanded:bg-muted" />}
           >
             <Avatar>
-              <AvatarImage src={user.avatar} alt={user.name} />
-              <AvatarFallback>CN</AvatarFallback>
+              <AvatarFallback>{initials(name)}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-start text-sm leading-tight">
-              <span className="truncate font-medium">{user.name}</span>
-              <span className="truncate text-xs">{user.email}</span>
+              {meQ.isLoading ? (
+                <>
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="mt-1 h-3 w-32" />
+                </>
+              ) : (
+                <>
+                  <span className="truncate font-medium">{name}</span>
+                  <span className="truncate text-xs text-muted-foreground">{email}</span>
+                </>
+              )}
             </div>
             <ChevronsUpDownIcon className="ms-auto size-4" />
           </DropdownMenuTrigger>
@@ -53,42 +82,53 @@ export function NavUser({ user }: { user: CurrentUser }) {
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
                   <Avatar>
-                    <AvatarImage src={user.avatar} alt={user.name} />
-                    <AvatarFallback>CN</AvatarFallback>
+                    <AvatarFallback>{initials(name)}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-start text-sm leading-tight">
-                    <span className="truncate font-medium">{user.name}</span>
-                    <span className="truncate text-xs">{user.email}</span>
+                    {meQ.isLoading ? (
+                      <>
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="mt-1 h-3 w-32" />
+                      </>
+                    ) : (
+                      <>
+                        <span className="truncate font-medium">{name}</span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {email}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <SparklesIcon />
-                Upgrade to Pro
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
+              <DropdownMenuItem render={<Link to="/settings/workspace/general" />}>
                 <BadgeCheckIcon />
-                Account
+                Workspace settings
               </DropdownMenuItem>
-              <DropdownMenuItem>
+              <DropdownMenuItem render={<Link to="/auth/mfa/totp" />}>
+                <ShieldCheckIcon />
+                Security & MFA
+              </DropdownMenuItem>
+              <DropdownMenuItem render={<Link to="/auth/api/keys" />}>
+                <KeyRoundIcon />
+                API Keys
+              </DropdownMenuItem>
+              <DropdownMenuItem render={<Link to="/settings/billing" />}>
                 <CreditCardIcon />
                 Billing
               </DropdownMenuItem>
-              <DropdownMenuItem>
-                <BellIcon />
-                Notifications
-              </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <LogOutIcon />
-              Log out
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => logout.mutate()}
+              disabled={logout.isPending}
+            >
+              {logout.isPending ? <Loader2Icon className="animate-spin" /> : <LogOutIcon />}
+              {logout.isPending ? "Signing out…" : "Sign out"}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

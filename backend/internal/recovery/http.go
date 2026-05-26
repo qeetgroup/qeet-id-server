@@ -52,7 +52,8 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ConfirmPasswordReset(r.Context(), in.Token, in.NewPassword); err != nil {
+	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if err := h.Service.ConfirmPasswordReset(r.Context(), in.Token, in.NewPassword, ac); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -87,7 +88,8 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.ConsumeMagicLink(r.Context(), in.Token)
+	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	res, err := h.Service.ConsumeMagicLink(r.Context(), in.Token, ac)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

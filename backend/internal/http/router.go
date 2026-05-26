@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/mfa"
 	"github.com/qeetgroup/qeet-identity/internal/oidc"
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
+	"github.com/qeetgroup/qeet-identity/internal/platform/health"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
 	"github.com/qeetgroup/qeet-identity/internal/policy"
@@ -52,6 +53,8 @@ type Deps struct {
 	Passkey      *passkey.Handler
 	Social       *social.Handler
 	Group        *group.Handler
+	Health       *health.Handler
+	InFlight     *httpx.InFlight
 
 	AuthVerifier   *httpx.AuthVerifier
 	AllowedOrigins []string
@@ -66,6 +69,8 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
+	r.Use(d.InFlight.Middleware)
+	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
 	r.Use(httpx.AccessLog)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.AllowedOrigins,
@@ -76,23 +81,21 @@ func NewRouter(d Deps) http.Handler {
 		MaxAge:           300,
 	}))
 
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"status":  "ok",
-			"service": d.ServiceName,
-			"env":     d.ServiceEnv,
-			"uptime":  time.Since(d.StartedAt).String(),
-		})
-	})
-	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": "ready"})
-	})
+	r.Get("/healthz", d.Health.Liveness)
+	r.Get("/readyz", d.Health.Readiness)
 
 	// OIDC well-known + JWKS live at the root, per spec.
 	d.OIDC.MountPublic(r)
 
 	// Per-IP throttle on auth-burning endpoints.
 	loginLimiter := ratelimit.New(5, 20)
+	// Per-tenant + per-user throttles on authenticated endpoints. Rates
+	// here are intentionally generous; the per-tenant bucket guards
+	// against a single tenant exhausting shared resources, the per-user
+	// bucket guards against a single compromised principal.
+	tenantLimiter := ratelimit.New(100, 500)
+	userLimiter := ratelimit.New(30, 100)
+	apiKeyLimiter := ratelimit.New(50, 200)
 
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).
@@ -108,6 +111,9 @@ func NewRouter(d Deps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(d.APIKeyService.Middleware)
 			r.Use(httpx.RequireAuth(d.AuthVerifier))
+			r.Use(tenantLimiter.MiddlewareBy("tenant", ratelimit.PerTenant))
+			r.Use(userLimiter.MiddlewareBy("user", ratelimit.PerUser))
+			r.Use(apiKeyLimiter.MiddlewareBy("apikey", ratelimit.PerAPIKey))
 
 			d.Auth.MountAuthed(r)
 			d.Tenant.Mount(r)

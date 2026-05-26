@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,29 @@ import (
 
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 )
+
+// parseUserMetadata decodes the JSONB metadata column. JSONB is guaranteed
+// valid JSON by Postgres, so a decode failure means data corruption or a
+// codec mismatch; we log it and fall back to an empty map so the user
+// remains usable for everything other than metadata.
+func parseUserMetadata(raw []byte, userID uuid.UUID) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		slog.Warn("user metadata unmarshal failed",
+			"user_id", userID,
+			"err", err,
+			"meta_bytes", len(raw),
+		)
+		return map[string]any{}
+	}
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
+}
 
 type Repository struct {
 	pool *pgxpool.Pool
@@ -39,12 +63,7 @@ func scanUser(row pgx.Row) (*User, error) {
 		}
 		return nil, err
 	}
-	if len(meta) > 0 {
-		_ = json.Unmarshal(meta, &u.Metadata)
-	}
-	if u.Metadata == nil {
-		u.Metadata = map[string]any{}
-	}
+	u.Metadata = parseUserMetadata(meta, u.ID)
 	return &u, nil
 }
 
@@ -177,12 +196,7 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			&u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, "", err
 		}
-		if len(meta) > 0 {
-			_ = json.Unmarshal(meta, &u.Metadata)
-		}
-		if u.Metadata == nil {
-			u.Metadata = map[string]any{}
-		}
+		u.Metadata = parseUserMetadata(meta, u.ID)
 		out = append(out, u)
 	}
 	var next string

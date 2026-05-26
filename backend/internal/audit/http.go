@@ -85,11 +85,13 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 }
 
 type Handler struct {
-	Reader *Reader
+	Reader   *Reader
+	Verifier *Verifier
 }
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/audit", h.list)
+	r.Get("/tenants/{tenantID}/audit/verify", h.verify)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -108,4 +110,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		"items":       out,
 		"next_cursor": next,
 	})
+}
+
+func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
+	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	res, err := h.Verifier.Verify(r.Context(), &tid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }

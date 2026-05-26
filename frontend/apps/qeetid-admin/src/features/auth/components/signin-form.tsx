@@ -67,9 +67,12 @@ export function LoginForm({
               <Field>
                 <div className="flex items-center">
                   <FieldLabel htmlFor="password">Password</FieldLabel>
-                  <a href="#" className="ms-auto text-sm underline-offset-2 hover:underline">
+                  <Link
+                    to="/forgot-password"
+                    className="ms-auto text-sm underline-offset-2 hover:underline"
+                  >
                     Forgot your password?
-                  </a>
+                  </Link>
                 </div>
                 <Input id="password" name="password" type="password" required />
               </Field>

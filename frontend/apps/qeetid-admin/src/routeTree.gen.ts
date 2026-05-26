@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthSignUpRouteImport } from './routes/_auth/sign-up'
 import { Route as AuthSignInRouteImport } from './routes/_auth/sign-in'
+import { Route as AuthForgotPasswordRouteImport } from './routes/_auth/forgot-password'
 import { Route as AppUsersRouteImport } from './routes/_app/users'
 import { Route as AppInvitationsRouteImport } from './routes/_app/invitations'
 import { Route as AppGroupsRouteImport } from './routes/_app/groups'
@@ -23,6 +24,7 @@ import { Route as AppActivityRouteImport } from './routes/_app/activity'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
 import { Route as AppUsersSessionsRouteImport } from './routes/_app/users/sessions'
 import { Route as AppUsersInvitationsRouteImport } from './routes/_app/users/invitations'
+import { Route as AppUsersImportRouteImport } from './routes/_app/users/import'
 import { Route as AppUsersDeletedRouteImport } from './routes/_app/users/deleted'
 import { Route as AppSettingsBrandingRouteImport } from './routes/_app/settings/branding'
 import { Route as AppSettingsBillingRouteImport } from './routes/_app/settings/billing'
@@ -89,6 +91,11 @@ const AuthSignInRoute = AuthSignInRouteImport.update({
   path: '/sign-in',
   getParentRoute: () => AuthRoute,
 } as any)
+const AuthForgotPasswordRoute = AuthForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
+  getParentRoute: () => AuthRoute,
+} as any)
 const AppUsersRoute = AppUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -132,6 +139,11 @@ const AppUsersSessionsRoute = AppUsersSessionsRouteImport.update({
 const AppUsersInvitationsRoute = AppUsersInvitationsRouteImport.update({
   id: '/invitations',
   path: '/invitations',
+  getParentRoute: () => AppUsersRoute,
+} as any)
+const AppUsersImportRoute = AppUsersImportRouteImport.update({
+  id: '/import',
+  path: '/import',
   getParentRoute: () => AppUsersRoute,
 } as any)
 const AppUsersDeletedRoute = AppUsersDeletedRouteImport.update({
@@ -370,6 +382,7 @@ export interface FileRoutesByFullPath {
   '/groups': typeof AppGroupsRoute
   '/invitations': typeof AppInvitationsRoute
   '/users': typeof AppUsersRouteWithChildren
+  '/forgot-password': typeof AuthForgotPasswordRoute
   '/sign-in': typeof AuthSignInRoute
   '/sign-up': typeof AuthSignUpRoute
   '/access/permissions': typeof AppAccessPermissionsRoute
@@ -388,6 +401,7 @@ export interface FileRoutesByFullPath {
   '/settings/billing': typeof AppSettingsBillingRoute
   '/settings/branding': typeof AppSettingsBrandingRoute
   '/users/deleted': typeof AppUsersDeletedRoute
+  '/users/import': typeof AppUsersImportRoute
   '/users/invitations': typeof AppUsersInvitationsRoute
   '/users/sessions': typeof AppUsersSessionsRoute
   '/auth/api/keys': typeof AppAuthApiKeysRoute
@@ -426,6 +440,7 @@ export interface FileRoutesByTo {
   '/groups': typeof AppGroupsRoute
   '/invitations': typeof AppInvitationsRoute
   '/users': typeof AppUsersRouteWithChildren
+  '/forgot-password': typeof AuthForgotPasswordRoute
   '/sign-in': typeof AuthSignInRoute
   '/sign-up': typeof AuthSignUpRoute
   '/access/permissions': typeof AppAccessPermissionsRoute
@@ -444,6 +459,7 @@ export interface FileRoutesByTo {
   '/settings/billing': typeof AppSettingsBillingRoute
   '/settings/branding': typeof AppSettingsBrandingRoute
   '/users/deleted': typeof AppUsersDeletedRoute
+  '/users/import': typeof AppUsersImportRoute
   '/users/invitations': typeof AppUsersInvitationsRoute
   '/users/sessions': typeof AppUsersSessionsRoute
   '/auth/api/keys': typeof AppAuthApiKeysRoute
@@ -485,6 +501,7 @@ export interface FileRoutesById {
   '/_app/groups': typeof AppGroupsRoute
   '/_app/invitations': typeof AppInvitationsRoute
   '/_app/users': typeof AppUsersRouteWithChildren
+  '/_auth/forgot-password': typeof AuthForgotPasswordRoute
   '/_auth/sign-in': typeof AuthSignInRoute
   '/_auth/sign-up': typeof AuthSignUpRoute
   '/_app/access/permissions': typeof AppAccessPermissionsRoute
@@ -503,6 +520,7 @@ export interface FileRoutesById {
   '/_app/settings/billing': typeof AppSettingsBillingRoute
   '/_app/settings/branding': typeof AppSettingsBrandingRoute
   '/_app/users/deleted': typeof AppUsersDeletedRoute
+  '/_app/users/import': typeof AppUsersImportRoute
   '/_app/users/invitations': typeof AppUsersInvitationsRoute
   '/_app/users/sessions': typeof AppUsersSessionsRoute
   '/_app/auth/api/keys': typeof AppAuthApiKeysRoute
@@ -543,6 +561,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/invitations'
     | '/users'
+    | '/forgot-password'
     | '/sign-in'
     | '/sign-up'
     | '/access/permissions'
@@ -561,6 +580,7 @@ export interface FileRouteTypes {
     | '/settings/billing'
     | '/settings/branding'
     | '/users/deleted'
+    | '/users/import'
     | '/users/invitations'
     | '/users/sessions'
     | '/auth/api/keys'
@@ -599,6 +619,7 @@ export interface FileRouteTypes {
     | '/groups'
     | '/invitations'
     | '/users'
+    | '/forgot-password'
     | '/sign-in'
     | '/sign-up'
     | '/access/permissions'
@@ -617,6 +638,7 @@ export interface FileRouteTypes {
     | '/settings/billing'
     | '/settings/branding'
     | '/users/deleted'
+    | '/users/import'
     | '/users/invitations'
     | '/users/sessions'
     | '/auth/api/keys'
@@ -657,6 +679,7 @@ export interface FileRouteTypes {
     | '/_app/groups'
     | '/_app/invitations'
     | '/_app/users'
+    | '/_auth/forgot-password'
     | '/_auth/sign-in'
     | '/_auth/sign-up'
     | '/_app/access/permissions'
@@ -675,6 +698,7 @@ export interface FileRouteTypes {
     | '/_app/settings/billing'
     | '/_app/settings/branding'
     | '/_app/users/deleted'
+    | '/_app/users/import'
     | '/_app/users/invitations'
     | '/_app/users/sessions'
     | '/_app/auth/api/keys'
@@ -748,6 +772,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthSignInRouteImport
       parentRoute: typeof AuthRoute
     }
+    '/_auth/forgot-password': {
+      id: '/_auth/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof AuthForgotPasswordRouteImport
+      parentRoute: typeof AuthRoute
+    }
     '/_app/users': {
       id: '/_app/users'
       path: '/users'
@@ -809,6 +840,13 @@ declare module '@tanstack/react-router' {
       path: '/invitations'
       fullPath: '/users/invitations'
       preLoaderRoute: typeof AppUsersInvitationsRouteImport
+      parentRoute: typeof AppUsersRoute
+    }
+    '/_app/users/import': {
+      id: '/_app/users/import'
+      path: '/import'
+      fullPath: '/users/import'
+      preLoaderRoute: typeof AppUsersImportRouteImport
       parentRoute: typeof AppUsersRoute
     }
     '/_app/users/deleted': {
@@ -1110,12 +1148,14 @@ declare module '@tanstack/react-router' {
 
 interface AppUsersRouteChildren {
   AppUsersDeletedRoute: typeof AppUsersDeletedRoute
+  AppUsersImportRoute: typeof AppUsersImportRoute
   AppUsersInvitationsRoute: typeof AppUsersInvitationsRoute
   AppUsersSessionsRoute: typeof AppUsersSessionsRoute
 }
 
 const AppUsersRouteChildren: AppUsersRouteChildren = {
   AppUsersDeletedRoute: AppUsersDeletedRoute,
+  AppUsersImportRoute: AppUsersImportRoute,
   AppUsersInvitationsRoute: AppUsersInvitationsRoute,
   AppUsersSessionsRoute: AppUsersSessionsRoute,
 }
@@ -1230,11 +1270,13 @@ const AppRouteChildren: AppRouteChildren = {
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 interface AuthRouteChildren {
+  AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
   AuthSignInRoute: typeof AuthSignInRoute
   AuthSignUpRoute: typeof AuthSignUpRoute
 }
 
 const AuthRouteChildren: AuthRouteChildren = {
+  AuthForgotPasswordRoute: AuthForgotPasswordRoute,
   AuthSignInRoute: AuthSignInRoute,
   AuthSignUpRoute: AuthSignUpRoute,
 }

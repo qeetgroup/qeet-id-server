@@ -35,6 +35,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "recharts": "catalog:",
+    "sonner": "^2.0.5",
     "tailwind-merge": "catalog:",
     "tailwindcss": "catalog:",
     "tw-animate-css": "catalog:",

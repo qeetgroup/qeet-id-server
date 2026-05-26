@@ -27,7 +27,7 @@ export function BrandHero({ className, ...props }: React.ComponentProps<"div">) 
         </g>
         <g fill="#ffffff" textAnchor="middle" style={{ fontFamily: "var(--font-display)" }}>
           <text x="400" y="500" fontSize="92" fontWeight="700" letterSpacing="-2">
-            Qeetid
+            Q.E.E.T ID
           </text>
           <text
             x="400"

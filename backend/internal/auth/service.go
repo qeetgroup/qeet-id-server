@@ -5,6 +5,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -13,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
+	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
 	"github.com/qeetgroup/qeet-identity/internal/platform/password"
 	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
 	"github.com/qeetgroup/qeet-identity/internal/user"
@@ -42,6 +45,16 @@ type SignupInput struct {
 	DisplayName string
 	IP          string
 	UserAgent   string
+}
+
+// RefreshInput carries the rotation request plus client context used for
+// auditing and theft-alert payloads. Callers that don't have IP/UA can
+// leave them empty.
+type RefreshInput struct {
+	RefreshToken string
+	IP           string
+	UserAgent    string
+	RequestID    string
 }
 
 // TenantBrief is the small tenant projection returned alongside Signup.
@@ -294,9 +307,11 @@ func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 
 // Refresh rotates the provided refresh token: the old row is marked used,
 // a new one is inserted, and a fresh access token is signed. Reuse of an
-// already-used token revokes the whole session (token theft mitigation).
-func (s *Service) Refresh(ctx context.Context, raw string) (*TokenPair, error) {
-	hash := tokens.HashRefresh(raw)
+// already-used token revokes the whole session (token theft mitigation)
+// and emits an audit event + outbox event so notifications (email,
+// webhook) can reach the user.
+func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, error) {
+	hash := tokens.HashRefresh(in.RefreshToken)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -334,9 +349,17 @@ func (s *Service) Refresh(ctx context.Context, raw string) (*TokenPair, error) {
 		return nil, errs.ErrUnauthorized.WithDetail("refresh token expired")
 	}
 	if usedAt != nil {
-		// Reuse — assume theft and revoke the entire session.
-		_, _ = tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at = NOW() WHERE id = $1`, sessionID)
-		_ = tx.Commit(ctx)
+		// Reuse — assume theft. Revoke the session, write an audit row,
+		// and enqueue an outbox event so downstream notifiers (email,
+		// webhook) can alert the user. All three happen atomically with
+		// the revocation so a partial failure leaves no inconsistent
+		// state.
+		if err := s.handleRefreshReuse(ctx, tx, userID, tenantID, sessionID, id, in); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
 		return nil, errs.ErrUnauthorized.WithDetail("refresh token reuse — session revoked")
 	}
 
@@ -376,6 +399,83 @@ func (s *Service) Refresh(ctx context.Context, raw string) (*TokenPair, error) {
 		SessionID:    sessionID,
 		UserID:       userID,
 	}, nil
+}
+
+// buildReuseEvents constructs the audit + outbox events emitted when a
+// refresh-token reuse is detected. Exported as a free function so tests
+// can verify the payload shape without a DB round-trip.
+func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in RefreshInput) (audit.Event, outbox.Event) {
+	meta := map[string]any{
+		"session_id":       sessionID,
+		"refresh_token_id": refreshID,
+		"reason":           "refresh_token_reuse",
+	}
+	if in.IP != "" {
+		meta["ip"] = in.IP
+	}
+	if in.UserAgent != "" {
+		meta["user_agent"] = in.UserAgent
+	}
+
+	tid := tenantID
+	uid := userID
+	sid := sessionID
+	ae := audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  &uid,
+		ActorType:    "system",
+		Action:       "auth.token_reuse_detected",
+		ResourceType: "session",
+		ResourceID:   &sid,
+		IP:           in.IP,
+		UserAgent:    in.UserAgent,
+		RequestID:    in.RequestID,
+		Metadata:     meta,
+	}
+	oe := outbox.Event{
+		AggregateID: sessionID,
+		Topic:       "auth",
+		EventType:   "auth.session.revoked_for_reuse",
+		Payload: map[string]any{
+			"user_id":    userID,
+			"tenant_id":  tenantID,
+			"session_id": sessionID,
+			"ip":         in.IP,
+			"user_agent": in.UserAgent,
+		},
+	}
+	return ae, oe
+}
+
+// handleRefreshReuse atomically records and revokes a stolen-token
+// situation. Caller has already loaded the offending refresh row and is
+// inside a transaction that will be committed only if every step here
+// succeeds — leaving no half-state if e.g. the outbox insert fails.
+func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
+	userID, tenantID, sessionID, refreshID uuid.UUID, in RefreshInput,
+) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.sessions SET revoked_at = NOW()
+		WHERE id = $1 AND revoked_at IS NULL
+	`, sessionID); err != nil {
+		return err
+	}
+
+	auditEvent, outboxEvent := buildReuseEvents(userID, tenantID, sessionID, refreshID, in)
+	if err := audit.Record(ctx, tx, auditEvent); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outboxEvent); err != nil {
+		return err
+	}
+
+	slog.Warn("refresh token reuse — session revoked",
+		"user_id", userID,
+		"tenant_id", tenantID,
+		"session_id", sessionID,
+		"ip", in.IP,
+	)
+	return nil
 }
 
 func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {

@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
   Textarea,
+  TimeSince,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -116,7 +117,7 @@ function RolesPage() {
                     <TableCell>
                       {r.is_system ? <Badge variant="muted">System</Badge> : <Badge variant="outline">Custom</Badge>}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{new Date(r.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell><TimeSince value={r.created_at} /></TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => setEditingRole(r)}>
                         Permissions
@@ -184,6 +185,7 @@ function CreateRoleSheet({ open, onOpenChange, tenantId, onCreated }: CreateRole
       onCreated();
       onOpenChange(false);
     },
+    meta: { successMessage: "Role created" },
   });
 
   return (
@@ -249,9 +251,11 @@ function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsShe
   // a row immediately hits the API.
   const grantM = useMutation({
     mutationFn: (permId: string) => api<void>(`/v1/roles/${role.id}/permissions/${permId}`, { method: "POST" }),
+    meta: { successMessage: "Permission granted" },
   });
   const revokeM = useMutation({
     mutationFn: (permId: string) => api<void>(`/v1/roles/${role.id}/permissions/${permId}`, { method: "DELETE" }),
+    meta: { successMessage: "Permission revoked" },
   });
 
   return (

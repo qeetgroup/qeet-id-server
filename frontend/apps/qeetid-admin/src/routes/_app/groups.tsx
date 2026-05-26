@@ -25,6 +25,7 @@ import {
   TableHeader,
   TableRow,
   Textarea,
+  TimeSince,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -116,7 +117,7 @@ function GroupsPage() {
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {g.parent_id ? g.parent_id.slice(0, 8) + "…" : "—"}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{new Date(g.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell><TimeSince value={g.created_at} /></TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => setExpandedId(g.id)}>
                         <UserPlusIcon /> Members

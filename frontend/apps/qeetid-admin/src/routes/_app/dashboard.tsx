@@ -13,6 +13,9 @@ import {
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { ActivityIcon, KeyRoundIcon, ShieldAlertIcon, UsersIcon } from "lucide-react";
+
+import { OnboardingChecklist } from "@/features/dashboard/components/onboarding-checklist";
+import { PasskeyPromptCard } from "@/features/dashboard/components/passkey-prompt-card";
 import {
   Area,
   AreaChart,
@@ -197,6 +200,8 @@ function StatCard({ icon, title, value, delta, positive, data, variant = "area" 
 function DashboardPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <OnboardingChecklist />
+      <PasskeyPromptCard />
       {/* KPI cards */}
       <div className="grid auto-rows-min gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard

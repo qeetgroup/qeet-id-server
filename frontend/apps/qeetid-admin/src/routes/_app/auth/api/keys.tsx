@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CopyableSecret,
   Field,
   FieldDescription,
   FieldError,
@@ -20,6 +21,7 @@ import {
   SheetHeader,
   SheetTitle,
   Skeleton,
+  StatusPill,
   Table,
   TableBody,
   TableCell,
@@ -27,9 +29,9 @@ import {
   TableHeader,
   TableRow,
 } from "@qeetid/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyIcon, KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -102,16 +104,7 @@ function ApiKeysPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex items-center gap-2">
-            <code className="flex-1 break-all rounded-md border bg-background px-3 py-2 text-sm">
-              {revealed.raw}
-            </code>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigator.clipboard.writeText(revealed.raw)}
-            >
-              <CopyIcon /> Copy
-            </Button>
+            <CopyableSecret value={revealed.raw} className="flex-1" />
             <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>
               Dismiss
             </Button>
@@ -176,13 +169,15 @@ function ApiKeysPage() {
                       {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never"}
                     </TableCell>
                     <TableCell>
-                      {k.revoked_at ? (
-                        <Badge variant="destructive">Revoked</Badge>
-                      ) : k.expires_at && new Date(k.expires_at) < new Date() ? (
-                        <Badge variant="warning">Expired</Badge>
-                      ) : (
-                        <Badge variant="success">Active</Badge>
-                      )}
+                      <StatusPill
+                        status={
+                          k.revoked_at
+                            ? "revoked"
+                            : k.expires_at && new Date(k.expires_at) < new Date()
+                              ? "expired"
+                              : "active"
+                        }
+                      />
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -190,7 +185,11 @@ function ApiKeysPage() {
                         size="sm"
                         disabled={!!k.revoked_at || revokeM.isPending}
                         onClick={() => {
-                          if (confirm(`Revoke "${k.name}"? Any service using it will lose access immediately.`)) {
+                          if (
+                            confirm(
+                              `Revoke "${k.name}"? Any service using it will lose access immediately.`,
+                            )
+                          ) {
                             revokeM.mutate(k.id);
                           }
                         }}
@@ -230,8 +229,12 @@ type CreateApiKeyResponse = ApiKey & { raw: string };
 
 function CreateApiKeySheet({ open, onOpenChange, tenantId, onCreated }: CreateApiKeySheetProps) {
   const createM = useMutation({
-    mutationFn: (body: { tenant_id: string; name: string; scopes?: string[]; expires_at?: string }) =>
-      api<CreateApiKeyResponse>("/v1/api-keys", { method: "POST", body }),
+    mutationFn: (body: {
+      tenant_id: string;
+      name: string;
+      scopes?: string[];
+      expires_at?: string;
+    }) => api<CreateApiKeyResponse>("/v1/api-keys", { method: "POST", body }),
     onSuccess: (res) => {
       onCreated({ name: res.name, raw: res.raw });
       onOpenChange(false);

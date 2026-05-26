@@ -6,12 +6,13 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CopyableSecret,
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-  Input,
+  OTPInput,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
@@ -32,6 +33,7 @@ function MfaTotpPage() {
   const [stage, setStage] = useState<Stage>("idle");
   const [enrollment, setEnrollment] = useState<EnrollStart | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [code, setCode] = useState("");
 
   const startM = useMutation({
     mutationFn: () => api<EnrollStart>("/v1/mfa/totp/enroll/start", { method: "POST", body: {} }),
@@ -101,56 +103,44 @@ function MfaTotpPage() {
             <FieldGroup>
               <Field>
                 <FieldLabel>otpauth:// URI</FieldLabel>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 break-all rounded-md border bg-muted px-3 py-2 text-xs">
-                    {enrollment.provisioning_url}
-                  </code>
-                  <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(enrollment.provisioning_url)}>
-                    <CopyIcon />
-                  </Button>
-                </div>
+                <CopyableSecret value={enrollment.provisioning_url} size="sm" />
                 <FieldDescription>
                   Most authenticators support pasting this URL. Or generate a QR from it via your password manager.
                 </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel>Manual secret (base32)</FieldLabel>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 break-all rounded-md border bg-muted px-3 py-2 text-xs">{enrollment.secret}</code>
-                  <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(enrollment.secret)}>
-                    <CopyIcon />
-                  </Button>
-                </div>
+                <CopyableSecret value={enrollment.secret} size="sm" />
                 <FieldDescription>Use this if your app asks for a raw shared secret instead.</FieldDescription>
               </Field>
 
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  const data = new FormData(e.currentTarget);
-                  confirmM.mutate(String(data.get("code") ?? "").trim());
+                  if (code.length === 6) confirmM.mutate(code);
                 }}
                 className="contents"
               >
                 <Field>
-                  <FieldLabel htmlFor="code">Verification code</FieldLabel>
-                  <Input
-                    id="code"
-                    name="code"
-                    inputMode="numeric"
-                    pattern="\d{6}"
-                    maxLength={6}
+                  <FieldLabel>Verification code</FieldLabel>
+                  <OTPInput
+                    value={code}
+                    onChange={setCode}
+                    onComplete={(v) => confirmM.mutate(v)}
                     autoFocus
-                    placeholder="123456"
-                    required
+                    aria-label="TOTP verification code"
+                    aria-invalid={!!confirmM.error}
                   />
+                  <FieldDescription>
+                    Six digits — paste the full code or type one digit at a time.
+                  </FieldDescription>
                 </Field>
                 {confirmM.error && <Field><FieldError>{(confirmM.error as ApiError).message}</FieldError></Field>}
                 <Field className="flex flex-row justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => setStage("idle")}>
+                  <Button type="button" variant="outline" onClick={() => { setStage("idle"); setCode(""); }}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={confirmM.isPending}>
+                  <Button type="submit" disabled={confirmM.isPending || code.length !== 6}>
                     {confirmM.isPending && <Loader2Icon className="animate-spin" />}
                     {confirmM.isPending ? "Verifying…" : "Confirm"}
                   </Button>

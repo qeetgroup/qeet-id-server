@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
@@ -37,6 +38,8 @@ type Repository struct {
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
+
+func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
 	var p Policy
@@ -78,9 +81,9 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	return &p, nil
 }
 
-func (r *Repository) Upsert(ctx context.Context, p Policy) error {
+func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) error {
 	settings, _ := json.Marshal(p.Settings)
-	_, err := r.pool.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
 		INSERT INTO tenant.security_policies (
 			tenant_id, ip_allowlist, ip_denylist,
 			password_min_length, password_complexity,
@@ -156,6 +159,18 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
+func auditActor(r *http.Request) (*uuid.UUID, string) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil {
+		return nil, "system"
+	}
+	at := p.ActorType
+	if at == "" {
+		at = "user"
+	}
+	return p.UserID, at
+}
+
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
@@ -168,7 +183,41 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
-	if err := h.Repo.Upsert(r.Context(), in); err != nil {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Repo.Upsert(ctx, tx, in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	target := tid
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &target,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "security_policy.updated",
+		ResourceType: "tenant",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata: map[string]any{
+			"ip_allowlist_count":  len(in.IPAllowlist),
+			"ip_denylist_count":   len(in.IPDenylist),
+			"mfa_enforcement":     in.MFAEnforcement,
+			"password_min_length": in.PasswordMinLength,
+			"session_max_age_s":   int64(in.SessionMaxAge.Seconds()),
+		},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

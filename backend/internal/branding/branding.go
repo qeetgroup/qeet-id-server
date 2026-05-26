@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
@@ -34,6 +35,8 @@ type Repository struct {
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
+
+func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, error) {
 	var b Branding
@@ -59,9 +62,9 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, er
 	return &b, nil
 }
 
-func (r *Repository) Upsert(ctx context.Context, b Branding) error {
+func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	settings, _ := json.Marshal(b.Settings)
-	_, err := r.pool.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
 		INSERT INTO tenant.branding (
 			tenant_id, logo_url, primary_color, secondary_color, custom_domain,
 			email_from_name, email_from_address, settings
@@ -103,6 +106,18 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, b)
 }
 
+func auditActor(r *http.Request) (*uuid.UUID, string) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil {
+		return nil, "system"
+	}
+	at := p.ActorType
+	if at == "" {
+		at = "user"
+	}
+	return p.UserID, at
+}
+
 func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
@@ -115,7 +130,42 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
-	if err := h.Repo.Upsert(r.Context(), in); err != nil {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Repo.Upsert(ctx, tx, in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	target := tid
+	meta := map[string]any{}
+	if in.CustomDomain != nil {
+		meta["custom_domain"] = *in.CustomDomain
+	}
+	if in.PrimaryColor != nil {
+		meta["primary_color"] = *in.PrimaryColor
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &target,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "branding.updated",
+		ResourceType: "tenant",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     meta,
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

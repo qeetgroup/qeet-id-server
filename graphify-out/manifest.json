@@ -1,0 +1,2662 @@
+{
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/turbo.json": {
+    "mtime": 1779337314.0569277,
+    "ast_hash": "4ebaaa66c5786b38dd16d3d3bd8eeadf",
+    "semantic_hash": "4ebaaa66c5786b38dd16d3d3bd8eeadf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/package.json": {
+    "mtime": 1779712168.4668145,
+    "ast_hash": "82814e968578bb4b6c1a99ca16abd047",
+    "semantic_hash": "82814e968578bb4b6c1a99ca16abd047"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/eslint.config.mjs": {
+    "mtime": 1779712168.4653854,
+    "ast_hash": "87ffe37c7d51090623bc7812c2728132",
+    "semantic_hash": "87ffe37c7d51090623bc7812c2728132"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-tsconfig/react-vite.json": {
+    "mtime": 1779336999.3353264,
+    "ast_hash": "883762c7aac91febb37b8be402683db9",
+    "semantic_hash": "883762c7aac91febb37b8be402683db9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-tsconfig/next.json": {
+    "mtime": 1779337004.439215,
+    "ast_hash": "45dd943a401f2e2ee4e8d9aa61fe74b5",
+    "semantic_hash": "45dd943a401f2e2ee4e8d9aa61fe74b5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-tsconfig/package.json": {
+    "mtime": 1779712168.4686902,
+    "ast_hash": "5e541e4852f7c277fb687e36c52f0370",
+    "semantic_hash": "5e541e4852f7c277fb687e36c52f0370"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-tsconfig/base.json": {
+    "mtime": 1779336994.3609436,
+    "ast_hash": "1ab30e910dce416c8544e5e5fea3779e",
+    "semantic_hash": "1ab30e910dce416c8544e5e5fea3779e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-tsconfig/node.json": {
+    "mtime": 1779337009.4056993,
+    "ast_hash": "c971998c604bdcca96bfc77b99467dbc",
+    "semantic_hash": "c971998c604bdcca96bfc77b99467dbc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/tsconfig.app.json": {
+    "mtime": 1779712168.4706488,
+    "ast_hash": "cd2356bed5c79f52f1fce4f4804f68e5",
+    "semantic_hash": "cd2356bed5c79f52f1fce4f4804f68e5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/package.json": {
+    "mtime": 1779712168.4718595,
+    "ast_hash": "de418e99cedc08996b013f20391383fa",
+    "semantic_hash": "de418e99cedc08996b013f20391383fa"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/components.json": {
+    "mtime": 1779324254.302143,
+    "ast_hash": "00babc0c56a180949480b67f609dc567",
+    "semantic_hash": "00babc0c56a180949480b67f609dc567"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/tsconfig.json": {
+    "mtime": 1779430261.1921415,
+    "ast_hash": "a2d19a20e5de102a2d5cc5cd1239b25e",
+    "semantic_hash": "a2d19a20e5de102a2d5cc5cd1239b25e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/index.ts": {
+    "mtime": 1779720820.132714,
+    "ast_hash": "1c7c90c296a755c5719ad55022f3a223",
+    "semantic_hash": "1c7c90c296a755c5719ad55022f3a223"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/theme-provider.tsx": {
+    "mtime": 1779430972.1781557,
+    "ast_hash": "04dd6a834366fe5a8731b2e273f775c6",
+    "semantic_hash": "04dd6a834366fe5a8731b2e273f775c6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/card.tsx": {
+    "mtime": 1779330721.4185379,
+    "ast_hash": "77a10bd948ca424972a28e704a3df604",
+    "semantic_hash": "77a10bd948ca424972a28e704a3df604"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/slider.tsx": {
+    "mtime": 1779325110.8977413,
+    "ast_hash": "bd24325cbce23d452a7ee912919e2926",
+    "semantic_hash": "bd24325cbce23d452a7ee912919e2926"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/chart.tsx": {
+    "mtime": 1779430825.5473714,
+    "ast_hash": "9ec6cb8672fa0bd904ec8d00e2aa087b",
+    "semantic_hash": "9ec6cb8672fa0bd904ec8d00e2aa087b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/sheet.tsx": {
+    "mtime": 1779430260.92647,
+    "ast_hash": "525ccadea39dde5a19cc5463a86e132d",
+    "semantic_hash": "525ccadea39dde5a19cc5463a86e132d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/field.tsx": {
+    "mtime": 1779330726.5149841,
+    "ast_hash": "934f9473271079300e4a4d85f2fb2d1c",
+    "semantic_hash": "934f9473271079300e4a4d85f2fb2d1c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/label.tsx": {
+    "mtime": 1779355547.9571683,
+    "ast_hash": "a70440da86bfc6a07f15197cca48cb08",
+    "semantic_hash": "a70440da86bfc6a07f15197cca48cb08"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/tooltip.tsx": {
+    "mtime": 1779430260.9887326,
+    "ast_hash": "a85b1923e3a19f49be005c1799657455",
+    "semantic_hash": "a85b1923e3a19f49be005c1799657455"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/switch.tsx": {
+    "mtime": 1779430260.9788766,
+    "ast_hash": "b86eded73142152918e3f3b49c7f04bc",
+    "semantic_hash": "b86eded73142152918e3f3b49c7f04bc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/breadcrumb.tsx": {
+    "mtime": 1779430260.7663345,
+    "ast_hash": "1e293c94338e66bf46d647f5af0cde6b",
+    "semantic_hash": "1e293c94338e66bf46d647f5af0cde6b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/avatar.tsx": {
+    "mtime": 1779330675.4466848,
+    "ast_hash": "0bdbdaf9143fe47912c52acbcdcc2390",
+    "semantic_hash": "0bdbdaf9143fe47912c52acbcdcc2390"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/badge.tsx": {
+    "mtime": 1779720815.9396799,
+    "ast_hash": "01428d114f525f4fe31175c80fef08bc",
+    "semantic_hash": "01428d114f525f4fe31175c80fef08bc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/sidebar.tsx": {
+    "mtime": 1779430260.9634597,
+    "ast_hash": "ef913d88e6310cac484308194e76628f",
+    "semantic_hash": "ef913d88e6310cac484308194e76628f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/table.tsx": {
+    "mtime": 1779720810.1958709,
+    "ast_hash": "9a50d6a5577dafcf9fda238932b1dacd",
+    "semantic_hash": "9a50d6a5577dafcf9fda238932b1dacd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/separator.tsx": {
+    "mtime": 1779330675.002521,
+    "ast_hash": "3de2dca3e47ab29c4b1f632671545628",
+    "semantic_hash": "3de2dca3e47ab29c4b1f632671545628"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/button.tsx": {
+    "mtime": 1779330672.877327,
+    "ast_hash": "6707c6122b78db9c74788c6b2a92ba27",
+    "semantic_hash": "6707c6122b78db9c74788c6b2a92ba27"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/collapsible.tsx": {
+    "mtime": 1779330675.2942474,
+    "ast_hash": "bc00817a4471ae1d76774aa4c50a7c31",
+    "semantic_hash": "bc00817a4471ae1d76774aa4c50a7c31"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/dropdown-menu.tsx": {
+    "mtime": 1779430260.8730972,
+    "ast_hash": "40fc75fe6ac070af494e5d1997cc62c2",
+    "semantic_hash": "40fc75fe6ac070af494e5d1997cc62c2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/select.tsx": {
+    "mtime": 1779430260.9114237,
+    "ast_hash": "349079254a0737bf0d6a71b66d625124",
+    "semantic_hash": "349079254a0737bf0d6a71b66d625124"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/textarea.tsx": {
+    "mtime": 1779325110.900163,
+    "ast_hash": "8d5d973805b3d4b00dfdfcf0d2c72ea6",
+    "semantic_hash": "8d5d973805b3d4b00dfdfcf0d2c72ea6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/input.tsx": {
+    "mtime": 1779330674.9486992,
+    "ast_hash": "0607b02d99a2e92f9509223f36ccc6ec",
+    "semantic_hash": "0607b02d99a2e92f9509223f36ccc6ec"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/components/ui/skeleton.tsx": {
+    "mtime": 1779330675.0705729,
+    "ast_hash": "0e6e825c43d858d98c9903f4da975382",
+    "semantic_hash": "0e6e825c43d858d98c9903f4da975382"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/hooks/use-mobile.ts": {
+    "mtime": 1779330675.167323,
+    "ast_hash": "209b5193af16624cdd89d3591480dd48",
+    "semantic_hash": "209b5193af16624cdd89d3591480dd48"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/src/lib/utils.ts": {
+    "mtime": 1779323368.5367398,
+    "ast_hash": "5a6fd53fdcf2be529e9cc0b718fde352",
+    "semantic_hash": "5a6fd53fdcf2be529e9cc0b718fde352"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/postcss.config.mjs": {
+    "mtime": 1779430260.5742996,
+    "ast_hash": "239f3ebf717465dc636818a1a619398d",
+    "semantic_hash": "239f3ebf717465dc636818a1a619398d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/next.config.mjs": {
+    "mtime": 1779430260.5659153,
+    "ast_hash": "64c557aa0ce484460b159cef744d5732",
+    "semantic_hash": "64c557aa0ce484460b159cef744d5732"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/next-env.d.ts": {
+    "mtime": 1779716585.0703788,
+    "ast_hash": "d0f8375ae1199dc7acd3977fc33b78b8",
+    "semantic_hash": "d0f8375ae1199dc7acd3977fc33b78b8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/package.json": {
+    "mtime": 1779712168.4727633,
+    "ast_hash": "65a109dab7d2f4ab0d2d2c5ca8f7c68a",
+    "semantic_hash": "65a109dab7d2f4ab0d2d2c5ca8f7c68a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/proxy.ts": {
+    "mtime": 1779430260.5789514,
+    "ast_hash": "6b03d8dc082791180f414061cb189f3f",
+    "semantic_hash": "6b03d8dc082791180f414061cb189f3f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/tsconfig.json": {
+    "mtime": 1779712168.4739554,
+    "ast_hash": "4e84d862eeabf167862dee2a6dea388b",
+    "semantic_hash": "4e84d862eeabf167862dee2a6dea388b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/source.config.ts": {
+    "mtime": 1779430260.5872533,
+    "ast_hash": "bffdd27596eada4177bf3a13d5a4a414",
+    "semantic_hash": "bffdd27596eada4177bf3a13d5a4a414"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/.source/source.config.mjs": {
+    "mtime": 1779717165.1412528,
+    "ast_hash": "c5d7828f38b4d978e5c965e7e09ddfbb",
+    "semantic_hash": "c5d7828f38b4d978e5c965e7e09ddfbb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/.source/dynamic.ts": {
+    "mtime": 1779717165.4633114,
+    "ast_hash": "6521c8a5255d3b06ea9ecd7e6f905ccc",
+    "semantic_hash": "6521c8a5255d3b06ea9ecd7e6f905ccc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/.source/browser.ts": {
+    "mtime": 1779717165.463311,
+    "ast_hash": "ed32df6ea166e3eb678374ab9e9a2c31",
+    "semantic_hash": "ed32df6ea166e3eb678374ab9e9a2c31"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/.source/server.ts": {
+    "mtime": 1779717165.463314,
+    "ast_hash": "ecdaea0b7251c1adf0ca665d8fde2d04",
+    "semantic_hash": "ecdaea0b7251c1adf0ca665d8fde2d04"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/meta.json": {
+    "mtime": 1779367567.4809368,
+    "ast_hash": "0e2473d1b8e35470e99ef81bfa662cf1",
+    "semantic_hash": "0e2473d1b8e35470e99ef81bfa662cf1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sdks/meta.json": {
+    "mtime": 1779430260.4941533,
+    "ast_hash": "e8c57a21529e33bb638e1de931f9fd93",
+    "semantic_hash": "e8c57a21529e33bb638e1de931f9fd93"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/meta.json": {
+    "mtime": 1779367967.9058473,
+    "ast_hash": "ae64d868a5f02c15a1f52a0f05a3bb6c",
+    "semantic_hash": "ae64d868a5f02c15a1f52a0f05a3bb6c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/meta.json": {
+    "mtime": 1779367635.5086603,
+    "ast_hash": "008424df365dc62ef2bcac11b41349fc",
+    "semantic_hash": "008424df365dc62ef2bcac11b41349fc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/layout.tsx": {
+    "mtime": 1779712168.5260336,
+    "ast_hash": "519eb9c50390cd674cef742f56746ad8",
+    "semantic_hash": "519eb9c50390cd674cef742f56746ad8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/llms.txt/route.ts": {
+    "mtime": 1779430260.7775,
+    "ast_hash": "b8a27b17bdecd71d17bec4081517a47d",
+    "semantic_hash": "b8a27b17bdecd71d17bec4081517a47d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/llms.mdx/docs/[[...slug]]/route.ts": {
+    "mtime": 1779430260.770618,
+    "ast_hash": "bbde3346edcaee4b697fe7281bcb19f4",
+    "semantic_hash": "bbde3346edcaee4b697fe7281bcb19f4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/(home)/layout.tsx": {
+    "mtime": 1779430260.5939388,
+    "ast_hash": "0417a34ebf56eae5e45789dffab44881",
+    "semantic_hash": "0417a34ebf56eae5e45789dffab44881"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/(home)/page.tsx": {
+    "mtime": 1779712168.5277462,
+    "ast_hash": "46a6105cfce6caa090a24c2debcb8d22",
+    "semantic_hash": "46a6105cfce6caa090a24c2debcb8d22"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/docs/layout.tsx": {
+    "mtime": 1779430260.6693697,
+    "ast_hash": "831c4ca6a9ca776bfe439306c461fa6c",
+    "semantic_hash": "831c4ca6a9ca776bfe439306c461fa6c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/docs/[[...slug]]/page.tsx": {
+    "mtime": 1779430260.6631129,
+    "ast_hash": "450cb29c619c677d7171c191ad746412",
+    "semantic_hash": "450cb29c619c677d7171c191ad746412"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/llms-full.txt/route.ts": {
+    "mtime": 1779430260.7555854,
+    "ast_hash": "44a932813fe6d88f87dcaf6ff9405cf2",
+    "semantic_hash": "44a932813fe6d88f87dcaf6ff9405cf2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/api/chat/route.ts": {
+    "mtime": 1779430260.6508536,
+    "ast_hash": "19d0539c5085a75bdb0eeaf9379eada6",
+    "semantic_hash": "19d0539c5085a75bdb0eeaf9379eada6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/api/search/route.ts": {
+    "mtime": 1779430260.6549504,
+    "ast_hash": "24ca93a87f9669252a8de3960e498fe6",
+    "semantic_hash": "24ca93a87f9669252a8de3960e498fe6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/app/og/docs/[...slug]/route.tsx": {
+    "mtime": 1779430260.7946494,
+    "ast_hash": "155942b4b998c27637adc37791598ca0",
+    "semantic_hash": "155942b4b998c27637adc37791598ca0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/mdx.tsx": {
+    "mtime": 1779430260.9002624,
+    "ast_hash": "98c8e2ee71a822f22f729b66e85851ff",
+    "semantic_hash": "98c8e2ee71a822f22f729b66e85851ff"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/markdown.tsx": {
+    "mtime": 1779430260.896627,
+    "ast_hash": "acf6a8199b9bb35a90e95ddcd5df44f2",
+    "semantic_hash": "acf6a8199b9bb35a90e95ddcd5df44f2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/ui/button.tsx": {
+    "mtime": 1779430260.9061143,
+    "ast_hash": "7de478198eddec81b1d640dbdb816d2b",
+    "semantic_hash": "7de478198eddec81b1d640dbdb816d2b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/ai/search.tsx": {
+    "mtime": 1779430260.8327177,
+    "ast_hash": "8481cc3e3cd904437003c8b06e2defd5",
+    "semantic_hash": "8481cc3e3cd904437003c8b06e2defd5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/effects/cycling-text.tsx": {
+    "mtime": 1779430260.86601,
+    "ast_hash": "d85802aa508a4c80af90f8bbcdf39faf",
+    "semantic_hash": "d85802aa508a4c80af90f8bbcdf39faf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/effects/ripple.tsx": {
+    "mtime": 1779430260.884261,
+    "ast_hash": "b4efba1f9d09fc16ebbb26587fda58bf",
+    "semantic_hash": "b4efba1f9d09fc16ebbb26587fda58bf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/effects/border-beam.tsx": {
+    "mtime": 1779430260.8455455,
+    "ast_hash": "1049062e822270d16cbd459c768ca133",
+    "semantic_hash": "1049062e822270d16cbd459c768ca133"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/effects/marquee.tsx": {
+    "mtime": 1779430825.5465233,
+    "ast_hash": "b75e28ac56d2d3cfee9ebd75fe3c563b",
+    "semantic_hash": "b75e28ac56d2d3cfee9ebd75fe3c563b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/effects/code-mockup.tsx": {
+    "mtime": 1779430260.8589141,
+    "ast_hash": "4b41c966d9f26d64d777d6c76a2b242f",
+    "semantic_hash": "4b41c966d9f26d64d777d6c76a2b242f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/components/effects/number-ticker.tsx": {
+    "mtime": 1779430260.878196,
+    "ast_hash": "9b52c263b0c9a037de5786f649d023ce",
+    "semantic_hash": "9b52c263b0c9a037de5786f649d023ce"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/lib/layout.shared.tsx": {
+    "mtime": 1779430260.9139307,
+    "ast_hash": "77fca672221a55f35507fee62fcc904a",
+    "semantic_hash": "77fca672221a55f35507fee62fcc904a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/lib/source.ts": {
+    "mtime": 1779430260.9226513,
+    "ast_hash": "591cc55b069f68115026d383f48d7fda",
+    "semantic_hash": "591cc55b069f68115026d383f48d7fda"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/lib/cn.ts": {
+    "mtime": 1779430260.910227,
+    "ast_hash": "9643788bd5c5d0b233e0077cfd081647",
+    "semantic_hash": "9643788bd5c5d0b233e0077cfd081647"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/src/lib/shared.ts": {
+    "mtime": 1779712168.5473704,
+    "ast_hash": "e1665ba549b7243f9a4834bda783ff12",
+    "semantic_hash": "e1665ba549b7243f9a4834bda783ff12"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.cta.json": {
+    "mtime": 1779712168.572484,
+    "ast_hash": "ddab7bc45bba69334c25ed0c67dcd79f",
+    "semantic_hash": "ddab7bc45bba69334c25ed0c67dcd79f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/package.json": {
+    "mtime": 1779712168.5744398,
+    "ast_hash": "11e86b8ac600d9c8e6a881256be75d6f",
+    "semantic_hash": "11e86b8ac600d9c8e6a881256be75d6f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/tsconfig.json": {
+    "mtime": 1779712168.5774684,
+    "ast_hash": "22f2b6032fa14c0a01727ca04d782dc9",
+    "semantic_hash": "22f2b6032fa14c0a01727ca04d782dc9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/vite.config.ts": {
+    "mtime": 1779352961.722317,
+    "ast_hash": "52e407ef9ac8a9581a4b8215b1b58cb8",
+    "semantic_hash": "52e407ef9ac8a9581a4b8215b1b58cb8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/nitro.json": {
+    "mtime": 1779730548.7155464,
+    "ast_hash": "056e5c596946cf068d7ccc902142096a",
+    "semantic_hash": "056e5c596946cf068d7ccc902142096a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/__23tanstack-start-plugin-adapters-BzCA6dXo.mjs": {
+    "mtime": 1779730548.5981963,
+    "ast_hash": "806ab4b032ca3cd3db3602062831d02a",
+    "semantic_hash": "806ab4b032ca3cd3db3602062831d02a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_app-BIfTfyZ2.mjs": {
+    "mtime": 1779730548.598421,
+    "ast_hash": "b369a5f701996533ab1387b42b224b30",
+    "semantic_hash": "b369a5f701996533ab1387b42b224b30"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_tanstack-start-manifest_v-C2B8bOnj.mjs": {
+    "mtime": 1779730548.7039177,
+    "ast_hash": "598671aef9f286da6ac2c50aeb289f2d",
+    "semantic_hash": "598671aef9f286da6ac2c50aeb289f2d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_-ZUYMJrHS.mjs": {
+    "mtime": 1779730548.5977378,
+    "ast_hash": "84a41bfce83a6b534b48dd5a7b366731",
+    "semantic_hash": "84a41bfce83a6b534b48dd5a7b366731"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_runtime.mjs": {
+    "mtime": 1779730548.633982,
+    "ast_hash": "5cc95d0e77d466fc0e6f3b29293c8593",
+    "semantic_hash": "5cc95d0e77d466fc0e6f3b29293c8593"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_-BtDiypfh.mjs": {
+    "mtime": 1779730548.597517,
+    "ast_hash": "ab8f87f95ff611f4735a35a6ff375482",
+    "semantic_hash": "ab8f87f95ff611f4735a35a6ff375482"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/index.mjs": {
+    "mtime": 1779730548.5972698,
+    "ast_hash": "260aae5a4c6cb9a1cf5b6abb751556d7",
+    "semantic_hash": "260aae5a4c6cb9a1cf5b6abb751556d7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_auth-D4kXzTqt.mjs": {
+    "mtime": 1779730548.5986328,
+    "ast_hash": "88583fb66cdb3284386683429d02ef3a",
+    "semantic_hash": "88583fb66cdb3284386683429d02ef3a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_chunks/ssr-renderer.mjs": {
+    "mtime": 1779730548.5990138,
+    "ast_hash": "684130c2825a90b9c0a83788d94d5f57",
+    "semantic_hash": "684130c2825a90b9c0a83788d94d5f57"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/roles-PnbB2LFA.mjs": {
+    "mtime": 1779730548.6783931,
+    "ast_hash": "df0ce0038aedf54e1d30244da303b38c",
+    "semantic_hash": "df0ce0038aedf54e1d30244da303b38c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/activity-Cu-AKAna.mjs": {
+    "mtime": 1779730548.6347218,
+    "ast_hash": "67b1855f2b5391b76ae1ecff4ff01d46",
+    "semantic_hash": "67b1855f2b5391b76ae1ecff4ff01d46"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/totp-DM6XblBW.mjs": {
+    "mtime": 1779730548.702914,
+    "ast_hash": "6cbbc0f9701466ee281623a8b6fac282",
+    "semantic_hash": "6cbbc0f9701466ee281623a8b6fac282"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/auth-CEB4uc_P.mjs": {
+    "mtime": 1779730548.6416051,
+    "ast_hash": "e296717562f606655efa273acc8bb467",
+    "semantic_hash": "e296717562f606655efa273acc8bb467"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/users-CMU9WTbU.mjs": {
+    "mtime": 1779730548.7033896,
+    "ast_hash": "aba01874b1478842d1eda94852e4124e",
+    "semantic_hash": "aba01874b1478842d1eda94852e4124e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/dashboard-BIN5d9MU.mjs": {
+    "mtime": 1779730548.6515572,
+    "ast_hash": "e4a32f7d77a0dead7317e21e8f4c91fa",
+    "semantic_hash": "e4a32f7d77a0dead7317e21e8f4c91fa"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/analytics-C3inb62T.mjs": {
+    "mtime": 1779730548.6371796,
+    "ast_hash": "f1168ac92c6445d5ca63789ce7697e98",
+    "semantic_hash": "f1168ac92c6445d5ca63789ce7697e98"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/ip-allowlist-CBEEdcAx.mjs": {
+    "mtime": 1779730548.654696,
+    "ast_hash": "e1d403c90e3c30d29aeab669beba740a",
+    "semantic_hash": "e1d403c90e3c30d29aeab669beba740a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/branding-CCwmSe_G.mjs": {
+    "mtime": 1779730548.651295,
+    "ast_hash": "029ec112e261ec0fe848ba824e995de4",
+    "semantic_hash": "029ec112e261ec0fe848ba824e995de4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/magic-links-DdBR47jD.mjs": {
+    "mtime": 1779730548.66214,
+    "ast_hash": "f1472f078b80f271278b4af984edecc0",
+    "semantic_hash": "f1472f078b80f271278b4af984edecc0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/src-D9dsuOYo.mjs": {
+    "mtime": 1779730548.6948228,
+    "ast_hash": "ac61d0ab3988852645c3aa21f16f129b",
+    "semantic_hash": "ac61d0ab3988852645c3aa21f16f129b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/page-header-BdaXzbTL.mjs": {
+    "mtime": 1779730548.6638248,
+    "ast_hash": "ce6fcdc9447d7e2ab10f5d859ea7d444",
+    "semantic_hash": "ce6fcdc9447d7e2ab10f5d859ea7d444"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/sms-email-CwT6TDM5.mjs": {
+    "mtime": 1779730548.688881,
+    "ast_hash": "e32b51551e64b69cc4ace9670ed0fa78",
+    "semantic_hash": "e32b51551e64b69cc4ace9670ed0fa78"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/domains-B761dnGL.mjs": {
+    "mtime": 1779730548.6519842,
+    "ast_hash": "595390a87946752f119ea9862ce9d96e",
+    "semantic_hash": "595390a87946752f119ea9862ce9d96e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/saml-B53WsL6f.mjs": {
+    "mtime": 1779730548.681536,
+    "ast_hash": "cd1a4b61bd1a56858b5e1613d907f8bc",
+    "semantic_hash": "cd1a4b61bd1a56858b5e1613d907f8bc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/sessions-DNi9A45Z.mjs": {
+    "mtime": 1779730548.6872647,
+    "ast_hash": "f28841b84e045fe7a94532bbfae06480",
+    "semantic_hash": "f28841b84e045fe7a94532bbfae06480"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/social-DrmCSHPc.mjs": {
+    "mtime": 1779730548.690745,
+    "ast_hash": "cc15e0fe6d6f7cdab8913b28a1653d8c",
+    "semantic_hash": "cc15e0fe6d6f7cdab8913b28a1653d8c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/keys--iTtQMhl.mjs": {
+    "mtime": 1779730548.659364,
+    "ast_hash": "ad66881b97818c5af88162ffeab04a4f",
+    "semantic_hash": "ad66881b97818c5af88162ffeab04a4f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/navigation-CRu7HPzt.mjs": {
+    "mtime": 1779730548.6625688,
+    "ast_hash": "4e147a31dd26d7ed41163c9f37c611e5",
+    "semantic_hash": "4e147a31dd26d7ed41163c9f37c611e5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/tenants-hkYFN4N4.mjs": {
+    "mtime": 1779730548.697097,
+    "ast_hash": "f952b1ef16aa4a1f04237a79284435f0",
+    "semantic_hash": "f952b1ef16aa4a1f04237a79284435f0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/scim-C0Po7f_f.mjs": {
+    "mtime": 1779730548.6861897,
+    "ast_hash": "a8629a77849980c1218d7c2a4615e8a6",
+    "semantic_hash": "a8629a77849980c1218d7c2a4615e8a6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/audit-logs-C125fjAF.mjs": {
+    "mtime": 1779730548.6393995,
+    "ast_hash": "a54e483f16577cc39c101c3e25486783",
+    "semantic_hash": "a54e483f16577cc39c101c3e25486783"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/billing-D2XMOgox.mjs": {
+    "mtime": 1779730548.646204,
+    "ast_hash": "1830d0b15e2cf9cb4a4deef1046cd761",
+    "semantic_hash": "1830d0b15e2cf9cb4a4deef1046cd761"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/passkeys-5mynuPUw.mjs": {
+    "mtime": 1779730548.668185,
+    "ast_hash": "f70f609e814970f3f9322b035ad687e5",
+    "semantic_hash": "f70f609e814970f3f9322b035ad687e5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/brand-hero-Cu-JGU9S.mjs": {
+    "mtime": 1779730548.651083,
+    "ast_hash": "21de37cb6223ad9fa983726620374faf",
+    "semantic_hash": "21de37cb6223ad9fa983726620374faf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/groups-CiLF5cnU.mjs": {
+    "mtime": 1779730548.6532302,
+    "ast_hash": "2f0b61be4f1ad194f3d266974243e00c",
+    "semantic_hash": "2f0b61be4f1ad194f3d266974243e00c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/policies-IXSGHryB.mjs": {
+    "mtime": 1779730548.6748154,
+    "ast_hash": "ab9b7a35d9a4ff9f905bf4fab65f75da",
+    "semantic_hash": "ab9b7a35d9a4ff9f905bf4fab65f75da"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/email-templates-Gb1clmZT.mjs": {
+    "mtime": 1779730548.652279,
+    "ast_hash": "3a2401ac4e287dbee4b7fdab87290171",
+    "semantic_hash": "3a2401ac4e287dbee4b7fdab87290171"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/soc2-CrBFCryQ.mjs": {
+    "mtime": 1779730548.6892624,
+    "ast_hash": "0912b837308058258f3a07f9939cf07e",
+    "semantic_hash": "0912b837308058258f3a07f9939cf07e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/sessions-DrfNrC-h.mjs": {
+    "mtime": 1779730548.6879,
+    "ast_hash": "0de7b26449103c2d5f025925c8af6b75",
+    "semantic_hash": "0de7b26449103c2d5f025925c8af6b75"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/gdpr-B7-3Bg3e.mjs": {
+    "mtime": 1779730548.6525385,
+    "ast_hash": "2214bfa51dcf12ffdd240d366496ffee",
+    "semantic_hash": "2214bfa51dcf12ffdd240d366496ffee"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/passwordless-DM6atqit.mjs": {
+    "mtime": 1779730548.6738577,
+    "ast_hash": "5b18531a35b9cb79e632fa7d29797b5a",
+    "semantic_hash": "5b18531a35b9cb79e632fa7d29797b5a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/rate-limits-B3ZWCY72.mjs": {
+    "mtime": 1779730548.675127,
+    "ast_hash": "7aedc09466055b006bca560c71226d9e",
+    "semantic_hash": "7aedc09466055b006bca560c71226d9e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/ldap-BVKOdN_J.mjs": {
+    "mtime": 1779730548.6601136,
+    "ast_hash": "bdbeb0f4aa02a1c10d154aac316b0d91",
+    "semantic_hash": "bdbeb0f4aa02a1c10d154aac316b0d91"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/oidc-CzDmZjLd.mjs": {
+    "mtime": 1779730548.6631067,
+    "ast_hash": "700a6ba3dc3638d66c35b478834d9de9",
+    "semantic_hash": "700a6ba3dc3638d66c35b478834d9de9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/infrastructure-CwF6JSq_.mjs": {
+    "mtime": 1779730548.653439,
+    "ast_hash": "e23425cff2e847d35e3932fa64807327",
+    "semantic_hash": "e23425cff2e847d35e3932fa64807327"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/permissions-Cuwy1cwU.mjs": {
+    "mtime": 1779730548.6744306,
+    "ast_hash": "c6808c75193e2bf5d7c00b0c26ebbcf5",
+    "semantic_hash": "c6808c75193e2bf5d7c00b0c26ebbcf5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/api-BTYEVj8m.mjs": {
+    "mtime": 1779730548.6379201,
+    "ast_hash": "f4e70a565b7fa789e4fe9b1314fb1130",
+    "semantic_hash": "f4e70a565b7fa789e4fe9b1314fb1130"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/retention-U88CrLiZ.mjs": {
+    "mtime": 1779730548.6764991,
+    "ast_hash": "a5c1ca3d40975d6e74793863a945d25d",
+    "semantic_hash": "a5c1ca3d40975d6e74793863a945d25d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/webhooks-Diobfxww.mjs": {
+    "mtime": 1779730548.7036994,
+    "ast_hash": "6f1fef450347e412dfb3d5caa3cdfe3f",
+    "semantic_hash": "6f1fef450347e412dfb3d5caa3cdfe3f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/anomalies-DVUxoiNC.mjs": {
+    "mtime": 1779730548.637627,
+    "ast_hash": "5be760a0d7864a2f008c053e0795c68d",
+    "semantic_hash": "5be760a0d7864a2f008c053e0795c68d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/recovery-codes-5K-uOVJ2.mjs": {
+    "mtime": 1779730548.6758287,
+    "ast_hash": "f5cd7fcfa07ccffe3b442980d09b7a79",
+    "semantic_hash": "f5cd7fcfa07ccffe3b442980d09b7a79"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/resources-BVr_7OSp.mjs": {
+    "mtime": 1779730548.6761625,
+    "ast_hash": "093ff9e0c4a6b339941213dc71e66f9b",
+    "semantic_hash": "093ff9e0c4a6b339941213dc71e66f9b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/ssr.mjs": {
+    "mtime": 1779730548.696378,
+    "ast_hash": "a391ef1b0275d634e81913082576ac45",
+    "semantic_hash": "a391ef1b0275d634e81913082576ac45"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/general-C8D9vU1m.mjs": {
+    "mtime": 1779730548.652948,
+    "ast_hash": "b351248e9a7e80979d2dde1b3fa0a51d",
+    "semantic_hash": "b351248e9a7e80979d2dde1b3fa0a51d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/deleted-Dlys4ILv.mjs": {
+    "mtime": 1779730548.6517663,
+    "ast_hash": "45c5fc5ce04436c3d8e06da2e913319f",
+    "semantic_hash": "45c5fc5ce04436c3d8e06da2e913319f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/rate-limits-CgJFAIID.mjs": {
+    "mtime": 1779730548.6754987,
+    "ast_hash": "2e5fdead76ca46ab52a26687b7865d35",
+    "semantic_hash": "2e5fdead76ca46ab52a26687b7865d35"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/sign-up-CsaRDQj7.mjs": {
+    "mtime": 1779730548.6885488,
+    "ast_hash": "f7a79d021c1fafd00261caba6d32e267",
+    "semantic_hash": "f7a79d021c1fafd00261caba6d32e267"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/invitations-p0EtlAoZ.mjs": {
+    "mtime": 1779730548.6537378,
+    "ast_hash": "9467c3aa5bb828781c1bf70aa3a6bbfe",
+    "semantic_hash": "9467c3aa5bb828781c1bf70aa3a6bbfe"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/start-BRont_2I.mjs": {
+    "mtime": 1779730548.6966746,
+    "ast_hash": "6a5fd8511ea117caf7e02ef28547484e",
+    "semantic_hash": "6a5fd8511ea117caf7e02ef28547484e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/bots-DCAdwCZZ.mjs": {
+    "mtime": 1779730548.650011,
+    "ast_hash": "037178ea528599cf24612af983333a75",
+    "semantic_hash": "037178ea528599cf24612af983333a75"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/router-DR15zhjz.mjs": {
+    "mtime": 1779730548.6789186,
+    "ast_hash": "2182a2eddfbf8b17c5c5dbc6763687b1",
+    "semantic_hash": "2182a2eddfbf8b17c5c5dbc6763687b1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/iso27001-BPZDe3W-.mjs": {
+    "mtime": 1779730548.6588407,
+    "ast_hash": "cc749d7d1a5502b5c2965b70793965da",
+    "semantic_hash": "cc749d7d1a5502b5c2965b70793965da"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/sign-in-BfOEXt8M.mjs": {
+    "mtime": 1779730548.6881788,
+    "ast_hash": "ba565ec14945103cbfb6c81832566bc8",
+    "semantic_hash": "ba565ec14945103cbfb6c81832566bc8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/bots-DyBBimYQ.mjs": {
+    "mtime": 1779730548.6507545,
+    "ast_hash": "7db1d67c4bcd1cc493cc365040c783f3",
+    "semantic_hash": "7db1d67c4bcd1cc493cc365040c783f3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_ssr/machine-identities-bn0AbNZ9.mjs": {
+    "mtime": 1779730548.6617606,
+    "ast_hash": "0a214f4290b0177c69ecefde1b2ae4ff",
+    "semantic_hash": "0a214f4290b0177c69ecefde1b2ae4ff"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/react-is.mjs": {
+    "mtime": 1779730548.62321,
+    "ast_hash": "c4b0c7dac2446c2c687f5dbf50e9245b",
+    "semantic_hash": "c4b0c7dac2446c2c687f5dbf50e9245b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/h3-v2.mjs": {
+    "mtime": 1779730548.614907,
+    "ast_hash": "7acab46d8c6a3574530ea30da78ffc83",
+    "semantic_hash": "7acab46d8c6a3574530ea30da78ffc83"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/decimal.js-light.mjs": {
+    "mtime": 1779730548.605771,
+    "ast_hash": "9087692534098d0d964437729293d197",
+    "semantic_hash": "9087692534098d0d964437729293d197"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/thesvg__react.mjs": {
+    "mtime": 1779730548.6334467,
+    "ast_hash": "ad5a088ab8e7489a9ecc1451d82af21c",
+    "semantic_hash": "ad5a088ab8e7489a9ecc1451d82af21c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-interpolate.mjs": {
+    "mtime": 1779730548.602779,
+    "ast_hash": "44222e4b339f2a3259bb8b16bda07029",
+    "semantic_hash": "44222e4b339f2a3259bb8b16bda07029"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/ufo.mjs": {
+    "mtime": 1779730548.6337407,
+    "ast_hash": "eb5ef2465e8f643ca2281ee7f22e7e7c",
+    "semantic_hash": "eb5ef2465e8f643ca2281ee7f22e7e7c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/recharts+[...].mjs": {
+    "mtime": 1779730548.6239824,
+    "ast_hash": "5b6597406e684857d45224f5f4c0e961",
+    "semantic_hash": "5b6597406e684857d45224f5f4c0e961"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-shape.mjs": {
+    "mtime": 1779730548.6040695,
+    "ast_hash": "22f7fe064928b908492cc450a64b6745",
+    "semantic_hash": "22f7fe064928b908492cc450a64b6745"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/immer.mjs": {
+    "mtime": 1779730548.6221898,
+    "ast_hash": "3ae07b333b8b71f970d288fde55cc299",
+    "semantic_hash": "3ae07b333b8b71f970d288fde55cc299"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-array.mjs": {
+    "mtime": 1779730548.6018012,
+    "ast_hash": "5a741a7a7cf69976820954f5d905d0a3",
+    "semantic_hash": "5a741a7a7cf69976820954f5d905d0a3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/tanstack__react-query.mjs": {
+    "mtime": 1779730548.6325502,
+    "ast_hash": "65476b056cdec7fe288a33ff2b2d48b6",
+    "semantic_hash": "65476b056cdec7fe288a33ff2b2d48b6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/react-redux+[...].mjs": {
+    "mtime": 1779730548.6236026,
+    "ast_hash": "5f4fa80e3eff2878f41a367c1aa1c146",
+    "semantic_hash": "5f4fa80e3eff2878f41a367c1aa1c146"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/lucide-react.mjs": {
+    "mtime": 1779730548.6226466,
+    "ast_hash": "dbd0f4b9a393fd2e2fb5b84ebd367a2f",
+    "semantic_hash": "dbd0f4b9a393fd2e2fb5b84ebd367a2f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/class-variance-authority+clsx.mjs": {
+    "mtime": 1779730548.601647,
+    "ast_hash": "973aa60997dceb3b4da40aaf5ac27535",
+    "semantic_hash": "973aa60997dceb3b4da40aaf5ac27535"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-color.mjs": {
+    "mtime": 1779730548.6020415,
+    "ast_hash": "e9716aa3918df5e1d3fd86e47befa1ec",
+    "semantic_hash": "e9716aa3918df5e1d3fd86e47befa1ec"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/tanstack__query-core.mjs": {
+    "mtime": 1779730548.629203,
+    "ast_hash": "4777fb3403fa82f91fd1ce6d9926ba6e",
+    "semantic_hash": "4777fb3403fa82f91fd1ce6d9926ba6e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/h3+rou3+srvx.mjs": {
+    "mtime": 1779730548.6129065,
+    "ast_hash": "f1007724835afa68cbfe34864209a8a8",
+    "semantic_hash": "f1007724835afa68cbfe34864209a8a8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/hookable.mjs": {
+    "mtime": 1779730548.6202648,
+    "ast_hash": "e0880825cc6f838da90024599c891de8",
+    "semantic_hash": "e0880825cc6f838da90024599c891de8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-scale+[...].mjs": {
+    "mtime": 1779730548.603352,
+    "ast_hash": "159c0c4a8285616c6b4e0b0468ad5461",
+    "semantic_hash": "159c0c4a8285616c6b4e0b0468ad5461"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-format.mjs": {
+    "mtime": 1779730548.6023593,
+    "ast_hash": "7ec21e9d18499c022c75f6df6e31ca3a",
+    "semantic_hash": "7ec21e9d18499c022c75f6df6e31ca3a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/tailwind-merge.mjs": {
+    "mtime": 1779730548.6247797,
+    "ast_hash": "d70c6ddae425c7e819b49dfedaa36dbb",
+    "semantic_hash": "d70c6ddae425c7e819b49dfedaa36dbb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/es-toolkit.mjs": {
+    "mtime": 1779730548.6102061,
+    "ast_hash": "2b86f2dd5e8eeab0b8053816dcd1ff2b",
+    "semantic_hash": "2b86f2dd5e8eeab0b8053816dcd1ff2b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/d3-path.mjs": {
+    "mtime": 1779730548.6030378,
+    "ast_hash": "b2d9331ea7768a0399d32791532bf0ba",
+    "semantic_hash": "b2d9331ea7768a0399d32791532bf0ba"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/eventemitter3.mjs": {
+    "mtime": 1779730548.61114,
+    "ast_hash": "a59ecede6dc5b5f1a884cea9fdbb9150",
+    "semantic_hash": "a59ecede6dc5b5f1a884cea9fdbb9150"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/tanstack__history.mjs": {
+    "mtime": 1779730548.6251283,
+    "ast_hash": "16101d3af03ed365705f9909695e6c42",
+    "semantic_hash": "16101d3af03ed365705f9909695e6c42"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/@tanstack/router-core+[...].mjs": {
+    "mtime": 1779730548.6014733,
+    "ast_hash": "5590fca9bebba6e27894e5300c47c863",
+    "semantic_hash": "5590fca9bebba6e27894e5300c47c863"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/@tanstack/react-router-ssr-query+[...].mjs": {
+    "mtime": 1779730548.6012511,
+    "ast_hash": "d185af50960d45689e26f2b9b892a6b1",
+    "semantic_hash": "d185af50960d45689e26f2b9b892a6b1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/@tanstack/react-router+[...].mjs": {
+    "mtime": 1779730548.600568,
+    "ast_hash": "2a8cb4bb2c8e0ea2aee6179b336c591c",
+    "semantic_hash": "2a8cb4bb2c8e0ea2aee6179b336c591c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/@base-ui/react+[...].mjs": {
+    "mtime": 1779730548.5995762,
+    "ast_hash": "9869ae79dd4005e800438cf001621245",
+    "semantic_hash": "9869ae79dd4005e800438cf001621245"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/server/_libs/@reduxjs/toolkit+[...].mjs": {
+    "mtime": 1779730548.6001859,
+    "ast_hash": "cfe26d55a1a0854e11a18182ccca8b6b",
+    "semantic_hash": "cfe26d55a1a0854e11a18182ccca8b6b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/manifest.json": {
+    "mtime": 1779730547.5630474,
+    "ast_hash": "49b913e254d1270fbdb23f6e6ef48359",
+    "semantic_hash": "49b913e254d1270fbdb23f6e6ef48359"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/bots-B9Chugn6.js": {
+    "mtime": 1779730546.313446,
+    "ast_hash": "3bf0d4bac07ff4245a8d3fbdbf206a80",
+    "semantic_hash": "3bf0d4bac07ff4245a8d3fbdbf206a80"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/activity-Cdy7WhGh.js": {
+    "mtime": 1779730546.3114438,
+    "ast_hash": "fd45e9524154b4477f59daaad37d6d10",
+    "semantic_hash": "fd45e9524154b4477f59daaad37d6d10"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/LineChart-By-FWbSs.js": {
+    "mtime": 1779730546.3092616,
+    "ast_hash": "886961aaf4b0f8961dba8ed397cef035",
+    "semantic_hash": "886961aaf4b0f8961dba8ed397cef035"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/iso27001-mp0jrwiz.js": {
+    "mtime": 1779730546.342283,
+    "ast_hash": "3d27096b21bf474f98e0e05a907a7606",
+    "semantic_hash": "3d27096b21bf474f98e0e05a907a7606"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/sign-up-BfLIkQle.js": {
+    "mtime": 1779730546.3791747,
+    "ast_hash": "77a8c9f1b8d6d03583567ebd02f79689",
+    "semantic_hash": "77a8c9f1b8d6d03583567ebd02f79689"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/dashboard-NhlZM9vG.js": {
+    "mtime": 1779730546.327856,
+    "ast_hash": "348ff4b1e1813e805df6f8a31d52c252",
+    "semantic_hash": "348ff4b1e1813e805df6f8a31d52c252"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/_app-ZeHjy9fX.js": {
+    "mtime": 1779730546.3109555,
+    "ast_hash": "2a28b8a35516aa468b4ebb1ac49be263",
+    "semantic_hash": "2a28b8a35516aa468b4ebb1ac49be263"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/monitor-smartphone-DaJ_1tl4.js": {
+    "mtime": 1779730546.351301,
+    "ast_hash": "e54b3a82896468c1bbd9f397a0709570",
+    "semantic_hash": "e54b3a82896468c1bbd9f397a0709570"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/circle-dashed-BnC8GSb5.js": {
+    "mtime": 1779730546.3255608,
+    "ast_hash": "924a9e8280e69b70ce111526fa7463a8",
+    "semantic_hash": "924a9e8280e69b70ce111526fa7463a8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/oidc-C0SG9v0W.js": {
+    "mtime": 1779730546.3535733,
+    "ast_hash": "40471ee601399adada678f1db9011e10",
+    "semantic_hash": "40471ee601399adada678f1db9011e10"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/sign-in-H0KhGwLX.js": {
+    "mtime": 1779730546.378896,
+    "ast_hash": "5e867f3701652db9293b48d774735f02",
+    "semantic_hash": "5e867f3701652db9293b48d774735f02"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/copy-Dnssg0K0.js": {
+    "mtime": 1779730546.327344,
+    "ast_hash": "7d1e0daece48057b076463d38fbed04a",
+    "semantic_hash": "7d1e0daece48057b076463d38fbed04a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/api-Dvf6D1up.js": {
+    "mtime": 1779730546.312252,
+    "ast_hash": "1da2e765d5e9901ec80f66bbfc7f096b",
+    "semantic_hash": "1da2e765d5e9901ec80f66bbfc7f096b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/recovery-codes-DLIFZ79g.js": {
+    "mtime": 1779730546.3662083,
+    "ast_hash": "d88e89a015d2a484545f5e44f773cc68",
+    "semantic_hash": "d88e89a015d2a484545f5e44f773cc68"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/social-CNysie8u.js": {
+    "mtime": 1779730546.3800874,
+    "ast_hash": "4575ff2835281584d00b0570568d746c",
+    "semantic_hash": "4575ff2835281584d00b0570568d746c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/useMutation-CYV2IwiL.js": {
+    "mtime": 1779730546.391063,
+    "ast_hash": "1a4bb85eb60d0d05d90dbf44df912efd",
+    "semantic_hash": "1a4bb85eb60d0d05d90dbf44df912efd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/navigation-Cmv020Fv.js": {
+    "mtime": 1779730546.3531842,
+    "ast_hash": "01a5cb47e5722b6150efb878460ac29d",
+    "semantic_hash": "01a5cb47e5722b6150efb878460ac29d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/passwordless-BHF1-WDD.js": {
+    "mtime": 1779730546.3565853,
+    "ast_hash": "28559e4faf7ad7420c05f38cb46658e1",
+    "semantic_hash": "28559e4faf7ad7420c05f38cb46658e1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/shield-off-DPvp9fha.js": {
+    "mtime": 1779730546.3786666,
+    "ast_hash": "35131230f545bb415e914e838feba389",
+    "semantic_hash": "35131230f545bb415e914e838feba389"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/_auth-DsJSpenL.js": {
+    "mtime": 1779730546.3112056,
+    "ast_hash": "84f7171119ae7b46cd7cc05a99d359be",
+    "semantic_hash": "84f7171119ae7b46cd7cc05a99d359be"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/resources-Dc3VSKhl.js": {
+    "mtime": 1779730546.3666747,
+    "ast_hash": "64406516dfe864dc64958c79761bf31a",
+    "semantic_hash": "64406516dfe864dc64958c79761bf31a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/groups-C01eMQ9z.js": {
+    "mtime": 1779730546.338927,
+    "ast_hash": "1d350c28be0ccb3351e982fa813109d3",
+    "semantic_hash": "1d350c28be0ccb3351e982fa813109d3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/ip-allowlist-B6BUUUjy.js": {
+    "mtime": 1779730546.3412979,
+    "ast_hash": "d322c1bf3435ff8506d7b03e1b32ca93",
+    "semantic_hash": "d322c1bf3435ff8506d7b03e1b32ca93"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/roles-CzuSGbs3.js": {
+    "mtime": 1779730546.3671772,
+    "ast_hash": "eb42e7654226dc74d260230ac38c7f01",
+    "semantic_hash": "eb42e7654226dc74d260230ac38c7f01"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/createLucideIcon-Db1vphWh.js": {
+    "mtime": 1779730546.327561,
+    "ast_hash": "6424e8b3bf140333b1e449da2e2cc336",
+    "semantic_hash": "6424e8b3bf140333b1e449da2e2cc336"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/zap-aHRlQgUA.js": {
+    "mtime": 1779730546.3937778,
+    "ast_hash": "64c86c029d8575c3ced263b20e01bfa3",
+    "semantic_hash": "64c86c029d8575c3ced263b20e01bfa3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/sessions-DkrVg1XS.js": {
+    "mtime": 1779730546.378388,
+    "ast_hash": "be71f6407b565908e5598e5bf8cbda08",
+    "semantic_hash": "be71f6407b565908e5598e5bf8cbda08"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/user-BuKjVpbi.js": {
+    "mtime": 1779730546.392171,
+    "ast_hash": "c9e58d96450ba882439f9f1b84203e60",
+    "semantic_hash": "c9e58d96450ba882439f9f1b84203e60"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/play-CAg9brmE.js": {
+    "mtime": 1779730546.3622904,
+    "ast_hash": "2d0a4a2373ee6ef47cb484a3a970b272",
+    "semantic_hash": "2d0a4a2373ee6ef47cb484a3a970b272"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/ldap-Xjfvj93B.js": {
+    "mtime": 1779730546.3488739,
+    "ast_hash": "74a4e3f88133f1729b56855cd7409118",
+    "semantic_hash": "74a4e3f88133f1729b56855cd7409118"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/globe-ByNvg2SH.js": {
+    "mtime": 1779730546.3385358,
+    "ast_hash": "2046fa41ebf17570b85150610d8ce543",
+    "semantic_hash": "2046fa41ebf17570b85150610d8ce543"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/sms-email-DI9Ob01H.js": {
+    "mtime": 1779730546.3794408,
+    "ast_hash": "c1cb8681d1535b9ff40f7a1382281d35",
+    "semantic_hash": "c1cb8681d1535b9ff40f7a1382281d35"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/scim-a74fgIE3.js": {
+    "mtime": 1779730546.3741393,
+    "ast_hash": "4aac35b6a66e75567f8b641f68b139ef",
+    "semantic_hash": "4aac35b6a66e75567f8b641f68b139ef"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/rate-limits-BJWqKi1Q.js": {
+    "mtime": 1779730546.3652954,
+    "ast_hash": "5ae5e2c28d5783d6969155e8c82be3d7",
+    "semantic_hash": "5ae5e2c28d5783d6969155e8c82be3d7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/passkeys-Dqyyo14_.js": {
+    "mtime": 1779730546.354086,
+    "ast_hash": "9c105c2cc3d3fcebf42bb3510e4f3ea2",
+    "semantic_hash": "9c105c2cc3d3fcebf42bb3510e4f3ea2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/sessions-CvtukGhn.js": {
+    "mtime": 1779730546.3774438,
+    "ast_hash": "5bf60d3847d14b9c5d38697dbc40ed56",
+    "semantic_hash": "5bf60d3847d14b9c5d38697dbc40ed56"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/soc2-BUL5LXJy.js": {
+    "mtime": 1779730546.3796782,
+    "ast_hash": "9d388021fef4281a34e4d94ea6c76e88",
+    "semantic_hash": "9d388021fef4281a34e4d94ea6c76e88"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/users-B4X8V4kB.js": {
+    "mtime": 1779730546.3924332,
+    "ast_hash": "1adf7a9a83374302578e39cc27b38e47",
+    "semantic_hash": "1adf7a9a83374302578e39cc27b38e47"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/circle-check-D2ePXJdK.js": {
+    "mtime": 1779730546.3252032,
+    "ast_hash": "777607461aff1fa5d5fea88e1ebfd5c7",
+    "semantic_hash": "777607461aff1fa5d5fea88e1ebfd5c7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/bots-BdRCiTX-.js": {
+    "mtime": 1779730546.3146584,
+    "ast_hash": "b71ac82de004f7ac3495cc719d1178f9",
+    "semantic_hash": "b71ac82de004f7ac3495cc719d1178f9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/rotate-ccw-Bv4W05r8.js": {
+    "mtime": 1779730546.3682299,
+    "ast_hash": "e9a0b2bb51961a7aa62a454e432dc72b",
+    "semantic_hash": "e9a0b2bb51961a7aa62a454e432dc72b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/AreaChart-3qBTXiNq.js": {
+    "mtime": 1779730546.3089564,
+    "ast_hash": "7721803b8b52088f5f9f696e279f79d3",
+    "semantic_hash": "7721803b8b52088f5f9f696e279f79d3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/webhooks-NqNJyD6l.js": {
+    "mtime": 1779730546.393105,
+    "ast_hash": "cc64acb7f25aee6f7567c1714d73210c",
+    "semantic_hash": "cc64acb7f25aee6f7567c1714d73210c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/domains-D6EdHZ8R.js": {
+    "mtime": 1779730546.3332446,
+    "ast_hash": "115750eb88d0f4aa01bae3938f2cc261",
+    "semantic_hash": "115750eb88d0f4aa01bae3938f2cc261"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/machine-identities-BYlpYtg6.js": {
+    "mtime": 1779730546.3503764,
+    "ast_hash": "f3fcd649b60547fba740cf20ed510b09",
+    "semantic_hash": "f3fcd649b60547fba740cf20ed510b09"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/totp-CxLdXb5W.js": {
+    "mtime": 1779730546.3837433,
+    "ast_hash": "61efe3ea84e0fb0fb0d334e704077966",
+    "semantic_hash": "61efe3ea84e0fb0fb0d334e704077966"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/invitations-BScEXlpV.js": {
+    "mtime": 1779730546.339934,
+    "ast_hash": "eb7e7fe55c061bb978d6d9850e222f5a",
+    "semantic_hash": "eb7e7fe55c061bb978d6d9850e222f5a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/plus-DEvuTBiZ.js": {
+    "mtime": 1779730546.363723,
+    "ast_hash": "24326845c645c8cd97516ee23c11bd50",
+    "semantic_hash": "24326845c645c8cd97516ee23c11bd50"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/permissions-D2mlX5_K.js": {
+    "mtime": 1779730546.3575983,
+    "ast_hash": "3873bb433c0fc2ce2e5720bfe1bc48a4",
+    "semantic_hash": "3873bb433c0fc2ce2e5720bfe1bc48a4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/trash-2-CwL74PJT.js": {
+    "mtime": 1779730546.3863738,
+    "ast_hash": "3f88d613332753fd3586adf75ab902ac",
+    "semantic_hash": "3f88d613332753fd3586adf75ab902ac"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/infrastructure-CnJnTHQh.js": {
+    "mtime": 1779730546.339283,
+    "ast_hash": "05b72d31e9e9ec8e0d861af16e8fd6d0",
+    "semantic_hash": "05b72d31e9e9ec8e0d861af16e8fd6d0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/useLocation-dib9tW_A.js": {
+    "mtime": 1779730546.3870196,
+    "ast_hash": "b55fc3f8566dd57513812b56a280502e",
+    "semantic_hash": "b55fc3f8566dd57513812b56a280502e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/loader-circle-BtoJRynF.js": {
+    "mtime": 1779730546.3497436,
+    "ast_hash": "df7e9e16827b314cfd4ace31d807dd0f",
+    "semantic_hash": "df7e9e16827b314cfd4ace31d807dd0f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/branding-ClH-TkjJ.js": {
+    "mtime": 1779730546.3195574,
+    "ast_hash": "991bcfdb84452ded8ca0b553a260877e",
+    "semantic_hash": "991bcfdb84452ded8ca0b553a260877e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/users-BmPjfp1V.js": {
+    "mtime": 1779730546.3927207,
+    "ast_hash": "eb09c63a09c5b03c86c004b2b73f1a9c",
+    "semantic_hash": "eb09c63a09c5b03c86c004b2b73f1a9c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/download-D8h1mYSN.js": {
+    "mtime": 1779730546.3361742,
+    "ast_hash": "fdaf11ad1619a71096c96c3c765036dd",
+    "semantic_hash": "fdaf11ad1619a71096c96c3c765036dd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/analytics-DP0mHjG4.js": {
+    "mtime": 1779730546.3117776,
+    "ast_hash": "982a0a99e3b5c3eaee9b6e51c5d253d5",
+    "semantic_hash": "982a0a99e3b5c3eaee9b6e51c5d253d5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/magic-links-cWsU3O57.js": {
+    "mtime": 1779730546.3509803,
+    "ast_hash": "212b6ba1e108921930c1906f6f817125",
+    "semantic_hash": "212b6ba1e108921930c1906f6f817125"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/anomalies-BaZE6Etb.js": {
+    "mtime": 1779730546.3120255,
+    "ast_hash": "fa4bb7276436f6925696254d6ed9a4cf",
+    "semantic_hash": "fa4bb7276436f6925696254d6ed9a4cf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/page-header-bZtWfD0q.js": {
+    "mtime": 1779730546.353828,
+    "ast_hash": "ae05e66e47946ff5c94313884d2be9ab",
+    "semantic_hash": "ae05e66e47946ff5c94313884d2be9ab"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/_-B8XW3Ohn.js": {
+    "mtime": 1779730546.3106701,
+    "ast_hash": "d01736ebde0fad739624ae6178136bdd",
+    "semantic_hash": "d01736ebde0fad739624ae6178136bdd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/tenants-BgGJBVNS.js": {
+    "mtime": 1779730546.3803258,
+    "ast_hash": "47cb8eb1e47c0a5f8bc437b94beb4ab1",
+    "semantic_hash": "47cb8eb1e47c0a5f8bc437b94beb4ab1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/auth-9SXuhZI3.js": {
+    "mtime": 1779730546.3129694,
+    "ast_hash": "7ce3d284f3cd1e5ef977b2cf77ca55c1",
+    "semantic_hash": "7ce3d284f3cd1e5ef977b2cf77ca55c1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/check-CUSetSwu.js": {
+    "mtime": 1779730546.324785,
+    "ast_hash": "e9466d63a4f8554644e93b4de3d3823e",
+    "semantic_hash": "e9466d63a4f8554644e93b4de3d3823e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/audit-logs-uGPFbvUh.js": {
+    "mtime": 1779730546.3125858,
+    "ast_hash": "49b8c0a9161f7994a793cc848133b618",
+    "semantic_hash": "49b8c0a9161f7994a793cc848133b618"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/useQuery-BTpEpN_P.js": {
+    "mtime": 1779730546.391774,
+    "ast_hash": "49092a934fd624092546faec1cc17d24",
+    "semantic_hash": "49092a934fd624092546faec1cc17d24"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/gdpr-DclZ7tWG.js": {
+    "mtime": 1779730546.3374875,
+    "ast_hash": "3fc2bf813a7a3a6720672528da84299c",
+    "semantic_hash": "3fc2bf813a7a3a6720672528da84299c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/index-Dj8NHUNv.js": {
+    "mtime": 1779730546.308531,
+    "ast_hash": "13f9f19c91b1313995f29f63d07ea52e",
+    "semantic_hash": "13f9f19c91b1313995f29f63d07ea52e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/rate-limits-CNtRDxUO.js": {
+    "mtime": 1779730546.3659227,
+    "ast_hash": "5c4315aa5e0cffb76b786e1e8c2336af",
+    "semantic_hash": "5c4315aa5e0cffb76b786e1e8c2336af"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/billing-xwJO9OCd.js": {
+    "mtime": 1779730546.313199,
+    "ast_hash": "b44974a2e917bae384b9c6edd2a06113",
+    "semantic_hash": "b44974a2e917bae384b9c6edd2a06113"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/policies-7-2hYOPB.js": {
+    "mtime": 1779730546.3647296,
+    "ast_hash": "e3c5649a43cf05cede10f99ddafaf5bf",
+    "semantic_hash": "e3c5649a43cf05cede10f99ddafaf5bf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/construction-CFrkhoS-.js": {
+    "mtime": 1779730546.3258758,
+    "ast_hash": "3349772cbe5515a2881ac07771c8a3b9",
+    "semantic_hash": "3349772cbe5515a2881ac07771c8a3b9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/brand-hero-DSrE7aRd.js": {
+    "mtime": 1779730546.3165395,
+    "ast_hash": "5265948da3cd307648552345bb36b022",
+    "semantic_hash": "5265948da3cd307648552345bb36b022"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/retention-D-AHvMKa.js": {
+    "mtime": 1779730546.3668783,
+    "ast_hash": "7e3855eb96a242c89d0fcb5d2e85a025",
+    "semantic_hash": "7e3855eb96a242c89d0fcb5d2e85a025"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/email-templates-Dc6HmklN.js": {
+    "mtime": 1779730546.336655,
+    "ast_hash": "50bf2b43eff8fd8d3b65209840bfed14",
+    "semantic_hash": "50bf2b43eff8fd8d3b65209840bfed14"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/database-CxL82XqQ.js": {
+    "mtime": 1779730546.3280597,
+    "ast_hash": "b577a89adbfda18721de677f3f7b21a5",
+    "semantic_hash": "b577a89adbfda18721de677f3f7b21a5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/keys-CXV6HSfj.js": {
+    "mtime": 1779730546.3452718,
+    "ast_hash": "c0c349f81c02bd76c383cba26459a3bf",
+    "semantic_hash": "c0c349f81c02bd76c383cba26459a3bf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/general-BQfYfkXV.js": {
+    "mtime": 1779730546.338052,
+    "ast_hash": "2677b001a3c6143957c098d7796d0794",
+    "semantic_hash": "2677b001a3c6143957c098d7796d0794"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/refresh-cw-fXZsKYN0.js": {
+    "mtime": 1779730546.3664548,
+    "ast_hash": "f4f9e98b698337cf0b9f5e0f4196fce5",
+    "semantic_hash": "f4f9e98b698337cf0b9f5e0f4196fce5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/deleted-D4BTC0_1.js": {
+    "mtime": 1779730546.3287268,
+    "ast_hash": "83abfb8108b11ac5e2d94594eb6864b6",
+    "semantic_hash": "83abfb8108b11ac5e2d94594eb6864b6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/eye-x4l7Ydkd.js": {
+    "mtime": 1779730546.3370054,
+    "ast_hash": "b029602798ba890321efd58eb5f2bea8",
+    "semantic_hash": "b029602798ba890321efd58eb5f2bea8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/assets/saml-h3hLg0ge.js": {
+    "mtime": 1779730546.3703983,
+    "ast_hash": "aac1ef656f1d7074192a4546b0dac64a",
+    "semantic_hash": "aac1ef656f1d7074192a4546b0dac64a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/public/manifest.json": {
+    "mtime": 1779294899.144239,
+    "ast_hash": "49b913e254d1270fbdb23f6e6ef48359",
+    "semantic_hash": "49b913e254d1270fbdb23f6e6ef48359"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.vscode/settings.json": {
+    "mtime": 1779294899.1407926,
+    "ast_hash": "338ce76b77ee3e51801e44cf984fac1f",
+    "semantic_hash": "338ce76b77ee3e51801e44cf984fac1f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/router.tsx": {
+    "mtime": 1779430260.2534156,
+    "ast_hash": "6f9c0f7859f0a3aadea5c2c22514faa5",
+    "semantic_hash": "6f9c0f7859f0a3aadea5c2c22514faa5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routeTree.gen.ts": {
+    "mtime": 1779730402.3332999,
+    "ast_hash": "ce4145ce736e1a831a21b6e8ce11b008",
+    "semantic_hash": "ce4145ce736e1a831a21b6e8ce11b008"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/env.ts": {
+    "mtime": 1779430260.0658975,
+    "ast_hash": "6b1a9edf50717dc12b9fdd3cf5ce9425",
+    "semantic_hash": "6b1a9edf50717dc12b9fdd3cf5ce9425"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/config/navigation.tsx": {
+    "mtime": 1779344402.5541844,
+    "ast_hash": "bd857cfd7e61293d00400fbb3a75d87c",
+    "semantic_hash": "bd857cfd7e61293d00400fbb3a75d87c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/auth/components/signin-form.tsx": {
+    "mtime": 1779726007.3977265,
+    "ast_hash": "ad58b4aa819312552794fffd808694e9",
+    "semantic_hash": "ad58b4aa819312552794fffd808694e9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/auth/components/signup-form.tsx": {
+    "mtime": 1779725994.3837526,
+    "ast_hash": "c9ea444871b0f5d6e84e71ac0e955a32",
+    "semantic_hash": "c9ea444871b0f5d6e84e71ac0e955a32"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/auth/components/brand-hero.tsx": {
+    "mtime": 1779712168.5830216,
+    "ast_hash": "61db9ddc5da74803228c9a6d96030490",
+    "semantic_hash": "61db9ddc5da74803228c9a6d96030490"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/header-user.tsx": {
+    "mtime": 1779722960.4643366,
+    "ast_hash": "da7186ca0ef7727c7e15436951c3a0a1",
+    "semantic_hash": "da7186ca0ef7727c7e15436951c3a0a1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/team-switcher.tsx": {
+    "mtime": 1779712168.585623,
+    "ast_hash": "173d6c1f3e434b1ae02ea829894559b5",
+    "semantic_hash": "173d6c1f3e434b1ae02ea829894559b5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/nav-main.tsx": {
+    "mtime": 1779712168.625638,
+    "ast_hash": "c7aeb3609ba48ffc85c86cf35cd5031b",
+    "semantic_hash": "c7aeb3609ba48ffc85c86cf35cd5031b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/nav-user.tsx": {
+    "mtime": 1779712168.6270657,
+    "ast_hash": "0cd6646847c24fd4166b3a61aeb61b46",
+    "semantic_hash": "0cd6646847c24fd4166b3a61aeb61b46"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/app-sidebar.tsx": {
+    "mtime": 1779712168.638507,
+    "ast_hash": "d41973b8eec7f29c75c7bb102b4010bb",
+    "semantic_hash": "d41973b8eec7f29c75c7bb102b4010bb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/dynamic-breadcrumb.tsx": {
+    "mtime": 1779712168.6293447,
+    "ast_hash": "64559f1b43808e475e080ca1d71fedb8",
+    "semantic_hash": "64559f1b43808e475e080ca1d71fedb8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/features/dashboard/components/theme-toggle.tsx": {
+    "mtime": 1779712168.6399188,
+    "ast_hash": "68ffabbf43bd843fb1be6781275f9f23",
+    "semantic_hash": "68ffabbf43bd843fb1be6781275f9f23"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/integrations/tanstack-query/devtools.tsx": {
+    "mtime": 1779430260.2332425,
+    "ast_hash": "5e995229262ab47d96e32ae6153abe74",
+    "semantic_hash": "5e995229262ab47d96e32ae6153abe74"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/integrations/tanstack-query/root-provider.tsx": {
+    "mtime": 1779430260.2440972,
+    "ast_hash": "58f94d214bc27cc006e7afe41d452ae4",
+    "semantic_hash": "58f94d214bc27cc006e7afe41d452ae4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/components/page-header.tsx": {
+    "mtime": 1779720861.3018956,
+    "ast_hash": "1b77caa45f3c16cd532bca9c626c535a",
+    "semantic_hash": "1b77caa45f3c16cd532bca9c626c535a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/lib/api.ts": {
+    "mtime": 1779720842.3996027,
+    "ast_hash": "72c6d26394b89f85a7aa729ab739dc68",
+    "semantic_hash": "72c6d26394b89f85a7aa729ab739dc68"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/lib/auth.ts": {
+    "mtime": 1779726015.2333589,
+    "ast_hash": "dff2d65bd145860df1b89b607458ad12",
+    "semantic_hash": "dff2d65bd145860df1b89b607458ad12"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/index.tsx": {
+    "mtime": 1779726796.218475,
+    "ast_hash": "524fa33d73b3542eee74508e86609621",
+    "semantic_hash": "524fa33d73b3542eee74508e86609621"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/__root.tsx": {
+    "mtime": 1779712168.641444,
+    "ast_hash": "f94aca4b2213b524c9fad64240fd674c",
+    "semantic_hash": "f94aca4b2213b524c9fad64240fd674c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_auth.tsx": {
+    "mtime": 1779726793.1038406,
+    "ast_hash": "5a93508ec83328a8a3aea3af4f061d31",
+    "semantic_hash": "5a93508ec83328a8a3aea3af4f061d31"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app.tsx": {
+    "mtime": 1779726788.355666,
+    "ast_hash": "757c0d8c6ccaa8f03ac351d7c5a59e66",
+    "semantic_hash": "757c0d8c6ccaa8f03ac351d7c5a59e66"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_auth/sign-in.tsx": {
+    "mtime": 1779726018.4320507,
+    "ast_hash": "ee2dadf9a94967dbb73517bd44e6affb",
+    "semantic_hash": "ee2dadf9a94967dbb73517bd44e6affb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_auth/sign-up.tsx": {
+    "mtime": 1779722985.9552867,
+    "ast_hash": "cde00e515d5a9542f16fb9c70009113e",
+    "semantic_hash": "cde00e515d5a9542f16fb9c70009113e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/dashboard.tsx": {
+    "mtime": 1779712168.6462352,
+    "ast_hash": "98f7dc9f002ce2033ca00130ea15fb5e",
+    "semantic_hash": "98f7dc9f002ce2033ca00130ea15fb5e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/activity.tsx": {
+    "mtime": 1779723131.8096745,
+    "ast_hash": "48bdddade143881e902066f110727c3f",
+    "semantic_hash": "48bdddade143881e902066f110727c3f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/analytics.tsx": {
+    "mtime": 1779730452.149421,
+    "ast_hash": "537889cc47005a812c491ed79ad840a1",
+    "semantic_hash": "537889cc47005a812c491ed79ad840a1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/users.tsx": {
+    "mtime": 1779720991.7892494,
+    "ast_hash": "8ad66d3af5713a29dc93a7d4e40b1504",
+    "semantic_hash": "8ad66d3af5713a29dc93a7d4e40b1504"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/invitations.tsx": {
+    "mtime": 1779721723.6825302,
+    "ast_hash": "83bdb7e509a024fda94b8f13d09837ba",
+    "semantic_hash": "83bdb7e509a024fda94b8f13d09837ba"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/$.tsx": {
+    "mtime": 1779712168.64761,
+    "ast_hash": "2853a5f6532e9221b58ccdcab718fdb4",
+    "semantic_hash": "2853a5f6532e9221b58ccdcab718fdb4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/groups.tsx": {
+    "mtime": 1779722200.2808502,
+    "ast_hash": "d80291d350dc19bad9deba9e7e42279a",
+    "semantic_hash": "d80291d350dc19bad9deba9e7e42279a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/organizations/tenants.tsx": {
+    "mtime": 1779721627.3401592,
+    "ast_hash": "4c25580475de7ac5972a34ced6d3470d",
+    "semantic_hash": "4c25580475de7ac5972a34ced6d3470d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/organizations/members.tsx": {
+    "mtime": 1779723186.0060127,
+    "ast_hash": "27eb046c918af487ca0604c18d68203a",
+    "semantic_hash": "27eb046c918af487ca0604c18d68203a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/settings/branding.tsx": {
+    "mtime": 1779721053.7898235,
+    "ast_hash": "1b7ef8ac6905bed556d3789de9ae9281",
+    "semantic_hash": "1b7ef8ac6905bed556d3789de9ae9281"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/settings/billing.tsx": {
+    "mtime": 1779723180.7482247,
+    "ast_hash": "71e25724a32652ff76d2a7b0471b7f6b",
+    "semantic_hash": "71e25724a32652ff76d2a7b0471b7f6b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/settings/workspace/domains.tsx": {
+    "mtime": 1779723157.0787704,
+    "ast_hash": "294c66b8e8cab5334cc80c0b1588334b",
+    "semantic_hash": "294c66b8e8cab5334cc80c0b1588334b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/settings/workspace/email-templates.tsx": {
+    "mtime": 1779730224.4032962,
+    "ast_hash": "e457a50d1734d3f7379623fe2ca19ba4",
+    "semantic_hash": "e457a50d1734d3f7379623fe2ca19ba4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/settings/workspace/general.tsx": {
+    "mtime": 1779721652.452432,
+    "ast_hash": "a86bf93d26306c72c52c7ad417d84b2d",
+    "semantic_hash": "a86bf93d26306c72c52c7ad417d84b2d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/developer/bots.tsx": {
+    "mtime": 1779730528.2790902,
+    "ast_hash": "076aa2001ac7034cfd1d2cdc3828f8bb",
+    "semantic_hash": "076aa2001ac7034cfd1d2cdc3828f8bb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/developer/webhooks.tsx": {
+    "mtime": 1779721849.1277852,
+    "ast_hash": "652b292f5c60bd9fdd0783b250cf7085",
+    "semantic_hash": "652b292f5c60bd9fdd0783b250cf7085"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/developer/infrastructure.tsx": {
+    "mtime": 1779730189.823813,
+    "ast_hash": "0b0828a56703d494f93ab7bdddb8a0e3",
+    "semantic_hash": "0b0828a56703d494f93ab7bdddb8a0e3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/access/policies.tsx": {
+    "mtime": 1779723095.6101394,
+    "ast_hash": "ee7cf2b9cee172ce5aa82e16c75938ee",
+    "semantic_hash": "ee7cf2b9cee172ce5aa82e16c75938ee"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/access/roles.tsx": {
+    "mtime": 1779721873.0407064,
+    "ast_hash": "60b68fbec21f6b3fdc44008f0da857d4",
+    "semantic_hash": "60b68fbec21f6b3fdc44008f0da857d4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/access/permissions.tsx": {
+    "mtime": 1779722210.8298523,
+    "ast_hash": "48a2952593e09af88f6fc92c6a3262fb",
+    "semantic_hash": "48a2952593e09af88f6fc92c6a3262fb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/access/resources.tsx": {
+    "mtime": 1779730523.5766923,
+    "ast_hash": "af398c279882c51907f1a14551ef9d6d",
+    "semantic_hash": "af398c279882c51907f1a14551ef9d6d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/audit-logs.tsx": {
+    "mtime": 1779721016.5641356,
+    "ast_hash": "a7775fef960549776772fa7af862d8d9",
+    "semantic_hash": "a7775fef960549776772fa7af862d8d9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/sessions.tsx": {
+    "mtime": 1779721598.0198069,
+    "ast_hash": "06b42870e49ac00c388b5066b9b5c45a",
+    "semantic_hash": "06b42870e49ac00c388b5066b9b5c45a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/rate-limits.tsx": {
+    "mtime": 1779723118.352877,
+    "ast_hash": "22123d7823d53b6b27ef63d560d52902",
+    "semantic_hash": "22123d7823d53b6b27ef63d560d52902"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/threats/bots.tsx": {
+    "mtime": 1779729670.4550064,
+    "ast_hash": "8cb72cb78017757048fa69e7de2a41aa",
+    "semantic_hash": "8cb72cb78017757048fa69e7de2a41aa"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/threats/rate-limits.tsx": {
+    "mtime": 1779729709.8705664,
+    "ast_hash": "de67b38e73a84fff995fe6df7ac8e2ab",
+    "semantic_hash": "de67b38e73a84fff995fe6df7ac8e2ab"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/threats/ip-allowlist.tsx": {
+    "mtime": 1779729736.3360338,
+    "ast_hash": "45003d369afe805388f908da465b3e16",
+    "semantic_hash": "45003d369afe805388f908da465b3e16"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/threats/anomalies.tsx": {
+    "mtime": 1779729690.0249927,
+    "ast_hash": "f18bc851bf7ed64313a51b9f54a4240a",
+    "semantic_hash": "f18bc851bf7ed64313a51b9f54a4240a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/compliance/soc2.tsx": {
+    "mtime": 1779730078.2206485,
+    "ast_hash": "7f5ff46b0a966a0f80f0cef73dc9fff7",
+    "semantic_hash": "7f5ff46b0a966a0f80f0cef73dc9fff7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/compliance/retention.tsx": {
+    "mtime": 1779730127.064852,
+    "ast_hash": "2a3e8fb2067d69b09e1e1972c196c7cd",
+    "semantic_hash": "2a3e8fb2067d69b09e1e1972c196c7cd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/compliance/iso27001.tsx": {
+    "mtime": 1779730102.385068,
+    "ast_hash": "5dda086ddc287786fe2a4636bbead9dc",
+    "semantic_hash": "5dda086ddc287786fe2a4636bbead9dc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/security/compliance/gdpr.tsx": {
+    "mtime": 1779722329.177074,
+    "ast_hash": "bb63a4c409d8be765bbf67a23aed3d77",
+    "semantic_hash": "bb63a4c409d8be765bbf67a23aed3d77"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/social.tsx": {
+    "mtime": 1779722242.1766984,
+    "ast_hash": "d566696e621c29daf912e7fe9f15a568",
+    "semantic_hash": "d566696e621c29daf912e7fe9f15a568"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/login-methods/magic-links.tsx": {
+    "mtime": 1779730464.000228,
+    "ast_hash": "1bb917901ad6511e6e76789c70a9db35",
+    "semantic_hash": "1bb917901ad6511e6e76789c70a9db35"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/login-methods/passkeys.tsx": {
+    "mtime": 1779722295.8596566,
+    "ast_hash": "b568041fe7168e37650e978eecc35e56",
+    "semantic_hash": "b568041fe7168e37650e978eecc35e56"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/login-methods/passwordless.tsx": {
+    "mtime": 1779730461.877801,
+    "ast_hash": "47d74a0a660d84ea4355adce1e076ff6",
+    "semantic_hash": "47d74a0a660d84ea4355adce1e076ff6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/mfa/recovery-codes.tsx": {
+    "mtime": 1779730473.9248962,
+    "ast_hash": "d6d7baa7db424eb09e1b5e72dde5104b",
+    "semantic_hash": "d6d7baa7db424eb09e1b5e72dde5104b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/mfa/totp.tsx": {
+    "mtime": 1779722527.4891691,
+    "ast_hash": "07e08b64ba6acf85d0fc9e48b652ba25",
+    "semantic_hash": "07e08b64ba6acf85d0fc9e48b652ba25"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/mfa/sms-email.tsx": {
+    "mtime": 1779730470.7749684,
+    "ast_hash": "dcf997342ced0d6eb918b32877492d64",
+    "semantic_hash": "dcf997342ced0d6eb918b32877492d64"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/connections/oidc.tsx": {
+    "mtime": 1779721547.8200178,
+    "ast_hash": "a353486d4cd44c13830a0b16431fec45",
+    "semantic_hash": "a353486d4cd44c13830a0b16431fec45"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/connections/scim.tsx": {
+    "mtime": 1779729943.864852,
+    "ast_hash": "2d1969dfda9cd18a249c98a87e49f967",
+    "semantic_hash": "2d1969dfda9cd18a249c98a87e49f967"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/connections/ldap.tsx": {
+    "mtime": 1779729965.886007,
+    "ast_hash": "e80845aff82f5efee7066dcb7613b4b9",
+    "semantic_hash": "e80845aff82f5efee7066dcb7613b4b9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/connections/saml.tsx": {
+    "mtime": 1779730526.7194672,
+    "ast_hash": "290a2b27d9e166cbc1a833332d97d57b",
+    "semantic_hash": "290a2b27d9e166cbc1a833332d97d57b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/api/keys.tsx": {
+    "mtime": 1779721470.4765732,
+    "ast_hash": "4f8f1b8cb26820dd717af29dd6b7626b",
+    "semantic_hash": "4f8f1b8cb26820dd717af29dd6b7626b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/auth/api/machine-identities.tsx": {
+    "mtime": 1779721847.0521004,
+    "ast_hash": "2eead6a8956033515af4215a3763b807",
+    "semantic_hash": "2eead6a8956033515af4215a3763b807"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/users/sessions.tsx": {
+    "mtime": 1779722346.9333785,
+    "ast_hash": "a502ade9de909017897c61b64f8c2ac4",
+    "semantic_hash": "a502ade9de909017897c61b64f8c2ac4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/users/deleted.tsx": {
+    "mtime": 1779730245.807166,
+    "ast_hash": "ff10418382bc80610ebf4378aa50160a",
+    "semantic_hash": "ff10418382bc80610ebf4378aa50160a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/src/routes/_app/users/invitations.tsx": {
+    "mtime": 1779723183.3614461,
+    "ast_hash": "c88824951d620ef17978a26bb6acfe6a",
+    "semantic_hash": "c88824951d620ef17978a26bb6acfe6a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/postcss.config.mjs": {
+    "mtime": 1779429309.5546756,
+    "ast_hash": "239f3ebf717465dc636818a1a619398d",
+    "semantic_hash": "239f3ebf717465dc636818a1a619398d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/next-env.d.ts": {
+    "mtime": 1779356624.6564233,
+    "ast_hash": "d0f8375ae1199dc7acd3977fc33b78b8",
+    "semantic_hash": "d0f8375ae1199dc7acd3977fc33b78b8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/package.json": {
+    "mtime": 1779712168.651471,
+    "ast_hash": "9195b3538fb2a6a4203462ee19da8bc1",
+    "semantic_hash": "9195b3538fb2a6a4203462ee19da8bc1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/tsconfig.json": {
+    "mtime": 1779712168.650124,
+    "ast_hash": "3d3958a576177523641dc6f9d66368b6",
+    "semantic_hash": "3d3958a576177523641dc6f9d66368b6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/next.config.ts": {
+    "mtime": 1779712168.6535285,
+    "ast_hash": "356df77f76b840c4515951a6d92600db",
+    "semantic_hash": "356df77f76b840c4515951a6d92600db"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/layout.tsx": {
+    "mtime": 1779712168.6549535,
+    "ast_hash": "03d8cfc6a0be4da668fb718e8a330956",
+    "semantic_hash": "03d8cfc6a0be4da668fb718e8a330956"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/layout.tsx": {
+    "mtime": 1779430260.123387,
+    "ast_hash": "4a552536a83523f9bdb40efa3aca3fcd",
+    "semantic_hash": "4a552536a83523f9bdb40efa3aca3fcd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/page.tsx": {
+    "mtime": 1779429309.5589101,
+    "ast_hash": "ce55528a2b1ba24c4955fa1b38cee08c",
+    "semantic_hash": "ce55528a2b1ba24c4955fa1b38cee08c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/customers/page.tsx": {
+    "mtime": 1779712168.6571271,
+    "ast_hash": "1f3bc8ae46faa0944908c831096e4f4d",
+    "semantic_hash": "1f3bc8ae46faa0944908c831096e4f4d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/contact/page.tsx": {
+    "mtime": 1779712168.6586974,
+    "ast_hash": "2d5517f60583f8a5ff67d3a2ea35405c",
+    "semantic_hash": "2d5517f60583f8a5ff67d3a2ea35405c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/security/page.tsx": {
+    "mtime": 1779712168.6599977,
+    "ast_hash": "90d27066cbf810a0661b966a67e8c4c5",
+    "semantic_hash": "90d27066cbf810a0661b966a67e8c4c5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/features/page.tsx": {
+    "mtime": 1779712168.662099,
+    "ast_hash": "b4fcd8df2b5e56c01c4810775454902b",
+    "semantic_hash": "b4fcd8df2b5e56c01c4810775454902b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/app/(marketing)/pricing/page.tsx": {
+    "mtime": 1779712168.6633716,
+    "ast_hash": "7f3ecd5576123bde0bdff80038d62145",
+    "semantic_hash": "7f3ecd5576123bde0bdff80038d62145"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/site-header.tsx": {
+    "mtime": 1779716752.1832495,
+    "ast_hash": "32778e89a975c9088467d1f0071e3d58",
+    "semantic_hash": "32778e89a975c9088467d1f0071e3d58"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/site-footer.tsx": {
+    "mtime": 1779716786.8150153,
+    "ast_hash": "545b818f3208980ffdd195f0e3271350",
+    "semantic_hash": "545b818f3208980ffdd195f0e3271350"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/theme-toggle.tsx": {
+    "mtime": 1779712168.6691399,
+    "ast_hash": "f575d5878fac26437b0e2435dfe050ff",
+    "semantic_hash": "f575d5878fac26437b0e2435dfe050ff"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/button-link.tsx": {
+    "mtime": 1779712168.667716,
+    "ast_hash": "1175d822fcde49d67365519061f806fb",
+    "semantic_hash": "1175d822fcde49d67365519061f806fb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/hero.tsx": {
+    "mtime": 1779712168.67249,
+    "ast_hash": "0f8b7fcb45a408b4865f46ea8082c7ef",
+    "semantic_hash": "0f8b7fcb45a408b4865f46ea8082c7ef"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/features.tsx": {
+    "mtime": 1779712168.680507,
+    "ast_hash": "d54da914229588ea0fbaf2fea95b8621",
+    "semantic_hash": "d54da914229588ea0fbaf2fea95b8621"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/testimonials.tsx": {
+    "mtime": 1779712168.6820242,
+    "ast_hash": "e7679e0cce51de8f544b4c3ce674bd8e",
+    "semantic_hash": "e7679e0cce51de8f544b4c3ce674bd8e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/stats.tsx": {
+    "mtime": 1779430260.388353,
+    "ast_hash": "9f38fde1a34187d256a6931c66f584ed",
+    "semantic_hash": "9f38fde1a34187d256a6931c66f584ed"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/how-it-works.tsx": {
+    "mtime": 1779712168.6830678,
+    "ast_hash": "e0fad0c2dd960b87d99df5829468361f",
+    "semantic_hash": "e0fad0c2dd960b87d99df5829468361f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/cta.tsx": {
+    "mtime": 1779430260.2948163,
+    "ast_hash": "a09dc945e12a8a8c30f5a5c42b40e34b",
+    "semantic_hash": "a09dc945e12a8a8c30f5a5c42b40e34b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/logo-cloud.tsx": {
+    "mtime": 1779430260.3828862,
+    "ast_hash": "26e0c945794fa71e859c5d6f96255086",
+    "semantic_hash": "26e0c945794fa71e859c5d6f96255086"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/sections/integrations.tsx": {
+    "mtime": 1779430260.3774362,
+    "ast_hash": "6eb276cc0c5c55eaaf77a5678a9f8f9f",
+    "semantic_hash": "6eb276cc0c5c55eaaf77a5678a9f8f9f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/effects/border-beam.tsx": {
+    "mtime": 1779712168.6855097,
+    "ast_hash": "e8a3a129300672baba4402c9e61e544c",
+    "semantic_hash": "e8a3a129300672baba4402c9e61e544c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/effects/aurora.tsx": {
+    "mtime": 1779712168.6885297,
+    "ast_hash": "823a19ff8895c67c393710057dfb20c1",
+    "semantic_hash": "823a19ff8895c67c393710057dfb20c1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/effects/dot-pattern.tsx": {
+    "mtime": 1779712168.6875045,
+    "ast_hash": "543d1599d4720d7d81a2476b7be4ac3f",
+    "semantic_hash": "543d1599d4720d7d81a2476b7be4ac3f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/effects/marquee.tsx": {
+    "mtime": 1779712168.6842215,
+    "ast_hash": "158a7bf428f5b39b13626ab2f8d00013",
+    "semantic_hash": "158a7bf428f5b39b13626ab2f8d00013"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/effects/number-ticker.tsx": {
+    "mtime": 1779712168.6896558,
+    "ast_hash": "8b6cfd8326fa438873fe9bdc9c5052d5",
+    "semantic_hash": "8b6cfd8326fa438873fe9bdc9c5052d5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/src/components/marketing/effects/code-block.tsx": {
+    "mtime": 1779712168.6934862,
+    "ast_hash": "e462c987b6110c8b7cce033b8de4122f",
+    "semantic_hash": "e462c987b6110c8b7cce033b8de4122f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/cmd/server/main.go": {
+    "mtime": 1779711593.3687937,
+    "ast_hash": "699d1262ae8c58eb908f8a6b1651cbeb",
+    "semantic_hash": "699d1262ae8c58eb908f8a6b1651cbeb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0011_passkeys.up.sql": {
+    "mtime": 1779710757.670347,
+    "ast_hash": "0a224b94c1467fd8e841d15f1b4d3659",
+    "semantic_hash": "0a224b94c1467fd8e841d15f1b4d3659"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0011_passkeys.down.sql": {
+    "mtime": 1779710759.213929,
+    "ast_hash": "a52c68a149dab9e688c1a84c0598350f",
+    "semantic_hash": "a52c68a149dab9e688c1a84c0598350f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0015_branding.up.sql": {
+    "mtime": 1779710777.9755683,
+    "ast_hash": "31a4956663c679f8484dde5639982b5a",
+    "semantic_hash": "31a4956663c679f8484dde5639982b5a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0007_audit.up.sql": {
+    "mtime": 1779710106.1236362,
+    "ast_hash": "71d4b2bcfa08427329c3dbbe2c67b49b",
+    "semantic_hash": "71d4b2bcfa08427329c3dbbe2c67b49b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0008_verification.up.sql": {
+    "mtime": 1779710736.1613212,
+    "ast_hash": "daed34d313f740426172296b365d6f57",
+    "semantic_hash": "daed34d313f740426172296b365d6f57"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0012_api_keys.down.sql": {
+    "mtime": 1779710765.00341,
+    "ast_hash": "3c4f85dd5e2e134fb52a6f8f54969ea4",
+    "semantic_hash": "3c4f85dd5e2e134fb52a6f8f54969ea4"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0020_social.up.sql": {
+    "mtime": 1779710822.081184,
+    "ast_hash": "a66c4596fefde7df5965c3f05f2dbe9b",
+    "semantic_hash": "a66c4596fefde7df5965c3f05f2dbe9b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0014_invites.up.sql": {
+    "mtime": 1779710773.751133,
+    "ast_hash": "25808832eedbce984d1f55a7032d5928",
+    "semantic_hash": "25808832eedbce984d1f55a7032d5928"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0016_webhooks.up.sql": {
+    "mtime": 1779710784.8572743,
+    "ast_hash": "f8e8984d63bfcb5cb6a05312d86d5942",
+    "semantic_hash": "f8e8984d63bfcb5cb6a05312d86d5942"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0005_auth.up.sql": {
+    "mtime": 1779710091.4342713,
+    "ast_hash": "8cc4a863e050f2e7fbbd78bb0793486a",
+    "semantic_hash": "8cc4a863e050f2e7fbbd78bb0793486a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0006_rbac.up.sql": {
+    "mtime": 1779710100.8655863,
+    "ast_hash": "ff2d571b2024ddffbc7da15b5c7294e2",
+    "semantic_hash": "ff2d571b2024ddffbc7da15b5c7294e2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0005_auth.down.sql": {
+    "mtime": 1779710093.083902,
+    "ast_hash": "9a87a63bf2e19434b5c28097951d4da0",
+    "semantic_hash": "9a87a63bf2e19434b5c28097951d4da0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0013_service_principals.down.sql": {
+    "mtime": 1779710769.923053,
+    "ast_hash": "4802ed4e9dd8af48e99b1007888a2f77",
+    "semantic_hash": "4802ed4e9dd8af48e99b1007888a2f77"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0002_platform_outbox.down.sql": {
+    "mtime": 1779710059.6519723,
+    "ast_hash": "5b8dd7887e968fec7d1811ac18af6c9c",
+    "semantic_hash": "5b8dd7887e968fec7d1811ac18af6c9c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0017_policy.down.sql": {
+    "mtime": 1779710797.3577557,
+    "ast_hash": "b7cecc97681a0f5d728c4a7befe644f8",
+    "semantic_hash": "b7cecc97681a0f5d728c4a7befe644f8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0019_oidc.up.sql": {
+    "mtime": 1779710812.5992193,
+    "ast_hash": "e43aaef5adccef8814b38c47f48fecad",
+    "semantic_hash": "e43aaef5adccef8814b38c47f48fecad"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0004_user.up.sql": {
+    "mtime": 1779710080.6133535,
+    "ast_hash": "d6299554e5eb2378df40ab1b75586520",
+    "semantic_hash": "d6299554e5eb2378df40ab1b75586520"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0022_global_email.up.sql": {
+    "mtime": 1779725889.002477,
+    "ast_hash": "1fc219d5130aeae64270be2c5a6af096",
+    "semantic_hash": "1fc219d5130aeae64270be2c5a6af096"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0009_recovery.down.sql": {
+    "mtime": 1779710744.1725974,
+    "ast_hash": "78a06bbe77097dfdc32a165e1815b47e",
+    "semantic_hash": "78a06bbe77097dfdc32a165e1815b47e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0018_gdpr.down.sql": {
+    "mtime": 1779710808.3928328,
+    "ast_hash": "30a3bedf8a4ebf0c32c5a2c9ee595956",
+    "semantic_hash": "30a3bedf8a4ebf0c32c5a2c9ee595956"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0003_tenant.down.sql": {
+    "mtime": 1779710066.8543823,
+    "ast_hash": "d2b7e005d69f2c1fa57c3df3736e237a",
+    "semantic_hash": "d2b7e005d69f2c1fa57c3df3736e237a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0016_webhooks.down.sql": {
+    "mtime": 1779710786.6152186,
+    "ast_hash": "51b8595be92d221306295fb3dee735f6",
+    "semantic_hash": "51b8595be92d221306295fb3dee735f6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0017_policy.up.sql": {
+    "mtime": 1779710795.9424837,
+    "ast_hash": "aa689340841e4265bb7b0da75dd67e49",
+    "semantic_hash": "aa689340841e4265bb7b0da75dd67e49"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0020_social.down.sql": {
+    "mtime": 1779710824.098661,
+    "ast_hash": "6e1d0df3fe224bf3f19ce48694cdb9aa",
+    "semantic_hash": "6e1d0df3fe224bf3f19ce48694cdb9aa"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0015_branding.down.sql": {
+    "mtime": 1779710779.0510533,
+    "ast_hash": "cfe8fab3324c64d865986fc15b8fb24f",
+    "semantic_hash": "cfe8fab3324c64d865986fc15b8fb24f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0001_schemas.up.sql": {
+    "mtime": 1779710053.274612,
+    "ast_hash": "c186c0b1531aed9036a40d1dcb44dc8a",
+    "semantic_hash": "c186c0b1531aed9036a40d1dcb44dc8a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0019_oidc.down.sql": {
+    "mtime": 1779710814.445509,
+    "ast_hash": "39810203e1f7bf622ead762a2f98031a",
+    "semantic_hash": "39810203e1f7bf622ead762a2f98031a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0022_global_email.down.sql": {
+    "mtime": 1779725891.2069695,
+    "ast_hash": "a78ef40018f39651c71b9a1e4a430db2",
+    "semantic_hash": "a78ef40018f39651c71b9a1e4a430db2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0021_org.up.sql": {
+    "mtime": 1779710828.7744346,
+    "ast_hash": "c8184ccb6c18df9b71ee661588734e54",
+    "semantic_hash": "c8184ccb6c18df9b71ee661588734e54"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0013_service_principals.up.sql": {
+    "mtime": 1779710768.904241,
+    "ast_hash": "8db1c679e7f027385e3a73fbbbad9f1d",
+    "semantic_hash": "8db1c679e7f027385e3a73fbbbad9f1d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0010_mfa.up.sql": {
+    "mtime": 1779710748.8029432,
+    "ast_hash": "87d8919a31015fa501cf752eb3ecc22f",
+    "semantic_hash": "87d8919a31015fa501cf752eb3ecc22f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0018_gdpr.up.sql": {
+    "mtime": 1779710807.3736253,
+    "ast_hash": "7d1cac614f96f34573e71ee06145c62e",
+    "semantic_hash": "7d1cac614f96f34573e71ee06145c62e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0021_org.down.sql": {
+    "mtime": 1779710829.797797,
+    "ast_hash": "b5c76a5eab70a66d862baef59b17a14f",
+    "semantic_hash": "b5c76a5eab70a66d862baef59b17a14f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0009_recovery.up.sql": {
+    "mtime": 1779710743.0720308,
+    "ast_hash": "fe73c87896a32373faa99b81988fd621",
+    "semantic_hash": "fe73c87896a32373faa99b81988fd621"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0003_tenant.up.sql": {
+    "mtime": 1779710075.3190315,
+    "ast_hash": "d245cb130d240fbf6a8956d6b39777f8",
+    "semantic_hash": "d245cb130d240fbf6a8956d6b39777f8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0012_api_keys.up.sql": {
+    "mtime": 1779710763.9710221,
+    "ast_hash": "7870e930e7db9278dcf96163df1f4708",
+    "semantic_hash": "7870e930e7db9278dcf96163df1f4708"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0006_rbac.down.sql": {
+    "mtime": 1779710102.511218,
+    "ast_hash": "2afccd67810c6a98d85c221dd2604b0a",
+    "semantic_hash": "2afccd67810c6a98d85c221dd2604b0a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0010_mfa.down.sql": {
+    "mtime": 1779710750.915882,
+    "ast_hash": "513d189809f5bf8104efc81ae29a8192",
+    "semantic_hash": "513d189809f5bf8104efc81ae29a8192"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0002_platform_outbox.up.sql": {
+    "mtime": 1779710058.5226016,
+    "ast_hash": "55874816387ece3153e1c9a7822bbb04",
+    "semantic_hash": "55874816387ece3153e1c9a7822bbb04"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0001_schemas.down.sql": {
+    "mtime": 1779710055.556927,
+    "ast_hash": "a0f22d9dd65da9c5494a9fe5f86e2b9f",
+    "semantic_hash": "a0f22d9dd65da9c5494a9fe5f86e2b9f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0004_user.down.sql": {
+    "mtime": 1779710081.629618,
+    "ast_hash": "ff4072b8571519ccf6788fa1666633be",
+    "semantic_hash": "ff4072b8571519ccf6788fa1666633be"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0007_audit.down.sql": {
+    "mtime": 1779710107.1464274,
+    "ast_hash": "c5b8075fcd16acb8d6eaa6fb15029c33",
+    "semantic_hash": "c5b8075fcd16acb8d6eaa6fb15029c33"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0014_invites.down.sql": {
+    "mtime": 1779710775.0273488,
+    "ast_hash": "bfb4f4ff6b226742cc938f1c619b4f1d",
+    "semantic_hash": "bfb4f4ff6b226742cc938f1c619b4f1d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/migrations/0008_verification.down.sql": {
+    "mtime": 1779710737.7450464,
+    "ast_hash": "d0e719be580534adf6e7c8e28590026a",
+    "semantic_hash": "d0e719be580534adf6e7c8e28590026a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/webhook/webhook.go": {
+    "mtime": 1779711282.0911908,
+    "ast_hash": "0e84de999b0234b37d4c50a21dfb4fa1",
+    "semantic_hash": "0e84de999b0234b37d4c50a21dfb4fa1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/tenant/domain.go": {
+    "mtime": 1779710135.2086327,
+    "ast_hash": "c7b617cf435ec49f4ca5b249cf3ae66e",
+    "semantic_hash": "c7b617cf435ec49f4ca5b249cf3ae66e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/tenant/http.go": {
+    "mtime": 1779710183.1405942,
+    "ast_hash": "832063d77aadb0bfc8244255a7d2298c",
+    "semantic_hash": "832063d77aadb0bfc8244255a7d2298c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/tenant/repository.go": {
+    "mtime": 1779710236.0084803,
+    "ast_hash": "242ea5437724f63d2c77d86c2e9bdfe0",
+    "semantic_hash": "242ea5437724f63d2c77d86c2e9bdfe0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/principal/principal.go": {
+    "mtime": 1779711131.5565083,
+    "ast_hash": "b23b776977316a655f4c691f243ff418",
+    "semantic_hash": "b23b776977316a655f4c691f243ff418"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/rbac/rbac.go": {
+    "mtime": 1779710411.3579845,
+    "ast_hash": "06db0d4995827a08f27ad6729338b790",
+    "semantic_hash": "06db0d4995827a08f27ad6729338b790"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/rbac/http.go": {
+    "mtime": 1779710439.481026,
+    "ast_hash": "9175a77fe43f70bf3fd835484f6913c7",
+    "semantic_hash": "9175a77fe43f70bf3fd835484f6913c7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/branding/branding.go": {
+    "mtime": 1779711044.186206,
+    "ast_hash": "ba819ae3ad61293cbeb3f32d83711a10",
+    "semantic_hash": "ba819ae3ad61293cbeb3f32d83711a10"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/passkey/passkey.go": {
+    "mtime": 1779711467.4076185,
+    "ast_hash": "bf1cd6daf8db9c773cbaf44b0c3e3da5",
+    "semantic_hash": "bf1cd6daf8db9c773cbaf44b0c3e3da5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/config/config.go": {
+    "mtime": 1779709941.4807322,
+    "ast_hash": "51248faa329f8b7f393e33a0aec6d414",
+    "semantic_hash": "51248faa329f8b7f393e33a0aec6d414"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/auth/service.go": {
+    "mtime": 1779725926.6995025,
+    "ast_hash": "6ddfca5959aec8dfca0992e6a415ef8a",
+    "semantic_hash": "6ddfca5959aec8dfca0992e6a415ef8a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/auth/http.go": {
+    "mtime": 1779725943.9766517,
+    "ast_hash": "52912ea93d1e9edc86c1623bf0247660",
+    "semantic_hash": "52912ea93d1e9edc86c1623bf0247660"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/group/group.go": {
+    "mtime": 1779722548.9141586,
+    "ast_hash": "37595a7071efbbc635c0d38ded285729",
+    "semantic_hash": "37595a7071efbbc635c0d38ded285729"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/recovery/recovery.go": {
+    "mtime": 1779710948.333868,
+    "ast_hash": "2dd1b38b65b4a52ab985564b6ef9d330",
+    "semantic_hash": "2dd1b38b65b4a52ab985564b6ef9d330"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/recovery/http.go": {
+    "mtime": 1779710960.2725084,
+    "ast_hash": "d5e5869be2edf6c57b6d0b7531d49486",
+    "semantic_hash": "d5e5869be2edf6c57b6d0b7531d49486"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/outbox/outbox.go": {
+    "mtime": 1779710036.071574,
+    "ast_hash": "7b3b24c5f61610a30701d46429db4edd",
+    "semantic_hash": "7b3b24c5f61610a30701d46429db4edd"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/password/hasher.go": {
+    "mtime": 1779710020.6182344,
+    "ast_hash": "7ab09eecb14fcea36c6aa8da25b078e7",
+    "semantic_hash": "7ab09eecb14fcea36c6aa8da25b078e7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/logger/handler.go": {
+    "mtime": 1779710004.4594398,
+    "ast_hash": "cb29147037043441143e168646ed76d1",
+    "semantic_hash": "cb29147037043441143e168646ed76d1"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/notifier/notifier.go": {
+    "mtime": 1779710849.2681777,
+    "ast_hash": "14d07c10a7c5acf98f92d871c445c169",
+    "semantic_hash": "14d07c10a7c5acf98f92d871c445c169"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/ratelimit/limiter.go": {
+    "mtime": 1779710870.0731058,
+    "ast_hash": "6c94e2ef31c680f19ffa976806edfa52",
+    "semantic_hash": "6c94e2ef31c680f19ffa976806edfa52"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/httpx/auth.go": {
+    "mtime": 1779709990.3090234,
+    "ast_hash": "6315e4dbc610229304dbf18bd64ab533",
+    "semantic_hash": "6315e4dbc610229304dbf18bd64ab533"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/httpx/response.go": {
+    "mtime": 1779709974.6120987,
+    "ast_hash": "659236c9fc5308d7a83f620b8eb8b599",
+    "semantic_hash": "659236c9fc5308d7a83f620b8eb8b599"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/httpx/middleware.go": {
+    "mtime": 1779709978.2862587,
+    "ast_hash": "aa31fd577e30d2f58779e9b581613dbb",
+    "semantic_hash": "aa31fd577e30d2f58779e9b581613dbb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/httpx/ctx.go": {
+    "mtime": 1779709967.2154744,
+    "ast_hash": "95cad606b951331e3a2c2cb575cb6d2e",
+    "semantic_hash": "95cad606b951331e3a2c2cb575cb6d2e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/errs/errs.go": {
+    "mtime": 1779709956.7817483,
+    "ast_hash": "33e3ebad7f477374050d87d0eb52e614",
+    "semantic_hash": "33e3ebad7f477374050d87d0eb52e614"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/db/pool.go": {
+    "mtime": 1779709962.4868982,
+    "ast_hash": "63870943a62697a051845e191ff50ba2",
+    "semantic_hash": "63870943a62697a051845e191ff50ba2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/codes/codes.go": {
+    "mtime": 1779710875.901021,
+    "ast_hash": "7929991ffef63a344ed54867313efd08",
+    "semantic_hash": "7929991ffef63a344ed54867313efd08"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/totp/totp.go": {
+    "mtime": 1779710861.690468,
+    "ast_hash": "1f85343845c647c7ec918bd01178b3f8",
+    "semantic_hash": "1f85343845c647c7ec918bd01178b3f8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/platform/tokens/jwt.go": {
+    "mtime": 1779711139.3255486,
+    "ast_hash": "4f7c666ec3c10ecdb298e8751fd8226c",
+    "semantic_hash": "4f7c666ec3c10ecdb298e8751fd8226c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/oidc/oidc.go": {
+    "mtime": 1779711444.325969,
+    "ast_hash": "e62c935458e8f0fc3d310f98f581c942",
+    "semantic_hash": "e62c935458e8f0fc3d310f98f581c942"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/user/domain.go": {
+    "mtime": 1779710255.6808527,
+    "ast_hash": "d753985aa4b741fabb2247c68d1810f5",
+    "semantic_hash": "d753985aa4b741fabb2247c68d1810f5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/user/http.go": {
+    "mtime": 1779710310.6918654,
+    "ast_hash": "879a83b72605dc2dd4c0651fa2b2643f",
+    "semantic_hash": "879a83b72605dc2dd4c0651fa2b2643f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/user/repository.go": {
+    "mtime": 1779725897.396615,
+    "ast_hash": "e486a972e9a28f7d53be1a1412021713",
+    "semantic_hash": "e486a972e9a28f7d53be1a1412021713"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/mfa/mfa.go": {
+    "mtime": 1779711184.123126,
+    "ast_hash": "4b892cc3b20e8b2ecbcb0ff5c240db0f",
+    "semantic_hash": "4b892cc3b20e8b2ecbcb0ff5c240db0f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/gdpr/gdpr.go": {
+    "mtime": 1779711353.035308,
+    "ast_hash": "8a52388e55c4c9a722ad156e61157576",
+    "semantic_hash": "8a52388e55c4c9a722ad156e61157576"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/social/social.go": {
+    "mtime": 1779711498.216392,
+    "ast_hash": "7304ca2625e20be90c5e08d782ba00eb",
+    "semantic_hash": "7304ca2625e20be90c5e08d782ba00eb"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/invite/invite.go": {
+    "mtime": 1779711013.5015984,
+    "ast_hash": "8ced9bd60ec8d2f6779d83d32d5d5029",
+    "semantic_hash": "8ced9bd60ec8d2f6779d83d32d5d5029"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/invite/http.go": {
+    "mtime": 1779711027.2107754,
+    "ast_hash": "330f605618e4413c3b8fbd171bc2c71c",
+    "semantic_hash": "330f605618e4413c3b8fbd171bc2c71c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/verification/verification.go": {
+    "mtime": 1779710908.5804994,
+    "ast_hash": "3eb27279809f11e92398ac45d66da32c",
+    "semantic_hash": "3eb27279809f11e92398ac45d66da32c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/verification/http.go": {
+    "mtime": 1779710921.088041,
+    "ast_hash": "09fb808743a1f2d3997c5c976de63660",
+    "semantic_hash": "09fb808743a1f2d3997c5c976de63660"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/apikey/apikey.go": {
+    "mtime": 1779711094.523842,
+    "ast_hash": "bf81c4b6cf32d7287993d269d9baf57d",
+    "semantic_hash": "bf81c4b6cf32d7287993d269d9baf57d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/audit/audit.go": {
+    "mtime": 1779710124.8689427,
+    "ast_hash": "26338c1e25637f89d6de77dff66a03cf",
+    "semantic_hash": "26338c1e25637f89d6de77dff66a03cf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/audit/http.go": {
+    "mtime": 1779711381.5391269,
+    "ast_hash": "75f6c79d04109cbad0b4732d2e3e5618",
+    "semantic_hash": "75f6c79d04109cbad0b4732d2e3e5618"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/http/router.go": {
+    "mtime": 1779711561.9123495,
+    "ast_hash": "845bbefd396a8339d274fe61f0dd5131",
+    "semantic_hash": "845bbefd396a8339d274fe61f0dd5131"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/internal/policy/policy.go": {
+    "mtime": 1779711317.8493292,
+    "ast_hash": "ff632aa7681306030c619119aedc18d3",
+    "semantic_hash": "ff632aa7681306030c619119aedc18d3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/api/postman/qeet-identity.postman_environment.json": {
+    "mtime": 1779717955.2023182,
+    "ast_hash": "db6acdcd6eca76258c2c7dae3d2104dc",
+    "semantic_hash": "db6acdcd6eca76258c2c7dae3d2104dc"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/api/postman/qeet-identity.postman_collection.json": {
+    "mtime": 1779726068.1754825,
+    "ast_hash": "9d2926da3319e8715a83e7a916e714d5",
+    "semantic_hash": "9d2926da3319e8715a83e7a916e714d5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.vscode/settings.json": {
+    "mtime": 1779729345.0281084,
+    "ast_hash": "efbe37a2ce071e8c95ae202c41b56c85",
+    "semantic_hash": "efbe37a2ce071e8c95ae202c41b56c85"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.vscode/extensions.json": {
+    "mtime": 1779729361.782409,
+    "ast_hash": "5830bd80fe29be24f245727c6b0b0ae2",
+    "semantic_hash": "5830bd80fe29be24f245727c6b0b0ae2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/CODE_OF_CONDUCT.md": {
+    "mtime": 1779715018.2857034,
+    "ast_hash": "d06e38a361d9d3a7287ef38aa789fed0",
+    "semantic_hash": "d06e38a361d9d3a7287ef38aa789fed0"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/CHANGELOG.md": {
+    "mtime": 1779715036.7891388,
+    "ast_hash": "26475b9cf2a7bc597baa297266449c66",
+    "semantic_hash": "26475b9cf2a7bc597baa297266449c66"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/README.md": {
+    "mtime": 1779715962.0962586,
+    "ast_hash": "6e73f9808b40f211776ad469efd5ca1a",
+    "semantic_hash": "6e73f9808b40f211776ad469efd5ca1a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/CONTRIBUTING.md": {
+    "mtime": 1779714928.7184358,
+    "ast_hash": "4992e47222572ef7abcc591f63c94e81",
+    "semantic_hash": "4992e47222572ef7abcc591f63c94e81"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/docker-compose.yml": {
+    "mtime": 1779729322.9901502,
+    "ast_hash": "ca145f07f32167758144d6f54c02675a",
+    "semantic_hash": "ca145f07f32167758144d6f54c02675a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/CLAUDE.md": {
+    "mtime": 1779729383.9905095,
+    "ast_hash": "956c58f79d6e75db0aa98103d82fd684",
+    "semantic_hash": "956c58f79d6e75db0aa98103d82fd684"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/SECURITY.md": {
+    "mtime": 1779714884.7624736,
+    "ast_hash": "2803f3c62958b3df44dbb83d1257d89b",
+    "semantic_hash": "2803f3c62958b3df44dbb83d1257d89b"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/pnpm-workspace.yaml": {
+    "mtime": 1779431031.5071108,
+    "ast_hash": "ce3e2918f070772727e0b4d56628dfb9",
+    "semantic_hash": "ce3e2918f070772727e0b4d56628dfb9"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/packages/qeetid-ui/README.md": {
+    "mtime": 1779323350.093722,
+    "ast_hash": "ac62a74ff455692432b00e882d1ab32a",
+    "semantic_hash": "ac62a74ff455692432b00e882d1ab32a"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/README.md": {
+    "mtime": 1779328184.759348,
+    "ast_hash": "dd14914513d92fd9efcd37bea0d26a72",
+    "semantic_hash": "dd14914513d92fd9efcd37bea0d26a72"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/cli.mdx": {
+    "mtime": 1779712168.4752512,
+    "ast_hash": "325970ca8dfccf73c3c0156d75ad8092",
+    "semantic_hash": "325970ca8dfccf73c3c0156d75ad8092"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/audit.mdx": {
+    "mtime": 1779712168.476495,
+    "ast_hash": "e79874125e5cfcddab22182b3a49f63f",
+    "semantic_hash": "e79874125e5cfcddab22182b3a49f63f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/edge.mdx": {
+    "mtime": 1779712168.4791439,
+    "ast_hash": "f4edb82f480d5108f50a7a214d95af20",
+    "semantic_hash": "f4edb82f480d5108f50a7a214d95af20"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sessions.mdx": {
+    "mtime": 1779712168.4777038,
+    "ast_hash": "2fae24c423afd7766d5774c7446014b2",
+    "semantic_hash": "2fae24c423afd7766d5774c7446014b2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/index.mdx": {
+    "mtime": 1779328184.6287575,
+    "ast_hash": "3e7c89c515ef09c03e2149853c6aae02",
+    "semantic_hash": "3e7c89c515ef09c03e2149853c6aae02"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/webhooks.mdx": {
+    "mtime": 1779712168.4804876,
+    "ast_hash": "9218819ac963119a26fba2247910d305",
+    "semantic_hash": "9218819ac963119a26fba2247910d305"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/concepts.mdx": {
+    "mtime": 1779712168.4831655,
+    "ast_hash": "7cb946debf49c8c1a536c156a08bf4f2",
+    "semantic_hash": "7cb946debf49c8c1a536c156a08bf4f2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/rate-limits.mdx": {
+    "mtime": 1779712168.4850256,
+    "ast_hash": "47e0e115b03956b818b14ace02537753",
+    "semantic_hash": "47e0e115b03956b818b14ace02537753"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/mfa.mdx": {
+    "mtime": 1779712168.4818194,
+    "ast_hash": "d26d98c0cb8860c063a82d3996347b12",
+    "semantic_hash": "d26d98c0cb8860c063a82d3996347b12"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/changelog.mdx": {
+    "mtime": 1779712168.4870076,
+    "ast_hash": "16bbad49f9f7b6b2ae5b2a649ba69019",
+    "semantic_hash": "16bbad49f9f7b6b2ae5b2a649ba69019"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/rbac.mdx": {
+    "mtime": 1779712168.4882212,
+    "ast_hash": "ef9a3e0d69afe36ee7581bdf92d3e5ca",
+    "semantic_hash": "ef9a3e0d69afe36ee7581bdf92d3e5ca"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/quickstart.mdx": {
+    "mtime": 1779712168.4903667,
+    "ast_hash": "6e896c1614484129cdc6bb78db748786",
+    "semantic_hash": "6e896c1614484129cdc6bb78db748786"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/multi-tenancy.mdx": {
+    "mtime": 1779712168.4892225,
+    "ast_hash": "5b60c3c3bc03d1d89a6c5d4cb5cec6de",
+    "semantic_hash": "5b60c3c3bc03d1d89a6c5d4cb5cec6de"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sdks/index.mdx": {
+    "mtime": 1779712168.495601,
+    "ast_hash": "fb187616635d5fd7515b211ab6562a55",
+    "semantic_hash": "fb187616635d5fd7515b211ab6562a55"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sdks/python.mdx": {
+    "mtime": 1779712168.493953,
+    "ast_hash": "b98738ca9d4d91eeefef7e4dec9bfe04",
+    "semantic_hash": "b98738ca9d4d91eeefef7e4dec9bfe04"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sdks/typescript.mdx": {
+    "mtime": 1779712168.4976525,
+    "ast_hash": "70808960bc1af65d5a39c1778cde6c7d",
+    "semantic_hash": "70808960bc1af65d5a39c1778cde6c7d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sdks/react.mdx": {
+    "mtime": 1779712168.4917507,
+    "ast_hash": "80758652b0c3946f6e75c7dfcc0000a2",
+    "semantic_hash": "80758652b0c3946f6e75c7dfcc0000a2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/sdks/go.mdx": {
+    "mtime": 1779712168.5004456,
+    "ast_hash": "60d7ac9ac25e0a30c85a4496b0a12491",
+    "semantic_hash": "60d7ac9ac25e0a30c85a4496b0a12491"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/pagination.mdx": {
+    "mtime": 1779712168.501821,
+    "ast_hash": "f9f393b90a31abea0e4da4847eb1d677",
+    "semantic_hash": "f9f393b90a31abea0e4da4847eb1d677"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/sessions.mdx": {
+    "mtime": 1779712168.4990168,
+    "ast_hash": "584bfc15a54d47399b7fb99d5712a2fa",
+    "semantic_hash": "584bfc15a54d47399b7fb99d5712a2fa"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/index.mdx": {
+    "mtime": 1779712168.506208,
+    "ast_hash": "93b64db5386d8eea4b0f93c2f8a5a504",
+    "semantic_hash": "93b64db5386d8eea4b0f93c2f8a5a504"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/tenants.mdx": {
+    "mtime": 1779712168.5039217,
+    "ast_hash": "e78c45c9e719cfb8106150566ab3d8e5",
+    "semantic_hash": "e78c45c9e719cfb8106150566ab3d8e5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/roles.mdx": {
+    "mtime": 1779712168.5120049,
+    "ast_hash": "ba787096a65e73e2c15f18cc9562c09c",
+    "semantic_hash": "ba787096a65e73e2c15f18cc9562c09c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/errors.mdx": {
+    "mtime": 1779712168.505067,
+    "ast_hash": "224fec71ca7cd9731de37a8ea9b8a501",
+    "semantic_hash": "224fec71ca7cd9731de37a8ea9b8a501"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/api/users.mdx": {
+    "mtime": 1779712168.513298,
+    "ast_hash": "c947fbd83266f87543ebe2f971154c67",
+    "semantic_hash": "c947fbd83266f87543ebe2f971154c67"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/passkeys.mdx": {
+    "mtime": 1779712168.5077128,
+    "ast_hash": "02bfaf56cbb16420f5040a0e0718c4d6",
+    "semantic_hash": "02bfaf56cbb16420f5040a0e0718c4d6"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/index.mdx": {
+    "mtime": 1779712168.5156507,
+    "ast_hash": "ecdf4c5517e0c47e896742980c98ae14",
+    "semantic_hash": "ecdf4c5517e0c47e896742980c98ae14"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/magic-links.mdx": {
+    "mtime": 1779712168.5180793,
+    "ast_hash": "fe6ea3b1e24f606f7a31f185da9edcc5",
+    "semantic_hash": "fe6ea3b1e24f606f7a31f185da9edcc5"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/sign-up.mdx": {
+    "mtime": 1779712168.5169637,
+    "ast_hash": "241bcbeaaedc70ed87d1abbbed7977d2",
+    "semantic_hash": "241bcbeaaedc70ed87d1abbbed7977d2"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/social-providers.mdx": {
+    "mtime": 1779712168.514279,
+    "ast_hash": "5b6913139d1ae6b950dccecab0b68f0e",
+    "semantic_hash": "5b6913139d1ae6b950dccecab0b68f0e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/sign-in.mdx": {
+    "mtime": 1779712168.5218582,
+    "ast_hash": "8b6ceeeaebda86174645ce4a7e2fbd28",
+    "semantic_hash": "8b6ceeeaebda86174645ce4a7e2fbd28"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-docs/content/docs/authentication/sso.mdx": {
+    "mtime": 1779712168.5234027,
+    "ast_hash": "0c1cd67906966e827b034c7f880dfab3",
+    "semantic_hash": "0c1cd67906966e827b034c7f880dfab3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/README.md": {
+    "mtime": 1779430781.6287227,
+    "ast_hash": "c03da5dff886f5e8fb522bc391c7d494",
+    "semantic_hash": "c03da5dff886f5e8fb522bc391c7d494"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/robots.txt": {
+    "mtime": 1779730547.5638835,
+    "ast_hash": "fa1ded1ed7c11438a9b0385b1e112850",
+    "semantic_hash": "fa1ded1ed7c11438a9b0385b1e112850"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/public/robots.txt": {
+    "mtime": 1779294899.144737,
+    "ast_hash": "fa1ded1ed7c11438a9b0385b1e112850",
+    "semantic_hash": "fa1ded1ed7c11438a9b0385b1e112850"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/README.md": {
+    "mtime": 1779294091.4595244,
+    "ast_hash": "f15aaa42d5d299d091b1171097ea56ad",
+    "semantic_hash": "f15aaa42d5d299d091b1171097ea56ad"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/AGENTS.md": {
+    "mtime": 1779430259.8785486,
+    "ast_hash": "3c1cd74f2d841551f835b7ccf0512d0c",
+    "semantic_hash": "3c1cd74f2d841551f835b7ccf0512d0c"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/CLAUDE.md": {
+    "mtime": 1779294136.3248482,
+    "ast_hash": "5c27369b226fcf2be8a6cfe52224e767",
+    "semantic_hash": "5c27369b226fcf2be8a6cfe52224e767"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/README.md": {
+    "mtime": 1779717934.2057335,
+    "ast_hash": "dbc199d63cfc4b26d5efbdcf4b99ee8d",
+    "semantic_hash": "dbc199d63cfc4b26d5efbdcf4b99ee8d"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/docker-compose.yml": {
+    "mtime": 1779726393.3488119,
+    "ast_hash": "b5763028d0f474aac796a2dc17320f71",
+    "semantic_hash": "b5763028d0f474aac796a2dc17320f71"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/backend/api/openapi.yaml": {
+    "mtime": 1779726083.866523,
+    "ast_hash": "e55ac63e9837bceca4f699bc2171cbac",
+    "semantic_hash": "e55ac63e9837bceca4f699bc2171cbac"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/PULL_REQUEST_TEMPLATE.md": {
+    "mtime": 1779715067.9868855,
+    "ast_hash": "d3bfb395ae092513042926667064c026",
+    "semantic_hash": "d3bfb395ae092513042926667064c026"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/dependabot.yml": {
+    "mtime": 1779729289.1028259,
+    "ast_hash": "611e44f8977c2fda940db1ff3d2afcc7",
+    "semantic_hash": "611e44f8977c2fda940db1ff3d2afcc7"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/workflows/codeql.yml": {
+    "mtime": 1779715106.1467173,
+    "ast_hash": "a33cb0a1d1d40020d4e21d3df7d60acf",
+    "semantic_hash": "a33cb0a1d1d40020d4e21d3df7d60acf"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/workflows/ci.yml": {
+    "mtime": 1779715977.2675605,
+    "ast_hash": "dbfe90fb3ce75b49de6fec04972a455f",
+    "semantic_hash": "dbfe90fb3ce75b49de6fec04972a455f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/ISSUE_TEMPLATE/feature_request.md": {
+    "mtime": 1779715079.1664338,
+    "ast_hash": "af38ea8f4132c06d12d8f2595eb09820",
+    "semantic_hash": "af38ea8f4132c06d12d8f2595eb09820"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/ISSUE_TEMPLATE/bug_report.md": {
+    "mtime": 1779715074.9855044,
+    "ast_hash": "cf68c7fb822256578a6a908658d7175f",
+    "semantic_hash": "cf68c7fb822256578a6a908658d7175f"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/.github/ISSUE_TEMPLATE/config.yml": {
+    "mtime": 1779715087.6700795,
+    "ast_hash": "260735294eac0932051c44c0fe357aa3",
+    "semantic_hash": "260735294eac0932051c44c0fe357aa3"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/documents/FEATURE-MATRIX.md": {
+    "mtime": 1779726094.396896,
+    "ast_hash": "00ac0399c5d6b3c2c03e8bdb1dc46c28",
+    "semantic_hash": "00ac0399c5d6b3c2c03e8bdb1dc46c28"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/documents/IMPLEMENTATION-STATUS.md": {
+    "mtime": 1779726090.7042534,
+    "ast_hash": "b3edaf877695aa309799362f497b03c8",
+    "semantic_hash": "b3edaf877695aa309799362f497b03c8"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/documents/README.md": {
+    "mtime": 1779714397.9236004,
+    "ast_hash": "9ff78481ce54077c7e32c10d85dab556",
+    "semantic_hash": "9ff78481ce54077c7e32c10d85dab556"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/documents/PROTOCOL-STATUS.md": {
+    "mtime": 1779714398.073814,
+    "ast_hash": "6a423e9e0d2e5aacd5b0a185091fd1ce",
+    "semantic_hash": "6a423e9e0d2e5aacd5b0a185091fd1ce"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/documents/GAP-ANALYSIS.md": {
+    "mtime": 1779714398.1149273,
+    "ast_hash": "ae9e4f28ad950eb8cbc58bd36e843460",
+    "semantic_hash": "ae9e4f28ad950eb8cbc58bd36e843460"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/logo512.png": {
+    "mtime": 1779730547.5637064,
+    "ast_hash": "917515db74ea8d1aee6a246cfbcc0b45",
+    "semantic_hash": "917515db74ea8d1aee6a246cfbcc0b45"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/.output/public/logo192.png": {
+    "mtime": 1779730547.563692,
+    "ast_hash": "33dbdd0177549353eeeb785d02c294af",
+    "semantic_hash": "33dbdd0177549353eeeb785d02c294af"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/public/logo512.png": {
+    "mtime": 1779294899.1437747,
+    "ast_hash": "917515db74ea8d1aee6a246cfbcc0b45",
+    "semantic_hash": "917515db74ea8d1aee6a246cfbcc0b45"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-admin/public/logo192.png": {
+    "mtime": 1779294899.1431165,
+    "ast_hash": "33dbdd0177549353eeeb785d02c294af",
+    "semantic_hash": "33dbdd0177549353eeeb785d02c294af"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/public/file.svg": {
+    "mtime": 1779294091.4575257,
+    "ast_hash": "d09f95206c3fa0bb9bd9fefabfd0ea71",
+    "semantic_hash": "d09f95206c3fa0bb9bd9fefabfd0ea71"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/public/vercel.svg": {
+    "mtime": 1779294091.4757938,
+    "ast_hash": "c0af2f507b369b085b35ef4bbe3bcf1e",
+    "semantic_hash": "c0af2f507b369b085b35ef4bbe3bcf1e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/public/next.svg": {
+    "mtime": 1779294091.47186,
+    "ast_hash": "8e061864f388b47f33a1c3780831193e",
+    "semantic_hash": "8e061864f388b47f33a1c3780831193e"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/public/globe.svg": {
+    "mtime": 1779294091.4690855,
+    "ast_hash": "2aaafa6a49b6563925fe440891e32717",
+    "semantic_hash": "2aaafa6a49b6563925fe440891e32717"
+  },
+  "/Users/a3097640/Desktop/QG/qeet-identity/frontend/apps/qeetid-web/public/window.svg": {
+    "mtime": 1779294091.4690855,
+    "ast_hash": "a2760511c65806022ad20adf74370ff3",
+    "semantic_hash": "a2760511c65806022ad20adf74370ff3"
+  }
+}

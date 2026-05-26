@@ -2,6 +2,10 @@
 // - Base URL comes from VITE_API_URL (defaults to http://localhost:4001).
 // - The access token from a successful signup/login is persisted under
 //   localStorage["qeetid.access_token"] and attached as Bearer on every call.
+// - On 401, we try `/v1/auth/refresh` once (single-flight, so a wave of
+//   concurrent queries shares one refresh) and replay the original request.
+//   If refresh itself fails, we clear local state and hard-redirect to
+//   /sign-in — that side-steps stale React Query caches mid-render.
 // - Errors are normalised into a typed `ApiError` so React Query / form
 //   handlers can switch on `err.status` and surface `err.message`.
 
@@ -55,6 +59,73 @@ type RequestOpts = {
   anonymous?: boolean;
 };
 
+// Single-flight refresh: if many queries hit a 401 at once they all await the
+// same in-flight `/v1/auth/refresh` instead of stampeding the endpoint (which
+// would revoke the session on the second request, since refresh tokens are
+// rotated single-use server-side — see auth/service.go Refresh()).
+let refreshInFlight: Promise<string | null> | null = null;
+
+type RefreshResponse = {
+  access_token: string;
+  refresh_token: string;
+};
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  const rt = tokenStore.getRefresh();
+  if (!rt) return null;
+
+  refreshInFlight = (async () => {
+    try {
+      const url = new URL("v1/auth/refresh", `${API_BASE_URL}/`);
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ refresh_token: rt }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as RefreshResponse;
+      tokenStore.set(data.access_token);
+      tokenStore.setRefresh(data.refresh_token);
+      return data.access_token;
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+function onAuthLost() {
+  tokenStore.clear();
+  if (typeof window !== "undefined" && window.location.pathname !== "/sign-in") {
+    window.location.assign("/sign-in");
+  }
+}
+
+async function doFetch(
+  url: URL,
+  method: string,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  anonymous: boolean
+): Promise<Response> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (!anonymous) {
+    const tok = tokenStore.get();
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+  }
+  return fetch(url, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal,
+  });
+}
+
 export async function api<T = unknown>(path: string, opts: RequestOpts = {}): Promise<T> {
   const { method = "GET", body, query, signal, anonymous = false } = opts;
 
@@ -65,21 +136,19 @@ export async function api<T = unknown>(path: string, opts: RequestOpts = {}): Pr
     }
   }
 
-  const headers: Record<string, string> = {
-    Accept: "application/json",
-  };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (!anonymous) {
-    const tok = tokenStore.get();
-    if (tok) headers.Authorization = `Bearer ${tok}`;
-  }
+  let res = await doFetch(url, method, body, signal, anonymous);
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal,
-  });
+  // Authenticated 401 → try to refresh once, then replay. Skip the retry for
+  // the refresh endpoint itself (avoids infinite loop) and for explicitly
+  // anonymous calls (login/signup form errors should surface immediately).
+  if (res.status === 401 && !anonymous && !path.includes("/auth/refresh")) {
+    const fresh = await refreshAccessToken();
+    if (fresh) {
+      res = await doFetch(url, method, body, signal, anonymous);
+    } else {
+      onAuthLost();
+    }
+  }
 
   if (res.status === 204) return undefined as T;
 

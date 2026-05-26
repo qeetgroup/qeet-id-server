@@ -69,6 +69,7 @@ function BrandingPage() {
       setSavedAt(new Date());
       qc.invalidateQueries({ queryKey: ["branding", tenantId] });
     },
+    meta: { successMessage: "Branding saved" },
   });
 
   const set = <K extends keyof Branding>(key: K, value: Branding[K]) =>

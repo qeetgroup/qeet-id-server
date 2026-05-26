@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CopyableSecret,
   Field,
   FieldDescription,
   FieldError,
@@ -33,9 +34,15 @@ import {
   TableRow,
   Textarea,
 } from "@qeetid/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CopyIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon, WorkflowIcon } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import {
+  Loader2Icon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  WorkflowIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -80,7 +87,12 @@ function OidcPage() {
         description="OAuth 2.0 / OIDC applications that delegate authentication to Qeetid. The /authorize and ID-token code flow is in progress — see GAP-ANALYSIS P0-4."
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+            >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               Refresh
             </Button>
@@ -94,27 +106,19 @@ function OidcPage() {
       {revealed && (
         <Card className="border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20">
           <CardHeader>
-            <CardTitle className="text-base">Client credentials for {revealed.client.name}</CardTitle>
-            <CardDescription>Confidential clients only. The secret is bcrypt-hashed server-side after this.</CardDescription>
+            <CardTitle className="text-base">
+              Client credentials for {revealed.client.name}
+            </CardTitle>
+            <CardDescription>
+              Confidential clients only. The secret is bcrypt-hashed server-side after this.
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="flex items-center gap-2">
-              <code className="flex-1 break-all rounded-md border bg-background px-3 py-2 text-xs">
-                client_id={revealed.client.client_id}
-              </code>
-              <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(revealed.client.client_id)}>
-                <CopyIcon />
-              </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 break-all rounded-md border bg-background px-3 py-2 text-xs">
-                client_secret={revealed.secret}
-              </code>
-              <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(revealed.secret)}>
-                <CopyIcon />
-              </Button>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>Dismiss</Button>
+            <CopyableSecret value={revealed.client.client_id} label="client_id=" size="sm" />
+            <CopyableSecret value={revealed.secret} label="client_secret=" size="sm" />
+            <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>
+              Dismiss
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -122,11 +126,17 @@ function OidcPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Registered applications</CardTitle>
-          <CardDescription>{listQ.data?.items?.length ?? 0} app{listQ.data?.items?.length === 1 ? "" : "s"}</CardDescription>
+          <CardDescription>
+            {listQ.data?.items?.length ?? 0} app{listQ.data?.items?.length === 1 ? "" : "s"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {listQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="space-y-3 p-4">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
           ) : listQ.isError ? (
             <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
           ) : !listQ.data?.items?.length ? (
@@ -150,9 +160,13 @@ function OidcPage() {
                 {listQ.data.items.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{c.client_id.slice(0, 16)}…</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">
+                      {c.client_id.slice(0, 16)}…
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={c.type === "confidential" ? "default" : "muted"}>{c.type}</Badge>
+                      <Badge variant={c.type === "confidential" ? "default" : "muted"}>
+                        {c.type}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs">
                       {c.redirect_uris.slice(0, 2).join(", ")}
@@ -160,8 +174,14 @@ function OidcPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {c.scopes.slice(0, 3).map((s) => <Badge key={s} variant="muted">{s}</Badge>)}
-                        {c.scopes.length > 3 && <Badge variant="muted">+{c.scopes.length - 3}</Badge>}
+                        {c.scopes.slice(0, 3).map((s) => (
+                          <Badge key={s} variant="muted">
+                            {s}
+                          </Badge>
+                        ))}
+                        {c.scopes.length > 3 && (
+                          <Badge variant="muted">+{c.scopes.length - 3}</Badge>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
@@ -169,7 +189,11 @@ function OidcPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          if (confirm(`Delete "${c.name}"? Apps using this client_id will stop working.`)) {
+                          if (
+                            confirm(
+                              `Delete "${c.name}"? Apps using this client_id will stop working.`,
+                            )
+                          ) {
                             deleteM.mutate(c.id);
                           }
                         }}
@@ -271,7 +295,9 @@ function CreateOidcSheet({ open, onOpenChange, tenantId, onCreated }: CreateOidc
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="public">Public — SPA, mobile (PKCE)</SelectItem>
-                    <SelectItem value="confidential">Confidential — server-side app (client secret)</SelectItem>
+                    <SelectItem value="confidential">
+                      Confidential — server-side app (client secret)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -284,18 +310,27 @@ function CreateOidcSheet({ open, onOpenChange, tenantId, onCreated }: CreateOidc
                   placeholder={"http://localhost:3000/callback\nhttps://app.acme.com/callback"}
                   required
                 />
-                <FieldDescription>One URL per line. Must be HTTPS in production; localhost is allowed for dev.</FieldDescription>
+                <FieldDescription>
+                  One URL per line. Must be HTTPS in production; localhost is allowed for dev.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="post_logout_uris">Post-logout redirect URIs</FieldLabel>
-                <Textarea id="post_logout_uris" name="post_logout_uris" rows={2} placeholder="https://app.acme.com/" />
+                <Textarea
+                  id="post_logout_uris"
+                  name="post_logout_uris"
+                  rows={2}
+                  placeholder="https://app.acme.com/"
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="scopes">Scopes</FieldLabel>
                 <Input id="scopes" name="scopes" defaultValue="openid profile email" />
               </Field>
               {createM.error && (
-                <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
               )}
             </FieldGroup>
           </div>

@@ -19,13 +19,15 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-  Skeleton,
+  DataState,
+  StatusPill,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -74,10 +76,12 @@ function WebhooksPage() {
   const disableM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/webhooks/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["webhooks"] }),
+    meta: { successMessage: "Webhook disabled" },
   });
 
   const testM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/webhooks/${id}/test`, { method: "POST" }),
+    meta: { successMessage: "Test event queued" },
   });
 
   return (
@@ -105,16 +109,16 @@ function WebhooksPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {listQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-          ) : listQ.isError ? (
-            <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
-          ) : !listQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <WebhookIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No webhooks yet.</p>
-            </div>
-          ) : (
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={!listQ.data?.items?.length}
+            emptyIcon={WebhookIcon}
+            emptyTitle="No webhooks yet."
+            skeletonRows={3}
+          >
+            {listQ.data && (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -136,9 +140,9 @@ function WebhooksPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {w.disabled_at ? <Badge variant="destructive">Disabled</Badge> : <Badge variant="success">Active</Badge>}
+                      <StatusPill status={w.disabled_at ? "disabled" : "active"} />
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{new Date(w.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell><TimeSince value={w.created_at} /></TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -163,7 +167,8 @@ function WebhooksPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
+            )}
+          </DataState>
         </CardContent>
       </Card>
 
