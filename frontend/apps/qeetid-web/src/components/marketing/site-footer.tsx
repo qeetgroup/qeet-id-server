@@ -65,7 +65,7 @@ export function SiteFooter() {
             <span className="grid size-7 place-items-center rounded-md bg-foreground text-background">
               <ShieldCheckIcon className="size-4" />
             </span>
-            <span className="text-base">Qeetid</span>
+            <span className="text-base">Identity</span>
           </Link>
           <p className="max-w-xs text-sm text-muted-foreground">
             One identity. Every platform. Auth infrastructure for modern teams.
@@ -109,7 +109,7 @@ export function SiteFooter() {
 
       <div className="border-t border-border/60">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:px-6 lg:px-8">
-          <p>© {new Date().getFullYear()} Qeetid, Inc. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Qeet Group, Inc. All rights reserved.</p>
           <p className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-1.5">
               <span className="size-1.5 rounded-full bg-emerald-500" /> All systems normal

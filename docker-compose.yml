@@ -1,0 +1,91 @@
+# Root docker-compose for whole-stack local dev.
+#
+# By default brings up Postgres + the backend API. To also run the three
+# frontend apps in containers, activate the `frontend` profile:
+#
+#   docker compose --profile frontend up
+#
+# Most teams will run the frontend with `pnpm dev` for hot reload and use
+# this file just for the backend + database tier.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qeet-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: qeet_identity
+      # Listen on 5001 inside the container so host:5001 maps 1:1.
+      PGPORT: "5001"
+    ports:
+      - "5001:5001"
+    volumes:
+      - qeet_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qeet_identity -p 5001"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: qeet-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: qeet-identity
+      SERVICE_ENV: dev
+      HTTP_PORT: "4001"
+      LOG_LEVEL: info
+      DB_URL: postgres://postgres:password@postgres:5001/qeet_identity?sslmode=disable
+      JWT_SECRET: dev-secret-do-not-use-in-prod-32b
+      JWT_ISSUER: qeet-identity
+      JWT_AUDIENCE: qeet-identity
+      ACCESS_TOKEN_TTL: 15m
+      REFRESH_TOKEN_TTL: 720h
+      ALLOWED_ORIGINS: http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3000,http://localhost:5173
+      AUTH_DEV_TRUST_HEADERS: "true"
+    ports:
+      - "4001:4001"
+
+  # ── Optional frontend tier (activate with --profile frontend) ───────────
+  admin:
+    build:
+      context: ./frontend
+      dockerfile: apps/qeetid-admin/Dockerfile
+    container_name: qeet-admin
+    profiles: [frontend]
+    depends_on: [backend]
+    environment:
+      VITE_APP_TITLE: Qeetid Admin
+      SERVER_URL: http://backend:4001
+    ports:
+      - "3002:3002"
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: apps/qeetid-web/Dockerfile
+    container_name: qeet-web
+    profiles: [frontend]
+    ports:
+      - "3001:3001"
+
+  docs:
+    build:
+      context: ./frontend
+      dockerfile: apps/qeetid-docs/Dockerfile
+    container_name: qeet-docs
+    profiles: [frontend]
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
+    ports:
+      - "3003:3003"
+
+volumes:
+  qeet_pgdata:

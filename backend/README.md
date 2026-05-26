@@ -1,6 +1,6 @@
 # qeet-identity backend
 
-Go modular monolith for the Qeetify identity platform. Single Go service,
+Go modular monolith for the Qeetid identity platform. Single Go service,
 single Postgres database with one schema per bounded context. Each context
 ships an outbox so it can be peeled off into its own service later without
 rewriting business logic.
@@ -46,22 +46,22 @@ docker compose up
 
 ```bash
 # Health
-curl localhost:4000/healthz
+curl localhost:4001/healthz
 
 # Create tenant (dev-trust header bypass)
-curl -X POST localhost:4000/v1/tenants \
+curl -X POST localhost:4001/v1/tenants \
   -H 'Content-Type: application/json' \
   -H 'X-Dev-User: 00000000-0000-0000-0000-000000000000' \
   -d '{"slug":"acme","name":"Acme Inc"}'
 
 # Create user under that tenant
-curl -X POST localhost:4000/v1/users \
+curl -X POST localhost:4001/v1/users \
   -H 'Content-Type: application/json' \
   -H 'X-Dev-User: 00000000-0000-0000-0000-000000000000' \
   -d '{"tenant_id":"<tenant-id>","email":"a@acme.test","password":"correct horse battery"}'
 
 # Login
-curl -X POST localhost:4000/v1/auth/login \
+curl -X POST localhost:4001/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"tenant_id":"<tenant-id>","email":"a@acme.test","password":"correct horse battery"}'
 ```

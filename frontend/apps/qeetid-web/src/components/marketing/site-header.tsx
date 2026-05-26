@@ -27,7 +27,7 @@ export function SiteHeader() {
           <span className="grid size-7 place-items-center rounded-md bg-foreground text-background">
             <ShieldCheckIcon className="size-4" />
           </span>
-          <span className="text-base">Qeetid</span>
+          <span className="text-base">Identity</span>
         </Link>
 
         <nav className="hidden flex-1 items-center gap-1 md:flex">

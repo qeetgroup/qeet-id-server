@@ -1,0 +1,45 @@
+# Code owners for qeet-identity.
+#
+# Lines later in the file take precedence. Owners listed for a path are
+# automatically requested as reviewers when a PR touches that path.
+#
+# Syntax: <pattern> <owner1> <owner2> ...
+# Replace @qeetgroup/* team handles with real teams or @-handles when known.
+
+# ── Default owners (every PR) ──────────────────────────────────────────────
+*                                @qeetgroup/maintainers
+
+# ── Backend ────────────────────────────────────────────────────────────────
+/backend/                        @qeetgroup/backend
+/backend/internal/auth/          @qeetgroup/backend @qeetgroup/security
+/backend/internal/oidc/          @qeetgroup/backend @qeetgroup/security
+/backend/internal/passkey/       @qeetgroup/backend @qeetgroup/security
+/backend/internal/social/        @qeetgroup/backend @qeetgroup/security
+/backend/internal/mfa/           @qeetgroup/backend @qeetgroup/security
+/backend/internal/apikey/        @qeetgroup/backend @qeetgroup/security
+/backend/internal/rbac/          @qeetgroup/backend @qeetgroup/security
+/backend/internal/gdpr/          @qeetgroup/backend @qeetgroup/compliance
+/backend/internal/audit/         @qeetgroup/backend @qeetgroup/compliance
+/backend/internal/platform/      @qeetgroup/backend @qeetgroup/platform
+/backend/migrations/             @qeetgroup/backend @qeetgroup/data
+/backend/api/                    @qeetgroup/backend @qeetgroup/api
+
+# ── Frontend ───────────────────────────────────────────────────────────────
+/frontend/                       @qeetgroup/frontend
+/frontend/apps/qeetid-admin/     @qeetgroup/frontend
+/frontend/apps/qeetid-web/       @qeetgroup/frontend @qeetgroup/marketing
+/frontend/apps/qeetid-docs/      @qeetgroup/frontend @qeetgroup/devrel
+/frontend/packages/qeetid-ui/    @qeetgroup/frontend @qeetgroup/design
+
+# ── Documentation ──────────────────────────────────────────────────────────
+/documents/                      @qeetgroup/maintainers @qeetgroup/product
+README.md                        @qeetgroup/maintainers
+CHANGELOG.md                     @qeetgroup/maintainers
+SECURITY.md                      @qeetgroup/security
+CONTRIBUTING.md                  @qeetgroup/maintainers
+CODE_OF_CONDUCT.md               @qeetgroup/maintainers
+
+# ── CI / tooling ───────────────────────────────────────────────────────────
+/.github/                        @qeetgroup/maintainers @qeetgroup/platform
+/Makefile                        @qeetgroup/maintainers
+/docker-compose.yml              @qeetgroup/platform

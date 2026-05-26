@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+bin/
+*.exe
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Docs that don't ship in the image
+README.md
+Makefile
+docker-compose.yml
+Dockerfile
+
+# CI
+.github/

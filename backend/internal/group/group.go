@@ -100,19 +100,34 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID uuid.UUID) e
 	return err
 }
 
-func (s *Service) ListMembers(ctx context.Context, groupID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := s.pool.Query(ctx, `SELECT user_id FROM tenant.group_members WHERE group_id = $1`, groupID)
+// Member is a group_members row enriched with the user's email +
+// display_name so the admin UI can render meaningful rows without a
+// per-member follow-up call.
+type Member struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Email       string    `json:"email"`
+	DisplayName *string   `json:"display_name"`
+}
+
+func (s *Service) ListMembers(ctx context.Context, groupID uuid.UUID) ([]Member, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT gm.user_id, u.email, u.display_name
+		FROM tenant.group_members gm
+		JOIN "user".users u ON u.id = gm.user_id
+		WHERE gm.group_id = $1 AND u.deleted_at IS NULL
+		ORDER BY u.email
+	`, groupID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []uuid.UUID
+	var out []Member
 	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
+		var m Member
+		if err := rows.Scan(&m.UserID, &m.Email, &m.DisplayName); err != nil {
 			return nil, err
 		}
-		out = append(out, id)
+		out = append(out, m)
 	}
 	return out, nil
 }

@@ -7,7 +7,7 @@ info:
     (tenant, user, auth, rbac). Per-context OpenAPI specs will replace this
     file once each context grows enough surface to warrant its own document.
 servers:
-  - url: http://localhost:4000
+  - url: http://localhost:4001
 paths:
   /healthz:
     get:
@@ -15,20 +15,62 @@ paths:
       responses:
         '200':
           description: ok
-  /v1/auth/login:
+  /v1/auth/signup:
     post:
-      summary: Issue an access + refresh token pair for a tenant user.
+      summary: Public self-service signup. Takes email + password only; backend auto-creates a personal workspace.
+      description: |
+        In one atomic transaction:
+        1. Generates a personal tenant (`personal-<12hex>` slug, `<name>'s workspace` name).
+        2. Creates the user with a password credential.
+        3. Creates a system `owner` role for the personal tenant and grants every platform permission to it.
+        4. Assigns the user to the owner role.
+        5. Issues an access + refresh token pair.
+
+        The user can rename their workspace or create more after sign-in via `POST /v1/tenants`.
+        Email is globally unique (migration 0022).
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [tenant_id, email, password]
+              required: [email, password]
               properties:
-                tenant_id: { type: string, format: uuid }
-                email:     { type: string, format: email }
-                password:  { type: string }
+                email:        { type: string, format: email }
+                password:     { type: string, minLength: 8, maxLength: 256 }
+                display_name: { type: string, maxLength: 200 }
+      responses:
+        '201':
+          description: created + token pair
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:          { type: object }
+                  tenant:        { type: object }
+                  access_token:  { type: string }
+                  refresh_token: { type: string }
+                  token_type:    { type: string, example: Bearer }
+                  expires_at:    { type: string, format: date-time }
+                  user_id:       { type: string, format: uuid }
+                  tenant_id:     { type: string, format: uuid }
+                  roles:         { type: array, items: { type: string }, example: [owner] }
+        '409': { description: email already in use }
+        '422': { description: validation failed }
+  /v1/auth/login:
+    post:
+      summary: Issue an access + refresh token pair. Looks the user up by email globally.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:    { type: string, format: email }
+                password: { type: string }
       responses:
         '200': { description: token pair }
         '401': { description: invalid credentials }

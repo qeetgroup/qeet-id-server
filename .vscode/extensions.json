@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    "golang.go",
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "editorconfig.editorconfig",
+    "ms-azuretools.vscode-docker",
+    "github.vscode-github-actions",
+    "redhat.vscode-yaml",
+    "mtxr.sqltools",
+    "mtxr.sqltools-driver-pg",
+    "unifiedjs.vscode-mdx",
+    "vivaxy.vscode-conventional-commits",
+    "yzhang.markdown-all-in-one",
+    "humao.rest-client"
+  ],
+  "unwantedRecommendations": []
+}

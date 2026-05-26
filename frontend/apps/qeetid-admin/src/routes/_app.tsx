@@ -6,17 +6,32 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@qeetid/ui";
-import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BellIcon, SearchIcon } from "lucide-react";
+import { useEffect } from "react";
+
 import { AppSidebar } from "@/features/dashboard/components/app-sidebar";
 import { DynamicBreadcrumb } from "@/features/dashboard/components/dynamic-breadcrumb";
 import { HeaderUser } from "@/features/dashboard/components/header-user";
 import { ThemeToggle } from "@/features/dashboard/components/theme-toggle";
-import { currentUser } from "@/config/navigation";
+import { isAuthenticated } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
+// The auth guard runs as a useEffect, not in beforeLoad, because the access
+// token lives in localStorage and is therefore invisible to the server.
+// Running it in beforeLoad would 302-redirect every hard refresh to
+// /sign-in even for users with a valid token (see issue: "after logged in
+// and i tried refresh the page, again it went to sign-in page").
 function AppLayout() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      navigate({ to: "/sign-in", replace: true });
+    }
+  }, [navigate]);
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -54,7 +69,7 @@ function AppLayout() {
             </Button>
             <ThemeToggle />
             <Separator orientation="vertical" className="mx-1 hidden h-6 sm:block" />
-            <HeaderUser user={currentUser} />
+            <HeaderUser />
           </div>
         </header>
         <div className="flex min-w-0 flex-1 flex-col gap-4 p-4">
