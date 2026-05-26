@@ -75,6 +75,19 @@ function WebhooksPage() {
 
   const disableM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/webhooks/${id}`, { method: "DELETE" }),
+    // Optimistic remove: drop from every active webhooks-query cache,
+    // snapshot for rollback. Same pattern as users.tsx.
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["webhooks"] });
+      const snapshots = qc.getQueriesData<{ items: Webhook[] }>({ queryKey: ["webhooks"] });
+      qc.setQueriesData<{ items: Webhook[] }>({ queryKey: ["webhooks"] }, (prev) =>
+        prev ? { ...prev, items: prev.items.filter((w) => w.id !== id) } : prev,
+      );
+      return { snapshots };
+    },
+    onError: (_err, _id, ctx) => {
+      ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["webhooks"] }),
     meta: { successMessage: "Webhook disabled" },
   });

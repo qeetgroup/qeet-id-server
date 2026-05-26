@@ -26,6 +26,7 @@ const columns = [
       { href: "/security", label: "Security" },
       { href: "/compare", label: "Compare" },
       { href: "/changelog", label: "Changelog" },
+      { href: "/blog", label: "Blog" },
     ],
   },
   {

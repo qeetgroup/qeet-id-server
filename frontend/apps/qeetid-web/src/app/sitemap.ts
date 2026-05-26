@@ -13,6 +13,7 @@ const ROUTES: { path: string; changeFrequency: MetadataRoute.Sitemap[number]["ch
   { path: "/security", changeFrequency: "monthly", priority: 0.8 },
   { path: "/customers", changeFrequency: "monthly", priority: 0.7 },
   { path: "/changelog", changeFrequency: "weekly", priority: 0.7 },
+  { path: "/blog", changeFrequency: "weekly", priority: 0.7 },
   { path: "/contact", changeFrequency: "yearly", priority: 0.5 },
   { path: "/compare", changeFrequency: "monthly", priority: 0.8 },
   { path: "/compare/auth0", changeFrequency: "monthly", priority: 0.8 },

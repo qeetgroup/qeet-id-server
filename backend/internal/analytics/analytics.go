@@ -282,7 +282,7 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 			SELECT date_trunc('day', confirmed_at)::date AS day, COUNT(*) AS enrolled
 			FROM auth.mfa_totp t
 			JOIN "user".users u ON u.id = t.user_id
-			WHERE u.tenant_id = $1 AND t.confirmed_at IS NOT NULL
+			WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
 			GROUP BY 1
 		)
 		SELECT
@@ -418,7 +418,7 @@ func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Ove
 		SELECT COUNT(*)
 		FROM auth.mfa_totp t
 		JOIN "user".users u ON u.id = t.user_id
-		WHERE u.tenant_id = $1 AND t.confirmed_at IS NOT NULL
+		WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
 	`, tid).Scan(&totp); err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Ove
 		SELECT COUNT(DISTINCT c.user_id)
 		FROM auth.mfa_recovery_codes c
 		JOIN "user".users u ON u.id = c.user_id
-		WHERE u.tenant_id = $1 AND c.used_at IS NULL
+		WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND c.used_at IS NULL
 	`, tid).Scan(&recovery); err != nil {
 		return err
 	}

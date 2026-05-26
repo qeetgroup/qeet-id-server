@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
 	"github.com/qeetgroup/qeet-identity/internal/platform/health"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
 	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
 	"github.com/qeetgroup/qeet-identity/internal/policy"
 	"github.com/qeetgroup/qeet-identity/internal/principal"
@@ -51,6 +52,7 @@ type Deps struct {
 	GDPR         *gdpr.Handler
 	Audit        *audit.Handler
 	Analytics    *analytics.Handler
+	Outbox       *outbox.Handler
 	OIDC         *oidc.Handler
 	Passkey      *passkey.Handler
 	Social       *social.Handler
@@ -74,10 +76,19 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
 	r.Use(httpx.AccessLog)
+	// CSRF: enforced on browser cookie-bearing requests; bearer-token
+	// (Authorization: Bearer …) traffic bypasses. Lives above the route
+	// groups so every mutation route inherits the check, including the
+	// public auth/recovery/invite endpoints which are the most CSRF-
+	// sensitive (they create sessions).
+	r.Use(httpx.CSRF(httpx.CSRFConfig{
+		AllowedOrigins: d.AllowedOrigins,
+		CookieSecure:   d.ServiceEnv != "dev",
+	}))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id", "X-Dev-User", "X-Dev-Tenant", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"X-Request-Id"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -132,6 +143,7 @@ func NewRouter(d Deps) http.Handler {
 			d.GDPR.Mount(r)
 			d.Audit.Mount(r)
 			d.Analytics.Mount(r)
+			d.Outbox.Mount(r)
 			d.OIDC.Mount(r)
 			d.Passkey.Mount(r)
 			d.Social.Mount(r)

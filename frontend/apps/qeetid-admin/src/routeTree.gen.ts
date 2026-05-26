@@ -40,6 +40,7 @@ import { Route as AppSecurityRateLimitsRouteImport } from './routes/_app/securit
 import { Route as AppSecurityAuditLogsRouteImport } from './routes/_app/security/audit-logs'
 import { Route as AppOrganizationsTenantsRouteImport } from './routes/_app/organizations/tenants'
 import { Route as AppOrganizationsMembersRouteImport } from './routes/_app/organizations/members'
+import { Route as AppGroupsGroupIdRouteImport } from './routes/_app/groups.$groupId'
 import { Route as AppDeveloperWebhooksRouteImport } from './routes/_app/developer/webhooks'
 import { Route as AppDeveloperInfrastructureRouteImport } from './routes/_app/developer/infrastructure'
 import { Route as AppDeveloperBotsRouteImport } from './routes/_app/developer/bots'
@@ -76,6 +77,7 @@ import { Route as AppAuthApiSecretsRouteImport } from './routes/_app/auth/api/se
 import { Route as AppAuthApiMachineIdentitiesRouteImport } from './routes/_app/auth/api/machine-identities'
 import { Route as AppAuthApiKeysRouteImport } from './routes/_app/auth/api/keys'
 import { Route as AppAccessRolesRoleIdRouteImport } from './routes/_app/access/roles.$roleId'
+import { Route as AppAuthConnectionsOidcClientIdRouteImport } from './routes/_app/auth/connections/oidc.$clientId'
 
 const AccountRoute = AccountRouteImport.update({
   id: '/account',
@@ -229,6 +231,11 @@ const AppOrganizationsMembersRoute = AppOrganizationsMembersRouteImport.update({
   id: '/organizations/members',
   path: '/organizations/members',
   getParentRoute: () => AppRoute,
+} as any)
+const AppGroupsGroupIdRoute = AppGroupsGroupIdRouteImport.update({
+  id: '/$groupId',
+  path: '/$groupId',
+  getParentRoute: () => AppGroupsRoute,
 } as any)
 const AppDeveloperWebhooksRoute = AppDeveloperWebhooksRouteImport.update({
   id: '/developer/webhooks',
@@ -426,6 +433,12 @@ const AppAccessRolesRoleIdRoute = AppAccessRolesRoleIdRouteImport.update({
   path: '/$roleId',
   getParentRoute: () => AppAccessRolesRoute,
 } as any)
+const AppAuthConnectionsOidcClientIdRoute =
+  AppAuthConnectionsOidcClientIdRouteImport.update({
+    id: '/$clientId',
+    path: '/$clientId',
+    getParentRoute: () => AppAuthConnectionsOidcRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -434,7 +447,7 @@ export interface FileRoutesByFullPath {
   '/activity': typeof AppActivityRoute
   '/analytics': typeof AppAnalyticsRoute
   '/dashboard': typeof AppDashboardRoute
-  '/groups': typeof AppGroupsRoute
+  '/groups': typeof AppGroupsRouteWithChildren
   '/invitations': typeof AppInvitationsRoute
   '/users': typeof AppUsersRouteWithChildren
   '/forgot-password': typeof AuthForgotPasswordRoute
@@ -453,6 +466,7 @@ export interface FileRoutesByFullPath {
   '/developer/bots': typeof AppDeveloperBotsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
+  '/groups/$groupId': typeof AppGroupsGroupIdRoute
   '/organizations/members': typeof AppOrganizationsMembersRoute
   '/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/security/audit-logs': typeof AppSecurityAuditLogsRoute
@@ -471,7 +485,7 @@ export interface FileRoutesByFullPath {
   '/auth/api/secrets': typeof AppAuthApiSecretsRoute
   '/auth/api/tokens': typeof AppAuthApiTokensRoute
   '/auth/connections/ldap': typeof AppAuthConnectionsLdapRoute
-  '/auth/connections/oidc': typeof AppAuthConnectionsOidcRoute
+  '/auth/connections/oidc': typeof AppAuthConnectionsOidcRouteWithChildren
   '/auth/connections/saml': typeof AppAuthConnectionsSamlRoute
   '/auth/connections/scim': typeof AppAuthConnectionsScimRoute
   '/auth/login-methods/magic-links': typeof AppAuthLoginMethodsMagicLinksRoute
@@ -493,6 +507,7 @@ export interface FileRoutesByFullPath {
   '/settings/workspace/domains': typeof AppSettingsWorkspaceDomainsRoute
   '/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
+  '/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -501,7 +516,7 @@ export interface FileRoutesByTo {
   '/activity': typeof AppActivityRoute
   '/analytics': typeof AppAnalyticsRoute
   '/dashboard': typeof AppDashboardRoute
-  '/groups': typeof AppGroupsRoute
+  '/groups': typeof AppGroupsRouteWithChildren
   '/invitations': typeof AppInvitationsRoute
   '/users': typeof AppUsersRouteWithChildren
   '/forgot-password': typeof AuthForgotPasswordRoute
@@ -520,6 +535,7 @@ export interface FileRoutesByTo {
   '/developer/bots': typeof AppDeveloperBotsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
+  '/groups/$groupId': typeof AppGroupsGroupIdRoute
   '/organizations/members': typeof AppOrganizationsMembersRoute
   '/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/security/audit-logs': typeof AppSecurityAuditLogsRoute
@@ -538,7 +554,7 @@ export interface FileRoutesByTo {
   '/auth/api/secrets': typeof AppAuthApiSecretsRoute
   '/auth/api/tokens': typeof AppAuthApiTokensRoute
   '/auth/connections/ldap': typeof AppAuthConnectionsLdapRoute
-  '/auth/connections/oidc': typeof AppAuthConnectionsOidcRoute
+  '/auth/connections/oidc': typeof AppAuthConnectionsOidcRouteWithChildren
   '/auth/connections/saml': typeof AppAuthConnectionsSamlRoute
   '/auth/connections/scim': typeof AppAuthConnectionsScimRoute
   '/auth/login-methods/magic-links': typeof AppAuthLoginMethodsMagicLinksRoute
@@ -560,6 +576,7 @@ export interface FileRoutesByTo {
   '/settings/workspace/domains': typeof AppSettingsWorkspaceDomainsRoute
   '/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
+  '/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -571,7 +588,7 @@ export interface FileRoutesById {
   '/_app/activity': typeof AppActivityRoute
   '/_app/analytics': typeof AppAnalyticsRoute
   '/_app/dashboard': typeof AppDashboardRoute
-  '/_app/groups': typeof AppGroupsRoute
+  '/_app/groups': typeof AppGroupsRouteWithChildren
   '/_app/invitations': typeof AppInvitationsRoute
   '/_app/users': typeof AppUsersRouteWithChildren
   '/_auth/forgot-password': typeof AuthForgotPasswordRoute
@@ -590,6 +607,7 @@ export interface FileRoutesById {
   '/_app/developer/bots': typeof AppDeveloperBotsRoute
   '/_app/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/_app/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
+  '/_app/groups/$groupId': typeof AppGroupsGroupIdRoute
   '/_app/organizations/members': typeof AppOrganizationsMembersRoute
   '/_app/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/_app/security/audit-logs': typeof AppSecurityAuditLogsRoute
@@ -608,7 +626,7 @@ export interface FileRoutesById {
   '/_app/auth/api/secrets': typeof AppAuthApiSecretsRoute
   '/_app/auth/api/tokens': typeof AppAuthApiTokensRoute
   '/_app/auth/connections/ldap': typeof AppAuthConnectionsLdapRoute
-  '/_app/auth/connections/oidc': typeof AppAuthConnectionsOidcRoute
+  '/_app/auth/connections/oidc': typeof AppAuthConnectionsOidcRouteWithChildren
   '/_app/auth/connections/saml': typeof AppAuthConnectionsSamlRoute
   '/_app/auth/connections/scim': typeof AppAuthConnectionsScimRoute
   '/_app/auth/login-methods/magic-links': typeof AppAuthLoginMethodsMagicLinksRoute
@@ -630,6 +648,7 @@ export interface FileRoutesById {
   '/_app/settings/workspace/domains': typeof AppSettingsWorkspaceDomainsRoute
   '/_app/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/_app/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
+  '/_app/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -659,6 +678,7 @@ export interface FileRouteTypes {
     | '/developer/bots'
     | '/developer/infrastructure'
     | '/developer/webhooks'
+    | '/groups/$groupId'
     | '/organizations/members'
     | '/organizations/tenants'
     | '/security/audit-logs'
@@ -699,6 +719,7 @@ export interface FileRouteTypes {
     | '/settings/workspace/domains'
     | '/settings/workspace/email-templates'
     | '/settings/workspace/general'
+    | '/auth/connections/oidc/$clientId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -726,6 +747,7 @@ export interface FileRouteTypes {
     | '/developer/bots'
     | '/developer/infrastructure'
     | '/developer/webhooks'
+    | '/groups/$groupId'
     | '/organizations/members'
     | '/organizations/tenants'
     | '/security/audit-logs'
@@ -766,6 +788,7 @@ export interface FileRouteTypes {
     | '/settings/workspace/domains'
     | '/settings/workspace/email-templates'
     | '/settings/workspace/general'
+    | '/auth/connections/oidc/$clientId'
   id:
     | '__root__'
     | '/'
@@ -795,6 +818,7 @@ export interface FileRouteTypes {
     | '/_app/developer/bots'
     | '/_app/developer/infrastructure'
     | '/_app/developer/webhooks'
+    | '/_app/groups/$groupId'
     | '/_app/organizations/members'
     | '/_app/organizations/tenants'
     | '/_app/security/audit-logs'
@@ -835,6 +859,7 @@ export interface FileRouteTypes {
     | '/_app/settings/workspace/domains'
     | '/_app/settings/workspace/email-templates'
     | '/_app/settings/workspace/general'
+    | '/_app/auth/connections/oidc/$clientId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1062,6 +1087,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/organizations/members'
       preLoaderRoute: typeof AppOrganizationsMembersRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_app/groups/$groupId': {
+      id: '/_app/groups/$groupId'
+      path: '/$groupId'
+      fullPath: '/groups/$groupId'
+      preLoaderRoute: typeof AppGroupsGroupIdRouteImport
+      parentRoute: typeof AppGroupsRoute
     }
     '/_app/developer/webhooks': {
       id: '/_app/developer/webhooks'
@@ -1315,8 +1347,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccessRolesRoleIdRouteImport
       parentRoute: typeof AppAccessRolesRoute
     }
+    '/_app/auth/connections/oidc/$clientId': {
+      id: '/_app/auth/connections/oidc/$clientId'
+      path: '/$clientId'
+      fullPath: '/auth/connections/oidc/$clientId'
+      preLoaderRoute: typeof AppAuthConnectionsOidcClientIdRouteImport
+      parentRoute: typeof AppAuthConnectionsOidcRoute
+    }
   }
 }
+
+interface AppGroupsRouteChildren {
+  AppGroupsGroupIdRoute: typeof AppGroupsGroupIdRoute
+}
+
+const AppGroupsRouteChildren: AppGroupsRouteChildren = {
+  AppGroupsGroupIdRoute: AppGroupsGroupIdRoute,
+}
+
+const AppGroupsRouteWithChildren = AppGroupsRoute._addFileChildren(
+  AppGroupsRouteChildren,
+)
 
 interface AppUsersRouteChildren {
   AppUsersUserIdRoute: typeof AppUsersUserIdRoute
@@ -1361,12 +1412,26 @@ const AppDeveloperWebhooksRouteChildren: AppDeveloperWebhooksRouteChildren = {
 const AppDeveloperWebhooksRouteWithChildren =
   AppDeveloperWebhooksRoute._addFileChildren(AppDeveloperWebhooksRouteChildren)
 
+interface AppAuthConnectionsOidcRouteChildren {
+  AppAuthConnectionsOidcClientIdRoute: typeof AppAuthConnectionsOidcClientIdRoute
+}
+
+const AppAuthConnectionsOidcRouteChildren: AppAuthConnectionsOidcRouteChildren =
+  {
+    AppAuthConnectionsOidcClientIdRoute: AppAuthConnectionsOidcClientIdRoute,
+  }
+
+const AppAuthConnectionsOidcRouteWithChildren =
+  AppAuthConnectionsOidcRoute._addFileChildren(
+    AppAuthConnectionsOidcRouteChildren,
+  )
+
 interface AppRouteChildren {
   AppSplatRoute: typeof AppSplatRoute
   AppActivityRoute: typeof AppActivityRoute
   AppAnalyticsRoute: typeof AppAnalyticsRoute
   AppDashboardRoute: typeof AppDashboardRoute
-  AppGroupsRoute: typeof AppGroupsRoute
+  AppGroupsRoute: typeof AppGroupsRouteWithChildren
   AppInvitationsRoute: typeof AppInvitationsRoute
   AppUsersRoute: typeof AppUsersRouteWithChildren
   AppAccessPermissionsRoute: typeof AppAccessPermissionsRoute
@@ -1389,7 +1454,7 @@ interface AppRouteChildren {
   AppAuthApiSecretsRoute: typeof AppAuthApiSecretsRoute
   AppAuthApiTokensRoute: typeof AppAuthApiTokensRoute
   AppAuthConnectionsLdapRoute: typeof AppAuthConnectionsLdapRoute
-  AppAuthConnectionsOidcRoute: typeof AppAuthConnectionsOidcRoute
+  AppAuthConnectionsOidcRoute: typeof AppAuthConnectionsOidcRouteWithChildren
   AppAuthConnectionsSamlRoute: typeof AppAuthConnectionsSamlRoute
   AppAuthConnectionsScimRoute: typeof AppAuthConnectionsScimRoute
   AppAuthLoginMethodsMagicLinksRoute: typeof AppAuthLoginMethodsMagicLinksRoute
@@ -1417,7 +1482,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppActivityRoute: AppActivityRoute,
   AppAnalyticsRoute: AppAnalyticsRoute,
   AppDashboardRoute: AppDashboardRoute,
-  AppGroupsRoute: AppGroupsRoute,
+  AppGroupsRoute: AppGroupsRouteWithChildren,
   AppInvitationsRoute: AppInvitationsRoute,
   AppUsersRoute: AppUsersRouteWithChildren,
   AppAccessPermissionsRoute: AppAccessPermissionsRoute,
@@ -1440,7 +1505,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAuthApiSecretsRoute: AppAuthApiSecretsRoute,
   AppAuthApiTokensRoute: AppAuthApiTokensRoute,
   AppAuthConnectionsLdapRoute: AppAuthConnectionsLdapRoute,
-  AppAuthConnectionsOidcRoute: AppAuthConnectionsOidcRoute,
+  AppAuthConnectionsOidcRoute: AppAuthConnectionsOidcRouteWithChildren,
   AppAuthConnectionsSamlRoute: AppAuthConnectionsSamlRoute,
   AppAuthConnectionsScimRoute: AppAuthConnectionsScimRoute,
   AppAuthLoginMethodsMagicLinksRoute: AppAuthLoginMethodsMagicLinksRoute,

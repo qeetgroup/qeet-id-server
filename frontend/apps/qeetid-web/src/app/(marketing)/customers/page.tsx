@@ -1,7 +1,6 @@
-import { ButtonLink } from "@/components/marketing/button-link";
+import { CaseStudyCard, type CaseStudy } from "@/components/marketing/blocks/case-study-card";
+import { CustomerLogoBlock } from "@/components/marketing/blocks/customer-logo-block";
 import { CTA } from "@/components/marketing/sections/cta";
-import { Avatar, AvatarFallback, AvatarImage } from "@qeetid/ui";
-import { ArrowRightIcon, QuoteIcon } from "lucide-react";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -10,7 +9,10 @@ export const metadata: Metadata = {
     "Platform teams at Lattice, Vercel, Linear, and hundreds more trust Qeetid with their identity layer.",
 };
 
-const stories = [
+// Customer-story data lives in this file (not a CMS) so it ships with
+// the marketing site and works offline. Replace with real, opted-in
+// quotes before GA — placeholder content is clearly fictional today.
+const stories: CaseStudy[] = [
   {
     company: "Lattice",
     logo: "L",
@@ -67,19 +69,19 @@ const stories = [
   },
 ];
 
-const logos = [
-  "Acme",
-  "Globex",
-  "Initech",
-  "Umbrella",
-  "Hooli",
-  "Pied Piper",
-  "Stark",
-  "Wayne",
-  "Tyrell",
-  "Massive",
-  "Bluebook",
-  "Aperture",
+const customerLogos = [
+  { name: "Acme" },
+  { name: "Globex" },
+  { name: "Initech" },
+  { name: "Umbrella" },
+  { name: "Hooli" },
+  { name: "Pied Piper" },
+  { name: "Stark" },
+  { name: "Wayne" },
+  { name: "Tyrell" },
+  { name: "Massive" },
+  { name: "Bluebook" },
+  { name: "Aperture" },
 ];
 
 export default function CustomersPage() {
@@ -97,75 +99,15 @@ export default function CustomersPage() {
               in, and their security teams happy.
             </p>
           </div>
-
-          <div className="mt-14 grid grid-cols-3 items-center gap-x-8 gap-y-6 sm:grid-cols-4 lg:grid-cols-6">
-            {logos.map((name) => (
-              <span
-                key={name}
-                className="text-center font-display text-lg font-medium tracking-tight text-muted-foreground/70"
-              >
-                {name}
-              </span>
-            ))}
-          </div>
         </div>
       </section>
 
+      <CustomerLogoBlock logos={customerLogos} />
+
       <section className="border-b border-border/60 bg-muted/30">
         <div className="mx-auto flex max-w-7xl flex-col gap-12 px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          {stories.map((s, i) => (
-            <article
-              key={s.company}
-              className="grid gap-8 rounded-3xl border border-border/60 bg-background p-8 lg:grid-cols-[1.4fr_1fr] lg:p-12"
-            >
-              <div className="flex flex-col gap-6">
-                <div className="flex items-center gap-3">
-                  <span className="grid size-10 place-items-center rounded-lg bg-foreground font-display text-lg font-semibold text-background">
-                    {s.logo}
-                  </span>
-                  <span className="text-sm font-medium uppercase tracking-widest text-muted-foreground">
-                    {s.company}
-                  </span>
-                </div>
-                <h2 className="font-display text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
-                  {s.headline}
-                </h2>
-                <p className="text-muted-foreground">{s.summary}</p>
-                <dl className="grid grid-cols-3 gap-4">
-                  {s.metrics.map((m) => (
-                    <div key={m.label} className="rounded-xl border border-border/60 p-4">
-                      <dt className="text-xs text-muted-foreground">{m.label}</dt>
-                      <dd className="mt-1 font-display text-xl font-semibold tracking-tight">
-                        {m.value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-                <ButtonLink
-                  variant="outline"
-                  className="w-fit"
-                  href={`/customers/${s.company.toLowerCase()}`}
-                >
-                  Read the full story <ArrowRightIcon className="size-4" />
-                </ButtonLink>
-              </div>
-              <figure className="flex flex-col gap-6 rounded-2xl bg-muted/40 p-6">
-                <QuoteIcon className="size-6 text-primary" />
-                <blockquote className="text-base leading-relaxed text-foreground/90 sm:text-lg">
-                  &ldquo;{s.quote.text}&rdquo;
-                </blockquote>
-                <figcaption className="mt-auto flex items-center gap-3">
-                  <Avatar className="size-10">
-                    <AvatarImage src={s.quote.avatar} alt={s.quote.name} />
-                    <AvatarFallback>{s.quote.name.charAt(0)}</AvatarFallback>
-                  </Avatar>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium">{s.quote.name}</span>
-                    <span className="text-xs text-muted-foreground">{s.quote.role}</span>
-                  </div>
-                </figcaption>
-              </figure>
-            </article>
+          {stories.map((s) => (
+            <CaseStudyCard key={s.company} data={s} />
           ))}
         </div>
       </section>

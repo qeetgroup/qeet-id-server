@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -37,6 +38,20 @@ type signupInput struct {
 }
 
 func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
+	// Signup is enumeration-sensitive — both the response shape and
+	// the response timing must be indistinguishable for "email
+	// exists" vs "email is new" so attackers can't probe accounts
+	// from the signup form. We achieve this with:
+	//
+	//   1) A neutral 422 response on conflict (no "already exists"
+	//      detail in the body — the verbose error string lived here
+	//      historically and leaked).
+	//   2) A 250ms timing floor on every signup attempt, capturing
+	//      the bcrypt + insert path's slowest case.
+	const signupFloor = 250 * time.Millisecond
+	start := time.Now()
+	defer httpx.ConstantTimeFloor(r.Context(), start, signupFloor)
+
 	var in signupInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
@@ -54,6 +69,15 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		UserAgent:   r.UserAgent(),
 	})
 	if err != nil {
+		// Conflict (existing email) used to surface "email already
+		// exists for tenant" verbatim. Neutralise to a generic 422 so
+		// the response is indistinguishable from other validation
+		// failures. Other backend errors (DB unavailable, etc.) still
+		// bubble up so legitimate operational issues aren't hidden.
+		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
+			httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("could not create account"))
+			return
+		}
 		httpx.WriteError(w, r, err)
 		return
 	}

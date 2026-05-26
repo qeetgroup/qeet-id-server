@@ -69,6 +69,26 @@ function ApiKeysPage() {
 
   const revokeM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/api-keys/${id}`, { method: "DELETE" }),
+    // Optimistic revoke: stamp `revoked_at = now()` on the local row so
+    // the UI flips to its revoked state instantly. Roll back if the
+    // server rejects.
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["api-keys"] });
+      const snapshots = qc.getQueriesData<ApiKeysResponse>({ queryKey: ["api-keys"] });
+      const stamp = new Date().toISOString();
+      qc.setQueriesData<ApiKeysResponse>({ queryKey: ["api-keys"] }, (prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((k) => (k.id === id ? { ...k, revoked_at: stamp } : k)),
+            }
+          : prev,
+      );
+      return { snapshots };
+    },
+    onError: (_err, _id, ctx) => {
+      ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
   });
 

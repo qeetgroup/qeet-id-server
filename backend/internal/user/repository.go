@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
+	"github.com/qeetgroup/qeet-identity/internal/platform/paging"
 )
 
 // parseUserMetadata decodes the JSONB metadata column. JSONB is guaranteed
@@ -168,7 +169,12 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			LIMIT $2
 		`, tenantID, limit+1)
 	} else {
-		cur, perr := uuid.Parse(cursor)
+		// Cursor is now an opaque base64(createdAt|id) pair — see
+		// platform/paging. The tuple inequality `(created_at, id) <
+		// ($curT, $curID)` matches the composite index, so the planner
+		// gets an index range scan instead of the legacy subselect
+		// (which forced a second lookup per page).
+		curT, curID, perr := paging.DecodeTimeUUID(cursor)
 		if perr != nil {
 			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
 		}
@@ -176,11 +182,10 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			SELECT `+userCols+`
 			FROM "user".users
 			WHERE tenant_id = $1 AND deleted_at IS NULL
-			  AND (created_at, id) <
-			      (SELECT created_at, id FROM "user".users WHERE id = $2)
+			  AND (created_at, id) < ($2, $3)
 			ORDER BY created_at DESC, id DESC
-			LIMIT $3
-		`, tenantID, cur, limit+1)
+			LIMIT $4
+		`, tenantID, curT, curID, limit+1)
 	}
 	if err != nil {
 		return nil, "", err
@@ -201,7 +206,8 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 	}
 	var next string
 	if len(out) > limit {
-		next = out[limit].ID.String()
+		last := out[limit-1]
+		next = paging.EncodeTimeUUID(last.CreatedAt, last.ID)
 		out = out[:limit]
 	}
 	return out, next, nil

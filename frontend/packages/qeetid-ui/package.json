@@ -13,7 +13,9 @@
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
     "check": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs && prettier --check \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

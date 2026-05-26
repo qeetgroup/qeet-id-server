@@ -31,7 +31,33 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/security/audit-logs")({ component: AuditLogsPage });
+// URL-driven filter state — the audit-logs view bookmarks any filter
+// combination as `/_app/security/audit-logs?action=user.create` so
+// engineers can paste-share a triage view in Slack. `validateSearch`
+// keeps every field optional + string so a malformed URL never crashes
+// the route.
+type AuditSearch = {
+  action?: string;
+  resource_type?: string;
+  actor_user_id?: string;
+};
+
+function validateAuditSearch(raw: Record<string, unknown>): AuditSearch {
+  const pick = (k: string): string | undefined => {
+    const v = raw[k];
+    return typeof v === "string" && v.trim() !== "" ? v : undefined;
+  };
+  return {
+    action: pick("action"),
+    resource_type: pick("resource_type"),
+    actor_user_id: pick("actor_user_id"),
+  };
+}
+
+export const Route = createFileRoute("/_app/security/audit-logs")({
+  component: AuditLogsPage,
+  validateSearch: validateAuditSearch,
+});
 
 type AuditEvent = {
   id: string;
@@ -103,7 +129,27 @@ function downloadBlob(content: string, mime: string, filename: string) {
 
 function AuditLogsPage() {
   const tenantId = useTenantId();
-  const [filters, setFilters] = useState({ action: "", resource_type: "", actor_user_id: "" });
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+  // Mirror URL → form state. Empty strings (vs undefined) are how the
+  // <Input> tracks "unfiltered" — the validateSearch normalises both
+  // directions so the URL doesn't accumulate trailing `?action=`.
+  const filters = {
+    action: search.action ?? "",
+    resource_type: search.resource_type ?? "",
+    actor_user_id: search.actor_user_id ?? "",
+  };
+  function setFilters(updater: (prev: typeof filters) => typeof filters) {
+    const next = updater(filters);
+    navigate({
+      search: () => ({
+        action: next.action || undefined,
+        resource_type: next.resource_type || undefined,
+        actor_user_id: next.actor_user_id || undefined,
+      }),
+      replace: true, // typing in a filter shouldn't pile up history entries
+    });
+  }
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
 
@@ -246,7 +292,7 @@ function AuditLogsPage() {
             variant="outline"
             disabled={!hasFilters}
             onClick={() => {
-              setFilters({ action: "", resource_type: "", actor_user_id: "" });
+              setFilters(() => ({ action: "", resource_type: "", actor_user_id: "" }));
               setCursor(undefined);
             }}
           >

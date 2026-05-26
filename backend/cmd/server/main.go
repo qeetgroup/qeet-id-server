@@ -113,6 +113,7 @@ func main() {
 	auditReader := audit.NewReader(pool)
 	auditVerifier := audit.NewVerifier(pool)
 	analyticsReader := analytics.NewReader(pool)
+	outboxReader := outbox.NewReader(pool)
 
 	startedAt := time.Now()
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
@@ -142,6 +143,7 @@ func main() {
 		GDPR:          &gdpr.Handler{Service: gdprService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
+		Outbox:        &outbox.Handler{Reader: outboxReader},
 		OIDC:          &oidc.Handler{Service: oidcService},
 		Passkey:       &passkey.Handler{Service: passkeyService},
 		Social:        &social.Handler{Service: socialService},

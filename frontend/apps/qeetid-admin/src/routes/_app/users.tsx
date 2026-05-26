@@ -19,6 +19,7 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
+  PaginationBar,
   Select,
   SelectContent,
   SelectItem,
@@ -86,10 +87,20 @@ function UsersPage() {
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // Cursor stack lets us pop back to the previous page without re-walking
+  // from the start, while the API itself is forward-only (next_cursor).
+  // Plain state (not URL) is fine here — users get a stable bookmark
+  // anyway because /users renders the first page, and deep-linking past
+  // page 1 doesn't carry much practical value for an admin index.
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const currentCursor = cursorStack[cursorStack.length - 1];
 
   const usersQ = useQuery({
-    queryKey: ["users", tenantId],
-    queryFn: () => api<UsersResponse>("/v1/users"),
+    queryKey: ["users", tenantId, currentCursor ?? ""],
+    queryFn: () =>
+      api<UsersResponse>("/v1/users", {
+        query: currentCursor ? { cursor: currentCursor } : undefined,
+      }),
     enabled: !!tenantId,
   });
 
@@ -132,6 +143,21 @@ function UsersPage() {
 
   const deleteM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/users/${id}`, { method: "DELETE" }),
+    // Optimistic remove: drop the row from every active users-query
+    // cache, remember a snapshot, and roll back on error. The list
+    // feels instant; if the server rejects, we restore + show a toast
+    // via the global mutation handler.
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["users"] });
+      const snapshots = qc.getQueriesData<UsersResponse>({ queryKey: ["users"] });
+      qc.setQueriesData<UsersResponse>({ queryKey: ["users"] }, (prev) =>
+        prev ? { ...prev, items: prev.items.filter((u) => u.id !== id) } : prev,
+      );
+      return { snapshots };
+    },
+    onError: (_err, _id, ctx) => {
+      ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
+    },
     onSuccess: () => {
       setConfirmingDelete(null);
       qc.invalidateQueries({ queryKey: ["users"] });
@@ -327,6 +353,26 @@ function UsersPage() {
                 })}
               </TableBody>
             </Table>
+          )}
+          {(cursorStack.length > 0 || !!usersQ.data?.next_cursor) && (
+            <PaginationBar
+              hasPrev={cursorStack.length > 0}
+              hasNext={!!usersQ.data?.next_cursor}
+              onFirst={() => {
+                setCursorStack([]);
+                setSelectedIds(new Set());
+              }}
+              onNext={() => {
+                const next = usersQ.data?.next_cursor;
+                if (next) {
+                  setCursorStack((s) => [...s, next]);
+                  setSelectedIds(new Set());
+                }
+              }}
+              itemsOnPage={usersQ.data?.items?.length ?? 0}
+              pageSize={50}
+              loading={usersQ.isFetching}
+            />
           )}
         </CardContent>
       </Card>

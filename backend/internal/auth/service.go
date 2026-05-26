@@ -518,11 +518,17 @@ type Session struct {
 }
 
 func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session, error) {
+	// Soft-deleted users keep their session rows for audit purposes but
+	// must not surface them via admin or self-service listings. Filter
+	// at the join rather than relying on the caller to know about
+	// `users.deleted_at`.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, tenant_id, host(ip), user_agent, created_at, last_seen_at, revoked_at
-		FROM auth.sessions
-		WHERE user_id = $1
-		ORDER BY created_at DESC
+		SELECT sess.id, sess.user_id, sess.tenant_id, host(sess.ip), sess.user_agent,
+		       sess.created_at, sess.last_seen_at, sess.revoked_at
+		FROM auth.sessions sess
+		JOIN "user".users u ON u.id = sess.user_id
+		WHERE sess.user_id = $1 AND u.deleted_at IS NULL
+		ORDER BY sess.created_at DESC
 		LIMIT 100
 	`, userID)
 	if err != nil {

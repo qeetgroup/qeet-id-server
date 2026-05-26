@@ -93,9 +93,14 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 }
 
 func (s *Service) ListIdentities(ctx context.Context, userID uuid.UUID) ([]ExternalIdentity, error) {
+	// Mirror users.deleted_at — a soft-deleted user's linked identities
+	// must not surface in self-service or admin lookups.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, tenant_id, provider, subject, email, linked_at
-		FROM "user".external_identities WHERE user_id = $1 ORDER BY linked_at DESC
+		SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+		FROM "user".external_identities ei
+		JOIN "user".users u ON u.id = ei.user_id
+		WHERE ei.user_id = $1 AND u.deleted_at IS NULL
+		ORDER BY ei.linked_at DESC
 	`, userID)
 	if err != nil {
 		return nil, err
