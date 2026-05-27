@@ -1,16 +1,16 @@
 # Graph Report - qeet-identity  (2026-05-27)
 
 ## Corpus Check
-- 655 files · ~605,459 words
+- 676 files · ~613,468 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 8058 nodes · 23621 edges · 326 communities (279 shown, 47 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 649 edges (avg confidence: 0.8)
+- 8209 nodes · 23742 edges · 355 communities (309 shown, 46 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 648 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `62642f9d`
+- Built from commit: `fc9b8409`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -273,6 +273,7 @@
 - [[_COMMUNITY_Admin build chunk 256|Admin build chunk #256]]
 - [[_COMMUNITY_Admin build chunk 257|Admin build chunk #257]]
 - [[_COMMUNITY_Admin build chunk 258|Admin build chunk #258]]
+- [[_COMMUNITY_Community 259|Community 259]]
 - [[_COMMUNITY_Admin build chunk 260|Admin build chunk #260]]
 - [[_COMMUNITY_Admin build chunk 261|Admin build chunk #261]]
 - [[_COMMUNITY_Admin build chunk 262|Admin build chunk #262]]
@@ -281,6 +282,7 @@
 - [[_COMMUNITY_Admin build chunk 265|Admin build chunk #265]]
 - [[_COMMUNITY_Admin build chunk 266|Admin build chunk #266]]
 - [[_COMMUNITY_Docs content|Docs content]]
+- [[_COMMUNITY_Community 268|Community 268]]
 - [[_COMMUNITY_Docs src|Docs src]]
 - [[_COMMUNITY_Docs src|Docs src]]
 - [[_COMMUNITY_Backend platform|Backend platform]]
@@ -290,6 +292,7 @@
 - [[_COMMUNITY_Backend verification|Backend verification]]
 - [[_COMMUNITY_Docs content|Docs content]]
 - [[_COMMUNITY_Docs content|Docs content]]
+- [[_COMMUNITY_Community 278|Community 278]]
 - [[_COMMUNITY_Backend tenant|Backend tenant]]
 - [[_COMMUNITY_Backend user|Backend user]]
 - [[_COMMUNITY_Docs content|Docs content]]
@@ -335,6 +338,26 @@
 - [[_COMMUNITY_Misc cluster 326|Misc cluster #326]]
 - [[_COMMUNITY_Misc cluster 327|Misc cluster #327]]
 - [[_COMMUNITY_Docs content|Docs content]]
+- [[_COMMUNITY_Community 329|Community 329]]
+- [[_COMMUNITY_Community 330|Community 330]]
+- [[_COMMUNITY_Community 331|Community 331]]
+- [[_COMMUNITY_Community 332|Community 332]]
+- [[_COMMUNITY_Community 333|Community 333]]
+- [[_COMMUNITY_Community 334|Community 334]]
+- [[_COMMUNITY_Community 335|Community 335]]
+- [[_COMMUNITY_Community 336|Community 336]]
+- [[_COMMUNITY_Community 337|Community 337]]
+- [[_COMMUNITY_Community 338|Community 338]]
+- [[_COMMUNITY_Community 339|Community 339]]
+- [[_COMMUNITY_Community 340|Community 340]]
+- [[_COMMUNITY_Community 341|Community 341]]
+- [[_COMMUNITY_Community 342|Community 342]]
+- [[_COMMUNITY_Community 343|Community 343]]
+- [[_COMMUNITY_Community 344|Community 344]]
+- [[_COMMUNITY_Community 345|Community 345]]
+- [[_COMMUNITY_Community 346|Community 346]]
+- [[_COMMUNITY_Community 347|Community 347]]
+- [[_COMMUNITY_Community 348|Community 348]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `b3()` - 127 edges
@@ -371,7 +394,7 @@
 - **OpenAPI-generated SDK family** — sdks_typescript_doc, sdks_react_doc, sdks_go_doc, sdks_python_doc [EXTRACTED 1.00]
 - **Session + permission hot-path APIs** — api_sessions_validate, api_roles_permissions_evaluate, api_roles_bulk_evaluate [INFERRED 0.85]
 
-## Communities (326 total, 47 thin omitted)
+## Communities (355 total, 46 thin omitted)
 
 ### Community 0 - "Admin build minified A"
 Cohesion: 0.00
@@ -379,7 +402,7 @@ Nodes (293): abortController, { active: activeIndex, lastUsedThumbIndex, control
 
 ### Community 1 - "Admin build minified B"
 Cohesion: 0.01
-Nodes (253): _3(), A3(), [A,j], acquire(), {active:S,lastUsedThumbIndex:C,controlRef:w,disabled:E,validation:D,formatOptionsRef:O,handleInputChange:k,inset:A,labelId:j,largeStep:M,locale:N,max:P,min:F,minStepsBetweenValues:I,form:L,name:R,orientation:z,pressedInputRef:B,pressedThumbCenterOffsetRef:ee,pressedThumbIndexRef:V,renderBeforeHydration:H,setActive:U,setIndicatorPosition:W,state:te,step:ne,values:re}, addObserver(), {alignItemWithTriggerActive:c}, arc() (+245 more)
+Nodes (203): _3(), A3(), [A,j], acquire(), {active:S,lastUsedThumbIndex:C,controlRef:w,disabled:E,validation:D,formatOptionsRef:O,handleInputChange:k,inset:A,labelId:j,largeStep:M,locale:N,max:P,min:F,minStepsBetweenValues:I,form:L,name:R,orientation:z,pressedInputRef:B,pressedThumbCenterOffsetRef:ee,pressedThumbIndexRef:V,renderBeforeHydration:H,setActive:U,setIndicatorPosition:W,state:te,step:ne,values:re}, {alignItemWithTriggerActive:c}, arc(), {arrowRef:s,side:c,align:l,arrowUncentered:u,arrowStyles:d} (+195 more)
 
 ### Community 2 - "Recharts charting bundle"
 Cohesion: 0.01
@@ -394,12 +417,12 @@ Cohesion: 0.02
 Nodes (86): abortController, activeMatches, applySearchMiddleware(), assetContext, assetScripts, beforeLoadFnContext, buildMiddlewareChain(), buildTagsFromMatches() (+78 more)
 
 ### Community 5 - "Recharts radial axes"
-Cohesion: 0.02
-Nodes (152): _a(), Ac(), add(), ao(), ba(), bi(), bn(), Bt() (+144 more)
+Cohesion: 0.03
+Nodes (108): _a(), Ac(), add(), ao(), ba(), bi(), bn(), Bt() (+100 more)
 
 ### Community 6 - "Admin minified utils C"
-Cohesion: 0.10
-Nodes (48): F(), I(), P(), z(), l(), A(), M(), f() (+40 more)
+Cohesion: 0.09
+Nodes (53): l(), A(), M(), I(), a(), f(), m(), p() (+45 more)
 
 ### Community 7 - "Admin RBAC pages (src)"
 Cohesion: 0.04
@@ -410,12 +433,12 @@ Cohesion: 0.04
 Nodes (92): AccountLayout(), AppLayout(), CommandPaletteLauncher(), HeaderUser(), ImpersonationBanner(), initialOf(), initials(), initials$1() (+84 more)
 
 ### Community 9 - "Admin minified utils D"
-Cohesion: 0.03
-Nodes (98): O(), xt(), H(), _(), c(), d(), f(), h() (+90 more)
+Cohesion: 0.04
+Nodes (83): O(), H(), _(), c(), d(), f(), h(), m() (+75 more)
 
 ### Community 10 - "Admin minified utils E"
-Cohesion: 0.06
-Nodes (12): a, t, x1(), F(), z(), D(), w(), k() (+4 more)
+Cohesion: 0.04
+Nodes (42): D(), T(), a, t, A(), M(), A(), j() (+34 more)
 
 ### Community 11 - "Admin route tree + router setup"
 Cohesion: 0.02
@@ -423,7 +446,7 @@ Nodes (104): Route, Route, Route, MyRouterContext, Route, getRouter(), Register,
 
 ### Community 12 - "TanStack Start SSR adapter"
 Cohesion: 0.03
-Nodes (89): addEarlyHintFetchAttrs(), appendResponseLinkHeaders(), attachResponseHeaders(), buildClientEntryScriptTag(), buildFinalManifest(), buildLinkParam(), buildManifestWithClientEntry(), cacheFinalManifestPromise() (+81 more)
+Nodes (94): toResponse(), addEarlyHintFetchAttrs(), appendResponseLinkHeaders(), attachResponseHeaders(), buildClientEntryScriptTag(), buildFinalManifest(), buildLinkParam(), buildManifestWithClientEntry() (+86 more)
 
 ### Community 13 - "Admin compiled prevention pages"
 Cohesion: 0.17
@@ -431,35 +454,35 @@ Nodes (37): camelCase, Component, target, PageHeader(), Badge(), Button$1(), Car
 
 ### Community 14 - "Admin minified utils F"
 Cohesion: 0.04
-Nodes (94): T(), x(), at(), ct(), dt(), $e(), ft(), it() (+86 more)
+Nodes (96): T(), x(), at(), ct(), dt(), $e(), ft(), it() (+88 more)
 
 ### Community 15 - "Admin minified utils G"
-Cohesion: 0.02
-Nodes (204): B(), De(), Ee(), Ie(), je(), Le(), Ne(), Oe() (+196 more)
+Cohesion: 0.03
+Nodes (77): Xe(), Ze(), $(), dr(), Kr(), qs(), Xs(), aa() (+69 more)
 
 ### Community 16 - "d3-scale bundle"
 Cohesion: 0.03
 Nodes (46): defaultLocale(), dISO(), divergingSqrt(), formatDayOfMonth(), formatDayOfYear(), formatFullYear(), formatFullYearISO(), formatHour12() (+38 more)
 
 ### Community 17 - "Backend RBAC + auth handlers"
-Cohesion: 0.08
-Nodes (21): Record(), auditActor(), Handler, ClientIP(), PrincipalFromCtx(), RequestID(), ctxKey, errorBody (+13 more)
+Cohesion: 0.09
+Nodes (17): Record(), Handler, auditActor(), Handler, RequireScope(), ClientIP(), PrincipalFromCtx(), RequestID() (+9 more)
 
 ### Community 18 - "Admin Resources/Roles pages"
 Cohesion: 0.04
 Nodes (67): Resource, Route, seed, CreateRoleSheet(), CreateRoleSheetProps, Permission, Role, RolePermissionsSheet() (+59 more)
 
 ### Community 19 - "Admin minified utils H"
-Cohesion: 0.05
-Nodes (112): ac(), al(), as(), Au(), bc(), bezierCurveTo(), bl(), bo() (+104 more)
+Cohesion: 0.07
+Nodes (92): ac(), add(), as(), async(), Au(), bc(), bo(), cc() (+84 more)
 
 ### Community 20 - "TanStack router-core assets"
 Cohesion: 0.06
-Nodes (66): createInlineCssPlaceholderAsset(), createInlineCssStyleAsset(), getStylesheetHref(), isInlinableStylesheet(), ai(), an(), ao(), b() (+58 more)
+Nodes (63): createInlineCssPlaceholderAsset(), createInlineCssStyleAsset(), getStylesheetHref(), isInlinableStylesheet(), ai(), an(), ao(), b() (+55 more)
 
 ### Community 21 - "Admin minified utils I"
-Cohesion: 0.11
-Nodes (18): Bb(), Gb(), Jb(), Kb(), qb(), RB(), Ub(), Wb() (+10 more)
+Cohesion: 0.04
+Nodes (86): addObserver(), al(), bh(), bl(), build(), cancel(), cl(), clamp() (+78 more)
 
 ### Community 22 - "Admin Permissions/Providers UI"
 Cohesion: 0.06
@@ -478,16 +501,16 @@ Cohesion: 0.04
 Nodes (50): usePopupStore(), applyMiddleware(), assertIsArrayOfFunctions(), assertReducerShape(), buildCreateSlice(), buildReducerCreators(), childAbortController, clearListenerMiddleware (+42 more)
 
 ### Community 26 - "Admin minified utils J"
-Cohesion: 0.05
-Nodes (91): ah(), Ak(), am(), AN(), Aq(), bm(), bn(), Bp() (+83 more)
+Cohesion: 0.07
+Nodes (63): Ak(), am(), bm(), bq(), cm(), concat(), copy(), Cw() (+55 more)
 
 ### Community 27 - "Floating UI / dialog runtime"
 Cohesion: 0.05
 Nodes (86): CompositeList(), deepEqual(), DialogInteractions(), DialogRoot(), didChange(), elements(), evaluateRenderProp(), findItemIndex() (+78 more)
 
 ### Community 28 - "React SSR streaming"
-Cohesion: 0.07
-Nodes (72): ref, abort(), abortRemainingReplayNodes(), abortTask(), abortTaskSoft(), addToReplayParent(), byteLengthOfChunk(), completeAll() (+64 more)
+Cohesion: 0.09
+Nodes (45): ref, abortRemainingReplayNodes(), byteLengthOfChunk(), createFormatContext(), createHoistableState(), createPendingSegment(), createPreambleState(), createPrerenderRequest() (+37 more)
 
 ### Community 29 - "tailwind-merge bundle"
 Cohesion: 0.03
@@ -498,28 +521,28 @@ Cohesion: 0.10
 Nodes (53): autoUpdate(), convertOffsetParentRelativeRectToViewportRelativeRect(), detectOverflow(), findRootOwnerId(), getAnimationType(), getBoundingClientRect(), getClientRectFromClippingAncestor(), getClippingElementAncestors() (+45 more)
 
 ### Community 31 - "Immer draft bundle"
-Cohesion: 0.11
-Nodes (31): a(), o(), _(), #_(), #b(), bindMethods(), #C(), constructor() (+23 more)
+Cohesion: 0.12
+Nodes (48): Js(), os(), ss(), ai(), Ar(), Bi(), br(), cr() (+40 more)
 
 ### Community 32 - "Admin minified utils K"
 Cohesion: 0.08
-Nodes (57): $$1(), A(), ar(), B$1(), Be(), Bn(), Bt(), c$1() (+49 more)
+Nodes (60): $$1(), A(), ar(), B$1(), Be(), Bn(), Bt(), c$1() (+52 more)
 
 ### Community 33 - "Admin minified utils L"
 Cohesion: 0.20
 Nodes (17): _(), async(), ce(), cn(), constructor(), da(), ka(), kt() (+9 more)
 
 ### Community 34 - "Admin minified utils M"
-Cohesion: 0.29
-Nodes (13): decodeHeader(), newIssuer(), TestAddRetiredKey_IgnoresEmptyValues(), TestIssueAccess_AlwaysCarriesKID(), TestKID_ChangesWhenSecretChanges(), TestKID_StableAcrossInstancesForSameSecret(), TestSign_SetsKIDForArbitraryClaims(), TestVerifyAccess_AcceptsRetiredKeyDuringGraceWindow() (+5 more)
+Cohesion: 0.11
+Nodes (47): af(), applyPatches(), bf(), bj(), cj(), deleteProperty(), fe(), fj() (+39 more)
 
 ### Community 35 - "Admin minified utils N"
-Cohesion: 0.06
-Nodes (150): Ad(), ae(), af(), Ag(), Bd(), Be(), bf(), bg() (+142 more)
+Cohesion: 0.08
+Nodes (91): Ad(), ae(), Ag(), Bd(), Be(), bg(), cd(), ce() (+83 more)
 
 ### Community 36 - "Admin minified utils O"
 Cohesion: 0.07
-Nodes (74): D(), T(), A(), M(), A(), j(), _, _1() (+66 more)
+Nodes (76): F(), I(), P(), z(), A(), Ao(), ap(), Aq() (+68 more)
 
 ### Community 37 - "Admin Profile/Groups UI"
 Cohesion: 0.06
@@ -538,8 +561,12 @@ Cohesion: 0.04
 Nodes (39): [actualTheme, setActualTheme], closeButton, closeTimerStartTimeRef, darkMediaQuery, deleteToast, dragStartTime, [expanded, setExpanded], filteredToasts (+31 more)
 
 ### Community 41 - "Backend auth/session service"
-Cohesion: 0.10
-Nodes (18): Service, buildReuseEvents(), derivePersonalTenant(), TestBuildReuseEvents_AuditShape(), TestBuildReuseEvents_OmitsEmptyClientContext(), TestBuildReuseEvents_OutboxShape(), Session, TenantBrief (+10 more)
+Cohesion: 0.06
+Nodes (32): Service, buildReuseEvents(), derivePersonalTenant(), TestBuildReuseEvents_AuditShape(), TestBuildReuseEvents_OmitsEmptyClientContext(), TestBuildReuseEvents_OutboxShape(), Session, TenantBrief (+24 more)
+
+### Community 42 - "TanStack Query helpers"
+Cohesion: 0.09
+Nodes (37): Sw(), Ae(), Ce(), ct(), De(), $e(), Ee(), Fe() (+29 more)
 
 ### Community 43 - "d3-shape bundle"
 Cohesion: 0.05
@@ -554,8 +581,8 @@ Cohesion: 0.05
 Nodes (19): canFetch(), fetchState(), findAll(), getAll(), getQueriesData(), hashKey(), hasObjectPrototype(), isFetching() (+11 more)
 
 ### Community 46 - "Backend analytics service"
-Cohesion: 0.04
-Nodes (19): pctChange(), contains(), TestOverview_JSONShape(), TestPctChange(), Reader, CreateInput, Group, Member (+11 more)
+Cohesion: 0.05
+Nodes (19): pctChange(), contains(), TestOverview_JSONShape(), TestPctChange(), Reader, Reader, Row, append() (+11 more)
 
 ### Community 47 - "Immer proxy core"
 Cohesion: 0.12
@@ -574,8 +601,8 @@ Cohesion: 0.05
 Nodes (38): AnalyticsPage(), fmtInt(), formatDelta(), KpiCard(), mauConfig, Route, DashboardPage(), formatDelta() (+30 more)
 
 ### Community 51 - "Admin minified utils R"
-Cohesion: 0.05
-Nodes (78): av(), Bv(), bY(), copy(), cV(), CY(), delete(), Dp() (+70 more)
+Cohesion: 0.04
+Nodes (99): ah(), av(), az(), Bp(), Bv(), bY(), cp(), cV() (+91 more)
 
 ### Community 52 - "Recharts compute layer"
 Cohesion: 0.05
@@ -586,12 +613,12 @@ Cohesion: 0.24
 Nodes (10): errorResponse(), isError(), isJSONSerializable(), mergeHeaders$1(), nullBody(), prepareResponse(), prepareResponseBody(), toJSON() (+2 more)
 
 ### Community 54 - "React SSR text encoding"
-Cohesion: 0.13
-Nodes (38): adoptPreloadCredentials(), createRenderState(), endChunkForTag(), enqueueFlush(), escapeTextForBrowser(), flattenOptionChildren(), flushStyleInPreamble(), getCustomFormFields() (+30 more)
+Cohesion: 0.12
+Nodes (41): adoptPreloadCredentials(), createRenderState(), endChunkForTag(), enqueueFlush(), escapeJSObjectForInstructionScripts(), escapeTextForBrowser(), flattenOptionChildren(), getCustomFormFields() (+33 more)
 
 ### Community 55 - "Backend platform auth middleware"
 Cohesion: 0.08
-Nodes (18): RequireAuth(), RequireScope(), AuthVerifier, WithPrincipal(), sleep(), bucket, KeyFunc, Limiter (+10 more)
+Nodes (18): RequireAuth(), AuthVerifier, WithPrincipal(), ctxKey, Principal, sleep(), bucket, KeyFunc (+10 more)
 
 ### Community 56 - "Backend user cursor + repo"
 Cohesion: 0.08
@@ -662,16 +689,16 @@ Cohesion: 0.08
 Nodes (31): cloneAndReplaceKey(), copyInitialProps(), createInitialMergedProps(), escape(), getElementKey(), getIteratorFn(), getReactElementRef(), getStateAttributesProps() (+23 more)
 
 ### Community 73 - "Admin build chunk #73"
-Cohesion: 0.08
-Nodes (29): cancel(), clamp(), createGenericEventDetails(), focus, focusThumb(), getControlOffset(), getDecimalPrecision(), getEventType() (+21 more)
+Cohesion: 0.12
+Nodes (19): clamp(), createGenericEventDetails(), getControlOffset(), getDecimalPrecision(), getFingerCoords(), getFingerState(), getNewValue(), getPushedThumbValues() (+11 more)
 
 ### Community 74 - "Admin build chunk #74"
 Cohesion: 0.13
 Nodes (24): clamp(), clampa(), clamph(), clampi(), clampt(), Color(), color_formatHex(), color_formatHex8() (+16 more)
 
 ### Community 75 - "Admin build chunk #75"
-Cohesion: 0.08
-Nodes (36): acquire(), cancelPendingOpen(), closestEnabledTooltipTrigger(), commitSelection(), contains(), createChangeEventDetails(), detectNestedTriggerHover(), entries() (+28 more)
+Cohesion: 0.06
+Nodes (46): acquire(), cancel(), cancelPendingOpen(), closestEnabledTooltipTrigger(), commitSelection(), contains(), createChangeEventDetails(), detectNestedTriggerHover() (+38 more)
 
 ### Community 76 - "Admin build chunk #76"
 Cohesion: 0.11
@@ -683,7 +710,7 @@ Nodes (14): data, metadata, data, metadata, Cell, ComparisonData, ComparisonPage
 
 ### Community 78 - "Admin build chunk #78"
 Cohesion: 0.11
-Nodes (14): constructor(), decodePathname(), errorResponse(), isError(), isJSONSerializable(), mergeHeaders$1(), nullBody(), prepareResponse() (+6 more)
+Nodes (13): constructor(), decodePathname(), errorResponse(), isError(), isJSONSerializable(), mergeHeaders$1(), nullBody(), prepareResponse() (+5 more)
 
 ### Community 79 - "Frontend package.json"
 Cohesion: 0.07
@@ -694,8 +721,8 @@ Cohesion: 0.09
 Nodes (13): Numeric(), confirmEnrollInput, Enrollment, Service, startEnrollInput, verifyInput, VerifyResult, Code() (+5 more)
 
 ### Community 81 - "Admin build chunk #81"
-Cohesion: 0.16
-Nodes (26): completeWriting(), escapeJSObjectForInstructionScripts(), escapeJSStringsForInstructionScripts(), flushBuffered(), flushCompletedBoundary(), flushCompletedQueues(), flushPartiallyCompletedSegment(), flushResource() (+18 more)
+Cohesion: 0.09
+Nodes (50): abort(), abortTask(), abortTaskSoft(), addToReplayParent(), completeAll(), completeShell(), completeWriting(), createCancelHandler() (+42 more)
 
 ### Community 82 - "Admin build chunk #82"
 Cohesion: 0.10
@@ -766,8 +793,8 @@ Cohesion: 0.10
 Nodes (19): compilerOptions, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules, jsx, lib, module, moduleResolution (+11 more)
 
 ### Community 99 - "Misc cluster #99"
-Cohesion: 0.11
-Nodes (20): Refresh-token rotation with reuse detection, P0-1 Replace HS256 with RS256/ES256 + JWKS rotation, Customer analytics endpoints (4.8), Composite-cursor pagination (2.2), CSRF double-submit middleware (1.1), Docs i18n scaffold (11.1), JWT kid enforcement (1.7), Log redaction handler (1.3) (+12 more)
+Cohesion: 0.18
+Nodes (11): Refresh-token rotation with reuse detection, P0-1 Replace HS256 with RS256/ES256 + JWKS rotation, Customer analytics endpoints (4.8), Composite-cursor pagination (2.2), Docs i18n scaffold (11.1), JWT kid enforcement (1.7), Log redaction handler (1.3), Per-tenant rate-limit tiers (1.6) (+3 more)
 
 ### Community 100 - "Admin build chunk #100"
 Cohesion: 0.14
@@ -798,7 +825,7 @@ Cohesion: 0.14
 Nodes (6): CreateInput, formatInterval(), Handler, Request, Service, duration
 
 ### Community 107 - "Backend principal"
-Cohesion: 0.13
+Cohesion: 0.14
 Nodes (6): CreateInput, Handler, Principal, joinScopes(), Service, TokenResponse
 
 ### Community 108 - "Backend rbac"
@@ -834,7 +861,7 @@ Cohesion: 0.19
 Nodes (15): applyPatches(), isDraft(), applyPatches(), createDraft(), current(), defineProperty(), die(), dontMutateFrozenCollections() (+7 more)
 
 ### Community 116 - "Backend apikey"
-Cohesion: 0.15
+Cohesion: 0.14
 Nodes (5): generateRaw(), CreateInput, Handler, Key, Service
 
 ### Community 117 - "Admin build chunk #117"
@@ -882,8 +909,8 @@ Cohesion: 0.14
 Nodes (14): _defineProperty$42(), getTooltipCSSClassName(), getTooltipTranslate(), getTooltipTranslateXY(), getTransformStyle(), JavascriptAnimate(), _objectSpread$40(), ownKeys$40() (+6 more)
 
 ### Community 128 - "Misc cluster #128"
-Cohesion: 0.16
-Nodes (14): CHANGELOG, Unreleased CHANGELOG entry, Code of Conduct, Contributing Guide, Branch model (main/develop/feat/fix), Conventional Commits convention, Contributor Covenant 2.1, P0-10 CI/CD pipeline (+6 more)
+Cohesion: 0.24
+Nodes (10): CHANGELOG, Unreleased CHANGELOG entry, Code of Conduct, Contributing Guide, Branch model (main/develop/feat/fix), Conventional Commits convention, Contributor Covenant 2.1, Pull request template (+2 more)
 
 ### Community 129 - "Misc cluster #129"
 Cohesion: 0.22
@@ -902,11 +929,11 @@ Cohesion: 0.14
 Nodes (5): CodeMockupProps, Tok, BorderBeamProps, MarqueeProps, NumberTickerProps
 
 ### Community 135 - "Admin build chunk #135"
-Cohesion: 0.38
-Nodes (7): et(), iu(), la(), onParse(), se(), serialize(), Xr()
+Cohesion: 0.16
+Nodes (14): ei(), $r(), et(), Gr(), iu(), la(), nr(), onError() (+6 more)
 
 ### Community 137 - "Backend policy"
-Cohesion: 0.18
+Cohesion: 0.21
 Nodes (5): Handler, Policy, auditActor(), cidrContains(), Repository
 
 ### Community 138 - "Misc cluster #138"
@@ -930,16 +957,16 @@ Cohesion: 0.15
 Nodes (12): name, private, scripts, build, check, dev, format, lint (+4 more)
 
 ### Community 143 - "Backend analytics"
-Cohesion: 0.17
+Cohesion: 0.15
 Nodes (9): ActivityPoint, Handler, HourlyPoint, MethodCount, MethodSlice, Metric, Overview, TrendPoint (+1 more)
 
 ### Community 144 - "Backend social"
-Cohesion: 0.20
-Nodes (4): CreateProviderInput, ExternalIdentity, Handler, Provider
+Cohesion: 0.11
+Nodes (30): B(), De(), Ee(), Ie(), je(), Le(), Ne(), Oe() (+22 more)
 
 ### Community 145 - "Admin build chunk #145"
-Cohesion: 0.21
-Nodes (12): execute(), isNotFound(), isPromise(), loadMatches(), loadRouteChunk(), pending(), queueExecution(), serverSsr() (+4 more)
+Cohesion: 0.18
+Nodes (15): handleRedirectResponse(), execute(), isNotFound(), isPromise(), isRedirect(), isResolvedRedirect(), loadMatches(), loadRouteChunk() (+7 more)
 
 ### Community 146 - "Admin build chunk #146"
 Cohesion: 0.23
@@ -958,7 +985,7 @@ Cohesion: 0.17
 Nodes (11): name, private, scripts, build, check, dev, format, lint (+3 more)
 
 ### Community 150 - "Backend branding"
-Cohesion: 0.20
+Cohesion: 0.24
 Nodes (4): Branding, auditActor(), Handler, Repository
 
 ### Community 151 - "Backend invite"
@@ -974,8 +1001,8 @@ Cohesion: 0.18
 Nodes (11): Next.js 16.2.6, React 19.2.6 catalog, Tailwind 4.3.0 catalog, TypeScript 6.0.3 catalog, Frontend pnpm workspace, qeetid-admin README (TanStack Start), Nitro server adapter, Shadcn UI (+3 more)
 
 ### Community 155 - "Misc cluster #155"
-Cohesion: 0.20
-Nodes (11): CLAUDE.md project guide, Default to no comments, No backward-compat shims pre-1.0, No new abstractions without third caller, Tenancy isolation convention, audit schema (events), auth schema, platform schema (+3 more)
+Cohesion: 0.22
+Nodes (25): bu(), Do(), Fu(), gu(), Hu(), Iu(), ku(), Lu() (+17 more)
 
 ### Community 156 - "Backend platform"
 Cohesion: 0.24
@@ -1002,7 +1029,7 @@ Cohesion: 0.18
 Nodes (11): files.exclude, **/bin, **/coverage, **/dist, **/.netlify, **/.next, **/node_modules, **/.output (+3 more)
 
 ### Community 162 - "Backend passkey"
-Cohesion: 0.22
+Cohesion: 0.20
 Nodes (4): Credential, Handler, notImplemented(), Service
 
 ### Community 163 - "Admin build chunk #163"
@@ -1050,8 +1077,8 @@ Cohesion: 0.20
 Nodes (10): search.exclude, **/coverage, **/dist, **/go.sum, **/.next, **/node_modules, **/.output, **/pnpm-lock.yaml (+2 more)
 
 ### Community 174 - "Backend audit"
-Cohesion: 0.22
-Nodes (3): Handler, Reader, Row
+Cohesion: 0.17
+Nodes (13): Dq(), Dw(), eq(), Ht(), Iq(), kq(), kx(), Oq() (+5 more)
 
 ### Community 175 - "Docs content"
 Cohesion: 0.22
@@ -1096,6 +1123,10 @@ Nodes (8): compilerOptions, erasableSyntaxOnly, paths, tsBuildInfoFile, exclude,
 ### Community 186 - "Backend platform"
 Cohesion: 0.29
 Nodes (3): DLQRow, Handler, Reader
+
+### Community 187 - "Backend user"
+Cohesion: 0.07
+Nodes (10): Handler, Handler, errorBody, WriteJSON(), createRoleInput, Handler, Handler, Handler (+2 more)
 
 ### Community 188 - "Backend platform"
 Cohesion: 0.57
@@ -1146,8 +1177,8 @@ Cohesion: 0.40
 Nodes (5): _defineProperty$7(), _objectSpread$7(), ownKeys$7(), _toPrimitive$7(), _toPropertyKey$7()
 
 ### Community 200 - "Admin build chunk #200"
-Cohesion: 0.19
-Nodes (14): assignKeyAndIndex(), createBrowserHistory(), createHistory(), createMemoryHistory(), createRandomKey(), parseHref(), sanitizePath(), createStartHandler() (+6 more)
+Cohesion: 0.46
+Nodes (7): assignKeyAndIndex(), createBrowserHistory(), createHistory(), createMemoryHistory(), createRandomKey(), parseHref(), sanitizePath()
 
 ### Community 201 - "Docs content"
 Cohesion: 0.38
@@ -1182,8 +1213,8 @@ Cohesion: 0.29
 Nodes (7): Six module-extraction rules, Backend README, Backend module shape convention, Audit log, Transactional outbox pattern, Tamper-evident audit hash chain (1.4), Outbox dead-letter queue (6.2)
 
 ### Community 209 - "Docs src"
-Cohesion: 0.40
-Nodes (5): Gr(), nr(), onError(), r, Te()
+Cohesion: 0.15
+Nodes (15): Cr(), gr(), hr(), wr(), AN(), Cn(), dn(), hn() (+7 more)
 
 ### Community 210 - "Docs src"
 Cohesion: 0.15
@@ -1208,6 +1239,10 @@ Nodes (7): Account linking by verified email, Social providers, Connection porta
 ### Community 215 - "Misc cluster #215"
 Cohesion: 0.29
 Nodes (7): source.fixAll.eslint, source.organizeImports, [go], editor.codeActionsOnSave, editor.defaultFormatter, editor.formatOnSave, editor.codeActionsOnSave
+
+### Community 217 - "Backend tenant"
+Cohesion: 0.15
+Nodes (12): Claude project guide — qeet-identity, code:bash (# Database), code:bash (# List every mounted route), Database conventions, Doing changes — quick checklist, Don'ts, Important conventions, Reference (+4 more)
 
 ### Community 218 - "Backend postman"
 Cohesion: 0.33
@@ -1353,6 +1388,10 @@ Nodes (5): _defineProperty$16(), _objectSpread$16(), ownKeys$16(), _toPrimitive$
 Cohesion: 0.40
 Nodes (5): _defineProperty$37(), _objectSpread$35(), ownKeys$35(), _toPrimitive$37(), _toPropertyKey$37()
 
+### Community 259 - "Community 259"
+Cohesion: 0.15
+Nodes (12): Audit trail, Database rules — Postgres + golang-migrate, Don't, Indexes, Migrations, Outbox (domain events), Primary keys, Running things (+4 more)
+
 ### Community 260 - "Admin build chunk #260"
 Cohesion: 0.40
 Nodes (5): _defineProperty$13(), _objectSpread$13(), ownKeys$13(), _toPrimitive$13(), _toPropertyKey$13()
@@ -1385,6 +1424,10 @@ Nodes (5): _defineProperty$5(), _objectSpread$5(), ownKeys$5(), _toPrimitive$5()
 Cohesion: 0.40
 Nodes (4): description, icon, pages, title
 
+### Community 268 - "Community 268"
+Cohesion: 0.18
+Nodes (12): bo(), es(), Jo(), ns(), $o(), qo(), ro(), ts() (+4 more)
+
 ### Community 269 - "Docs src"
 Cohesion: 0.40
 Nodes (3): DEFAULT_LANGUAGE, LanguageCode, LANGUAGES
@@ -1402,8 +1445,8 @@ Cohesion: 0.50
 Nodes (5): POST /v1/users/{userId}/roles, POST /v1/roles, Roles & permissions API, Group role assignment, svc-rbac service
 
 ### Community 274 - "Backend auth"
-Cohesion: 0.25
-Nodes (4): Handler, loginInput, refreshInput, signupInput
+Cohesion: 0.50
+Nodes (3): loginInput, refreshInput, signupInput
 
 ### Community 275 - "Backend verification"
 Cohesion: 0.50
@@ -1416,6 +1459,10 @@ Nodes (3): icon, pages, title
 ### Community 277 - "Docs content"
 Cohesion: 0.50
 Nodes (3): icon, pages, title
+
+### Community 278 - "Community 278"
+Cohesion: 0.17
+Nodes (4): CreateInput, Group, Member, Service
 
 ### Community 279 - "Backend tenant"
 Cohesion: 0.50
@@ -1465,25 +1512,97 @@ Nodes (3): Admin App Branding Asset, React Atom Symbol (Cyan), React Logo 192px 
 Cohesion: 0.67
 Nodes (3): qeetid-web AGENTS.md (Next.js notice), qeetid-web CLAUDE.md (re-exports AGENTS.md), qeetid-web README (Next.js bootstrap)
 
+### Community 329 - "Community 329"
+Cohesion: 0.17
+Nodes (11): Backend rules — `backend/`, Comments, Concurrency, Config, Dependencies, Errors, Logging, Module shape (+3 more)
+
+### Community 330 - "Community 330"
+Cohesion: 0.18
+Nodes (10): Add a new endpoint — full workflow, Done when, Phase 0 — Confirm scope, Phase 1 — Find the right module, Phase 2 — Implement the handler, Phase 3 — OpenAPI, Phase 4 — Postman, Phase 5 — Tests (+2 more)
+
+### Community 331 - "Community 331"
+Cohesion: 0.33
+Nodes (7): #a(), bindMethods(), constructor(), #i(), onMutationUpdate(), reset(), setOptions()
+
+### Community 332 - "Community 332"
+Cohesion: 0.18
+Nodes (10): API surface rules, Don't, Idempotency, OpenAPI hygiene, Pagination, Postman hygiene, Responses, Running the suite (+2 more)
+
+### Community 333 - "Community 333"
+Cohesion: 0.18
+Nodes (10): Admin navigation, API calls, Apps, Comments, Don't, Frontend rules — `frontend/`, Routing, Shared package (+2 more)
+
+### Community 334 - "Community 334"
+Cohesion: 0.22
+Nodes (10): G(), gn(), lr(), mr(), _n(), Sr(), Tn(), Tr() (+2 more)
+
+### Community 335 - "Community 335"
+Cohesion: 0.20
+Nodes (9): Branches, code:bash (git status), Commits, Don't, Git workflow rules, Pull requests, Reviews, Useful commands (+1 more)
+
+### Community 336 - "Community 336"
+Cohesion: 0.20
+Nodes (9): Audit, Authentication, Authorization, Crypto, Hard rules, Process, Reporting, Security rules (+1 more)
+
+### Community 337 - "Community 337"
+Cohesion: 0.20
+Nodes (9): Backend tests — Go, code:bash (make test                 # full suite), Contract tests — Postman / Newman, Coverage, Don't, Frontend tests, Testing rules, Useful commands (+1 more)
+
+### Community 338 - "Community 338"
+Cohesion: 0.20
+Nodes (9): code:block1 (# Release readiness — <target>), Inputs, Phase 1 — Snapshot the state, Phase 2 — Cross-check docs vs. code, Phase 3 — Security review, Phase 4 — Migration safety, Phase 5 — Test pass, Phase 6 — Produce the report (+1 more)
+
+### Community 339 - "Community 339"
+Cohesion: 0.22
+Nodes (9): CSRF double-submit middleware (1.1), Security headers middleware (1.2), Bug report issue template, Issue template config, Vulnerability disclosure process, Self-hoster hardening expectations, Security Policy, Severity-based response SLAs (+1 more)
+
+### Community 340 - "Community 340"
+Cohesion: 0.25
+Nodes (7): Adding a new slash command, Adjusting locally, .claude/ — Claude Code configuration for this repo, code:json ({), How `settings.json` is scoped, See also, What's in here
+
+### Community 341 - "Community 341"
+Cohesion: 0.25
+Nodes (7): Documentation rules — `documents/`, Don't, Files and what they own, Other docs, Style, Update rules, What counts as "done"
+
+### Community 342 - "Community 342"
+Cohesion: 0.25
+Nodes (7): env, QEETID_API_BASE, QEETID_DB_URL, permissions, allow, deny, $schema
+
+### Community 343 - "Community 343"
+Cohesion: 0.25
+Nodes (7): code:block1 (# Next: <item title>), Gap-fill — pick and scope the next work item, Phase 1 — Read the source of truth, Phase 2 — Score the candidates, Phase 3 — Pick, Phase 4 — Scope the chosen item, Phase 5 — Hand back
+
+### Community 344 - "Community 344"
+Cohesion: 0.33
+Nodes (5): .claude/skills/ — project-local skills, code:markdown (---), Index, SKILL.md format, When to write a new skill (vs. a command)
+
+### Community 346 - "Community 346"
+Cohesion: 0.50
+Nodes (3): .claude/rules/ — topic-scoped project rules, Conventions for these rule files, Index
+
+### Community 347 - "Community 347"
+Cohesion: 0.50
+Nodes (4): P0-10 CI/CD pipeline, CI workflow, CI backend job (Go), CI frontend job (pnpm)
+
 ## Knowledge Gaps
-- **1554 isolated node(s):** `name`, `_postman_id`, `description`, `schema`, `type` (+1549 more)
+- **1663 isolated node(s):** `What's in here`, `How `settings.json` is scoped`, `code:json ({)`, `Adding a new slash command`, `See also` (+1658 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **47 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **46 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `addEventListener()` connect `Admin build chunk #289` to `Admin build minified A`, `Admin build chunk #73`, `Floating UI / dialog runtime`, `Admin minified utils G`?**
-  _High betweenness centrality (0.185) - this node is a cross-community bridge._
-- **Why does `gn()` connect `Admin minified utils G` to `Admin build chunk #289`, `Admin build minified B`, `Admin minified utils O`, `Recharts radial axes`, `Admin minified utils F`, `Admin minified utils H`, `Admin minified utils J`?**
-  _High betweenness centrality (0.185) - this node is a cross-community bridge._
-- **Why does `useMemo()` connect `Admin build chunk #125` to `TanStack Router runtime`, `Admin Profile/Groups UI`, `Admin compiled API-key/sessions pages`, `Admin placeholder pages`, `Web src`?**
-  _High betweenness centrality (0.108) - this node is a cross-community bridge._
+- **Why does `addEventListener()` connect `Admin build chunk #289` to `Admin build minified A`, `Admin build chunk #75`, `Floating UI / dialog runtime`, `Immer draft bundle`?**
+  _High betweenness centrality (0.176) - this node is a cross-community bridge._
+- **Why does `gn()` connect `Immer draft bundle` to `Admin build chunk #289`, `Admin build minified B`, `Admin minified utils O`, `Recharts radial axes`, `Admin minified utils F`, `Docs src`, `Admin minified utils H`?**
+  _High betweenness centrality (0.176) - this node is a cross-community bridge._
+- **Why does `Symbol()` connect `d3-shape bundle` to `Recharts charting bundle`, `Admin minified utils O`?**
+  _High betweenness centrality (0.072) - this node is a cross-community bridge._
 - **Are the 46 inferred relationships involving `useMutation()` (e.g. with `ImpersonationBanner()` and `useMarkAllRead()`) actually correct?**
   _`useMutation()` has 46 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 37 inferred relationships involving `useQuery()` (e.g. with `TeamSwitcher()` and `useSteps()`) actually correct?**
   _`useQuery()` has 37 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `name`, `_postman_id`, `description` to the rest of the system?**
-  _1559 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `What's in here`, `How `settings.json` is scoped`, `code:json ({)` to the rest of the system?**
+  _1665 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Admin build minified A` be split into smaller, more focused modules?**
   _Cohesion score 0.004998729136660171 - nodes in this community are weakly interconnected._
