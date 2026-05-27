@@ -2,6 +2,21 @@
 
 This file briefs Claude (or any other AI assistant) on how to be useful in this codebase. Read it before making changes. Humans, see [README.md](./README.md) and [CONTRIBUTING.md](./CONTRIBUTING.md) instead.
 
+> Operational config lives in [.claude/](./.claude/) — see [.claude/README.md](./.claude/README.md). Quick map:
+> - **Commands** ([.claude/commands/](./.claude/commands/)): `/routes`, `/migration-new`, `/module-new`, `/feature-status`, `/api-test`, `/audit-check`.
+> - **Skills** ([.claude/skills/](./.claude/skills/)): [add-endpoint](./.claude/skills/add-endpoint/SKILL.md), [release-readiness](./.claude/skills/release-readiness/SKILL.md), [gap-fill](./.claude/skills/gap-fill/SKILL.md) — auto-triggered by natural-language intent.
+> - **Agents** ([.claude/agents/](./.claude/agents/)): [qeetid-reviewer](./.claude/agents/qeetid-reviewer.md).
+>
+> Topic-scoped rules live in [.claude/rules/](./.claude/rules/). Read the relevant one before touching code in that slice:
+> [backend](./.claude/rules/backend.md) ·
+> [frontend](./.claude/rules/frontend.md) ·
+> [database](./.claude/rules/database.md) ·
+> [security](./.claude/rules/security.md) ·
+> [api](./.claude/rules/api.md) ·
+> [testing](./.claude/rules/testing.md) ·
+> [git-workflow](./.claude/rules/git-workflow.md) ·
+> [docs](./.claude/rules/docs.md)
+
 ---
 
 ## What this repo is

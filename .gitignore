@@ -27,6 +27,16 @@ Desktop.ini
 .classpath
 .settings/
 
+# Claude Code — keep shared config (settings.json, commands/, agents/, README.md),
+# ignore personal overrides and runtime artifacts.
+.claude/settings.local.json
+.claude/.cache/
+.claude/.session/
+.claude/logs/
+
+# graphify output (regenerated on demand)
+graphify-out/
+
 # Env / secrets — never commit
 .env
 .env.local
