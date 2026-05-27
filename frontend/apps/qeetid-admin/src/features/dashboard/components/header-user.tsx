@@ -80,9 +80,9 @@ export function HeaderUser() {
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem render={<Link to="/users" />}>
+          <DropdownMenuItem render={<Link to="/account/profile" />}>
             <UserIcon />
-            Users
+            My account
           </DropdownMenuItem>
           <DropdownMenuItem render={<Link to="/settings/workspace/general" />}>
             <BadgeCheckIcon />

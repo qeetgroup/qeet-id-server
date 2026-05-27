@@ -127,7 +127,7 @@ function useSteps(): Step[] {
       description: "Bring in admins, engineers, or support staff.",
       ctaLabel: "Invite teammates",
       ctaHref: "/invitations",
-      done: isDoneSafe(users.data, users.error, (d) => d.items.length > 1),
+      done: isDoneSafe(users.data, users.error, (d) => (d.items?.length ?? 0) > 1),
     },
     {
       id: "oauth-app",
@@ -136,7 +136,7 @@ function useSteps(): Step[] {
       description: "Hook up your first OAuth/OIDC client to start signing users in.",
       ctaLabel: "Add application",
       ctaHref: "/auth/connections/oidc",
-      done: isDoneSafe(oidc.data, oidc.error, (d) => d.items.length > 0),
+      done: isDoneSafe(oidc.data, oidc.error, (d) => (d.items?.length ?? 0) > 0),
     },
     {
       id: "api-key",
@@ -145,7 +145,7 @@ function useSteps(): Step[] {
       description: "Service-to-service auth for your backend integrations.",
       ctaLabel: "Create key",
       ctaHref: "/auth/api/keys",
-      done: isDoneSafe(apiKeys.data, apiKeys.error, (d) => d.items.length > 0),
+      done: isDoneSafe(apiKeys.data, apiKeys.error, (d) => (d.items?.length ?? 0) > 0),
     },
     {
       id: "webhook",
@@ -154,7 +154,7 @@ function useSteps(): Step[] {
       description: "Listen for sign-ins, role changes, audit events.",
       ctaLabel: "Add webhook",
       ctaHref: "/developer/webhooks",
-      done: isDoneSafe(webhooks.data, webhooks.error, (d) => d.items.length > 0),
+      done: isDoneSafe(webhooks.data, webhooks.error, (d) => (d.items?.length ?? 0) > 0),
     },
   ];
 }

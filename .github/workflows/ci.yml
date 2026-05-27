@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
 
 # Cancel in-flight runs on the same ref when a new commit arrives.
 concurrency:
@@ -12,6 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # Backend: vet, lint, test (race), build, migration up+down smoke.
+  # Postgres runs as a service container. We expose the container's
+  # 5432 on host 5001 to match the dev-time DB_URL convention.
+  # ────────────────────────────────────────────────────────────────────
   backend:
     name: Backend (Go)
     runs-on: ubuntu-latest
@@ -26,12 +32,14 @@ jobs:
           POSTGRES_PASSWORD: qeet
           POSTGRES_DB: qeet_identity
         ports:
-          - 5001:5001
+          - 5001:5432
         options: >-
           --health-cmd "pg_isready -U qeet"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      DB_URL: postgres://qeet:qeet@localhost:5001/qeet_identity?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -46,20 +54,64 @@ jobs:
           curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-amd64.tar.gz | tar xz
           sudo mv migrate /usr/local/bin/
 
-      - name: Run migrations
-        env:
-          DB_URL: postgres://qeet:qeet@localhost:5001/qeet_identity?sslmode=disable
-        run: make migrate-up
+      - name: Verify dependencies
+        run: go mod verify
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61
+          working-directory: backend
+          args: --timeout=5m
 
       - name: go vet
         run: go vet ./...
 
       - name: go test
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: go build
-        run: go build ./...
+        run: go build -o bin/qeet-identity ./cmd/server
 
+      - name: Migration smoke (up)
+        run: make migrate-up
+
+      - name: Migration smoke (down -all)
+        # Catches missing or non-reversible down migrations before main.
+        # We don't reapply after — `migrate-up` already ran in the prior
+        # step and proved forward direction works.
+        run: migrate -path migrations -database "$DB_URL" down -all
+
+      - name: Upload coverage artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.out
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────────
+  # Container image build smoke test. Doesn't push — just proves the
+  # Dockerfile + module graph still produces a working image.
+  # ────────────────────────────────────────────────────────────────────
+  backend-image:
+    name: Backend image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          tags: qeet-identity:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ────────────────────────────────────────────────────────────────────
+  # Frontend: install once via pnpm, then lint / typecheck / build /
+  # test. Turbo handles per-package caching.
+  # ────────────────────────────────────────────────────────────────────
   frontend:
     name: Frontend (pnpm)
     runs-on: ubuntu-latest
@@ -93,3 +145,40 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # ────────────────────────────────────────────────────────────────────
+  # OpenAPI lint. The spec is still incomplete (§12.3), so this job is
+  # informational for now via continue-on-error. Flip it to hard when
+  # the spec is comprehensive.
+  # ────────────────────────────────────────────────────────────────────
+  openapi:
+    name: OpenAPI lint
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Spectral lint
+        run: npx -y @stoplight/spectral-cli lint backend/api/openapi.yaml
+
+  # ────────────────────────────────────────────────────────────────────
+  # Lockfile freshness — catch package.json edits that didn't update
+  # the lockfile in the same PR.
+  # ────────────────────────────────────────────────────────────────────
+  lockfile-fresh:
+    name: Lockfile freshness
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: pnpm install --frozen-lockfile --lockfile-only

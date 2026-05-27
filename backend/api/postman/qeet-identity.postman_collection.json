@@ -2,7 +2,7 @@
   "info": {
     "name": "Qeet Identity API",
     "_postman_id": "8f3b6e10-7a3f-4d9c-9a55-qeetid000001",
-    "description": "Complete request collection for the qeet-identity backend (Go monolith).\n\n## Setup\n\n1. Start the backend: `cd backend && make run` (defaults to `http://localhost:4001`).\n2. Import this collection AND the companion environment (`qeet-identity.postman_environment.json`).\n3. Select the **qeet-identity (local)** environment in the Postman environment dropdown.\n4. **First time / fresh DB:** run **Auth \u2192 Signup**. It creates a new tenant + user + owner role in one shot and auto-populates `{{tenantId}}`, `{{userId}}`, `{{accessToken}}`, `{{refreshToken}}`. The signup user becomes the tenant admin.\n5. **Returning users:** run **Auth \u2192 Login** with the saved tenant_id + email + password.\n\n## Conventions\n\n- All authed requests inherit a `Bearer {{accessToken}}` header from the collection root.\n- IDs (`{{tenantId}}`, `{{userId}}`, `{{roleId}}`, \u2026) are written back to collection variables by the corresponding `Create` / `Signup` requests, so you can chain them.\n- Routes prefixed `/v1/...` are versioned API surface. Discovery / JWKS live at root (`/.well-known/...`) per the OIDC spec.\n\n## Status legend\n\nRoutes marked `[501]` in the request name are stubbed in the current implementation \u2014 they return 501 Not Implemented. See `documents/IMPLEMENTATION-STATUS.md`.\n",
+    "description": "Complete request collection for the qeet-identity backend (Go monolith).\n\n## Setup\n\n1. Start the backend: `cd backend && make run` (defaults to `http://localhost:4001`).\n2. Import this collection AND the companion environment (`qeet-identity.postman_environment.json`).\n3. Select the **qeet-identity (local)** environment in the Postman environment dropdown.\n4. **First time / fresh DB:** run **Auth → Signup**. It creates a new tenant + user + owner role in one shot and auto-populates `{{tenantId}}`, `{{userId}}`, `{{accessToken}}`, `{{refreshToken}}`. The signup user becomes the tenant admin.\n5. **Returning users:** run **Auth → Login** with the saved tenant_id + email + password.\n\n## Conventions\n\n- All authed requests inherit a `Bearer {{accessToken}}` header from the collection root.\n- IDs (`{{tenantId}}`, `{{userId}}`, `{{roleId}}`, …) are written back to collection variables by the corresponding `Create` / `Signup` requests, so you can chain them.\n- Routes prefixed `/v1/...` are versioned API surface. Discovery / JWKS live at root (`/.well-known/...`) per the OIDC spec.\n\n## Status legend\n\nRoutes marked `[501]` in the request name are stubbed in the current implementation — they return 501 Not Implemented. See `documents/IMPLEMENTATION-STATUS.md`.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -15,6 +15,91 @@
       }
     ]
   },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.get('baseUrl') && !pm.collectionVariables.get('baseUrl')) {",
+          "  throw new Error('baseUrl is not set. Select the qeet-identity (local) environment or override --env-var baseUrl=...');",
+          "}",
+          "",
+          "// --- CSRF auto-handler ---------------------------------------------------",
+          "// The backend CSRF middleware (httpx/csrf.go) requires non-Bearer mutation",
+          "// requests to carry (a) an allow-listed Origin/Referer and (b) a double-",
+          "// submit cookie pair (qe_csrf + X-CSRF-Token). Bearer-token traffic skips",
+          "// entirely. Postman is not a browser so it sends neither header — handle",
+          "// it transparently here so the public auth routes (signup/login/recovery/",
+          "// invite-accept/oauth-token) work out of the box.",
+          "(function () {",
+          "  const method = (pm.request.method || 'GET').toUpperCase();",
+          "  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;",
+          "",
+          "  const authHeader = pm.request.headers.get('Authorization') || '';",
+          "  if (authHeader.toLowerCase().indexOf('bearer ') === 0) return; // Bearer bypasses CSRF",
+          "",
+          "  const origin = pm.collectionVariables.get('csrfOrigin') ||",
+          "                 pm.environment.get('csrfOrigin') ||",
+          "                 'http://localhost:3002';",
+          "  if (!pm.request.headers.has('Origin')) {",
+          "    pm.request.headers.upsert({ key: 'Origin', value: origin });",
+          "  }",
+          "",
+          "  // If we already have a cached CSRF token from a prior seed, just echo it.",
+          "  const cached = pm.collectionVariables.get('_csrfToken');",
+          "  if (cached) {",
+          "    pm.request.headers.upsert({ key: 'X-CSRF-Token', value: cached });",
+          "    return;",
+          "  }",
+          "",
+          "  // Otherwise, seed the cookie by GETting /healthz and extract qe_csrf",
+          "  // from Set-Cookie. Postman will wait for this async call before firing",
+          "  // the main request.",
+          "  const baseUrl = pm.environment.get('baseUrl') || pm.collectionVariables.get('baseUrl');",
+          "  pm.sendRequest({ url: baseUrl + '/healthz', method: 'GET' }, function (err, res) {",
+          "    if (err || !res) return;",
+          "    const setCookies = res.headers.all().filter(function (h) {",
+          "      return (h.key || '').toLowerCase() === 'set-cookie';",
+          "    });",
+          "    for (let i = 0; i < setCookies.length; i++) {",
+          "      const m = /qe_csrf=([^;]+)/.exec(setCookies[i].value || '');",
+          "      if (m) {",
+          "        pm.collectionVariables.set('_csrfToken', m[1]);",
+          "        pm.request.headers.upsert({ key: 'X-CSRF-Token', value: m[1] });",
+          "        return;",
+          "      }",
+          "    }",
+          "  });",
+          "})();"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Skip everything if the request errored out (no response, e.g. connection refused).",
+          "if (!pm.response || typeof pm.response.code !== 'number') { return; }",
+          "// Universal sanity checks. Per-request tests still run.",
+          "pm.test('Response under 5s', () => pm.expect(pm.response.responseTime).to.be.below(5000));",
+          "// Safety-net token capture: if any response carries access_token / refresh_token,",
+          "// keep collection vars in sync. Per-request tests still own the primary capture.",
+          "try {",
+          "  if (pm.response.code >= 200 && pm.response.code < 300) {",
+          "    const ct = pm.response.headers.get('Content-Type') || '';",
+          "    if (ct.indexOf('application/json') !== -1) {",
+          "      const body = pm.response.json();",
+          "      if (body && body.access_token)  pm.collectionVariables.set('accessToken',  body.access_token);",
+          "      if (body && body.refresh_token) pm.collectionVariables.set('refreshToken', body.refresh_token);",
+          "    }",
+          "  }",
+          "} catch (e) { /* non-JSON or empty body — ignore */ }"
+        ]
+      }
+    }
+  ],
   "variable": [
     {
       "key": "baseUrl",
@@ -115,6 +200,16 @@
       "key": "gdprRequestId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "signupEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "signupPassword",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -122,7 +217,7 @@
       "name": "Health",
       "item": [
         {
-          "name": "Liveness \u2014 GET /healthz",
+          "name": "Liveness — GET /healthz",
           "request": {
             "auth": {
               "type": "noauth"
@@ -141,7 +236,7 @@
           }
         },
         {
-          "name": "Readiness \u2014 GET /readyz",
+          "name": "Readiness — GET /readyz",
           "request": {
             "auth": {
               "type": "noauth"
@@ -165,7 +260,7 @@
       "name": "OIDC Discovery (public)",
       "item": [
         {
-          "name": "OpenID configuration \u2014 GET /.well-known/openid-configuration",
+          "name": "OpenID configuration — GET /.well-known/openid-configuration",
           "request": {
             "auth": {
               "type": "noauth"
@@ -185,7 +280,7 @@
           }
         },
         {
-          "name": "JWKS \u2014 GET /.well-known/jwks.json",
+          "name": "JWKS — GET /.well-known/jwks.json",
           "request": {
             "auth": {
               "type": "noauth"
@@ -210,7 +305,7 @@
       "name": "Auth",
       "item": [
         {
-          "name": "Signup \u2014 POST /v1/auth/signup",
+          "name": "Signup — POST /v1/auth/signup",
           "event": [
             {
               "listen": "test",
@@ -223,7 +318,13 @@
                   "if (body.tenant_id)            pm.collectionVariables.set('tenantId',     body.tenant_id);",
                   "if (body.access_token)         pm.collectionVariables.set('accessToken',  body.access_token);",
                   "if (body.refresh_token)        pm.collectionVariables.set('refreshToken', body.refresh_token);",
-                  "console.log('Signed up \u2014 you are now owner of tenant', body.tenant_id);"
+                  "console.log('Signed up — you are now owner of tenant', body.tenant_id);",
+                  "// Persist the email/password actually sent so Login can re-use them.",
+                  "try {",
+                  "  const reqBody = JSON.parse(pm.request.body && pm.request.body.raw || '{}');",
+                  "  if (reqBody.email)    pm.collectionVariables.set('signupEmail',    reqBody.email);",
+                  "  if (reqBody.password) pm.collectionVariables.set('signupPassword', reqBody.password);",
+                  "} catch (e) {}"
                 ]
               }
             }
@@ -241,7 +342,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"jane@acme.test\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Jane Doe\"\n}"
+              "raw": "{\n  \"email\": \"jane+{{$timestamp}}@acme.test\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Jane Doe\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/signup",
@@ -254,11 +355,11 @@
                 "signup"
               ]
             },
-            "description": "Public self-service signup. Takes only `{email, password, display_name?}`. In ONE transaction the backend:\n\n1. Generates a personal tenant for the new user (slug like `personal-<12hex>`, name like `\"Jane's workspace\"`).\n2. Creates the user with a password credential.\n3. Creates a system `owner` role for the personal tenant and grants it every platform permission.\n4. Assigns the user to that owner role.\n5. Issues an access + refresh token pair (auto-login).\n\nThe user can rename their workspace or create more from `Tenants \u2192 New tenant`.\n\n**Email is globally unique** \u2014 same address can't sign up twice across the platform.\n\n**Errors:**\n- 409 \u2014 email already in use\n- 422 \u2014 validation failed (password < 8 chars, invalid email, \u2026)"
+            "description": "Public self-service signup. Takes only `{email, password, display_name?}`. In ONE transaction the backend:\n\n1. Generates a personal tenant for the new user (slug like `personal-<12hex>`, name like `\"Jane's workspace\"`).\n2. Creates the user with a password credential.\n3. Creates a system `owner` role for the personal tenant and grants it every platform permission.\n4. Assigns the user to that owner role.\n5. Issues an access + refresh token pair (auto-login).\n\nThe user can rename their workspace or create more from `Tenants → New tenant`.\n\n**Email is globally unique** — same address can't sign up twice across the platform.\n\n**Errors:**\n- 409 — email already in use\n- 422 — validation failed (password < 8 chars, invalid email, …)"
           }
         },
         {
-          "name": "Login \u2014 POST /v1/auth/login",
+          "name": "Login — POST /v1/auth/login",
           "event": [
             {
               "listen": "test",
@@ -286,7 +387,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"Password123!\"\n}"
+              "raw": "{\n  \"email\": \"{{signupEmail}}\",\n  \"password\": \"{{signupPassword}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/login",
@@ -302,7 +403,7 @@
           }
         },
         {
-          "name": "Refresh \u2014 POST /v1/auth/refresh",
+          "name": "Refresh — POST /v1/auth/refresh",
           "event": [
             {
               "listen": "test",
@@ -346,7 +447,7 @@
           }
         },
         {
-          "name": "Me \u2014 GET /v1/auth/me",
+          "name": "Me — GET /v1/auth/me",
           "request": {
             "method": "GET",
             "header": [],
@@ -364,25 +465,7 @@
           }
         },
         {
-          "name": "Logout \u2014 POST /v1/auth/logout",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/auth/logout",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "logout"
-              ]
-            }
-          }
-        },
-        {
-          "name": "List sessions \u2014 GET /v1/auth/sessions",
+          "name": "List sessions — GET /v1/auth/sessions",
           "request": {
             "method": "GET",
             "header": [],
@@ -397,10 +480,30 @@
                 "sessions"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('sessionId', arr[0].id);",
+                  "      console.log('captured sessionId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Revoke session \u2014 DELETE /v1/auth/sessions/{id}",
+          "name": "Revoke session — DELETE /v1/auth/sessions/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -417,6 +520,24 @@
               ]
             }
           }
+        },
+        {
+          "name": "Logout — POST /v1/auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "logout"
+              ]
+            }
+          }
         }
       ]
     },
@@ -424,7 +545,7 @@
       "name": "Recovery (public)",
       "item": [
         {
-          "name": "Forgot password \u2014 POST /v1/auth/forgot-password",
+          "name": "Forgot password — POST /v1/auth/forgot-password",
           "request": {
             "auth": {
               "type": "noauth"
@@ -454,7 +575,7 @@
           }
         },
         {
-          "name": "Reset password \u2014 POST /v1/auth/reset-password",
+          "name": "Reset password — POST /v1/auth/reset-password",
           "request": {
             "auth": {
               "type": "noauth"
@@ -484,7 +605,7 @@
           }
         },
         {
-          "name": "Magic link start \u2014 POST /v1/auth/magic-link/start",
+          "name": "Magic link start — POST /v1/auth/magic-link/start",
           "request": {
             "auth": {
               "type": "noauth"
@@ -515,7 +636,7 @@
           }
         },
         {
-          "name": "Magic link consume \u2014 POST /v1/auth/magic-link/consume",
+          "name": "Magic link consume — POST /v1/auth/magic-link/consume",
           "request": {
             "auth": {
               "type": "noauth"
@@ -551,7 +672,7 @@
       "name": "Tenants",
       "item": [
         {
-          "name": "List tenants \u2014 GET /v1/tenants",
+          "name": "List tenants — GET /v1/tenants",
           "request": {
             "method": "GET",
             "header": [],
@@ -565,10 +686,30 @@
                 "tenants"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('tenantId', arr[0].id);",
+                  "      console.log('captured tenantId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Create tenant \u2014 POST /v1/tenants",
+          "name": "Create tenant — POST /v1/tenants",
           "event": [
             {
               "listen": "test",
@@ -591,7 +732,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"slug\": \"acme\",\n  \"name\": \"Acme Corp\",\n  \"plan\": \"free\",\n  \"region\": \"us-east-1\",\n  \"metadata\": {}\n}"
+              "raw": "{\n  \"slug\": \"acme-{{$timestamp}}\",\n  \"name\": \"Acme Corp {{$timestamp}}\",\n  \"plan\": \"free\",\n  \"region\": \"us-east-1\",\n  \"metadata\": {}\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants",
@@ -606,7 +747,7 @@
           }
         },
         {
-          "name": "Get tenant \u2014 GET /v1/tenants/{id}",
+          "name": "Get tenant — GET /v1/tenants/{id}",
           "request": {
             "method": "GET",
             "header": [],
@@ -624,7 +765,7 @@
           }
         },
         {
-          "name": "Update tenant \u2014 PATCH /v1/tenants/{id}",
+          "name": "Update tenant — PATCH /v1/tenants/{id}",
           "request": {
             "method": "PATCH",
             "header": [
@@ -651,7 +792,7 @@
           }
         },
         {
-          "name": "Delete tenant \u2014 DELETE /v1/tenants/{id}",
+          "name": "Delete tenant — DELETE /v1/tenants/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -674,7 +815,7 @@
       "name": "Users",
       "item": [
         {
-          "name": "List users \u2014 GET /v1/users",
+          "name": "List users — GET /v1/users",
           "request": {
             "method": "GET",
             "header": [],
@@ -688,10 +829,30 @@
                 "users"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('userId', arr[0].id);",
+                  "      console.log('captured userId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Create user \u2014 POST /v1/users",
+          "name": "Create user — POST /v1/users",
           "event": [
             {
               "listen": "test",
@@ -714,7 +875,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"email\": \"alice@example.com\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Alice Adams\",\n  \"phone\": \"+15555550100\",\n  \"metadata\": {}\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"email\": \"alice+{{$timestamp}}@example.com\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"Alice Adams\",\n  \"phone\": \"+15555550100\",\n  \"metadata\": {}\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users",
@@ -729,7 +890,7 @@
           }
         },
         {
-          "name": "Get user \u2014 GET /v1/users/{id}",
+          "name": "Get user — GET /v1/users/{id}",
           "request": {
             "method": "GET",
             "header": [],
@@ -747,7 +908,7 @@
           }
         },
         {
-          "name": "Update user \u2014 PATCH /v1/users/{id}",
+          "name": "Update user — PATCH /v1/users/{id}",
           "request": {
             "method": "PATCH",
             "header": [
@@ -774,7 +935,7 @@
           }
         },
         {
-          "name": "Delete user \u2014 DELETE /v1/users/{id}",
+          "name": "Delete user — DELETE /v1/users/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -792,7 +953,7 @@
           }
         },
         {
-          "name": "Set password \u2014 POST /v1/users/{id}/password",
+          "name": "Set password — POST /v1/users/{id}/password",
           "request": {
             "method": "POST",
             "header": [
@@ -825,7 +986,7 @@
       "name": "Verification",
       "item": [
         {
-          "name": "Start email verification \u2014 POST /v1/users/{id}/verify/email/start",
+          "name": "Start email verification — POST /v1/users/{id}/verify/email/start",
           "request": {
             "method": "POST",
             "header": [
@@ -855,7 +1016,7 @@
           }
         },
         {
-          "name": "Confirm email verification \u2014 POST /v1/users/{id}/verify/email/confirm",
+          "name": "Confirm email verification — POST /v1/users/{id}/verify/email/confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -885,7 +1046,7 @@
           }
         },
         {
-          "name": "Start phone verification \u2014 POST /v1/users/{id}/verify/phone/start",
+          "name": "Start phone verification — POST /v1/users/{id}/verify/phone/start",
           "request": {
             "method": "POST",
             "header": [
@@ -915,7 +1076,7 @@
           }
         },
         {
-          "name": "Confirm phone verification \u2014 POST /v1/users/{id}/verify/phone/confirm",
+          "name": "Confirm phone verification — POST /v1/users/{id}/verify/phone/confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -950,7 +1111,7 @@
       "name": "RBAC",
       "item": [
         {
-          "name": "List permissions \u2014 GET /v1/permissions",
+          "name": "List permissions — GET /v1/permissions",
           "request": {
             "method": "GET",
             "header": [],
@@ -964,10 +1125,30 @@
                 "permissions"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('permissionId', arr[0].id);",
+                  "      console.log('captured permissionId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "List roles \u2014 GET /v1/tenants/{tenantID}/roles",
+          "name": "List roles — GET /v1/tenants/{tenantID}/roles",
           "request": {
             "method": "GET",
             "header": [],
@@ -983,10 +1164,30 @@
                 "roles"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('roleId', arr[0].id);",
+                  "      console.log('captured roleId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Create role \u2014 POST /v1/tenants/{tenantID}/roles",
+          "name": "Create role — POST /v1/tenants/{tenantID}/roles",
           "event": [
             {
               "listen": "test",
@@ -1009,7 +1210,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"editor\",\n  \"description\": \"Can edit users and audit\"\n}"
+              "raw": "{\n  \"name\": \"editor-{{$timestamp}}\",\n  \"description\": \"Can edit users and audit\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/roles",
@@ -1026,7 +1227,7 @@
           }
         },
         {
-          "name": "Grant permission to role \u2014 POST /v1/roles/{roleID}/permissions/{permID}",
+          "name": "Grant permission to role — POST /v1/roles/{roleID}/permissions/{permID}",
           "request": {
             "method": "POST",
             "header": [],
@@ -1046,7 +1247,7 @@
           }
         },
         {
-          "name": "Revoke permission from role \u2014 DELETE /v1/roles/{roleID}/permissions/{permID}",
+          "name": "Revoke permission from role — DELETE /v1/roles/{roleID}/permissions/{permID}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1066,7 +1267,7 @@
           }
         },
         {
-          "name": "Assign role to user \u2014 POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
+          "name": "Assign role to user — POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
           "request": {
             "method": "POST",
             "header": [],
@@ -1088,7 +1289,7 @@
           }
         },
         {
-          "name": "Unassign role from user \u2014 DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
+          "name": "Unassign role from user — DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1110,7 +1311,7 @@
           }
         },
         {
-          "name": "Effective permissions \u2014 GET /v1/users/{userID}/tenants/{tenantID}/permissions",
+          "name": "Effective permissions — GET /v1/users/{userID}/tenants/{tenantID}/permissions",
           "request": {
             "method": "GET",
             "header": [],
@@ -1131,7 +1332,7 @@
           }
         },
         {
-          "name": "Permission check \u2014 GET /v1/check",
+          "name": "Permission check — GET /v1/check",
           "request": {
             "method": "GET",
             "header": [],
@@ -1167,7 +1368,7 @@
       "name": "Invites",
       "item": [
         {
-          "name": "Create invite \u2014 POST /v1/invites",
+          "name": "Create invite — POST /v1/invites",
           "event": [
             {
               "listen": "test",
@@ -1190,7 +1391,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"email\": \"newuser@example.com\",\n  \"role_id\": \"{{roleId}}\"\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"email\": \"newuser+{{$timestamp}}@example.com\",\n  \"role_id\": \"{{roleId}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/invites",
@@ -1205,7 +1406,7 @@
           }
         },
         {
-          "name": "List invites \u2014 GET /v1/tenants/{tenantID}/invites",
+          "name": "List invites — GET /v1/tenants/{tenantID}/invites",
           "request": {
             "method": "GET",
             "header": [],
@@ -1221,10 +1422,30 @@
                 "invites"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('inviteId', arr[0].id);",
+                  "      console.log('captured inviteId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Revoke invite \u2014 DELETE /v1/invites/{id}",
+          "name": "Revoke invite — DELETE /v1/invites/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1242,7 +1463,7 @@
           }
         },
         {
-          "name": "Accept invite (public) \u2014 POST /v1/invites/accept",
+          "name": "Accept invite (public) — POST /v1/invites/accept",
           "request": {
             "auth": {
               "type": "noauth"
@@ -1277,7 +1498,7 @@
       "name": "MFA (TOTP)",
       "item": [
         {
-          "name": "Start TOTP enrollment \u2014 POST /v1/mfa/totp/enroll/start",
+          "name": "Start TOTP enrollment — POST /v1/mfa/totp/enroll/start",
           "request": {
             "method": "POST",
             "header": [
@@ -1306,7 +1527,7 @@
           }
         },
         {
-          "name": "Confirm TOTP enrollment \u2014 POST /v1/mfa/totp/enroll/confirm",
+          "name": "Confirm TOTP enrollment — POST /v1/mfa/totp/enroll/confirm",
           "request": {
             "method": "POST",
             "header": [
@@ -1335,7 +1556,7 @@
           }
         },
         {
-          "name": "Verify TOTP \u2014 POST /v1/mfa/totp/verify",
+          "name": "Verify TOTP — POST /v1/mfa/totp/verify",
           "request": {
             "method": "POST",
             "header": [
@@ -1363,7 +1584,7 @@
           }
         },
         {
-          "name": "Disable TOTP \u2014 DELETE /v1/mfa/totp",
+          "name": "Disable TOTP — DELETE /v1/mfa/totp",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1386,7 +1607,7 @@
       "name": "API Keys",
       "item": [
         {
-          "name": "Create API key \u2014 POST /v1/api-keys",
+          "name": "Create API key — POST /v1/api-keys",
           "event": [
             {
               "listen": "test",
@@ -1410,7 +1631,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"user_id\": \"{{userId}}\",\n  \"name\": \"CI deploy key\",\n  \"scopes\": [\"user.read\", \"tenant.read\"]\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"user_id\": \"{{userId}}\",\n  \"name\": \"CI deploy key {{$timestamp}}\",\n  \"scopes\": [\"user.read\", \"tenant.read\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/api-keys",
@@ -1425,7 +1646,7 @@
           }
         },
         {
-          "name": "List API keys \u2014 GET /v1/tenants/{tenantID}/api-keys",
+          "name": "List API keys — GET /v1/tenants/{tenantID}/api-keys",
           "request": {
             "method": "GET",
             "header": [],
@@ -1441,10 +1662,30 @@
                 "api-keys"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('apiKeyId', arr[0].id);",
+                  "      console.log('captured apiKeyId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Revoke API key \u2014 DELETE /v1/api-keys/{id}",
+          "name": "Revoke API key — DELETE /v1/api-keys/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1462,7 +1703,7 @@
           }
         },
         {
-          "name": "Authed call with API key \u2014 GET /v1/users (ApiKey auth)",
+          "name": "Authed call with API key — GET /v1/users (ApiKey auth)",
           "request": {
             "auth": {
               "type": "apikey",
@@ -1504,7 +1745,7 @@
       "name": "Service Principals (M2M)",
       "item": [
         {
-          "name": "Create service principal \u2014 POST /v1/service-principals",
+          "name": "Create service principal — POST /v1/service-principals",
           "event": [
             {
               "listen": "test",
@@ -1512,9 +1753,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "const body = pm.response.json();",
-                  "if (body.id || body.principal && body.principal.id) pm.collectionVariables.set('principalId', body.id || body.principal.id);",
-                  "if (body.client_secret) pm.collectionVariables.set('principalSecret', body.client_secret);",
-                  "if (body.secret)        pm.collectionVariables.set('principalSecret', body.secret);"
+                  "if (body) {",
+                  "  if (body.client_id)     pm.collectionVariables.set('principalId',     body.client_id);",
+                  "  else if (body.service_principal && body.service_principal.id)",
+                  "                          pm.collectionVariables.set('principalId',     body.service_principal.id);",
+                  "  if (body.client_secret) pm.collectionVariables.set('principalSecret', body.client_secret);",
+                  "}"
                 ]
               }
             }
@@ -1529,7 +1773,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"build-bot\",\n  \"description\": \"CI/CD service account\",\n  \"scopes\": [\"user.read\", \"tenant.read\"]\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"build-bot-{{$timestamp}}\",\n  \"description\": \"CI/CD service account\",\n  \"scopes\": [\"user.read\", \"tenant.read\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/service-principals",
@@ -1544,7 +1788,7 @@
           }
         },
         {
-          "name": "List service principals \u2014 GET /v1/tenants/{tenantID}/service-principals",
+          "name": "List service principals — GET /v1/tenants/{tenantID}/service-principals",
           "request": {
             "method": "GET",
             "header": [],
@@ -1560,10 +1804,30 @@
                 "service-principals"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('principalId', arr[0].id);",
+                  "      console.log('captured principalId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Disable service principal \u2014 DELETE /v1/service-principals/{id}",
+          "name": "Disable service principal — DELETE /v1/service-principals/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1581,7 +1845,7 @@
           }
         },
         {
-          "name": "OAuth token (client_credentials) \u2014 POST /v1/oauth/token",
+          "name": "OAuth token (client_credentials) — POST /v1/oauth/token",
           "event": [
             {
               "listen": "test",
@@ -1644,7 +1908,7 @@
       "name": "OIDC (Authed)",
       "item": [
         {
-          "name": "Register OIDC client \u2014 POST /v1/oidc/clients",
+          "name": "Register OIDC client — POST /v1/oidc/clients",
           "event": [
             {
               "listen": "test",
@@ -1668,7 +1932,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"My SPA\",\n  \"type\": \"public\",\n  \"redirect_uris\": [\"http://localhost:3000/callback\"],\n  \"post_logout_uris\": [\"http://localhost:3000/\"],\n  \"grant_types\": [\"authorization_code\", \"refresh_token\"],\n  \"scopes\": [\"openid\", \"profile\", \"email\"]\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"My SPA {{$timestamp}}\",\n  \"type\": \"public\",\n  \"redirect_uris\": [\"http://localhost:3000/callback\"],\n  \"post_logout_uris\": [\"http://localhost:3000/\"],\n  \"grant_types\": [\"authorization_code\", \"refresh_token\"],\n  \"scopes\": [\"openid\", \"profile\", \"email\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oidc/clients",
@@ -1684,7 +1948,7 @@
           }
         },
         {
-          "name": "Authorize \u2014 GET /v1/oauth/authorize",
+          "name": "Authorize — GET /v1/oauth/authorize",
           "request": {
             "method": "GET",
             "header": [],
@@ -1732,7 +1996,7 @@
           }
         },
         {
-          "name": "Token (authorization_code) \u2014 POST /v1/oauth/token-code",
+          "name": "Token (authorization_code) — POST /v1/oauth/token-code",
           "request": {
             "method": "POST",
             "header": [
@@ -1785,7 +2049,7 @@
           }
         },
         {
-          "name": "UserInfo \u2014 GET /v1/oauth/userinfo",
+          "name": "UserInfo — GET /v1/oauth/userinfo",
           "request": {
             "method": "GET",
             "header": [],
@@ -1808,7 +2072,7 @@
       "name": "Passkeys (WebAuthn)",
       "item": [
         {
-          "name": "List passkeys \u2014 GET /v1/passkeys",
+          "name": "List passkeys — GET /v1/passkeys",
           "request": {
             "method": "GET",
             "header": [],
@@ -1822,10 +2086,30 @@
                 "passkeys"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('passkeyId', arr[0].id);",
+                  "      console.log('captured passkeyId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Delete passkey \u2014 DELETE /v1/passkeys/{id}",
+          "name": "Delete passkey — DELETE /v1/passkeys/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1843,7 +2127,7 @@
           }
         },
         {
-          "name": "[501] Register begin \u2014 POST /v1/passkeys/register/begin",
+          "name": "[501] Register begin — POST /v1/passkeys/register/begin",
           "request": {
             "method": "POST",
             "header": [
@@ -1871,7 +2155,7 @@
           }
         },
         {
-          "name": "[501] Register finish \u2014 POST /v1/passkeys/register/finish",
+          "name": "[501] Register finish — POST /v1/passkeys/register/finish",
           "request": {
             "method": "POST",
             "header": [
@@ -1899,7 +2183,7 @@
           }
         },
         {
-          "name": "[501] Login begin \u2014 POST /v1/passkeys/login/begin",
+          "name": "[501] Login begin — POST /v1/passkeys/login/begin",
           "request": {
             "method": "POST",
             "header": [
@@ -1927,7 +2211,7 @@
           }
         },
         {
-          "name": "[501] Login finish \u2014 POST /v1/passkeys/login/finish",
+          "name": "[501] Login finish — POST /v1/passkeys/login/finish",
           "request": {
             "method": "POST",
             "header": [
@@ -1960,7 +2244,7 @@
       "name": "Social Login",
       "item": [
         {
-          "name": "Upsert provider \u2014 POST /v1/social/providers",
+          "name": "Upsert provider — POST /v1/social/providers",
           "request": {
             "method": "POST",
             "header": [
@@ -1987,7 +2271,7 @@
           }
         },
         {
-          "name": "List providers \u2014 GET /v1/tenants/{tenantID}/social/providers",
+          "name": "List providers — GET /v1/tenants/{tenantID}/social/providers",
           "request": {
             "method": "GET",
             "header": [],
@@ -2007,7 +2291,7 @@
           }
         },
         {
-          "name": "List linked identities \u2014 GET /v1/users/{userID}/social/identities",
+          "name": "List linked identities — GET /v1/users/{userID}/social/identities",
           "request": {
             "method": "GET",
             "header": [],
@@ -2024,10 +2308,30 @@
                 "identities"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('socialIdentityId', arr[0].id);",
+                  "      console.log('captured socialIdentityId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Unlink identity \u2014 DELETE /v1/social/identities/{id}",
+          "name": "Unlink identity — DELETE /v1/social/identities/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2046,7 +2350,7 @@
           }
         },
         {
-          "name": "[501] OAuth start \u2014 GET /v1/social/{provider}/start",
+          "name": "[501] OAuth start — GET /v1/social/{provider}/start",
           "request": {
             "method": "GET",
             "header": [],
@@ -2065,7 +2369,7 @@
           }
         },
         {
-          "name": "[501] OAuth callback \u2014 GET /v1/social/{provider}/callback",
+          "name": "[501] OAuth callback — GET /v1/social/{provider}/callback",
           "request": {
             "method": "GET",
             "header": [],
@@ -2089,7 +2393,7 @@
       "name": "Webhooks",
       "item": [
         {
-          "name": "Create webhook \u2014 POST /v1/webhooks",
+          "name": "Create webhook — POST /v1/webhooks",
           "event": [
             {
               "listen": "test",
@@ -2112,7 +2416,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"url\": \"https://example.com/webhook\",\n  \"events\": [\"user.created\", \"user.updated\", \"tenant.created\"]\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"url\": \"https://example.com/webhook/{{$timestamp}}\",\n  \"events\": [\"user.created\", \"user.updated\", \"tenant.created\"]\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks",
@@ -2127,7 +2431,7 @@
           }
         },
         {
-          "name": "List webhooks \u2014 GET /v1/tenants/{tenantID}/webhooks",
+          "name": "List webhooks — GET /v1/tenants/{tenantID}/webhooks",
           "request": {
             "method": "GET",
             "header": [],
@@ -2143,10 +2447,30 @@
                 "webhooks"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('webhookId', arr[0].id);",
+                  "      console.log('captured webhookId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Disable webhook \u2014 DELETE /v1/webhooks/{id}",
+          "name": "Disable webhook — DELETE /v1/webhooks/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2164,7 +2488,7 @@
           }
         },
         {
-          "name": "Test webhook \u2014 POST /v1/webhooks/{id}/test",
+          "name": "Test webhook — POST /v1/webhooks/{id}/test",
           "request": {
             "method": "POST",
             "header": [],
@@ -2188,7 +2512,7 @@
       "name": "Branding",
       "item": [
         {
-          "name": "Get branding \u2014 GET /v1/tenants/{tenantID}/branding",
+          "name": "Get branding — GET /v1/tenants/{tenantID}/branding",
           "request": {
             "method": "GET",
             "header": [],
@@ -2207,7 +2531,7 @@
           }
         },
         {
-          "name": "Update branding \u2014 PUT /v1/tenants/{tenantID}/branding",
+          "name": "Update branding — PUT /v1/tenants/{tenantID}/branding",
           "request": {
             "method": "PUT",
             "header": [
@@ -2240,7 +2564,7 @@
       "name": "Policy",
       "item": [
         {
-          "name": "Get policy \u2014 GET /v1/tenants/{tenantID}/policy",
+          "name": "Get policy — GET /v1/tenants/{tenantID}/policy",
           "request": {
             "method": "GET",
             "header": [],
@@ -2259,7 +2583,7 @@
           }
         },
         {
-          "name": "Update policy \u2014 PUT /v1/tenants/{tenantID}/policy",
+          "name": "Update policy — PUT /v1/tenants/{tenantID}/policy",
           "request": {
             "method": "PUT",
             "header": [
@@ -2292,7 +2616,7 @@
       "name": "Audit",
       "item": [
         {
-          "name": "List audit events \u2014 GET /v1/tenants/{tenantID}/audit",
+          "name": "List audit events — GET /v1/tenants/{tenantID}/audit",
           "request": {
             "method": "GET",
             "header": [],
@@ -2313,6 +2637,11 @@
                   "value": "50"
                 },
                 {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true
+                },
+                {
                   "key": "action",
                   "value": "",
                   "disabled": true
@@ -2330,6 +2659,84 @@
               ]
             }
           }
+        },
+        {
+          "name": "Verify audit chain — GET /v1/tenants/{tenantID}/audit/verify",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/audit/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "audit",
+                "verify"
+              ]
+            },
+            "description": "Verifies the tamper-evident hash chain across audit events for the tenant. Returns ok=true plus the verified range; ok=false with break_at when a tampered row is detected."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analytics",
+      "item": [
+        {
+          "name": "Tenant analytics overview — GET /v1/tenants/{tenantID}/analytics/overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/analytics/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "analytics",
+                "overview"
+              ]
+            },
+            "description": "Returns rollup metrics for the admin dashboard: total users, MAU, signups vs prior period, signins, failure rates, weekly activity (last 8 weeks)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin / Outbox",
+      "item": [
+        {
+          "name": "List DLQ events — GET /v1/admin/outbox/dlq",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/admin/outbox/dlq?limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "outbox",
+                "dlq"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Inspects dead-lettered outbox events for ops triage. Requires platform-admin gating in the deployment."
+          }
         }
       ]
     },
@@ -2337,7 +2744,7 @@
       "name": "GDPR",
       "item": [
         {
-          "name": "Create purge request \u2014 POST /v1/gdpr/purge",
+          "name": "Create purge request — POST /v1/gdpr/purge",
           "event": [
             {
               "listen": "test",
@@ -2376,7 +2783,7 @@
           }
         },
         {
-          "name": "List purge requests \u2014 GET /v1/tenants/{tenantID}/gdpr/purge",
+          "name": "List purge requests — GET /v1/tenants/{tenantID}/gdpr/purge",
           "request": {
             "method": "GET",
             "header": [],
@@ -2393,10 +2800,30 @@
                 "purge"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('gdprRequestId', arr[0].id);",
+                  "      console.log('captured gdprRequestId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Cancel purge request \u2014 DELETE /v1/gdpr/purge/{id}",
+          "name": "Cancel purge request — DELETE /v1/gdpr/purge/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2420,7 +2847,7 @@
       "name": "Groups",
       "item": [
         {
-          "name": "Create group \u2014 POST /v1/groups",
+          "name": "Create group — POST /v1/groups",
           "event": [
             {
               "listen": "test",
@@ -2443,7 +2870,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"parent_id\": null,\n  \"name\": \"Engineering\",\n  \"description\": \"Engineering organisation\"\n}"
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"parent_id\": null,\n  \"name\": \"Engineering-{{$timestamp}}\",\n  \"description\": \"Engineering organisation\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/groups",
@@ -2458,7 +2885,7 @@
           }
         },
         {
-          "name": "List groups \u2014 GET /v1/tenants/{tenantID}/groups",
+          "name": "List groups — GET /v1/tenants/{tenantID}/groups",
           "request": {
             "method": "GET",
             "header": [],
@@ -2474,10 +2901,30 @@
                 "groups"
               ]
             }
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response && pm.response.code === 200) {",
+                  "  try {",
+                  "    const body = pm.response.json();",
+                  "    const arr = body && body.items;",
+                  "    if (Array.isArray(arr) && arr.length > 0 && arr[0].id) {",
+                  "      pm.collectionVariables.set('groupId', arr[0].id);",
+                  "      console.log('captured groupId =', arr[0].id);",
+                  "    }",
+                  "  } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Delete group \u2014 DELETE /v1/groups/{id}",
+          "name": "Delete group — DELETE /v1/groups/{id}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2495,7 +2942,7 @@
           }
         },
         {
-          "name": "Add member \u2014 POST /v1/groups/{id}/members/{userID}",
+          "name": "Add member — POST /v1/groups/{id}/members/{userID}",
           "request": {
             "method": "POST",
             "header": [],
@@ -2515,7 +2962,7 @@
           }
         },
         {
-          "name": "Remove member \u2014 DELETE /v1/groups/{id}/members/{userID}",
+          "name": "Remove member — DELETE /v1/groups/{id}/members/{userID}",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2535,7 +2982,7 @@
           }
         },
         {
-          "name": "List members \u2014 GET /v1/groups/{id}/members",
+          "name": "List members — GET /v1/groups/{id}/members",
           "request": {
             "method": "GET",
             "header": [],

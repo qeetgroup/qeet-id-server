@@ -67,7 +67,10 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		return nil, "", err
 	}
 	defer resRows.Close()
-	var out []Row
+	// Initialise as empty (not nil) so an empty list serialises to JSON
+	// `[]` rather than `null`. The frontend can then iterate without
+	// null-guarding every access site.
+	out := []Row{}
 	for resRows.Next() {
 		var r Row
 		if err := resRows.Scan(&r.ID, &r.TenantID, &r.ActorUserID, &r.ActorType, &r.Action,

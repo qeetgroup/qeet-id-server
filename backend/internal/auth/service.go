@@ -256,10 +256,15 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 	if hash == "" || !password.Verify(hash, in.Password) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
 	}
-	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent)
+	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
 }
 
-func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*TokenPair, error) {
+// IssuePair creates a session, mints an access+refresh pair, and records
+// an audit row labelled with the login method ("password", "magic_link",
+// "invite_accept", "oidc", "passkey", "social", …). The audit row lives
+// inside the session-insert transaction so analytics never see a session
+// without its provenance event.
+func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -290,6 +295,22 @@ func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
 		VALUES ($1, $2, $3)
 	`, sessionID, refreshHash, refreshExp); err != nil {
+		return nil, err
+	}
+	if method == "" {
+		method = "unknown"
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       "auth.login_succeeded",
+		ResourceType: "session",
+		ResourceID:   &sessionID,
+		IP:           ip,
+		UserAgent:    ua,
+		Metadata:     map[string]any{"method": method},
+	}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -497,11 +518,17 @@ type Session struct {
 }
 
 func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session, error) {
+	// Soft-deleted users keep their session rows for audit purposes but
+	// must not surface them via admin or self-service listings. Filter
+	// at the join rather than relying on the caller to know about
+	// `users.deleted_at`.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, tenant_id, host(ip), user_agent, created_at, last_seen_at, revoked_at
-		FROM auth.sessions
-		WHERE user_id = $1
-		ORDER BY created_at DESC
+		SELECT sess.id, sess.user_id, sess.tenant_id, host(sess.ip), sess.user_agent,
+		       sess.created_at, sess.last_seen_at, sess.revoked_at
+		FROM auth.sessions sess
+		JOIN "user".users u ON u.id = sess.user_id
+		WHERE sess.user_id = $1 AND u.deleted_at IS NULL
+		ORDER BY sess.created_at DESC
 		LIMIT 100
 	`, userID)
 	if err != nil {

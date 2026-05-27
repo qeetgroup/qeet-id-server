@@ -1,5 +1,4 @@
 import {
-  Badge,
   Card,
   CardContent,
   CardDescription,
@@ -30,85 +29,133 @@ import { useState } from "react";
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
   XAxis,
   YAxis,
 } from "recharts";
 
 import { PageHeader } from "@/components/page-header";
+import { useAnalyticsOverview } from "@/lib/analytics";
 
 export const Route = createFileRoute("/_app/analytics")({ component: AnalyticsPage });
 
-// ── Mock data ──────────────────────────────────────────────────────────────
-const mauTrend = [
-  { week: "W18", mau: 18200, dau: 4100 },
-  { week: "W19", mau: 19400, dau: 4380 },
-  { week: "W20", mau: 21100, dau: 4720 },
-  { week: "W21", mau: 22800, dau: 5050 },
-  { week: "W22", mau: 24600, dau: 5410 },
-  { week: "W23", mau: 26900, dau: 5870 },
-  { week: "W24", mau: 29200, dau: 6310 },
-  { week: "W25", mau: 31700, dau: 6720 },
-];
-
-const geo = [
-  { region: "North America", users: 14820, fill: "var(--chart-1)" },
-  { region: "Europe", users: 9430, fill: "var(--chart-2)" },
-  { region: "Asia-Pacific", users: 5210, fill: "var(--chart-3)" },
-  { region: "LATAM", users: 1640, fill: "var(--chart-4)" },
-  { region: "MEA", users: 600, fill: "var(--chart-5)" },
-];
-
-const apiVolume = [
-  { day: "Mon", reqs: 1.2 },
-  { day: "Tue", reqs: 1.4 },
-  { day: "Wed", reqs: 1.35 },
-  { day: "Thu", reqs: 1.55 },
-  { day: "Fri", reqs: 1.7 },
-  { day: "Sat", reqs: 0.9 },
-  { day: "Sun", reqs: 0.7 },
-];
-
-const topApps = [
-  { name: "Acme Web", logins: 18420, dau: 4310, change: 12.4 },
-  { name: "Acme iOS", logins: 9120, dau: 2480, change: 8.1 },
-  { name: "Internal Admin", logins: 410, dau: 92, change: -3.2 },
-  { name: "Acme Android", logins: 7820, dau: 2210, change: 5.6 },
-  { name: "Partner API", logins: 2480, dau: 1140, change: 22.7 },
-];
-
-const kpis = [
-  { label: "MAU", value: "31,720", delta: 8.2, hint: "vs last month", icon: <UsersIcon className="size-4" /> },
-  { label: "DAU / MAU", value: "21.2%", delta: 1.4, hint: "stickiness", icon: <ZapIcon className="size-4" /> },
-  { label: "Avg sessions / user", value: "4.7", delta: 0.3, hint: "per week", icon: <TrendingUpIcon className="size-4" /> },
-  { label: "Tenants", value: "248", delta: 12, hint: "active orgs", icon: <GlobeIcon className="size-4" /> },
-];
-
 const mauConfig: ChartConfig = {
-  mau: { label: "MAU", color: "var(--chart-1)" },
-  dau: { label: "DAU", color: "var(--chart-2)" },
+  wau: { label: "WAU", color: "var(--chart-1)" },
+  dau: { label: "DAU (avg)", color: "var(--chart-2)" },
 };
-const apiConfig: ChartConfig = {
-  reqs: { label: "Requests (M)", color: "var(--chart-3)" },
-};
-const geoConfig: ChartConfig = {
-  users: { label: "Users" },
-  "North America": { label: "North America", color: "var(--chart-1)" },
-  Europe: { label: "Europe", color: "var(--chart-2)" },
-  "Asia-Pacific": { label: "Asia-Pacific", color: "var(--chart-3)" },
-  LATAM: { label: "LATAM", color: "var(--chart-4)" },
-  MEA: { label: "MEA", color: "var(--chart-5)" },
-};
+
+function formatDelta(pct: number, suffix = "%"): string {
+  const sign = pct >= 0 ? "+" : "";
+  return `${sign}${pct.toFixed(1)}${suffix}`;
+}
+
+function fmtInt(n: number): string {
+  return Math.round(n).toLocaleString("en-US");
+}
+
+function KpiCard({
+  label,
+  value,
+  delta,
+  hint,
+  icon,
+  positiveIsGood = true,
+}: {
+  label: string;
+  value: string;
+  delta: number;
+  hint: string;
+  icon: React.ReactNode;
+  positiveIsGood?: boolean;
+}) {
+  const isPositive = delta >= 0;
+  const isGood = positiveIsGood ? isPositive : !isPositive;
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardDescription>{label}</CardDescription>
+        <span className="text-muted-foreground">{icon}</span>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-semibold tracking-tight">{value}</div>
+        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+          {isPositive ? (
+            <ArrowUpRightIcon className={`size-3 ${isGood ? "text-emerald-500" : "text-rose-500"}`} />
+          ) : (
+            <ArrowDownRightIcon className={`size-3 ${isGood ? "text-emerald-500" : "text-rose-500"}`} />
+          )}
+          <span className={isGood ? "text-emerald-500" : "text-rose-500"}>{formatDelta(delta)}</span>
+          <span>{hint}</span>
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function KpiSkeleton() {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="h-3 w-20 animate-pulse rounded bg-muted" />
+      </CardHeader>
+      <CardContent>
+        <div className="h-7 w-24 animate-pulse rounded bg-muted" />
+        <div className="mt-2 h-3 w-32 animate-pulse rounded bg-muted" />
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmptyChart({ message, height = "h-[280px]" }: { message: string; height?: string }) {
+  return (
+    <div
+      className={`flex w-full items-center justify-center rounded-md border border-dashed text-center text-sm text-muted-foreground ${height}`}
+    >
+      {message}
+    </div>
+  );
+}
 
 function AnalyticsPage() {
+  // Range selector is kept for visual parity with the future API.
+  // Today the backend overview is fixed-window (24h / 7d / 14d / 30d
+  // depending on the metric); the selector is a no-op until §4.8 is
+  // extended with a range parameter.
   const [range, setRange] = useState("30d");
+
+  const { data, isLoading, isError, error } = useAnalyticsOverview();
+
+  if (isError) {
+    return (
+      <div className="flex min-w-0 flex-col gap-6">
+        <PageHeader description="Product analytics across tenants, applications, and authentication methods." />
+        <Card>
+          <CardContent className="py-12 text-center text-sm text-muted-foreground">
+            Couldn&apos;t load analytics{error instanceof Error ? `: ${error.message}` : ""}.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Coalesce every KPI individually so an older backend (one that
+  // hasn't been redeployed with the §4.8 extra fields) renders zeros
+  // and skeleton-deltas instead of crashing the whole page.
+  const ZERO = { value: 0, delta_pct: 0 };
+  const k = data?.kpis;
+  const kpis = data
+    ? {
+        mau: k?.mau ?? ZERO,
+        logins_today: k?.logins_today ?? ZERO,
+        mfa_adoption_pct: k?.mfa_adoption_pct ?? ZERO,
+        failed_logins_24h: k?.failed_logins_24h ?? ZERO,
+        dau: k?.dau ?? ZERO,
+        total_users: k?.total_users ?? ZERO,
+        avg_sessions_per_user: k?.avg_sessions_per_user ?? ZERO,
+        stickiness_pct: k?.stickiness_pct ?? ZERO,
+      }
+    : null;
+  const weekly = data?.weekly_activity_8w ?? [];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -130,61 +177,83 @@ function AnalyticsPage() {
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {kpis.map((k) => (
-          <Card key={k.label}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardDescription>{k.label}</CardDescription>
-              <span className="text-muted-foreground">{k.icon}</span>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold tracking-tight">{k.value}</div>
-              <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                {k.delta >= 0 ? (
-                  <ArrowUpRightIcon className="size-3 text-emerald-500" />
-                ) : (
-                  <ArrowDownRightIcon className="size-3 text-rose-500" />
-                )}
-                <span className={k.delta >= 0 ? "text-emerald-500" : "text-rose-500"}>
-                  {k.delta >= 0 ? "+" : ""}
-                  {k.delta}%
-                </span>
-                <span>{k.hint}</span>
-              </p>
-            </CardContent>
-          </Card>
-        ))}
+        {isLoading || !kpis ? (
+          <>
+            <KpiSkeleton />
+            <KpiSkeleton />
+            <KpiSkeleton />
+            <KpiSkeleton />
+          </>
+        ) : (
+          <>
+            <KpiCard
+              label="MAU"
+              value={fmtInt(kpis.mau.value)}
+              delta={kpis.mau.delta_pct}
+              hint="vs last 30 days"
+              icon={<UsersIcon className="size-4" />}
+            />
+            <KpiCard
+              label="DAU / MAU"
+              value={`${kpis.stickiness_pct.value.toFixed(1)}%`}
+              delta={kpis.stickiness_pct.delta_pct}
+              hint="stickiness"
+              icon={<ZapIcon className="size-4" />}
+            />
+            <KpiCard
+              label="Avg sessions / user"
+              value={kpis.avg_sessions_per_user.value.toFixed(1)}
+              delta={kpis.avg_sessions_per_user.delta_pct}
+              hint="last 30 days"
+              icon={<TrendingUpIcon className="size-4" />}
+            />
+            <KpiCard
+              label="Total users"
+              value={fmtInt(kpis.total_users.value)}
+              delta={kpis.total_users.delta_pct}
+              hint="vs 30 days ago"
+              icon={<GlobeIcon className="size-4" />}
+            />
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Active users</CardTitle>
-            <CardDescription>Weekly MAU and DAU</CardDescription>
+            <CardDescription>Weekly WAU and average DAU · last 8 weeks</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={mauConfig} className="h-[280px] w-full">
-              <AreaChart data={mauTrend}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="week" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Area
-                  type="monotone"
-                  dataKey="mau"
-                  stroke="var(--color-mau)"
-                  fill="var(--color-mau)"
-                  fillOpacity={0.2}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="dau"
-                  stroke="var(--color-dau)"
-                  fill="var(--color-dau)"
-                  fillOpacity={0.2}
-                />
-              </AreaChart>
-            </ChartContainer>
+            {isLoading ? (
+              <div className="h-[280px] w-full animate-pulse rounded bg-muted/40" />
+            ) : weekly.length === 0 || weekly.every((w) => w.wau === 0 && w.dau === 0) ? (
+              <EmptyChart message="No session activity recorded in the last 8 weeks." />
+            ) : (
+              <ChartContainer config={mauConfig} className="h-[280px] w-full">
+                <AreaChart data={weekly}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis dataKey="week" tickLine={false} axisLine={false} />
+                  <YAxis tickLine={false} axisLine={false} />
+                  <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
+                  <ChartLegend content={<ChartLegendContent />} />
+                  <Area
+                    type="monotone"
+                    dataKey="wau"
+                    stroke="var(--color-wau)"
+                    fill="var(--color-wau)"
+                    fillOpacity={0.2}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="dau"
+                    stroke="var(--color-dau)"
+                    fill="var(--color-dau)"
+                    fillOpacity={0.2}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -194,17 +263,7 @@ function AnalyticsPage() {
             <CardDescription>Users by region</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={geoConfig} className="mx-auto h-[280px] w-full">
-              <PieChart>
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Pie data={geo} dataKey="users" nameKey="region" innerRadius={55} strokeWidth={2}>
-                  {geo.map((d) => (
-                    <Cell key={d.region} fill={d.fill} />
-                  ))}
-                </Pie>
-                <ChartLegend content={<ChartLegendContent nameKey="region" />} />
-              </PieChart>
-            </ChartContainer>
+            <EmptyChart message="Requires GeoIP enrichment (roadmap §4.6)." />
           </CardContent>
         </Card>
       </div>
@@ -213,18 +272,10 @@ function AnalyticsPage() {
         <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle>API volume</CardTitle>
-            <CardDescription>Requests per day (millions)</CardDescription>
+            <CardDescription>Requests per day</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={apiConfig} className="h-[220px] w-full">
-              <LineChart data={apiVolume}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="day" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Line type="monotone" dataKey="reqs" stroke="var(--color-reqs)" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ChartContainer>
+            <EmptyChart message="Requires request-volume instrumentation." height="h-[220px]" />
           </CardContent>
         </Card>
 
@@ -234,31 +285,10 @@ function AnalyticsPage() {
             <CardDescription>Ranked by logins in the selected period</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={{ logins: { label: "Logins", color: "var(--chart-1)" } }} className="h-[220px] w-full">
-              <BarChart data={topApps} layout="vertical">
-                <CartesianGrid horizontal={false} />
-                <XAxis type="number" tickLine={false} axisLine={false} />
-                <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} width={120} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="logins" fill="var(--color-logins)" radius={4} />
-              </BarChart>
-            </ChartContainer>
-            <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-              {topApps.map((a) => (
-                <div key={a.name} className="flex items-center justify-between rounded-md border px-3 py-2">
-                  <span className="font-medium">{a.name}</span>
-                  <Badge variant={a.change >= 0 ? "default" : "secondary"} className="gap-1">
-                    {a.change >= 0 ? (
-                      <ArrowUpRightIcon className="size-3" />
-                    ) : (
-                      <ArrowDownRightIcon className="size-3" />
-                    )}
-                    {a.change >= 0 ? "+" : ""}
-                    {a.change}%
-                  </Badge>
-                </div>
-              ))}
-            </div>
+            <EmptyChart
+              message="Requires per-application login tagging on auth events."
+              height="h-[220px]"
+            />
           </CardContent>
         </Card>
       </div>

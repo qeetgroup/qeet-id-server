@@ -16,6 +16,7 @@ import { HeaderUser } from "@/features/dashboard/components/header-user";
 import { ImpersonationBanner } from "@/features/dashboard/components/impersonation-banner";
 import { NotificationsInbox } from "@/features/dashboard/components/notifications-inbox";
 import { ThemeToggle } from "@/features/dashboard/components/theme-toggle";
+import { WhatsNewDropdown } from "@/features/dashboard/components/whats-new-dropdown";
 import { isAuthenticated } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
@@ -73,6 +74,7 @@ function AppLayout() {
             >
               <SearchIcon />
             </Button>
+            <WhatsNewDropdown />
             <NotificationsInbox />
             <ThemeToggle />
             <Separator orientation="vertical" className="mx-1 hidden h-6 sm:block" />

@@ -51,6 +51,33 @@ export function useLogin() {
 }
 
 /**
+ * Consume a magic-link token and exchange it for a Qeetid session.
+ * Called by the public /magic landing page. On success the access /
+ * refresh / tenant / user are persisted exactly like the password
+ * login flow, so downstream queries immediately see a Bearer header.
+ */
+export function useConsumeMagicLink() {
+  const navigate = useNavigate();
+  return useMutation({
+    mutationFn: (token: string) =>
+      api<TokenPair & { tenant_id?: string }>("/v1/auth/magic-link/consume", {
+        method: "POST",
+        body: { token },
+        anonymous: true,
+      }),
+    onSuccess: (pair) => {
+      tokenStore.set(pair.access_token);
+      tokenStore.setRefresh(pair.refresh_token);
+      if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
+      tokenStore.setUserId(pair.user_id);
+      navigate({ to: "/dashboard" });
+    },
+    // The /magic page surfaces the error inline; no global toast.
+    meta: { silent: true },
+  });
+}
+
+/**
  * Kick off a password-reset email. Endpoint returns 200 regardless of
  * whether the email exists (constant-time no-leak design), so the
  * caller can unconditionally show "check your inbox" UX. The mutation

@@ -140,7 +140,11 @@ function CommandPalette({
       }}
       aria-label="Command palette"
       className={cn(
-        "mt-[10vh] w-full max-w-lg rounded-xl border bg-popover p-0 text-popover-foreground shadow-2xl",
+        // Native <dialog>:modal centers via the UA's `margin: auto` —
+        // setting margin-top to 10vh would silently kill that. Fix by
+        // forcing fixed positioning + left:50% + -translate-x-1/2 so the
+        // palette is always horizontally centered regardless of UA.
+        "fixed left-1/2 top-[10vh] -translate-x-1/2 w-[min(32rem,calc(100%-2rem))] rounded-xl border bg-popover p-0 text-popover-foreground shadow-2xl",
         "backdrop:bg-foreground/30 backdrop:backdrop-blur-sm",
         "open:animate-in open:fade-in-0 open:zoom-in-95",
         className,

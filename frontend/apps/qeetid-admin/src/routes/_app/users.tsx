@@ -19,6 +19,7 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
+  PaginationBar,
   Select,
   SelectContent,
   SelectItem,
@@ -33,7 +34,6 @@ import {
   SheetTitle,
   Skeleton,
   StatusPill,
-  buttonVariants,
   Table,
   TableBody,
   TableCell,
@@ -41,9 +41,10 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
+  buttonVariants,
 } from "@qeetid/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import {
   KeyRoundIcon,
   Loader2Icon,
@@ -54,7 +55,8 @@ import {
   UploadCloudIcon,
   UserIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api, tokenStore } from "@/lib/api";
@@ -83,15 +85,79 @@ function UsersPage() {
   const [editing, setEditing] = useState<User | null>(null);
   const [settingPassword, setSettingPassword] = useState<User | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // Cursor stack lets us pop back to the previous page without re-walking
+  // from the start, while the API itself is forward-only (next_cursor).
+  // Plain state (not URL) is fine here — users get a stable bookmark
+  // anyway because /users renders the first page, and deep-linking past
+  // page 1 doesn't carry much practical value for an admin index.
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
+  const currentCursor = cursorStack[cursorStack.length - 1];
 
   const usersQ = useQuery({
-    queryKey: ["users", tenantId],
-    queryFn: () => api<UsersResponse>("/v1/users"),
+    queryKey: ["users", tenantId, currentCursor ?? ""],
+    queryFn: () =>
+      api<UsersResponse>("/v1/users", {
+        query: currentCursor ? { cursor: currentCursor } : undefined,
+      }),
     enabled: !!tenantId,
+  });
+
+  // Bulk delete: the backend doesn't expose a /v1/users/bulk DELETE
+  // endpoint today, so we fan out N parallel single deletes (capped at
+  // a small concurrency limit so we don't accidentally DoS the admin
+  // session). Promise.allSettled lets us surface partial successes.
+  const bulkDeleteM = useMutation({
+    mutationFn: async (ids: string[]): Promise<{ ok: number; failed: number }> => {
+      setBulkProgress({ done: 0, total: ids.length });
+      const CONCURRENCY = 5;
+      let done = 0;
+      let ok = 0;
+      let failed = 0;
+      const queue = [...ids];
+      async function worker() {
+        for (;;) {
+          const id = queue.shift();
+          if (!id) return;
+          try {
+            await api<void>(`/v1/users/${id}`, { method: "DELETE" });
+            ok++;
+          } catch {
+            failed++;
+          }
+          done++;
+          setBulkProgress({ done, total: ids.length });
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+      return { ok, failed };
+    },
+    onSettled: () => {
+      setBulkProgress(null);
+      setSelectedIds(new Set());
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
+    meta: { silent: true }, // we toast manually with combined ok/failed
   });
 
   const deleteM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/users/${id}`, { method: "DELETE" }),
+    // Optimistic remove: drop the row from every active users-query
+    // cache, remember a snapshot, and roll back on error. The list
+    // feels instant; if the server rejects, we restore + show a toast
+    // via the global mutation handler.
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["users"] });
+      const snapshots = qc.getQueriesData<UsersResponse>({ queryKey: ["users"] });
+      qc.setQueriesData<UsersResponse>({ queryKey: ["users"] }, (prev) =>
+        prev ? { ...prev, items: prev.items.filter((u) => u.id !== id) } : prev,
+      );
+      return { snapshots };
+    },
+    onError: (_err, _id, ctx) => {
+      ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
+    },
     onSuccess: () => {
       setConfirmingDelete(null);
       qc.invalidateQueries({ queryKey: ["users"] });
@@ -114,10 +180,7 @@ function UsersPage() {
               <RefreshCwIcon className={usersQ.isFetching ? "animate-spin" : ""} />
               Refresh
             </Button>
-            <Link
-              to="/users/import"
-              className={buttonVariants({ variant: "outline", size: "sm" })}
-            >
+            <Link to="/users/import" className={buttonVariants({ variant: "outline", size: "sm" })}>
               <UploadCloudIcon /> Import
             </Link>
             <Button size="sm" onClick={() => setCreating(true)}>
@@ -135,6 +198,34 @@ function UsersPage() {
             this tenant
           </CardDescription>
         </CardHeader>
+        {selectedIds.size > 0 && (
+          <BulkActionsToolbar
+            count={selectedIds.size}
+            isPending={bulkDeleteM.isPending}
+            progress={bulkProgress}
+            onClear={() => setSelectedIds(new Set())}
+            onDelete={() => {
+              const ids = Array.from(selectedIds);
+              if (
+                confirm(
+                  `Delete ${ids.length} user${ids.length === 1 ? "" : "s"}? This can't be undone.`,
+                )
+              ) {
+                bulkDeleteM.mutate(ids, {
+                  onSuccess: (res) => {
+                    if (res.failed === 0) {
+                      toast.success(`Deleted ${res.ok} user${res.ok === 1 ? "" : "s"}`);
+                    } else if (res.ok === 0) {
+                      toast.error(`All ${res.failed} delete${res.failed === 1 ? "" : "s"} failed`);
+                    } else {
+                      toast.warning(`Deleted ${res.ok}, failed ${res.failed}`);
+                    }
+                  },
+                });
+              }
+            }}
+          />
+        )}
         <CardContent className="p-0">
           {usersQ.isLoading ? (
             <UsersTableSkeleton />
@@ -153,6 +244,14 @@ function UsersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <MasterCheckbox
+                      items={usersQ.data.items}
+                      currentUserId={currentUserId}
+                      selectedIds={selectedIds}
+                      onChange={setSelectedIds}
+                    />
+                  </TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Status</TableHead>
@@ -164,10 +263,37 @@ function UsersPage() {
               <TableBody>
                 {usersQ.data.items.map((u) => {
                   const isSelf = u.id === currentUserId;
+                  const isSelected = selectedIds.has(u.id);
                   return (
-                    <TableRow key={u.id}>
+                    <TableRow
+                      key={u.id}
+                      className={isSelected ? "bg-muted/40" : undefined}
+                    >
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={isSelf}
+                          aria-label={`Select ${u.email}`}
+                          onChange={(e) =>
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(u.id);
+                              else next.delete(u.id);
+                              return next;
+                            })
+                          }
+                          className="size-4 cursor-pointer rounded border-input accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">
-                        {u.email}
+                        <Link
+                          to="/users/$userId"
+                          params={{ userId: u.id }}
+                          className="hover:underline"
+                        >
+                          {u.email}
+                        </Link>
                         {isSelf && (
                           <Badge variant="muted" className="ml-2">
                             You
@@ -213,7 +339,9 @@ function UsersPage() {
                             size="icon"
                             aria-label="Delete user"
                             disabled={isSelf}
-                            title={isSelf ? "You can't delete your own account here" : "Delete user"}
+                            title={
+                              isSelf ? "You can't delete your own account here" : "Delete user"
+                            }
                             onClick={() => setConfirmingDelete(u.id)}
                           >
                             <Trash2Icon className="text-destructive" />
@@ -225,6 +353,26 @@ function UsersPage() {
                 })}
               </TableBody>
             </Table>
+          )}
+          {(cursorStack.length > 0 || !!usersQ.data?.next_cursor) && (
+            <PaginationBar
+              hasPrev={cursorStack.length > 0}
+              hasNext={!!usersQ.data?.next_cursor}
+              onFirst={() => {
+                setCursorStack([]);
+                setSelectedIds(new Set());
+              }}
+              onNext={() => {
+                const next = usersQ.data?.next_cursor;
+                if (next) {
+                  setCursorStack((s) => [...s, next]);
+                  setSelectedIds(new Set());
+                }
+              }}
+              itemsOnPage={usersQ.data?.items?.length ?? 0}
+              pageSize={50}
+              loading={usersQ.isFetching}
+            />
           )}
         </CardContent>
       </Card>
@@ -290,6 +438,97 @@ function UsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bulk-selection helpers
+// ---------------------------------------------------------------------------
+
+interface MasterCheckboxProps {
+  items: User[];
+  currentUserId: string | null;
+  selectedIds: Set<string>;
+  onChange: (next: Set<string>) => void;
+}
+
+/** Header checkbox that selects every row except the signed-in admin
+ *  (we never want to bulk-delete yourself). Renders indeterminate when
+ *  some-but-not-all selectable rows are checked. */
+function MasterCheckbox({ items, currentUserId, selectedIds, onChange }: MasterCheckboxProps) {
+  const selectable = items.filter((u) => u.id !== currentUserId);
+  const allChecked = selectable.length > 0 && selectable.every((u) => selectedIds.has(u.id));
+  const someChecked = selectable.some((u) => selectedIds.has(u.id));
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = !allChecked && someChecked;
+  }, [allChecked, someChecked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={allChecked}
+      aria-label="Select all users"
+      onChange={(e) => {
+        if (e.target.checked) {
+          onChange(new Set(selectable.map((u) => u.id)));
+        } else {
+          onChange(new Set());
+        }
+      }}
+      className="size-4 cursor-pointer rounded border-input accent-primary"
+    />
+  );
+}
+
+interface BulkActionsToolbarProps {
+  count: number;
+  isPending: boolean;
+  progress: { done: number; total: number } | null;
+  onClear: () => void;
+  onDelete: () => void;
+}
+
+/** Sticky strip rendered between the card header and the table when
+ *  at least one row is selected. Shows the count, a Clear action, and
+ *  the destructive bulk-delete CTA. Progress is rendered live during
+ *  the parallel-fan-out deletion. */
+function BulkActionsToolbar({
+  count,
+  isPending,
+  progress,
+  onClear,
+  onDelete,
+}: BulkActionsToolbarProps) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-y bg-muted/40 px-4 py-2 text-sm">
+      <span className="font-medium">
+        {count} selected
+      </span>
+      {progress && (
+        <span className="text-xs text-muted-foreground">
+          ({progress.done} / {progress.total} processed…)
+        </span>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="ms-auto"
+        onClick={onClear}
+        disabled={isPending}
+      >
+        Clear
+      </Button>
+      <Button
+        variant="destructive"
+        size="sm"
+        onClick={onDelete}
+        disabled={isPending}
+      >
+        {isPending ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
+        Delete {count} user{count === 1 ? "" : "s"}
+      </Button>
     </div>
   );
 }
@@ -361,7 +600,9 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
               <Field>
                 <FieldLabel htmlFor="display_name">Display name</FieldLabel>
                 <Input id="display_name" name="display_name" type="text" />
-                <FieldDescription>Optional. Shown in the user list and audit logs.</FieldDescription>
+                <FieldDescription>
+                  Optional. Shown in the user list and audit logs.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="phone">Phone</FieldLabel>
@@ -372,12 +613,16 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
                   placeholder="+15555550100"
                   pattern="\+[1-9]\d{1,14}"
                 />
-                <FieldDescription>E.164 format. Used for SMS OTP if MFA is enabled.</FieldDescription>
+                <FieldDescription>
+                  E.164 format. Used for SMS OTP if MFA is enabled.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="password">Initial password</FieldLabel>
                 <Input id="password" name="password" type="password" minLength={8} required />
-                <FieldDescription>At least 8 characters. The user can change it later.</FieldDescription>
+                <FieldDescription>
+                  At least 8 characters. The user can change it later.
+                </FieldDescription>
               </Field>
               {createM.error && (
                 <Field>
@@ -425,8 +670,7 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
   }
 
   const updateM = useMutation({
-    mutationFn: (body: UpdateBody) =>
-      api<User>(`/v1/users/${user!.id}`, { method: "PATCH", body }),
+    mutationFn: (body: UpdateBody) => api<User>(`/v1/users/${user!.id}`, { method: "PATCH", body }),
     onSuccess: onSaved,
     meta: { successMessage: "User updated" },
   });
@@ -610,9 +854,7 @@ function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps
                 )}
                 {setM.isSuccess && (
                   <Field>
-                    <FieldDescription className="text-success">
-                      Password updated.
-                    </FieldDescription>
+                    <FieldDescription className="text-success">Password updated.</FieldDescription>
                   </Field>
                 )}
               </FieldGroup>

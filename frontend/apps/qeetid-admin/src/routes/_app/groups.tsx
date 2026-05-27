@@ -27,7 +27,7 @@ import {
   Textarea,
   TimeSince,
 } from "@qeetid/ui";
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon, UsersRoundIcon } from "lucide-react";
 import { useState } from "react";
@@ -63,6 +63,19 @@ function GroupsPage() {
 
   const deleteM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/groups/${id}`, { method: "DELETE" }),
+    // Optimistic remove + rollback. Mirrors users.tsx / webhooks.tsx
+    // so list-screen UX is consistent across the admin.
+    onMutate: async (id) => {
+      await qc.cancelQueries({ queryKey: ["groups"] });
+      const snapshots = qc.getQueriesData<{ items: Group[] }>({ queryKey: ["groups"] });
+      qc.setQueriesData<{ items: Group[] }>({ queryKey: ["groups"] }, (prev) =>
+        prev ? { ...prev, items: prev.items.filter((g) => g.id !== id) } : prev,
+      );
+      return { snapshots };
+    },
+    onError: (_err, _id, ctx) => {
+      ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups"] }),
   });
 
@@ -112,7 +125,15 @@ function GroupsPage() {
               <TableBody>
                 {groupsQ.data.items.map((g) => (
                   <TableRow key={g.id}>
-                    <TableCell className="font-medium">{g.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link
+                        to="/groups/$groupId"
+                        params={{ groupId: g.id }}
+                        className="hover:underline"
+                      >
+                        {g.name}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{g.description || "—"}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {g.parent_id ? g.parent_id.slice(0, 8) + "…" : "—"}

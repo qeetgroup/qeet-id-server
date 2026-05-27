@@ -1,5 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,15 +5,17 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuShortcut,
   DropdownMenuTrigger,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   Skeleton,
+  cn,
   useSidebar,
 } from "@qeetid/ui";
-import { Building2Icon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { Building2Icon, CheckIcon, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 
 import { api, tokenStore } from "@/lib/api";
 
@@ -84,9 +84,7 @@ export function TeamSwitcher() {
                   <span className="truncate text-xs capitalize">{active.plan}</span>
                 </>
               ) : (
-                <span className="truncate font-medium text-muted-foreground">
-                  No workspace
-                </span>
+                <span className="truncate font-medium text-muted-foreground">No workspace</span>
               )}
             </div>
             <ChevronsUpDownIcon className="ms-auto" />
@@ -106,27 +104,35 @@ export function TeamSwitcher() {
                   <span className="text-sm text-muted-foreground">No workspaces yet</span>
                 </DropdownMenuItem>
               ) : (
-                tenants.slice(0, 9).map((t, index) => (
-                  <DropdownMenuItem
-                    key={t.id}
-                    onClick={() => switchTenant(t.id)}
-                    className="gap-2 p-2"
-                  >
-                    <div className="flex size-6 items-center justify-center rounded-md border text-xs font-semibold">
-                      {initialOf(t.name)}
-                    </div>
-                    <span className="truncate">{t.name}</span>
-                    <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                ))
+                tenants.slice(0, 9).map((t) => {
+                  const isActive = t.id === activeId;
+                  return (
+                    <DropdownMenuItem
+                      key={t.id}
+                      onClick={() => {
+                        if (!isActive) switchTenant(t.id);
+                      }}
+                      className={cn("gap-2 p-2", isActive && "bg-accent/40")}
+                      aria-current={isActive ? "true" : undefined}
+                    >
+                      <div className="flex size-6 items-center justify-center rounded-md border text-xs font-semibold">
+                        {initialOf(t.name)}
+                      </div>
+                      <span className="truncate">{t.name}</span>
+                      {isActive && (
+                        <CheckIcon
+                          aria-label="Current workspace"
+                          className="ms-auto size-4 text-emerald-600 dark:text-emerald-400"
+                        />
+                      )}
+                    </DropdownMenuItem>
+                  );
+                })
               )}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem
-                render={<Link to="/organizations/tenants" />}
-                className="gap-2 p-2"
-              >
+              <DropdownMenuItem render={<Link to="/organizations/tenants" />} className="gap-2 p-2">
                 <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                   <PlusIcon className="size-4" />
                 </div>

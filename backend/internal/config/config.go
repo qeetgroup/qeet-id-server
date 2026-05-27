@@ -28,6 +28,7 @@ type Config struct {
 
 	AllowedOriginsRaw   string `envconfig:"ALLOWED_ORIGINS" default:""`
 	AuthDevTrustHeaders bool   `envconfig:"AUTH_DEV_TRUST_HEADERS" default:"false"`
+	CSRFDisabled        bool   `envconfig:"CSRF_DISABLED" default:"false"`
 }
 
 func Load() (*Config, error) {

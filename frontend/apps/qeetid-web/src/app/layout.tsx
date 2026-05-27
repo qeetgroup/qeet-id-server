@@ -17,12 +17,51 @@ export const metadata: Metadata = {
   description:
     "Qeetid is the identity platform for modern teams. SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
   metadataBase: new URL("https://qeetid.com"),
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     title: "Qeetid — One Identity. Every Platform.",
     description:
       "SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
     type: "website",
+    siteName: "Qeetid",
+    locale: "en_US",
+    url: "https://qeetid.com",
   },
+  twitter: {
+    card: "summary_large_image",
+    title: "Qeetid — One Identity. Every Platform.",
+    description:
+      "SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
+    site: "@qeetid",
+    creator: "@qeetid",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-snippet": -1,
+      "max-image-preview": "large",
+      "max-video-preview": -1,
+    },
+  },
+  keywords: [
+    "identity platform",
+    "SSO",
+    "single sign-on",
+    "MFA",
+    "passkeys",
+    "RBAC",
+    "auth0 alternative",
+    "open source identity",
+    "self-hosted auth",
+  ],
+  authors: [{ name: "Qeetid", url: "https://qeetid.com" }],
+  creator: "Qeetid",
+  publisher: "Qeetid",
 };
 
 const STORAGE_KEY = "qeetid-web-theme";

@@ -28,7 +28,7 @@ import {
   Textarea,
   TimeSince,
 } from "@qeetid/ui";
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
@@ -112,7 +112,15 @@ function RolesPage() {
               <TableBody>
                 {rolesQ.data.items.map((r) => (
                   <TableRow key={r.id}>
-                    <TableCell className="font-medium">{r.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link
+                        to="/access/roles/$roleId"
+                        params={{ roleId: r.id }}
+                        className="hover:underline"
+                      >
+                        {r.name}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{r.description || "—"}</TableCell>
                     <TableCell>
                       {r.is_system ? <Badge variant="muted">System</Badge> : <Badge variant="outline">Custom</Badge>}

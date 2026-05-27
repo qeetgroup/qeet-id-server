@@ -13,8 +13,11 @@ import {
 } from "@qeetid/ui";
 import { Link } from "@tanstack/react-router";
 import { Apple, Github, Google, Microsoft } from "@thesvg/react";
-import { Loader2Icon } from "lucide-react";
+import { BuildingIcon, Loader2Icon } from "lucide-react";
+import { useEffect, useState } from "react";
 import type * as React from "react";
+
+import { useSSODiscovery } from "@/lib/sso";
 
 import { BrandHero } from "./brand-hero";
 
@@ -36,6 +39,18 @@ export function LoginForm({
   onLogin,
   ...props
 }: LoginFormProps) {
+  const [email, setEmail] = useState("");
+  // Debounce the email value used to drive SSO discovery so we don't
+  // hammer the discovery endpoint on every keystroke.
+  const [debouncedEmail, setDebouncedEmail] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedEmail(email), 350);
+    return () => clearTimeout(t);
+  }, [email]);
+
+  const sso = useSSODiscovery(debouncedEmail);
+  const ssoHit = sso.data;
+
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card className="overflow-hidden p-0">
@@ -44,6 +59,11 @@ export function LoginForm({
             className="p-6 md:p-8"
             onSubmit={(e) => {
               e.preventDefault();
+              if (ssoHit) {
+                // Browser redirect to the IdP — leaves the SPA entirely.
+                window.location.href = ssoHit.redirect_url;
+                return;
+              }
               const data = new FormData(e.currentTarget);
               onLogin?.({
                 email: String(data.get("email") ?? "").trim(),
@@ -61,21 +81,44 @@ export function LoginForm({
 
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" name="email" type="email" placeholder="m@example.com" required />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="m@example.com"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
               </Field>
 
-              <Field>
-                <div className="flex items-center">
-                  <FieldLabel htmlFor="password">Password</FieldLabel>
-                  <Link
-                    to="/forgot-password"
-                    className="ms-auto text-sm underline-offset-2 hover:underline"
-                  >
-                    Forgot your password?
-                  </Link>
-                </div>
-                <Input id="password" name="password" type="password" required />
-              </Field>
+              {ssoHit ? (
+                <Field>
+                  <div className="flex items-start gap-2 rounded-md border border-sky-500/40 bg-sky-50/40 p-3 dark:bg-sky-950/15">
+                    <BuildingIcon className="mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-400" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">{ssoHit.provider_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Your organisation uses {ssoHit.kind.toUpperCase()} single sign-on.
+                        You&apos;ll be redirected to your identity provider.
+                      </p>
+                    </div>
+                  </div>
+                </Field>
+              ) : (
+                <Field>
+                  <div className="flex items-center">
+                    <FieldLabel htmlFor="password">Password</FieldLabel>
+                    <Link
+                      to="/forgot-password"
+                      className="ms-auto text-sm underline-offset-2 hover:underline"
+                    >
+                      Forgot your password?
+                    </Link>
+                  </div>
+                  <Input id="password" name="password" type="password" required />
+                </Field>
+              )}
 
               {errorMessage && (
                 <Field>
@@ -86,7 +129,11 @@ export function LoginForm({
               <Field>
                 <Button type="submit" disabled={isLoading}>
                   {isLoading && <Loader2Icon className="animate-spin" />}
-                  {isLoading ? "Signing in…" : "Login"}
+                  {ssoHit
+                    ? `Continue with ${ssoHit.provider_name}`
+                    : isLoading
+                      ? "Signing in…"
+                      : "Login"}
                 </Button>
               </Field>
 

@@ -5,12 +5,14 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  ColorPicker,
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
   Input,
+  LogoUploader,
   Skeleton,
 } from "@qeetid/ui";
 import { createFileRoute } from "@tanstack/react-router";
@@ -109,53 +111,32 @@ function BrandingPage() {
                 <CardContent>
                   <FieldGroup>
                     <Field>
-                      <FieldLabel htmlFor="logo_url">Logo URL</FieldLabel>
-                      <Input
-                        id="logo_url"
-                        name="logo_url"
-                        type="url"
-                        placeholder="https://cdn.example.com/logo.svg"
+                      <FieldLabel>Logo</FieldLabel>
+                      <LogoUploader
                         value={draft.logo_url ?? ""}
-                        onChange={(e) => set("logo_url", e.target.value)}
+                        onChange={(next) => set("logo_url", next)}
+                        hint="Square SVG or PNG, at least 64×64. Drag a file or paste a URL."
+                        maxSizeMB={2}
                       />
-                      <FieldDescription>Square SVG or PNG, at least 64×64.</FieldDescription>
                     </Field>
                     <Field className="grid grid-cols-2 gap-4">
                       <Field>
-                        <FieldLabel htmlFor="primary_color">Primary color</FieldLabel>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="primary_color"
-                            name="primary_color"
-                            type="color"
-                            value={draft.primary_color ?? "#5b21b6"}
-                            onChange={(e) => set("primary_color", e.target.value)}
-                            className="size-10 cursor-pointer p-1"
-                          />
-                          <Input
-                            value={draft.primary_color ?? ""}
-                            onChange={(e) => set("primary_color", e.target.value)}
-                            placeholder="#5b21b6"
-                          />
-                        </div>
+                        <FieldLabel>Primary color</FieldLabel>
+                        <ColorPicker
+                          value={draft.primary_color ?? ""}
+                          onChange={(hex) => set("primary_color", hex)}
+                          placeholder="#5b21b6"
+                          ariaLabel="Primary brand colour"
+                        />
                       </Field>
                       <Field>
-                        <FieldLabel htmlFor="secondary_color">Secondary color</FieldLabel>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id="secondary_color"
-                            name="secondary_color"
-                            type="color"
-                            value={draft.secondary_color ?? "#ffffff"}
-                            onChange={(e) => set("secondary_color", e.target.value)}
-                            className="size-10 cursor-pointer p-1"
-                          />
-                          <Input
-                            value={draft.secondary_color ?? ""}
-                            onChange={(e) => set("secondary_color", e.target.value)}
-                            placeholder="#ffffff"
-                          />
-                        </div>
+                        <FieldLabel>Secondary color</FieldLabel>
+                        <ColorPicker
+                          value={draft.secondary_color ?? ""}
+                          onChange={(hex) => set("secondary_color", hex)}
+                          placeholder="#ffffff"
+                          ariaLabel="Secondary brand colour"
+                        />
                       </Field>
                     </Field>
                   </FieldGroup>
