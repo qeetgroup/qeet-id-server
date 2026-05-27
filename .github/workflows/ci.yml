@@ -125,7 +125,7 @@ jobs:
         with:
           version: 9.15.4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
@@ -157,7 +157,7 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - name: Spectral lint
@@ -178,7 +178,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
       - run: pnpm install --frozen-lockfile --lockfile-only
