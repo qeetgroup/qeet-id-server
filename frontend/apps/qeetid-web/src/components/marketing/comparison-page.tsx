@@ -19,7 +19,7 @@ export interface ComparisonRow {
   section: string
   /** Capability label, e.g. "Self-hostable / open-source". */
   feature: string
-  /** What Qeetid offers in this row. */
+  /** What Qeet ID offers in this row. */
   qeetid: Cell
   /** What the competitor offers. */
   competitor: Cell
@@ -32,7 +32,7 @@ export interface ComparisonData {
   competitor: string
   /** Short marketing-friendly description of the competitor (1 sentence). */
   competitorBlurb: string
-  /** Pitch above the table: "Why teams pick Qeetid over <competitor>". */
+  /** Pitch above the table: "Why teams pick Qeet ID over <competitor>". */
   pitch: {
     headline: string
     subhead: string
@@ -72,7 +72,7 @@ function CellIcon({ value }: { value: Cell }) {
 }
 
 /**
- * ComparisonPage renders the canonical Qeetid-vs-X marketing layout:
+ * ComparisonPage renders the canonical Qeet ID-vs-X marketing layout:
  *
  *   Hero with side-by-side "fact sheets"
  *      ↓
@@ -118,14 +118,14 @@ export function ComparisonPage({ data }: { data: ComparisonData }) {
             Compare
           </p>
           <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-5xl">
-            Qeetid <span className="text-muted-foreground">vs.</span> {data.competitor}
+            Qeet ID <span className="text-muted-foreground">vs.</span> {data.competitor}
           </h1>
           <p className="mt-4 max-w-xl text-balance text-lg text-muted-foreground">
             {data.competitorBlurb}
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <FactCard title="Qeetid" rows={data.factsQeetid} highlighted />
+          <FactCard title="Qeet ID" rows={data.factsQeetid} highlighted />
           <FactCard title={data.competitor} rows={data.factsCompetitor} />
         </div>
       </div>
@@ -150,7 +150,7 @@ export function ComparisonPage({ data }: { data: ComparisonData }) {
           <thead className="bg-muted/40">
             <tr>
               <th className="px-4 py-3 text-left font-medium">Capability</th>
-              <th className="w-40 px-4 py-3 text-center font-medium">Qeetid</th>
+              <th className="w-40 px-4 py-3 text-center font-medium">Qeet ID</th>
               <th className="w-40 px-4 py-3 text-center font-medium">{data.competitor}</th>
             </tr>
           </thead>

@@ -4,7 +4,7 @@ description: Sign-in, sign-up, social providers, SAML, OIDC, magic links, and pa
 icon: KeyRound
 ---
 
-Qeetid lets you turn auth methods on and off per tenant. The same `<QeetidSignIn />`
+Qeet ID lets you turn auth methods on and off per tenant. The same `<QeetidSignIn />`
 component renders the right UI for whatever you've enabled.
 
 ## Supported methods
@@ -40,7 +40,7 @@ component renders the right UI for whatever you've enabled.
    `POST /v1/sessions/complete`.
 4. **MFA step-up (optional)** — if the tenant requires MFA, the server returns
    `mfa_required` with available factors. The client renders the appropriate UI.
-5. **Session issued** — Qeetid sets an `httpOnly`, `Secure`, `SameSite=Lax` cookie and
+5. **Session issued** — Qeet ID sets an `httpOnly`, `Secure`, `SameSite=Lax` cookie and
    returns the user object.
 
 ## Choosing methods

@@ -3,9 +3,9 @@ import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Compare Qeetid",
+  title: "Compare Qeet ID",
   description:
-    "Honest, side-by-side comparisons of Qeetid against Auth0, Clerk, WorkOS, and Stytch — feature parity, deployment, pricing.",
+    "Honest, side-by-side comparisons of Qeet ID against Auth0, Clerk, WorkOS, and Stytch — feature parity, deployment, pricing.",
 };
 
 const competitors = [
@@ -43,7 +43,7 @@ export default function ComparePage() {
           Compare
         </p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-5xl">
-          How does Qeetid stack up?
+          How does Qeet ID stack up?
         </h1>
         <p className="mt-4 max-w-2xl text-balance text-lg text-muted-foreground">
           We&apos;ve put together honest, side-by-side comparisons against the identity
@@ -61,7 +61,7 @@ export default function ComparePage() {
             >
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold tracking-tight">
-                  Qeetid <span className="text-muted-foreground">vs.</span> {c.name}
+                  Qeet ID <span className="text-muted-foreground">vs.</span> {c.name}
                 </h2>
                 <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-foreground" />
               </div>

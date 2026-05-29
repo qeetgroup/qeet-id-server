@@ -276,7 +276,7 @@ function BrandingPage() {
                     </div>
                     <p className="text-center text-xs text-slate-500">
                       Powered by{" "}
-                      {draft.email_from_name || "Qeetid"}
+                      {draft.email_from_name || "Qeet ID"}
                     </p>
                   </div>
                 </CardContent>

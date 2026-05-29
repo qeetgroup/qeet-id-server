@@ -6,7 +6,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Engineering blog",
   description:
-    "Notes from the team building Qeetid. Security, identity, and the boring infra it takes to make auth feel boring.",
+    "Notes from the team building Qeet ID. Security, identity, and the boring infra it takes to make auth feel boring.",
 };
 
 function formatDate(iso: string) {

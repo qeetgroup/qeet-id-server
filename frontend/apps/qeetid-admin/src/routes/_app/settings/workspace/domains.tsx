@@ -98,7 +98,7 @@ function DomainsPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Custom domain</CardTitle>
-              <CardDescription>One domain per tenant. Leave blank to use the default Qeetid-hosted URL.</CardDescription>
+              <CardDescription>One domain per tenant. Leave blank to use the default Qeet ID-hosted URL.</CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>

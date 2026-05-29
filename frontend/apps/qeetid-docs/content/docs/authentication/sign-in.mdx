@@ -64,7 +64,7 @@ function MyForm() {
 Every request that needs auth should validate the session cookie server-side:
 
 ```ts title="lib/auth.ts"
-import { Qeetid } from "@qeetid/sdk";
+import { Qeet ID } from "@qeetid/sdk";
 import { cookies } from "next/headers";
 
 const qee = new Qeetid({ secretKey: process.env.QEETID_SECRET_KEY! });
@@ -98,7 +98,7 @@ on revoke. Expect sub-30ms p99.
 | Wrong password    | `invalid_credentials` | Show generic error; never reveal which field. |
 | Account locked    | `account_locked`      | Display recovery flow.                        |
 | MFA required      | `mfa_required`        | Render `<QeetidMFAChallenge />`.             |
-| Provider rejected | `provider_error`      | Show provider name and Qeetid support link.  |
+| Provider rejected | `provider_error`      | Show provider name and Qeet ID support link.  |
 | Network/transient | `network_error`       | Retry with backoff.                           |
 
 ## Next

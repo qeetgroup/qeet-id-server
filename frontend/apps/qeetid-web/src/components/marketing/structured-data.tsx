@@ -37,7 +37,7 @@ export function OrganizationJsonLd() {
         "@context": "https://schema.org",
         "@type": "Organization",
         "@id": `${BASE}/#organization`,
-        name: "Qeetid",
+        name: "Qeet ID",
         url: BASE,
         logo: `${BASE}/icon.png`,
         sameAs: [
@@ -61,7 +61,7 @@ export function WebSiteJsonLd() {
         "@type": "WebSite",
         "@id": `${BASE}/#website`,
         url: BASE,
-        name: "Qeetid",
+        name: "Qeet ID",
         publisher: { "@id": `${BASE}/#organization` },
         inLanguage: "en-US",
       }}
@@ -79,10 +79,10 @@ export function ProductJsonLd() {
       data={{
         "@context": "https://schema.org",
         "@type": "Product",
-        name: "Qeetid",
+        name: "Qeet ID",
         description:
           "Identity platform for modern teams. SSO, MFA, passkeys, RBAC, and session management — open source and self-hostable.",
-        brand: { "@type": "Brand", name: "Qeetid" },
+        brand: { "@type": "Brand", name: "Qeet ID" },
         offers: [
           {
             "@type": "Offer",
@@ -123,7 +123,7 @@ export function SoftwareApplicationJsonLd() {
       data={{
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
-        name: "Qeetid",
+        name: "Qeet ID",
         applicationCategory: "DeveloperApplication",
         applicationSubCategory: "Identity & Access Management",
         operatingSystem: "Web, Linux, macOS, Windows",

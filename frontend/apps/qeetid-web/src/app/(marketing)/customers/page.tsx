@@ -6,7 +6,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Customers",
   description:
-    "Platform teams at Lattice, Vercel, Linear, and hundreds more trust Qeetid with their identity layer.",
+    "Platform teams at Lattice, Vercel, Linear, and hundreds more trust Qeet ID with their identity layer.",
 };
 
 // Customer-story data lives in this file (not a CMS) so it ships with
@@ -18,7 +18,7 @@ const stories: CaseStudy[] = [
     logo: "L",
     headline: "Lattice replaced its in-house auth in two sprints",
     summary:
-      "After three years of maintaining bespoke session and SSO code, Lattice migrated 1.2M users to Qeetid in six weeks.",
+      "After three years of maintaining bespoke session and SSO code, Lattice migrated 1.2M users to Qeet ID in six weeks.",
     metrics: [
       { value: "2 sprints", label: "to full migration" },
       { value: "62%", label: "infra cost reduction" },
@@ -36,7 +36,7 @@ const stories: CaseStudy[] = [
     logo: "V",
     headline: "Vercel's RBAC layer handles 9B permission checks per month",
     summary:
-      "Vercel's platform team uses Qeetid's RBAC hot-path to gate every dashboard action across millions of teams.",
+      "Vercel's platform team uses Qeet ID's RBAC hot-path to gate every dashboard action across millions of teams.",
     metrics: [
       { value: "9B / mo", label: "permission checks" },
       { value: "28ms", label: "p99 evaluation" },
@@ -92,10 +92,10 @@ export default function CustomersPage() {
           <div className="mx-auto max-w-3xl text-center">
             <p className="text-sm font-medium uppercase tracking-widest text-primary">Customers</p>
             <h1 className="mt-2 font-display text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-              The world&apos;s best product teams trust Qeetid
+              The world&apos;s best product teams trust Qeet ID
             </h1>
             <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-              From two-person startups to Fortune 100 platforms — Qeetid keeps their users signed
+              From two-person startups to Fortune 100 platforms — Qeet ID keeps their users signed
               in, and their security teams happy.
             </p>
           </div>

@@ -4,7 +4,7 @@ description: TOTP, SMS, email OTP, WebAuthn, and recovery codes — with policy-
 icon: Fingerprint
 ---
 
-Multi-factor authentication in Qeetid isn't a checkbox — it's a system. You can enforce
+Multi-factor authentication in Qeet ID isn't a checkbox — it's a system. You can enforce
 factors per role, per resource, or per action, and require **step-up** on sensitive
 operations like billing or admin changes.
 
@@ -80,12 +80,12 @@ async function deleteAccount() {
   const proof = await stepUp({ factor: "webauthn" });
   await fetch("/api/account", {
     method: "DELETE",
-    headers: { "X-Qeetid-Step-Up": proof.token },
+    headers: { "X-Qeet ID-Step-Up": proof.token },
   });
 }
 ```
 
-Your server can require the `X-Qeetid-Step-Up` header on sensitive endpoints:
+Your server can require the `X-Qeet ID-Step-Up` header on sensitive endpoints:
 
 ```ts
 const proof = await qee.stepUp.validate(req.headers["x-qeetid-step-up"]);

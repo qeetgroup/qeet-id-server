@@ -95,7 +95,7 @@ function ApiKeysPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Long-lived secrets your apps and scripts use to call the Qeetid API. Send as Authorization: ApiKey <raw>."
+        description="Long-lived secrets your apps and scripts use to call the Qeet ID API. Send as Authorization: ApiKey <raw>."
         actions={
           <>
             <Button

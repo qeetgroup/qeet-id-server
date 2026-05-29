@@ -4,12 +4,12 @@ description: Hard tenant isolation, per-organization branding, custom domains, a
 icon: Building
 ---
 
-Qeetid is **multi-tenant by default**. Tenants (called _organizations_) are the unit
+Qeet ID is **multi-tenant by default**. Tenants (called _organizations_) are the unit
 of isolation. Every user, role, session, and audit log belongs to a tenant.
 
 ## Why this matters
 
-Most identity platforms bolt multi-tenancy on as an afterthought. Qeetid treats it as
+Most identity platforms bolt multi-tenancy on as an afterthought. Qeet ID treats it as
 a first-class concept:
 
 - **Data isolation.** Postgres row-level security + schema isolation. A bug in your app
@@ -44,7 +44,7 @@ await qee.tenants.updateBranding("acme", {
 These propagate to:
 
 - The hosted sign-in page (`auth.qeetid.com/acme`)
-- All emails Qeetid sends on behalf of the tenant
+- All emails Qeet ID sends on behalf of the tenant
 - Embedded UI components (`<QeetidSignIn />` reads from branding automatically)
 
 ## Custom domains
@@ -56,7 +56,7 @@ custom domain:
 await qee.tenants.addDomain("acme", { domain: "auth.acme.com" });
 ```
 
-You'll get back a CNAME record to add to DNS. Once verified, Qeetid provisions a TLS
+You'll get back a CNAME record to add to DNS. Once verified, Qeet ID provisions a TLS
 certificate via ACME (no action needed from you).
 
 ## Data residency

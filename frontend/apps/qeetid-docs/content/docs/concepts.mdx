@@ -1,10 +1,10 @@
 ---
 title: Core concepts
-description: The five primitives Qeetid is built on — identities, tenants, roles, sessions, and audit — and how they fit together.
+description: The five primitives Qeet ID is built on — identities, tenants, roles, sessions, and audit — and how they fit together.
 icon: Compass
 ---
 
-Qeetid is built on five primitives. Almost everything else is a thin wrapper around them.
+Qeet ID is built on five primitives. Almost everything else is a thin wrapper around them.
 
 | Primitive   | Service       | Question it answers                             |
 | ----------- | ------------- | ----------------------------------------------- |
@@ -16,7 +16,7 @@ Qeetid is built on five primitives. Almost everything else is a thin wrapper aro
 
 ## Users
 
-A **user** in Qeetid (called a _Qeetid ID_) is a stable identity that follows a person
+A **user** in Qeet ID (called a _Qeet ID ID_) is a stable identity that follows a person
 across tenants and applications. Users have:
 
 - A canonical **identifier** (`usr_…`) that never changes.
@@ -33,7 +33,7 @@ const user = await qee.users.create({
 ```
 
 <Callout type="info">
-  Users are global. The same Qeetid ID can be a member of multiple tenants — that's how
+  Users are global. The same Qeet ID ID can be a member of multiple tenants — that's how
   invitations, multi-org switching, and partner workflows work.
 </Callout>
 
@@ -105,7 +105,7 @@ Sessions can optionally be exchanged for a short-lived JWT for stateless edge us
 
 ## Events
 
-Every state change in Qeetid produces an **event** — `user.signed_in`,
+Every state change in Qeet ID produces an **event** — `user.signed_in`,
 `role.assigned`, `session.revoked`, and so on. Events are:
 
 - Written to an **immutable audit log** with tamper-evident hashes.

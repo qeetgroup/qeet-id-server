@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Contact",
-  description: "Talk to Qeetid sales, support, or press. Or just say hello.",
+  description: "Talk to Qeet ID sales, support, or press. Or just say hello.",
 };
 
 const channels = [

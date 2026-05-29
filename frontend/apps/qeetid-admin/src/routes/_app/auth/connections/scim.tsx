@@ -132,7 +132,7 @@ function ScimPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Group → role mapping</CardTitle>
-            <CardDescription>SCIM Group memberships translate to Qeetid RBAC role assignments.</CardDescription>
+            <CardDescription>SCIM Group memberships translate to Qeet ID RBAC role assignments.</CardDescription>
           </div>
           <Button variant="outline">Add mapping</Button>
         </CardHeader>
@@ -141,7 +141,7 @@ function ScimPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>IdP group displayName</TableHead>
-                <TableHead>Qeetid role</TableHead>
+                <TableHead>Qeet ID role</TableHead>
                 <TableHead className="w-[1%]" />
               </TableRow>
             </TableHeader>

@@ -106,7 +106,7 @@ export default function SecurityPage() {
               Built for the most regulated industries
             </h1>
             <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-              Banks, hospitals, and Fortune 100 platforms run on Qeetid. Audit-ready by default.
+              Banks, hospitals, and Fortune 100 platforms run on Qeet ID. Audit-ready by default.
               The whole company is accountable for keeping it that way.
             </p>
           </div>

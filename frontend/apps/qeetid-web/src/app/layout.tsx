@@ -11,27 +11,27 @@ const firaCode = Fira_Code({
 
 export const metadata: Metadata = {
   title: {
-    default: "Qeetid — One Identity. Every Platform.",
-    template: "%s | Qeetid",
+    default: "Qeet ID — One Identity. Every Platform.",
+    template: "%s | Qeet ID",
   },
   description:
-    "Qeetid is the identity platform for modern teams. SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
+    "Qeet ID is the identity platform for modern teams. SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
   metadataBase: new URL("https://qeetid.com"),
   alternates: {
     canonical: "/",
   },
   openGraph: {
-    title: "Qeetid — One Identity. Every Platform.",
+    title: "Qeet ID — One Identity. Every Platform.",
     description:
       "SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
     type: "website",
-    siteName: "Qeetid",
+    siteName: "Qeet ID",
     locale: "en_US",
     url: "https://qeetid.com",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Qeetid — One Identity. Every Platform.",
+    title: "Qeet ID — One Identity. Every Platform.",
     description:
       "SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
     site: "@qeetid",
@@ -59,9 +59,9 @@ export const metadata: Metadata = {
     "open source identity",
     "self-hosted auth",
   ],
-  authors: [{ name: "Qeetid", url: "https://qeetid.com" }],
-  creator: "Qeetid",
-  publisher: "Qeetid",
+  authors: [{ name: "Qeet ID", url: "https://qeetid.com" }],
+  creator: "Qeet ID",
+  publisher: "Qeet ID",
 };
 
 const STORAGE_KEY = "qeetid-web-theme";

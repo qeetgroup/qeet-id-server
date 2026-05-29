@@ -4,7 +4,7 @@ description: React to identity events in real time over HTTP or Kafka, with at-l
 icon: PlugZap
 ---
 
-Webhooks let your services react to identity events. Every state change in Qeetid can
+Webhooks let your services react to identity events. Every state change in Qeet ID can
 fire a webhook — with at-least-once delivery, exponential backoff, and a 30-day replay
 window if your endpoint goes down.
 
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
 
 ## Retry policy
 
-If your endpoint returns a non-2xx status (or times out after 10 seconds), Qeetid
+If your endpoint returns a non-2xx status (or times out after 10 seconds), Qeet ID
 retries with exponential backoff:
 
 - 1 minute → 5 → 15 → 1h → 6h → 24h (final)

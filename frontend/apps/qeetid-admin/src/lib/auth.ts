@@ -51,7 +51,7 @@ export function useLogin() {
 }
 
 /**
- * Consume a magic-link token and exchange it for a Qeetid session.
+ * Consume a magic-link token and exchange it for a Qeet ID session.
  * Called by the public /magic landing page. On success the access /
  * refresh / tenant / user are persisted exactly like the password
  * login flow, so downstream queries immediately see a Bearer header.

@@ -3,19 +3,19 @@ import type { Metadata } from "next";
 import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
-  title: "Qeetid vs. Auth0",
+  title: "Qeet ID vs. Auth0",
   description:
-    "How Qeetid compares to Auth0 (Okta): open-source / self-hostable, transparent per-MAU pricing, and a modern passkeys-first stack.",
+    "How Qeet ID compares to Auth0 (Okta): open-source / self-hostable, transparent per-MAU pricing, and a modern passkeys-first stack.",
 };
 
 const data: ComparisonData = {
   competitor: "Auth0",
   competitorBlurb:
-    "Auth0 is the enterprise CIAM market leader, acquired by Okta in 2021. It excels at federation and is widely adopted; choose Qeetid when you want open-source code, single-tenant deployment, and pricing that scales linearly with users.",
+    "Auth0 is the enterprise CIAM market leader, acquired by Okta in 2021. It excels at federation and is widely adopted; choose Qeet ID when you want open-source code, single-tenant deployment, and pricing that scales linearly with users.",
   pitch: {
     headline: "Same protocols. Fewer surprises on the bill.",
     subhead:
-      "Qeetid speaks every OAuth / OIDC / SAML / SCIM dialect Auth0 does. The difference is transparency — the code, the pricing, and where your data lives.",
+      "Qeet ID speaks every OAuth / OIDC / SAML / SCIM dialect Auth0 does. The difference is transparency — the code, the pricing, and where your data lives.",
     bullets: [
       "MIT-licensed core you can self-host on your own infrastructure.",
       "Linear per-MAU pricing without sudden tier breakpoints.",
@@ -80,7 +80,7 @@ const data: ComparisonData = {
     { section: "Developer experience", feature: "First-party SDKs", qeetid: "React, Node, Go, Python (beta)", competitor: "20+ languages" },
   ],
   cta: {
-    headline: "Try Qeetid in 60 seconds",
+    headline: "Try Qeet ID in 60 seconds",
     subhead:
       "Spin up a workspace with your email — no credit card. Or run the Docker image on your own laptop right now.",
   },

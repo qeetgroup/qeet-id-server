@@ -4,7 +4,7 @@ description: SAML 2.0 and OIDC. Connect Okta, Azure AD, OneLogin, Ping, or any c
 icon: Building
 ---
 
-Enterprise SSO connects your customers' identity providers to Qeetid. Once configured,
+Enterprise SSO connects your customers' identity providers to Qeet ID. Once configured,
 their employees can sign in to your app with the credentials they already use everywhere
 else — and you get automatic provisioning, group sync, and centralized revocation.
 
@@ -71,11 +71,11 @@ await qee.connections.enableScim("acme", {
 
 Once enabled, SCIM-based IdPs can:
 
-- Create new users in Qeetid when they're added to your customer's directory.
+- Create new users in Qeet ID when they're added to your customer's directory.
 - Update profile fields when they change in the IdP.
 - **Deprovision** users (revoke sessions and disable accounts) when they leave the
   organization — instantly.
-- Sync groups to Qeetid groups for RBAC.
+- Sync groups to Qeet ID groups for RBAC.
 
 <Callout type="info">
   SCIM is included on Enterprise plans. See [Pricing](https://qeetid.com/pricing) for details.
@@ -85,7 +85,7 @@ Once enabled, SCIM-based IdPs can:
 
 | Symptom                                  | Likely cause                                        |
 | ---------------------------------------- | --------------------------------------------------- |
-| Loop redirecting between IdP and Qeetid | Clock skew on IdP server. Check NTP.                |
+| Loop redirecting between IdP and Qeet ID | Clock skew on IdP server. Check NTP.                |
 | `attribute_missing` error                | Attribute mapping doesn't match what the IdP sends. |
 | Users created but groups missing         | SCIM not configured, or group filter excludes them. |
 | Sign-in works but profile is blank       | `attributeMapping.displayName` not set.             |

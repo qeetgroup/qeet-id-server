@@ -29,7 +29,7 @@ const NAV = [
  * AccountLayout hosts the end-user self-service surface ("My Account").
  * It's intentionally separate from the admin `_app` shell — no
  * sidebar, simpler chrome — because the audience is the human whose
- * identity Qeetid manages, not a tenant operator.
+ * identity Qeet ID manages, not a tenant operator.
  *
  * Auth guard mirrors `_app`: a stored access token is required;
  * otherwise route to sign-in.

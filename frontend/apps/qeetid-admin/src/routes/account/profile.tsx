@@ -52,7 +52,7 @@ function ProfilePage() {
         <CardHeader>
           <CardTitle className="text-base">Profile</CardTitle>
           <CardDescription>
-            The name and contact details we show across Qeetid.
+            The name and contact details we show across Qeet ID.
           </CardDescription>
         </CardHeader>
         <CardContent>

@@ -4,7 +4,7 @@ import { ImageResponse } from "next/og";
 // shadow this by adding their own `opengraph-image.tsx`. Generated at
 // build time + statically cached; no runtime dependency.
 
-export const alt = "Qeetid — One Identity. Every Platform.";
+export const alt = "Qeet ID — One Identity. Every Platform.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -50,7 +50,7 @@ export default async function Image() {
           >
             Q
           </div>
-          Qeetid
+          Qeet ID
         </div>
 
         {/* Headline. Satori (the renderer behind ImageResponse) requires

@@ -137,7 +137,7 @@ export default function FeaturesPage() {
               <span className="text-primary">None you don&apos;t.</span>
             </h1>
             <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-              Qeetid is built around a small set of opinionated primitives: identity, sign-in,
+              Qeet ID is built around a small set of opinionated primitives: identity, sign-in,
               permissions, sessions, and audit. Compose them however your product needs.
             </p>
           </div>

@@ -18,7 +18,7 @@ uv add qeetid
 
 ```python title="auth.py"
 import os
-from qeetid import Qeetid
+from qeetid import Qeet ID
 
 qee = Qeetid(secret_key=os.environ["QEETID_SECRET_KEY"])
 ```
@@ -91,7 +91,7 @@ async def me(session = Depends(current_session)):
 
 ```python title="qeetid_middleware.py"
 from django.http import HttpResponseUnauthorized
-from qeetid import Qeetid
+from qeetid import Qeet ID
 
 qee = Qeetid(secret_key=os.environ["QEETID_SECRET_KEY"])
 

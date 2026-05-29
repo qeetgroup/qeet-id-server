@@ -1,10 +1,10 @@
 ---
 title: Edge runtime
-description: Qeetid auth runs at the edge across 30+ regions, with sub-50ms p99 sign-in worldwide.
+description: Qeet ID auth runs at the edge across 30+ regions, with sub-50ms p99 sign-in worldwide.
 icon: Globe
 ---
 
-Every Qeetid auth call hits the closest edge node. We run in 30+ regions across all
+Every Qeet ID auth call hits the closest edge node. We run in 30+ regions across all
 major cloud providers, with sub-50ms p99 sign-in worldwide.
 
 ## What runs at the edge
@@ -35,7 +35,7 @@ residency-compliant.
 
 ## Cache layers
 
-Qeetid uses three cache layers for hot reads:
+Qeet ID uses three cache layers for hot reads:
 
 1. **Edge SRAM** — 30s TTL, key-scoped to (tenant, user, action).
 2. **Regional Redis** — 60s TTL, with active invalidation.
@@ -62,5 +62,5 @@ Measured against the public status page at [status.qeetid.com](https://status.qe
 
 <Callout type="info">
   Need a private network? Enterprise plans support AWS PrivateLink, Azure Private Endpoint, and GCP
-  Private Service Connect for tenant-to-Qeetid traffic.
+  Private Service Connect for tenant-to-Qeet ID traffic.
 </Callout>

@@ -53,7 +53,7 @@ function ForgotPasswordPage() {
                   <div className="flex flex-col items-center gap-2 text-center">
                     <h1 className="text-2xl font-bold">Reset your password</h1>
                     <p className="text-balance text-muted-foreground">
-                      Enter the email address tied to your Qeetid account and we&apos;ll send
+                      Enter the email address tied to your Qeet ID account and we&apos;ll send
                       you a reset link.
                     </p>
                   </div>

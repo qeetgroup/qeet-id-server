@@ -1,6 +1,6 @@
 # Security Policy
 
-Qeetid is identity infrastructure. We take security reports seriously and triage them ahead of feature work.
+Qeet ID is identity infrastructure. We take security reports seriously and triage them ahead of feature work.
 
 ## Supported versions
 
@@ -48,7 +48,7 @@ We will keep you informed throughout triage and remediation, and credit you (if 
 
 **Out of scope:**
 - Vulnerabilities requiring physical access to a user's device
-- Social engineering of Qeetid staff or customers
+- Social engineering of Qeet ID staff or customers
 - Denial-of-service via volumetric traffic against production hosts
 - Self-XSS, missing security headers without demonstrated impact, automated-scanner output without proof of exploit
 - Issues in third-party dependencies that have already been disclosed upstream (please file with the upstream maintainer instead)
@@ -71,7 +71,7 @@ A formal bug bounty program will launch alongside v1.0. Until then, we handle re
 
 ## Hardening expectations for self-hosters
 
-If you are deploying Qeetid yourself, please also:
+If you are deploying Qeet ID yourself, please also:
 - Run TLS 1.2+ on every public endpoint
 - Rotate the JWT signing key set every 90 days
 - Keep dependencies current — `go.mod` and `pnpm-lock.yaml` are version-pinned for reproducibility, not because they should stay stale
@@ -80,4 +80,4 @@ If you are deploying Qeetid yourself, please also:
 
 ---
 
-Thank you for helping keep Qeetid and its users safe.
+Thank you for helping keep Qeet ID and its users safe.

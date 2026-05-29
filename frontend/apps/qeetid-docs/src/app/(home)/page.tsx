@@ -119,7 +119,7 @@ function Hero() {
 
           <p className="mt-6 max-w-2xl text-balance text-base text-fd-muted-foreground leading-8 sm:text-lg">
             Guides, API reference, SDKs, and operational playbooks for building sign-in, sessions,
-            passkeys, SSO, RBAC, and audit trails on Qeetid.
+            passkeys, SSO, RBAC, and audit trails on Qeet ID.
           </p>
 
           <div className="mt-9 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">

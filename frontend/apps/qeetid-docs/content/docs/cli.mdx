@@ -4,7 +4,7 @@ description: Provision tenants, rotate keys, replay events, and tunnel webhooks 
 icon: Terminal
 ---
 
-The `qee` CLI is the fastest way to manage Qeetid outside the dashboard. It wraps the
+The `qee` CLI is the fastest way to manage Qeet ID outside the dashboard. It wraps the
 same API the SDKs use, with auth handled by your machine's keychain.
 
 ## Install
@@ -62,12 +62,12 @@ For local development:
 qee dev --forward http://localhost:3000/api/qeetid/webhooks
 ```
 
-This opens an ephemeral tunnel signed with your CLI credentials and forwards Qeetid's
+This opens an ephemeral tunnel signed with your CLI credentials and forwards Qeet ID's
 test events to your local server. Tear it down with `Ctrl+C`; nothing persists.
 
 ## Profiles
 
-If you work across multiple Qeetid accounts (e.g. personal + work):
+If you work across multiple Qeet ID accounts (e.g. personal + work):
 
 ```bash
 qee config set-profile work

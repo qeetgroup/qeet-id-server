@@ -2,7 +2,7 @@
 
 ## Our pledge
 
-We pledge to make participation in the Qeetid project a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion, or sexual identity and orientation.
+We pledge to make participation in the Qeet ID project a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, religion, or sexual identity and orientation.
 
 ## Our standards
 
@@ -28,7 +28,7 @@ Maintainers have the right and responsibility to remove, edit, or reject comment
 
 ## Scope
 
-This Code of Conduct applies within all community spaces — the GitHub repository, issue tracker, discussions, pull request reviews, and any other official Qeetid channel — and also applies when an individual is officially representing the community in public spaces.
+This Code of Conduct applies within all community spaces — the GitHub repository, issue tracker, discussions, pull request reviews, and any other official Qeet ID channel — and also applies when an individual is officially representing the community in public spaces.
 
 ## Enforcement
 

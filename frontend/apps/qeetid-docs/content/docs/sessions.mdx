@@ -4,7 +4,7 @@ description: Stateful sessions with cluster-wide revocation, idle timeouts, and 
 icon: ShieldCheck
 ---
 
-A Qeetid session is the server-validated handle that says "this client is currently
+A Qeet ID session is the server-validated handle that says "this client is currently
 authenticated." Sessions are stateful by default — you can revoke any session from
 anywhere, instantly, across your entire fleet.
 
@@ -114,7 +114,7 @@ revocation lag matters less than a database hit.
 
 ## Anatomy of a session cookie
 
-The cookie Qeetid sets:
+The cookie Qeet ID sets:
 
 - **Name** — `qee_session` (configurable per tenant).
 - **Value** — opaque token; not a JWT, no claims embedded.

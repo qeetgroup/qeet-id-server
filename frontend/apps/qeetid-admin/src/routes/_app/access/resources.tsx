@@ -196,7 +196,7 @@ function ResourcesPage() {
         <SheetContent className="sm:max-w-md">
           <SheetHeader>
             <SheetTitle>New resource</SheetTitle>
-            <SheetDescription>Define an API that Qeetid issues access tokens for.</SheetDescription>
+            <SheetDescription>Define an API that Qeet ID issues access tokens for.</SheetDescription>
           </SheetHeader>
           <div className="mt-4 grid gap-4">
             <Field>

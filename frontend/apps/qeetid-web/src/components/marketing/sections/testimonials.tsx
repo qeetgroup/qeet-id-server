@@ -3,7 +3,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@qeetid/ui";
 const quotes = [
   {
     quote:
-      "We ripped out our home-grown auth in two sprints. Passkeys, SAML, MFA — all working on day one. Qeetid paid for itself the week we shipped.",
+      "We ripped out our home-grown auth in two sprints. Passkeys, SAML, MFA — all working on day one. Qeet ID paid for itself the week we shipped.",
     name: "Priya Anand",
     role: "Staff Engineer, Lattice",
     avatar: "https://i.pravatar.cc/96?img=5",

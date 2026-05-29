@@ -106,7 +106,7 @@ export function PricingCalculator() {
             Estimate your bill
           </p>
           <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-            How much will Qeetid cost you?
+            How much will Qeet ID cost you?
           </h2>
           <p className="mt-3 text-muted-foreground">
             Drag the slider to your expected monthly active users. The estimate covers core authentication; add-ons quoted separately.

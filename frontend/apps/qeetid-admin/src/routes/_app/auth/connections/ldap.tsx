@@ -45,7 +45,7 @@ function LdapPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Connection</CardTitle>
-            <CardDescription>Outbound from the Qeetid LDAP connector to your directory.</CardDescription>
+            <CardDescription>Outbound from the Qeet ID LDAP connector to your directory.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Enabled</span>

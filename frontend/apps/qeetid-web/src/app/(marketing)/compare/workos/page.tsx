@@ -3,19 +3,19 @@ import type { Metadata } from "next";
 import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
-  title: "Qeetid vs. WorkOS",
+  title: "Qeet ID vs. WorkOS",
   description:
-    "Qeetid vs. WorkOS: complete identity for B2B SaaS — user store, SSO, SCIM, audit, and a brandable admin, in one open-source binary.",
+    "Qeet ID vs. WorkOS: complete identity for B2B SaaS — user store, SSO, SCIM, audit, and a brandable admin, in one open-source binary.",
 };
 
 const data: ComparisonData = {
   competitor: "WorkOS",
   competitorBlurb:
-    "WorkOS sells enterprise-readiness APIs — SSO, SCIM, Audit Logs, Directory Sync — that you bolt onto your own user store. Qeetid is the user store too: identity, RBAC, MFA, sessions, admin UI, plus the same enterprise APIs in one binary.",
+    "WorkOS sells enterprise-readiness APIs — SSO, SCIM, Audit Logs, Directory Sync — that you bolt onto your own user store. Qeet ID is the user store too: identity, RBAC, MFA, sessions, admin UI, plus the same enterprise APIs in one binary.",
   pitch: {
-    headline: "WorkOS is half the system. Qeetid is the whole one.",
+    headline: "WorkOS is half the system. Qeet ID is the whole one.",
     subhead:
-      "If you already have a user database and just need SSO + SCIM, WorkOS is great. If you're building from scratch — or want to consolidate — Qeetid gives you the user store, MFA, sessions, admin UI, and the enterprise APIs in a single Postgres-backed service.",
+      "If you already have a user database and just need SSO + SCIM, WorkOS is great. If you're building from scratch — or want to consolidate — Qeet ID gives you the user store, MFA, sessions, admin UI, and the enterprise APIs in a single Postgres-backed service.",
     bullets: [
       "Built-in user store with sessions, MFA, social, and passkeys.",
       "Multi-tenant by default — organisations are first-class.",
@@ -57,7 +57,7 @@ const data: ComparisonData = {
 
     // ---- Compliance ----
     { section: "Compliance", feature: "Audit logs (search, export)", qeetid: true, competitor: true },
-    { section: "Compliance", feature: "Tamper-evident audit chain (SHA-256)", qeetid: true, competitor: false, note: "Qeetid chains every audit row by hash; tampering breaks the chain." },
+    { section: "Compliance", feature: "Tamper-evident audit chain (SHA-256)", qeetid: true, competitor: false, note: "Qeet ID chains every audit row by hash; tampering breaks the chain." },
     { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap v1.0", competitor: true },
     { section: "Compliance", feature: "Self-hosted = your compliance boundary", qeetid: true, competitor: false },
 
@@ -75,7 +75,7 @@ const data: ComparisonData = {
   cta: {
     headline: "One binary, one bill, one identity stack",
     subhead:
-      "Replace your user store, MFA library, session manager, and enterprise-SSO bolt-on with Qeetid. Or keep what you have and migrate gradually.",
+      "Replace your user store, MFA library, session manager, and enterprise-SSO bolt-on with Qeet ID. Or keep what you have and migrate gradually.",
   },
 };
 

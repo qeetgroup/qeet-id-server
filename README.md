@@ -1,10 +1,10 @@
-# QEETID — Identity Platform
+# Qeet ID — Identity Platform
 
 > **Authenticate Everything.** A developer-first, enterprise-ready alternative to Auth0 / Okta — open source, affordable, and built around passkeys-first authentication.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-This monorepo contains the full Qeetid identity platform: a Go modular-monolith backend, three frontend apps (admin dashboard, marketing site, docs), and a shared UI component library.
+This monorepo contains the full Qeet ID identity platform: a Go modular-monolith backend, three frontend apps (admin dashboard, marketing site, docs), and a shared UI component library.
 
 > **Status:** pre-1.0. Roughly **29% of v1.0 must-haves implemented, 16% partial, 55% not started** — see [documents/IMPLEMENTATION-STATUS.md](./documents/IMPLEMENTATION-STATUS.md) and [documents/GAP-ANALYSIS.md](./documents/GAP-ANALYSIS.md) before betting your product on it.
 

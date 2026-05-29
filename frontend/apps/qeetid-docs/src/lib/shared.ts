@@ -1,4 +1,4 @@
-export const appName = "Qeetid Docs";
+export const appName = "Qeet ID Docs";
 export const docsRoute = "/docs";
 export const docsImageRoute = "/og/docs";
 export const docsContentRoute = "/llms.mdx/docs";

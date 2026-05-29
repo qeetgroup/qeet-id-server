@@ -150,7 +150,7 @@ function AuthMockup() {
           </div>
 
           <p className="text-center text-[11px] text-muted-foreground">
-            Protected by Qeetid. <span className="underline">Why a passkey?</span>
+            Protected by Qeet ID. <span className="underline">Why a passkey?</span>
           </p>
         </div>
       </div>
@@ -248,7 +248,7 @@ export function Hero() {
           </h1>
 
           <p className="max-w-xl text-base text-muted-foreground text-balance sm:text-lg">
-            Qeetid is the auth platform engineers wish they&apos;d had. SSO, MFA, passkeys, RBAC,
+            Qeet ID is the auth platform engineers wish they&apos;d had. SSO, MFA, passkeys, RBAC,
             and stateful sessions — backed by a single, audit-ready identity graph. Drop it in. Ship
             in days.
           </p>

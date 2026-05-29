@@ -84,7 +84,7 @@ function OidcPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="OAuth 2.0 / OIDC applications that delegate authentication to Qeetid. The /authorize and ID-token code flow is in progress — see GAP-ANALYSIS P0-4."
+        description="OAuth 2.0 / OIDC applications that delegate authentication to Qeet ID. The /authorize and ID-token code flow is in progress — see GAP-ANALYSIS P0-4."
         actions={
           <>
             <Button

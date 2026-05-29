@@ -1,4 +1,4 @@
-# Contributing to Qeetid
+# Contributing to Qeet ID
 
 Thanks for considering a contribution. This guide covers branching, commits, code style, and how to add new features across the monorepo.
 

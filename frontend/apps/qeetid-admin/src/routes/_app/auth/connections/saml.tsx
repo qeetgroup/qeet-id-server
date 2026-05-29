@@ -209,7 +209,7 @@ function SamlPage() {
               </>
             )}
             {step === 2 && (
-              <p>Map IdP claims to Qeetid attributes — email, given_name, family_name, groups.</p>
+              <p>Map IdP claims to Qeet ID attributes — email, given_name, family_name, groups.</p>
             )}
             {step === 3 && (
               <p>

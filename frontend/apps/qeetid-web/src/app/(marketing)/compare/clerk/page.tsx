@@ -3,15 +3,15 @@ import type { Metadata } from "next";
 import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
-  title: "Qeetid vs. Clerk",
+  title: "Qeet ID vs. Clerk",
   description:
-    "Qeetid vs. Clerk: open-source identity for full-stack teams who want self-hosting, multi-tenant defaults, and the same drop-in DX.",
+    "Qeet ID vs. Clerk: open-source identity for full-stack teams who want self-hosting, multi-tenant defaults, and the same drop-in DX.",
 };
 
 const data: ComparisonData = {
   competitor: "Clerk",
   competitorBlurb:
-    "Clerk is the modern developer-friendly auth-as-a-service for React / Next.js apps. If you live in Vercel and want the polished React components, it's terrific. Qeetid is the choice when you also need self-hosting, multi-tenant SaaS shape, or to own your database.",
+    "Clerk is the modern developer-friendly auth-as-a-service for React / Next.js apps. If you live in Vercel and want the polished React components, it's terrific. Qeet ID is the choice when you also need self-hosting, multi-tenant SaaS shape, or to own your database.",
   pitch: {
     headline: "The DX you like from Clerk. The deployment story your platform team needs.",
     subhead:

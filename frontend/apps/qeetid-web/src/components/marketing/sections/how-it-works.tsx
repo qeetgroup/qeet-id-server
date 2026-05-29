@@ -34,12 +34,12 @@ const steps: Step[] = [
     code: (
       <>
         <Tok.k>import</Tok.k> <Tok.punct>{`{ `}</Tok.punct>
-        <Tok.t>Qeetid</Tok.t>
+        <Tok.t>Qeet ID</Tok.t>
         <Tok.punct>{` }`}</Tok.punct> <Tok.k>from</Tok.k> <Tok.s>{`"@qeetid/sdk"`}</Tok.s>
         <Tok.punct>;</Tok.punct>
         {"\n\n"}
         <Tok.k>const</Tok.k> <Tok.v>QG</Tok.v> <Tok.punct>=</Tok.punct> <Tok.k>new</Tok.k>{" "}
-        <Tok.t>Qeetid</Tok.t>
+        <Tok.t>Qeet ID</Tok.t>
         <Tok.punct>{`({`}</Tok.punct>
         {"\n  "}
         <Tok.p>tenant</Tok.p>

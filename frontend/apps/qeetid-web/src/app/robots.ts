@@ -10,7 +10,7 @@ export default function robots(): MetadataRoute.Robots {
         userAgent: "*",
         allow: "/",
         // Compare pages are intentionally indexable — they're SEO bait
-        // for high-intent queries like "Qeetid vs Auth0".
+        // for high-intent queries like "Qeet ID vs Auth0".
         disallow: ["/api/", "/legal/draft/"],
       },
     ],

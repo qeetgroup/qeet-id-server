@@ -3,15 +3,15 @@ import type { Metadata } from "next";
 import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
-  title: "Qeetid vs. Stytch",
+  title: "Qeet ID vs. Stytch",
   description:
-    "Qeetid vs. Stytch: open-source identity with the same passwordless-first methods, plus a built-in admin and self-hosting.",
+    "Qeet ID vs. Stytch: open-source identity with the same passwordless-first methods, plus a built-in admin and self-hosting.",
 };
 
 const data: ComparisonData = {
   competitor: "Stytch",
   competitorBlurb:
-    "Stytch is a passwordless-first auth API with strong fraud / device-fingerprinting capabilities. Qeetid covers the same passwordless methods (passkeys, magic links, OTP) and adds a complete admin UI, multi-tenant B2B, and self-hosting on Postgres.",
+    "Stytch is a passwordless-first auth API with strong fraud / device-fingerprinting capabilities. Qeet ID covers the same passwordless methods (passkeys, magic links, OTP) and adds a complete admin UI, multi-tenant B2B, and self-hosting on Postgres.",
   pitch: {
     headline: "Passwordless. Plus everything around it.",
     subhead:
@@ -79,7 +79,7 @@ const data: ComparisonData = {
   cta: {
     headline: "Modern auth methods you can self-host",
     subhead:
-      "Start free on our hosted plan, or run Qeetid on your own infrastructure with one Docker command.",
+      "Start free on our hosted plan, or run Qeet ID on your own infrastructure with one Docker command.",
   },
 };
 

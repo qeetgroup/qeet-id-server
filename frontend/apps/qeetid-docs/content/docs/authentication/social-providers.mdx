@@ -3,7 +3,7 @@ title: Social providers
 description: Sign in with Google, Microsoft, Apple, GitHub, GitLab, and more.
 ---
 
-Qeetid ships with OAuth client implementations for the most common social providers.
+Qeet ID ships with OAuth client implementations for the most common social providers.
 You can enable any combination per tenant from the dashboard or via API.
 
 ## Supported providers
@@ -48,7 +48,7 @@ The `methods` array controls **which** providers show up and **in what order**.
 
 ## Provisioning JIT users
 
-When a user signs in with a social provider for the first time, Qeetid creates a Qeetid
+When a user signs in with a social provider for the first time, Qeet ID creates a Qeet ID
 ID and populates the profile from the provider's claims. You can map and override fields:
 
 ```ts
@@ -63,8 +63,8 @@ await qee.providers.update("acme", "google", {
 
 ## Linking providers to existing users
 
-If a user signs in with Google but already exists in Qeetid with the same email,
-Qeetid **links** the Google identity to the existing user (configurable).
+If a user signs in with Google but already exists in Qeet ID with the same email,
+Qeet ID **links** the Google identity to the existing user (configurable).
 
 ```ts
 await qee.tenants.updateConfiguration("acme", {
