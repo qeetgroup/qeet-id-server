@@ -371,67 +371,6 @@ importers:
 
   packages/qeetid-tsconfig: {}
 
-  packages/qeetid-ui:
-    dependencies:
-      '@base-ui/react':
-        specifier: ^1.5.0
-        version: 1.5.0(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@fontsource-variable/inter':
-        specifier: ^5.2.8
-        version: 5.2.8
-      '@tailwindcss/vite':
-        specifier: 'catalog:'
-        version: 4.3.0(vite@8.0.14(@types/node@22.19.19)(esbuild@0.28.0)(jiti@2.7.0))
-      '@thesvg/react':
-        specifier: 'catalog:'
-        version: 3.0.1(react@19.2.6)
-      class-variance-authority:
-        specifier: 'catalog:'
-        version: 0.7.1
-      clsx:
-        specifier: 'catalog:'
-        version: 2.1.1
-      lucide-react:
-        specifier: 'catalog:'
-        version: 0.577.0(react@19.2.6)
-      react:
-        specifier: 'catalog:'
-        version: 19.2.6
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.2.6(react@19.2.6)
-      recharts:
-        specifier: 'catalog:'
-        version: 3.8.1(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(redux@5.0.1)
-      shadcn:
-        specifier: ^4.7.0
-        version: 4.7.0(@types/node@22.19.19)(typescript@6.0.3)
-      tailwind-merge:
-        specifier: 'catalog:'
-        version: 3.6.0
-      tailwindcss:
-        specifier: 'catalog:'
-        version: 4.3.0
-      tw-animate-css:
-        specifier: 'catalog:'
-        version: 1.4.0
-    devDependencies:
-      '@qeetid/tsconfig':
-        specifier: workspace:*
-        version: link:../qeetid-tsconfig
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.15
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.2.3(@types/react@19.2.15)
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-
 packages:
 
   '@acemir/cssom@0.9.31':
@@ -917,9 +856,6 @@ packages:
 
   '@floating-ui/utils@0.2.11':
     resolution: {integrity: sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg==}
-
-  '@fontsource-variable/inter@5.2.8':
-    resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
 
   '@fumadocs/tailwind@0.0.5':
     resolution: {integrity: sha512-ENKPWUDRmriccsrUDE4bDBq3FNr/ms3BP2rWlsAEMV1yP23pcCaan+ceGfeBUsAQjw7sj9Q3R4Kl3g/TCStPzQ==}
@@ -6860,8 +6796,6 @@ snapshots:
       react-dom: 19.2.6(react@19.2.6)
 
   '@floating-ui/utils@0.2.11': {}
-
-  '@fontsource-variable/inter@5.2.8': {}
 
   '@fumadocs/tailwind@0.0.5(@tailwindcss/oxide@4.3.0)(tailwindcss@4.3.0)':
     optionalDependencies:
