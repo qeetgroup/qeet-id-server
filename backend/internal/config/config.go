@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"strings"
 	"time"
 
@@ -33,6 +34,13 @@ type Config struct {
 	// AppBaseURL is the frontend origin used to build links in emails
 	// (password reset, magic links, invites).
 	AppBaseURL string `envconfig:"APP_BASE_URL" default:"http://localhost:3000"`
+
+	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
+	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
+	// port); RP_ORIGINS is a comma-separated allow-list of full origins.
+	WebAuthnRPID          string `envconfig:"WEBAUTHN_RP_ID" default:""`
+	WebAuthnRPDisplayName string `envconfig:"WEBAUTHN_RP_DISPLAY_NAME" default:""`
+	WebAuthnRPOriginsRaw  string `envconfig:"WEBAUTHN_RP_ORIGINS" default:""`
 }
 
 func Load() (*Config, error) {
@@ -55,4 +63,30 @@ func (c *Config) AllowedOrigins() []string {
 		}
 	}
 	return out
+}
+
+// WebAuthnRP returns the effective Relying Party config, defaulting the ID to
+// the AppBaseURL host, the display name to ServiceName, and the origins to
+// AppBaseURL when the explicit env vars are unset.
+func (c *Config) WebAuthnRP() (id, displayName string, origins []string) {
+	id = c.WebAuthnRPID
+	if id == "" {
+		if u, err := url.Parse(c.AppBaseURL); err == nil {
+			id = u.Hostname()
+		}
+	}
+	displayName = c.WebAuthnRPDisplayName
+	if displayName == "" {
+		displayName = c.ServiceName
+	}
+	if c.WebAuthnRPOriginsRaw != "" {
+		for _, p := range strings.Split(c.WebAuthnRPOriginsRaw, ",") {
+			if t := strings.TrimSpace(p); t != "" {
+				origins = append(origins, t)
+			}
+		}
+	} else {
+		origins = []string{c.AppBaseURL}
+	}
+	return id, displayName, origins
 }

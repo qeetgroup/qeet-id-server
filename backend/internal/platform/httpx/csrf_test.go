@@ -166,3 +166,28 @@ func TestNewCSRFTokenIsRandom(t *testing.T) {
 		t.Errorf("token unexpectedly short: %d", len(a))
 	}
 }
+
+func TestCSRF_ExemptPathBypassesMutationCheck(t *testing.T) {
+	mw := withCSRF(t, CSRFConfig{
+		AllowedOrigins: []string{"https://admin.qeetid.com"},
+		ExemptPaths:    []string{"/saml/acs/"},
+	})
+
+	// Exempt path: cross-site POST with no cookie/origin (as an IdP would
+	// form-POST a SAML assertion) must pass — it's signature-authenticated.
+	exempt := httptest.NewRequest(http.MethodPost, "/saml/acs/abc123", strings.NewReader("SAMLResponse=x"))
+	exempt.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mw.ServeHTTP(rec, exempt)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("exempt SAML ACS path must bypass CSRF, got %d", rec.Code)
+	}
+
+	// A non-exempt mutation with no cookie/origin is still rejected.
+	other := httptest.NewRequest(http.MethodPost, "/saml/exchange", strings.NewReader("{}"))
+	rec2 := httptest.NewRecorder()
+	mw.ServeHTTP(rec2, other)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("non-exempt path must still enforce CSRF, got %d", rec2.Code)
+	}
+}

@@ -49,6 +49,12 @@ type CSRFConfig struct {
 	// sub-domains (e.g. admin.qeetid.com / api.qeetid.com). Leave empty
 	// to scope strictly to the issuing host.
 	CookieDomain string
+	// ExemptPaths are URL-path prefixes the double-submit/origin check is
+	// skipped for. Reserved for endpoints that are authenticated by another
+	// mechanism and are legitimately invoked cross-site by a third party —
+	// e.g. a SAML Assertion Consumer Service, which the IdP form-POSTs to and
+	// which is protected by XML-signature validation, not a CSRF cookie.
+	ExemptPaths []string
 }
 
 // CSRF returns a chi-compatible middleware enforcing the rules above.
@@ -74,6 +80,15 @@ func CSRF(cfg CSRFConfig) func(http.Handler) http.Handler {
 			if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
 				next.ServeHTTP(w, r)
 				return
+			}
+
+			// Explicitly-exempt paths (e.g. SAML ACS) are authenticated by
+			// another mechanism and are invoked cross-site by design.
+			for _, p := range cfg.ExemptPaths {
+				if strings.HasPrefix(r.URL.Path, p) {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 
 			// Origin / Referer check. Browsers always send at least

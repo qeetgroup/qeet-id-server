@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/gdpr"
 	"github.com/qeetgroup/qeet-identity/internal/group"
 	"github.com/qeetgroup/qeet-identity/internal/invite"
+	"github.com/qeetgroup/qeet-identity/internal/ldap"
 	"github.com/qeetgroup/qeet-identity/internal/mfa"
 	"github.com/qeetgroup/qeet-identity/internal/oidc"
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
@@ -27,6 +28,8 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/principal"
 	"github.com/qeetgroup/qeet-identity/internal/rbac"
 	"github.com/qeetgroup/qeet-identity/internal/recovery"
+	"github.com/qeetgroup/qeet-identity/internal/saml"
+	"github.com/qeetgroup/qeet-identity/internal/scim"
 	"github.com/qeetgroup/qeet-identity/internal/social"
 	"github.com/qeetgroup/qeet-identity/internal/tenant"
 	"github.com/qeetgroup/qeet-identity/internal/user"
@@ -35,30 +38,33 @@ import (
 )
 
 type Deps struct {
-	Tenant       *tenant.Handler
-	User         *user.Handler
-	Auth         *auth.Handler
-	RBAC         *rbac.Handler
-	Verification *verification.Handler
-	Recovery     *recovery.Handler
-	Invite       *invite.Handler
-	Branding     *branding.Handler
-	APIKey       *apikey.Handler
+	Tenant        *tenant.Handler
+	User          *user.Handler
+	Auth          *auth.Handler
+	RBAC          *rbac.Handler
+	Verification  *verification.Handler
+	Recovery      *recovery.Handler
+	Invite        *invite.Handler
+	Branding      *branding.Handler
+	APIKey        *apikey.Handler
 	APIKeyService *apikey.Service
-	Principal    *principal.Handler
-	MFA          *mfa.Handler
-	Webhook      *webhook.Handler
-	Policy       *policy.Handler
-	GDPR         *gdpr.Handler
-	Audit        *audit.Handler
-	Analytics    *analytics.Handler
-	Outbox       *outbox.Handler
-	OIDC         *oidc.Handler
-	Passkey      *passkey.Handler
-	Social       *social.Handler
-	Group        *group.Handler
-	Health       *health.Handler
-	InFlight     *httpx.InFlight
+	Principal     *principal.Handler
+	MFA           *mfa.Handler
+	Webhook       *webhook.Handler
+	Policy        *policy.Handler
+	GDPR          *gdpr.Handler
+	Audit         *audit.Handler
+	Analytics     *analytics.Handler
+	Outbox        *outbox.Handler
+	OIDC          *oidc.Handler
+	Passkey       *passkey.Handler
+	Social        *social.Handler
+	Group         *group.Handler
+	SCIM          *scim.Handler
+	SAML          *saml.Handler
+	LDAP          *ldap.Handler
+	Health        *health.Handler
+	InFlight      *httpx.InFlight
 
 	AuthVerifier   *httpx.AuthVerifier
 	AllowedOrigins []string
@@ -89,6 +95,9 @@ func NewRouter(d Deps) http.Handler {
 		r.Use(httpx.CSRF(httpx.CSRFConfig{
 			AllowedOrigins: d.AllowedOrigins,
 			CookieSecure:   d.ServiceEnv != "dev",
+			// SAML ACS is a cross-site form-POST from the IdP, authenticated
+			// by XML-signature validation rather than a CSRF cookie.
+			ExemptPaths: []string{"/saml/acs/"},
 		}))
 	}
 	r.Use(cors.Handler(cors.Options{
@@ -106,6 +115,17 @@ func NewRouter(d Deps) http.Handler {
 	// OIDC well-known + JWKS live at the root, per spec.
 	d.OIDC.MountPublic(r)
 
+	// SCIM 2.0 lives at /scim/v2 with its own per-tenant bearer-token auth
+	// (IdPs present a token, not a user JWT), so it mounts outside /v1.
+	d.SCIM.MountPublic(r)
+
+	// SAML SSO ceremony (metadata, login redirect, ACS, code exchange) is
+	// IdP/browser-facing — no user JWT — so it also mounts at the root.
+	d.SAML.MountPublic(r)
+
+	// LDAP username/password login is end-user-facing (no JWT).
+	d.LDAP.MountPublic(r)
+
 	// Per-IP throttle on auth-burning endpoints.
 	loginLimiter := ratelimit.New(5, 20)
 	// Per-tenant + per-user throttles on authenticated endpoints. Rates
@@ -120,10 +140,12 @@ func NewRouter(d Deps) http.Handler {
 		// Public (no JWT required).
 		r.Group(func(r chi.Router) {
 			r.Use(loginLimiter.Middleware)
-			d.Auth.Mount(r)        // /auth/login, /auth/refresh
-			d.Recovery.Mount(r)    // forgot password, magic links
-			d.Invite.MountPublic(r) // accept-invite
+			d.Auth.Mount(r)            // /auth/login, /auth/refresh
+			d.Recovery.Mount(r)        // forgot password, magic links
+			d.Invite.MountPublic(r)    // accept-invite
 			d.Principal.MountPublic(r) // /oauth/token (client_credentials)
+			d.Social.MountPublic(r)    // social OAuth start/callback/exchange
+			d.Passkey.MountPublic(r)   // passwordless passkey login
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.
@@ -154,6 +176,9 @@ func NewRouter(d Deps) http.Handler {
 			d.Passkey.Mount(r)
 			d.Social.Mount(r)
 			d.Group.Mount(r)
+			d.SCIM.Mount(r) // /tenants/{id}/scim admin: token rotate/revoke/status
+			d.SAML.Mount(r) // /tenants/{id}/saml admin: connection CRUD
+			d.LDAP.Mount(r) // /tenants/{id}/ldap admin: connection CRUD + test bind
 		})
 	})
 

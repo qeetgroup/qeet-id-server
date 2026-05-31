@@ -1,89 +1,87 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
+  StatusPill,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  Textarea,
+  TimeSince,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2Icon, DownloadIcon, PlusIcon, UploadIcon, WorkflowIcon } from "lucide-react";
+import {
+  DownloadIcon,
+  ExternalLinkIcon,
+  Loader2Icon,
+  PlusIcon,
+  Trash2Icon,
+  WorkflowIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { ApiError } from "@/lib/api";
+import {
+  type SamlConnection,
+  samlLoginUrl,
+  samlMetadataUrl,
+  useCreateSamlConnection,
+  useDeleteSamlConnection,
+  useSamlConnections,
+  useUpdateSamlConnection,
+} from "@/lib/saml";
 
 export const Route = createFileRoute("/_app/auth/connections/saml")({ component: SamlPage });
 
-const connections = [
-  {
-    id: "1",
-    name: "Acme — Entra ID",
-    idp: "Microsoft Entra ID",
-    entityId: "https://sts.windows.net/tenantid/",
-    status: "active",
-    users: 4218,
-    lastSync: "12m ago",
-  },
-  {
-    id: "2",
-    name: "Acme — Okta",
-    idp: "Okta",
-    entityId: "http://www.okta.com/exk1abc23def",
-    status: "active",
-    users: 2104,
-    lastSync: "8m ago",
-  },
-  {
-    id: "3",
-    name: "Contoso Pilot",
-    idp: "Ping Identity",
-    entityId: "https://pingidentity.com/idp/contoso",
-    status: "draft",
-    users: 0,
-    lastSync: "—",
-  },
-];
-
-const steps = [
-  "Identify IdP",
-  "Upload metadata",
-  "Map attributes",
-  "Test SSO",
-  "Activate",
-];
-
 function SamlPage() {
-  const [open, setOpen] = useState(false);
-  const [step, setStep] = useState(0);
+  const listQ = useSamlConnections();
+  const updateM = useUpdateSamlConnection();
+  const deleteM = useDeleteSamlConnection();
+  const [creating, setCreating] = useState(false);
+
+  const items = listQ.data?.items ?? [];
+  const active = items.filter((c) => c.status === "active").length;
+  const lastLogin = items
+    .map((c) => c.last_login_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
-        description="Service-provider–initiated SAML 2.0 connections to enterprise IdPs."
+        description="Service-provider–initiated SAML 2.0 connections to enterprise IdPs. Assertions are validated against the IdP signing certificate; users are provisioned on first login."
         actions={
-          <>
-            <Button variant="outline">
-              <DownloadIcon className="mr-2 size-4" />
-              Download SP metadata
-            </Button>
-            <Button onClick={() => setOpen(true)}>
-              <PlusIcon className="mr-2 size-4" />
-              New connection
-            </Button>
-          </>
+          <Button size="sm" onClick={() => setCreating(true)}>
+            <PlusIcon className="mr-2 size-4" />
+            New connection
+          </Button>
         }
       />
 
@@ -94,27 +92,25 @@ function SamlPage() {
             <WorkflowIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {connections.filter((c) => c.status === "active").length}
-            </div>
+            <div className="text-2xl font-semibold tracking-tight">{active}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription>Federated users</CardDescription>
+            <CardDescription>Total connections</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {connections.reduce((s, c) => s + c.users, 0).toLocaleString()}
-            </div>
+            <div className="text-2xl font-semibold tracking-tight">{items.length}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription>SSO logins (24h)</CardDescription>
+            <CardDescription>Last SSO login</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">3,420</div>
+            <div className="text-2xl font-semibold tracking-tight">
+              {lastLogin ? <TimeSince value={lastLogin} /> : "Never"}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -122,116 +118,199 @@ function SamlPage() {
       <Card>
         <CardHeader>
           <CardTitle>Connections</CardTitle>
-          <CardDescription>One row per IdP. JIT provisioning runs on every successful assertion.</CardDescription>
+          <CardDescription>
+            One row per IdP. JIT provisioning runs on every successful assertion.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>IdP</TableHead>
-                <TableHead>Entity ID</TableHead>
-                <TableHead>Users</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Last sync</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {connections.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="font-medium">{c.name}</TableCell>
-                  <TableCell>{c.idp}</TableCell>
-                  <TableCell className="max-w-[260px] truncate font-mono text-xs">{c.entityId}</TableCell>
-                  <TableCell className="text-sm">{c.users.toLocaleString()}</TableCell>
-                  <TableCell>
-                    {c.status === "active" ? (
-                      <Badge variant="default">active</Badge>
-                    ) : (
-                      <Badge variant="secondary">draft</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{c.lastSync}</TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm">
-                      Open
-                    </Button>
-                  </TableCell>
+        <CardContent className="p-0">
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={items.length === 0}
+            emptyIcon={WorkflowIcon}
+            emptyTitle="No SAML connections yet."
+            skeletonRows={3}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>IdP entity ID</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Last login</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {items.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="max-w-[260px] truncate font-mono text-xs text-muted-foreground">
+                      {c.idp_entity_id}
+                    </TableCell>
+                    <TableCell>
+                      <StatusPill status={c.status} />
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {c.last_login_at ? <TimeSince value={c.last_login_at} /> : "—"}
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => window.open(samlLoginUrl(c.id), "_blank", "noopener")}
+                        disabled={c.status === "disabled"}
+                        title="Open the IdP login to test this connection"
+                      >
+                        <ExternalLinkIcon /> Test SSO
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => window.open(samlMetadataUrl(c.id), "_blank", "noopener")}
+                        title="Download SP metadata to hand to your IdP"
+                      >
+                        <DownloadIcon /> Metadata
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          updateM.mutate({
+                            id: c.id,
+                            status: c.status === "active" ? "disabled" : "active",
+                          })
+                        }
+                        disabled={updateM.isPending}
+                      >
+                        {c.status === "active" ? "Disable" : "Enable"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (confirm(`Delete SAML connection "${c.name}"?`)) deleteM.mutate(c.id);
+                        }}
+                        disabled={deleteM.isPending}
+                      >
+                        <Trash2Icon /> Delete
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
 
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="sm:max-w-xl">
+      <CreateConnectionSheet open={creating} onOpenChange={setCreating} />
+    </div>
+  );
+}
+
+function CreateConnectionSheet({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const createM = useCreateSamlConnection();
+  const [status, setStatus] = useState<SamlConnection["status"]>("draft");
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-lg">
+        <form
+          className="flex h-full flex-col"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const data = new FormData(e.currentTarget);
+            createM.mutate(
+              {
+                name: String(data.get("name") ?? "").trim(),
+                idp_entity_id: String(data.get("idp_entity_id") ?? "").trim(),
+                idp_sso_url: String(data.get("idp_sso_url") ?? "").trim(),
+                idp_certificate: String(data.get("idp_certificate") ?? "").trim(),
+                email_attribute: String(data.get("email_attribute") ?? "").trim(),
+                name_attribute: String(data.get("name_attribute") ?? "").trim(),
+                status,
+              },
+              { onSuccess: () => onOpenChange(false) },
+            );
+          }}
+        >
           <SheetHeader>
             <SheetTitle>New SAML connection</SheetTitle>
-            <SheetDescription>5-step setup wizard. Cancel any time — drafts are saved.</SheetDescription>
+            <SheetDescription>
+              Paste the IdP&apos;s SSO URL, issuer and signing certificate (from its metadata).
+            </SheetDescription>
           </SheetHeader>
-
-          <ol className="mt-4 flex flex-wrap gap-2 text-xs">
-            {steps.map((s, i) => (
-              <li
-                key={s}
-                className={`flex items-center gap-1 rounded-md border px-2 py-1 ${
-                  i === step ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground"
-                }`}
-              >
-                <span className="font-mono">{i + 1}.</span>
-                {s}
-                {i < step && <CheckCircle2Icon className="size-3 text-emerald-500" />}
-              </li>
-            ))}
-          </ol>
-
-          <div className="mt-6 space-y-4 text-sm">
-            {step === 0 && (
-              <>
-                <p>Choose your IdP to apply the right defaults.</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {["Microsoft Entra ID", "Okta", "Google Workspace", "Ping Identity", "OneLogin", "Other"].map((p) => (
-                    <Button key={p} variant="outline" className="justify-start">
-                      {p}
-                    </Button>
-                  ))}
-                </div>
-              </>
-            )}
-            {step === 1 && (
-              <>
-                <p>Upload IdP metadata XML or paste a metadata URL.</p>
-                <div className="flex flex-col gap-2 rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-                  <UploadIcon className="mx-auto size-6" />
-                  Drop metadata.xml here or click to browse
-                </div>
-              </>
-            )}
-            {step === 2 && (
-              <p>Map IdP claims to Qeet ID attributes — email, given_name, family_name, groups.</p>
-            )}
-            {step === 3 && (
-              <p>
-                Click "Test SSO" — we'll redirect to your IdP and back. The assertion is decoded and validated
-                without provisioning any users.
-              </p>
-            )}
-            {step === 4 && <p>Flip the connection to active. JIT provisioning starts immediately.</p>}
+          <div className="flex-1 overflow-y-auto p-4">
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="name">Connection name</FieldLabel>
+                <Input id="name" name="name" placeholder="Acme — Okta" required />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="idp_entity_id">IdP entity ID / issuer</FieldLabel>
+                <Input id="idp_entity_id" name="idp_entity_id" placeholder="http://www.okta.com/exk1abc" required />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="idp_sso_url">IdP SSO URL</FieldLabel>
+                <Input id="idp_sso_url" name="idp_sso_url" type="url" placeholder="https://acme.okta.com/app/.../sso/saml" required />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="idp_certificate">IdP signing certificate</FieldLabel>
+                <Textarea
+                  id="idp_certificate"
+                  name="idp_certificate"
+                  rows={6}
+                  className="font-mono text-xs"
+                  placeholder="-----BEGIN CERTIFICATE----- … or bare base64 from IdP metadata"
+                  required
+                />
+                <FieldDescription>PEM or the bare base64 from the IdP metadata&apos;s X509Certificate.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="email_attribute">Email attribute</FieldLabel>
+                <Input id="email_attribute" name="email_attribute" placeholder="email (blank = use NameID)" />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="name_attribute">Display-name attribute</FieldLabel>
+                <Input id="name_attribute" name="name_attribute" placeholder="displayName (optional)" />
+              </Field>
+              <Field>
+                <FieldLabel>Initial status</FieldLabel>
+                <Select value={status} onValueChange={(v) => setStatus(v as SamlConnection["status"])}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>Draft connections accept test logins but aren&apos;t advertised.</FieldDescription>
+              </Field>
+              {createM.error && (
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
+            </FieldGroup>
           </div>
-
-          <SheetFooter className="mt-6 flex justify-between">
-            <Button variant="outline" disabled={step === 0} onClick={() => setStep(step - 1)}>
-              Back
+          <SheetFooter className="flex-row justify-end gap-2 border-t">
+            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <Button type="submit" disabled={createM.isPending}>
+              {createM.isPending && <Loader2Icon className="animate-spin" />}
+              {createM.isPending ? "Creating…" : "Create connection"}
             </Button>
-            {step < steps.length - 1 ? (
-              <Button onClick={() => setStep(step + 1)}>Continue</Button>
-            ) : (
-              <Button onClick={() => setOpen(false)}>Activate</Button>
-            )}
           </SheetFooter>
-        </SheetContent>
-      </Sheet>
-    </div>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }

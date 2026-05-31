@@ -1,165 +1,285 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
+  FieldError,
+  FieldGroup,
   FieldLabel,
+  Input,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Slider,
-  Switch,
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+  StatusPill,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { MailIcon, MessageSquareIcon } from "lucide-react";
+import { Loader2Icon, MailIcon, MessageSquareIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { ApiError } from "@/lib/api";
+import {
+  type OtpChannel,
+  useChallengeOtpFactor,
+  useConfirmOtpFactor,
+  useDeleteOtpFactor,
+  useEnrollOtpStart,
+  useOtpFactors,
+} from "@/lib/mfa";
 
 export const Route = createFileRoute("/_app/auth/mfa/sms-email")({ component: SmsEmailPage });
 
 function SmsEmailPage() {
-  const [emailEnabled, setEmailEnabled] = useState(true);
-  const [smsEnabled, setSmsEnabled] = useState(false);
-  const [codeLen, setCodeLen] = useState(6);
-  const [ttl, setTtl] = useState("10m");
-  const [perPhoneCap, setPerPhoneCap] = useState(5);
+  const listQ = useOtpFactors();
+  const challengeM = useChallengeOtpFactor();
+  const deleteM = useDeleteOtpFactor();
+  const [adding, setAdding] = useState(false);
+
+  const items = listQ.data?.items ?? [];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="OTP delivery via email or SMS as a second factor or step-up challenge." />
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <MailIcon className="size-4" />
-              Email OTP
-            </CardTitle>
-            <CardDescription>SendGrid · 14,210 users enrolled</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <Badge variant={emailEnabled ? "default" : "outline"}>{emailEnabled ? "enabled" : "off"}</Badge>
-            <Switch checked={emailEnabled} onCheckedChange={setEmailEnabled} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <MessageSquareIcon className="size-4" />
-              SMS OTP
-            </CardTitle>
-            <CardDescription>Twilio · 6,302 users enrolled</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between space-y-1">
-            <div>
-              <Badge variant={smsEnabled ? "default" : "outline"}>{smsEnabled ? "enabled" : "off"}</Badge>
-              <p className="mt-1 text-xs text-muted-foreground">
-                NIST SP 800-63B classifies SMS as AAL2 restricted.
-              </p>
-            </div>
-            <Switch checked={smsEnabled} onCheckedChange={setSmsEnabled} />
-          </CardContent>
-        </Card>
-      </div>
+      <PageHeader
+        description="One-time passcodes delivered to a verified email address or phone number, used as a second factor."
+        actions={
+          <Button size="sm" onClick={() => setAdding(true)}>
+            <PlusIcon className="mr-2 size-4" />
+            Add factor
+          </Button>
+        }
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle>Code parameters</CardTitle>
-          <CardDescription>Applied to both email and SMS OTPs.</CardDescription>
+          <CardTitle>OTP factors</CardTitle>
+          <CardDescription>Each delivers a single-use code at sign-in. Codes expire after 10 minutes.</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-6 md:grid-cols-2">
-          <Field>
-            <FieldLabel>Code length: {codeLen} digits</FieldLabel>
-            <Slider
-              value={[codeLen]}
-              onValueChange={(v) => setCodeLen(Array.isArray(v) ? (v[0] ?? 6) : v)}
-              min={4}
-              max={10}
-              step={2}
-            />
-            <FieldDescription>Even-length codes only; longer = better entropy.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel>TTL</FieldLabel>
-            <Select value={ttl} onValueChange={(v) => v && setTtl(v)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="5m">5 minutes</SelectItem>
-                <SelectItem value="10m">10 minutes</SelectItem>
-                <SelectItem value="15m">15 minutes</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel>Per-phone request cap: {perPhoneCap} / hour</FieldLabel>
-            <Slider
-              value={[perPhoneCap]}
-              onValueChange={(v) => setPerPhoneCap(Array.isArray(v) ? (v[0] ?? 5) : v)}
-              min={1}
-              max={20}
-              step={1}
-            />
-            <FieldDescription>Mitigates SMS-pumping abuse against premium-rate numbers.</FieldDescription>
-          </Field>
-          <Field>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <FieldLabel>Allow recovery codes as fallback</FieldLabel>
-                <FieldDescription>Users can use a single-use recovery code if OTP delivery fails.</FieldDescription>
-              </div>
-              <Switch defaultChecked />
-            </div>
-          </Field>
+        <CardContent className="p-0">
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={items.length === 0}
+            emptyIcon={MailIcon}
+            emptyTitle="No email or SMS factors yet."
+            skeletonRows={2}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Channel</TableHead>
+                  <TableHead>Destination</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((f) => (
+                  <TableRow key={f.id}>
+                    <TableCell>
+                      <span className="flex items-center gap-2">
+                        {f.channel === "email" ? (
+                          <MailIcon className="size-4 text-muted-foreground" />
+                        ) : (
+                          <MessageSquareIcon className="size-4 text-muted-foreground" />
+                        )}
+                        {f.channel === "email" ? "Email" : "SMS"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{f.destination}</TableCell>
+                    <TableCell>
+                      <StatusPill kind={f.verified ? "success" : "warning"}>
+                        {f.verified ? "Verified" : "Pending"}
+                      </StatusPill>
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => challengeM.mutate(f.id)}
+                        disabled={!f.verified || challengeM.isPending}
+                        title="Send a test code to verify delivery"
+                      >
+                        <SendIcon /> Send test
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (confirm(`Remove this ${f.channel} factor?`)) deleteM.mutate(f.id);
+                        }}
+                        disabled={deleteM.isPending}
+                      >
+                        <Trash2Icon /> Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Step-up policy</CardTitle>
-          <CardDescription>Force a fresh OTP challenge for sensitive operations.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>Change password</span>
-            <Switch defaultChecked />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>Add or remove MFA factor</span>
-            <Switch defaultChecked />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>Generate / rotate API key</span>
-            <Switch defaultChecked />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>Delete account</span>
-            <Switch defaultChecked />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>Connect new device</span>
-            <Switch />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-            <span>Privileged admin action</span>
-            <Switch defaultChecked />
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline">Discard</Button>
-        <Button>Save changes</Button>
-      </div>
+      <AddFactorSheet open={adding} onOpenChange={setAdding} />
     </div>
+  );
+}
+
+function AddFactorSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const enrollM = useEnrollOtpStart();
+  const confirmM = useConfirmOtpFactor();
+  const [channel, setChannel] = useState<OtpChannel>("email");
+  const [destination, setDestination] = useState("");
+  const [factorId, setFactorId] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+
+  const reset = () => {
+    setChannel("email");
+    setDestination("");
+    setFactorId(null);
+    setCode("");
+    enrollM.reset();
+    confirmM.reset();
+  };
+
+  const close = (o: boolean) => {
+    if (!o) reset();
+    onOpenChange(o);
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={close}>
+      <SheetContent side="right" className="w-full sm:max-w-md">
+        <div className="flex h-full flex-col">
+          <SheetHeader>
+            <SheetTitle>Add an OTP factor</SheetTitle>
+            <SheetDescription>
+              {factorId
+                ? "Enter the code we just sent to confirm you control this destination."
+                : "We'll send a one-time code to confirm the destination."}
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto p-4">
+            {!factorId ? (
+              <form
+                id="otp-start"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  enrollM.mutate(
+                    { channel, destination: destination.trim() },
+                    { onSuccess: (d) => setFactorId(d.factor_id) },
+                  );
+                }}
+              >
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel>Channel</FieldLabel>
+                    <Select value={channel} onValueChange={(v) => setChannel(v as OtpChannel)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="email">Email</SelectItem>
+                        <SelectItem value="sms">SMS</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="destination">
+                      {channel === "email" ? "Email address" : "Phone number"}
+                    </FieldLabel>
+                    <Input
+                      id="destination"
+                      value={destination}
+                      onChange={(e) => setDestination(e.target.value)}
+                      placeholder={channel === "email" ? "you@example.com" : "+15551234567"}
+                      required
+                    />
+                    <FieldDescription>
+                      {channel === "sms" ? "Use E.164 format (+ country code)." : "A code will be emailed here."}
+                    </FieldDescription>
+                  </Field>
+                  {enrollM.error && (
+                    <Field>
+                      <FieldError>{(enrollM.error as ApiError).message}</FieldError>
+                    </Field>
+                  )}
+                </FieldGroup>
+              </form>
+            ) : (
+              <form
+                id="otp-confirm"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  confirmM.mutate(
+                    { id: factorId, code: code.trim() },
+                    { onSuccess: () => close(false) },
+                  );
+                }}
+              >
+                <FieldGroup>
+                  <Field>
+                    <FieldLabel htmlFor="code">Verification code</FieldLabel>
+                    <Input
+                      id="code"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="123456"
+                      className="font-mono tracking-widest"
+                      required
+                    />
+                    <FieldDescription>Sent to {destination}. Expires in 10 minutes.</FieldDescription>
+                  </Field>
+                  {confirmM.error && (
+                    <Field>
+                      <FieldError>{(confirmM.error as ApiError).message}</FieldError>
+                    </Field>
+                  )}
+                </FieldGroup>
+              </form>
+            )}
+          </div>
+
+          <SheetFooter className="flex-row justify-end gap-2 border-t">
+            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            {!factorId ? (
+              <Button type="submit" form="otp-start" disabled={enrollM.isPending || !destination.trim()}>
+                {enrollM.isPending && <Loader2Icon className="animate-spin" />}
+                {enrollM.isPending ? "Sending…" : "Send code"}
+              </Button>
+            ) : (
+              <Button type="submit" form="otp-confirm" disabled={confirmM.isPending || !code.trim()}>
+                {confirmM.isPending && <Loader2Icon className="animate-spin" />}
+                {confirmM.isPending ? "Confirming…" : "Confirm"}
+              </Button>
+            )}
+          </SheetFooter>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

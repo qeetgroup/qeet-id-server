@@ -16,7 +16,8 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ConstructionIcon, FingerprintIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { startRegistration } from "@simplewebauthn/browser";
+import { FingerprintIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
@@ -45,6 +46,25 @@ function PasskeysPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["passkeys"] }),
   });
 
+  // Registration ceremony: ask the backend for creation options, drive the
+  // browser WebAuthn API, then post the attestation back to finish.
+  const registerM = useMutation({
+    mutationFn: async () => {
+      const begin = await api<{
+        session_id: string;
+        publicKey: Parameters<typeof startRegistration>[0]["optionsJSON"];
+      }>("/v1/passkeys/register/begin", { method: "POST" });
+      const credential = await startRegistration({ optionsJSON: begin.publicKey });
+      const name = window.prompt("Name this passkey", "My passkey")?.trim() || undefined;
+      await api<void>("/v1/passkeys/register/finish", {
+        method: "POST",
+        body: { session_id: begin.session_id, credential, name },
+      });
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["passkeys"] }),
+    onError: (e) => window.alert((e as Error).message),
+  });
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
@@ -55,26 +75,12 @@ function PasskeysPage() {
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               Refresh
             </Button>
-            <Button size="sm" disabled title="Backend ceremony not yet implemented — see GAP-ANALYSIS P0-3.">
-              <PlusIcon /> Register passkey
+            <Button size="sm" onClick={() => registerM.mutate()} disabled={registerM.isPending}>
+              <PlusIcon /> {registerM.isPending ? "Registering…" : "Register passkey"}
             </Button>
           </>
         }
       />
-
-      <Card className="border-amber-500/40 bg-amber-50/30 dark:bg-amber-950/20">
-        <CardContent className="flex items-start gap-3 p-4">
-          <ConstructionIcon className="size-5 text-amber-700 dark:text-amber-500" />
-          <div className="text-sm">
-            <p className="font-medium">WebAuthn ceremony not implemented yet.</p>
-            <p className="text-muted-foreground">
-              The backend storage layer is ready (<code>auth.passkey_credentials</code>) but the four ceremony
-              endpoints (<code>/v1/passkeys/register/begin</code>, etc.) currently return 501. This is the top
-              v1.0 launch blocker — see <code>documents/GAP-ANALYSIS.md</code> P0-3.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
