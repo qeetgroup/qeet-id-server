@@ -1,6 +1,5 @@
-import { ShieldCheckIcon } from "lucide-react";
 import Link from "next/link";
-import { QeetLogo} from "@qeetrix/brand";
+import { QeetMark } from "./qeet-mark";
 
 
 function GithubGlyph() {
@@ -66,9 +65,7 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.5fr_repeat(4,1fr)] lg:px-8">
         <div className="flex flex-col gap-4">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center rounded-md bg-foreground text-background">
-              <QeetLogo className="size-6" />
-            </span>
+            <QeetMark size={28} className="size-7" />
             <span className="text-base">Identity</span>
           </Link>
           <p className="max-w-xs text-sm text-muted-foreground">
