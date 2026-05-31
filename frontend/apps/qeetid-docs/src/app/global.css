@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* Brings Cal Sans @font-face declarations + design tokens used by web/admin. */
-@import "@qeetid/ui/styles.css";
+@import "@qeetrix/ui/styles.css";
 
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
@@ -15,13 +15,13 @@ html > body[data-scroll-locked] {
   --removed-body-scroll-bar-size: 0px !important;
 }
 
-/* Brand: bind Fumadocs's primary to @qeetid/ui's --primary so docs match web/admin in both modes. */
+/* Brand: bind Fumadocs's primary to @qeetrix/ui's --primary so docs match web/admin in both modes. */
 :root,
 .dark {
   --color-fd-primary: var(--primary);
 }
 
-/* Tailwind tokens — Fira Code for code, Cal Sans for everything else (via @qeetid/ui). */
+/* Tailwind tokens — Fira Code for code, Cal Sans for everything else (via @qeetrix/ui). */
 @theme inline {
   --font-mono: var(--font-fira-code), ui-monospace, "SFMono-Regular", Menlo, monospace;
 
@@ -40,7 +40,7 @@ html > body[data-scroll-locked] {
   --animate-signal-flow: signal-flow 9s linear infinite;
 }
 
-/* Apply the @qeetid/ui font tokens that web/admin use. */
+/* Apply the @qeetrix/ui font tokens that web/admin use. */
 body {
   font-family: var(--font-sans);
 }

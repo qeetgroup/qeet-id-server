@@ -16,7 +16,7 @@ import {
   SelectValue,
   Slider,
   Switch,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { KeyRoundIcon, LockIcon, ShieldOffIcon } from "lucide-react";
 import { useState } from "react";

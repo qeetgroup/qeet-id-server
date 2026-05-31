@@ -16,7 +16,7 @@ import {
   TableRow,
   TimeSince,
   buttonVariants,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react";

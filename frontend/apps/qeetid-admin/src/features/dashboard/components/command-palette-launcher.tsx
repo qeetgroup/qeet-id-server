@@ -1,4 +1,4 @@
-import { CommandPalette, type CommandPaletteItem } from "@qeetid/ui";
+import { CommandPalette, type CommandPaletteItem } from "@qeetrix/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 

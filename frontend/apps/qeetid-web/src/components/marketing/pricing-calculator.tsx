@@ -1,6 +1,6 @@
 "use client";
 
-import { Slider } from "@qeetid/ui";
+import { Slider } from "@qeetrix/ui";
 import { useMemo, useState } from "react";
 
 import { ButtonLink } from "@/components/marketing/button-link";

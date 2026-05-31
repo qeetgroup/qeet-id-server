@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
   Textarea,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { EyeIcon, MailIcon, RotateCcwIcon, SendIcon } from "lucide-react";
 import { useState } from "react";

@@ -1,4 +1,4 @@
-import { ThemeProvider } from "@qeetid/ui";
+import { ThemeProvider } from "@qeetrix/ui";
 import type { Metadata } from "next";
 import { Fira_Code } from "next/font/google";
 import "./globals.css";

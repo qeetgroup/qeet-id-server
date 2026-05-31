@@ -1,4 +1,4 @@
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 
 type AuroraProps = {
   className?: string;

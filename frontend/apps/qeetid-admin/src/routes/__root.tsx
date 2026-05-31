@@ -1,4 +1,4 @@
-import { ThemeProvider } from "@qeetid/ui";
+import { ThemeProvider } from "@qeetrix/ui";
 import type { QueryClient } from "@tanstack/react-query";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/react-router";

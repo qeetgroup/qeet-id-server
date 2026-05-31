@@ -1,4 +1,4 @@
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 import type * as React from "react";
 
 export function BrandHero({ className, ...props }: React.ComponentProps<"div">) {

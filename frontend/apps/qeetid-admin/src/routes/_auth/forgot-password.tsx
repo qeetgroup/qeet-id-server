@@ -8,7 +8,7 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2Icon, Loader2Icon } from "lucide-react";
 import { useState } from "react";

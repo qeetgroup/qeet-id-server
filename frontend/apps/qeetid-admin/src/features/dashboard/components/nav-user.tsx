@@ -13,7 +13,7 @@ import {
   SidebarMenuItem,
   Skeleton,
   useSidebar,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import {
   BadgeCheckIcon,

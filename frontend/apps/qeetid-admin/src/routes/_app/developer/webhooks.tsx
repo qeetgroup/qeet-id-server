@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlayIcon, PlusIcon, RefreshCwIcon, Trash2Icon, WebhookIcon } from "lucide-react";

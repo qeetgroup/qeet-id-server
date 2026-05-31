@@ -1,4 +1,4 @@
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 import { CheckIcon, MinusIcon, XIcon } from "lucide-react";
 
 import { ButtonLink } from "@/components/marketing/button-link";

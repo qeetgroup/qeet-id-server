@@ -1,4 +1,4 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@qeetid/ui";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { ConstructionIcon } from "lucide-react";
 import { navGroups } from "@/config/navigation";

@@ -42,7 +42,7 @@ import {
   TableRow,
   TimeSince,
   buttonVariants,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import {

@@ -1,4 +1,4 @@
-import { Button, Input, Label, Textarea } from "@qeetid/ui";
+import { Button, Input, Label, Textarea } from "@qeetrix/ui";
 import { BuildingIcon, LifeBuoyIcon, MailIcon, NewspaperIcon } from "lucide-react";
 import type { Metadata } from "next";
 

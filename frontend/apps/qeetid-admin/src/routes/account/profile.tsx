@@ -11,7 +11,7 @@ import {
   FieldLabel,
   Input,
   Skeleton,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon } from "lucide-react";

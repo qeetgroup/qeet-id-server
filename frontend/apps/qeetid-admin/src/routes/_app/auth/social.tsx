@@ -25,7 +25,7 @@ import {
   SheetHeader,
   SheetTitle,
   Skeleton,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, NetworkIcon, PlusIcon, RefreshCwIcon } from "lucide-react";

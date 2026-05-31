@@ -1,4 +1,4 @@
-import { Button } from "@qeetid/ui";
+import { Button } from "@qeetrix/ui";
 import { useMutation } from "@tanstack/react-query";
 import { LogOutIcon, UserCogIcon } from "lucide-react";
 

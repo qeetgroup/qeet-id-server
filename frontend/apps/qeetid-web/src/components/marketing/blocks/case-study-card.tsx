@@ -1,4 +1,4 @@
-import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetid/ui";
+import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetrix/ui";
 import { ArrowRightIcon, QuoteIcon } from "lucide-react";
 
 import { ButtonLink } from "@/components/marketing/button-link";

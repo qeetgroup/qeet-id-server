@@ -23,7 +23,7 @@ import {
   TableHeader,
   TableRow,
   Textarea,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { SparklesIcon } from "lucide-react";
 import { useState } from "react";

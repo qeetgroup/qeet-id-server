@@ -10,7 +10,7 @@ import {
   FieldLabel,
   FieldSeparator,
   Input,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import { Apple, Github, Google, Microsoft } from "@thesvg/react";
 import { BuildingIcon, Loader2Icon } from "lucide-react";

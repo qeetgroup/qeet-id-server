@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@qeetid/ui": "workspace:*",
+    "@qeetrix/ui": "^0.0.2",
     "@t3-oss/env-core": "^0.13.10",
     "@tailwindcss/vite": "catalog:",
     "@tanstack/react-devtools": "^0.10.5",

@@ -1,4 +1,4 @@
-import { Button, StatusPill, TimeSince, cn } from "@qeetid/ui";
+import { Button, StatusPill, TimeSince, cn } from "@qeetrix/ui";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangleIcon,

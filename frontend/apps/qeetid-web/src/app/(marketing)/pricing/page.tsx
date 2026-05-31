@@ -1,7 +1,7 @@
 import { ButtonLink } from "@/components/marketing/button-link";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { PricingCalculator } from "@/components/marketing/pricing-calculator";
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 import { CheckIcon } from "lucide-react";
 import type { Metadata } from "next";
 

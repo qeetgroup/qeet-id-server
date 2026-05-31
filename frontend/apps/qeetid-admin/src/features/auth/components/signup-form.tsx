@@ -12,7 +12,7 @@ import {
   Input,
   PasswordStrengthMeter,
   scorePassword,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import { Apple, Github, Google, Microsoft } from "@thesvg/react";
 import { Loader2Icon } from "lucide-react";

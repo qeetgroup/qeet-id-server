@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Skeleton,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import {
   BadgeCheckIcon,

@@ -3,7 +3,7 @@ import { Fira_Code } from "next/font/google";
 import "./global.css";
 
 /**
- * Fira Code is loaded from Google because @qeetid/ui mis-defines `--font-mono`
+ * Fira Code is loaded from Google because @qeetrix/ui mis-defines `--font-mono`
  * as 'Cal Sans Text' (not a real monospace). This variable wins over the package
  * default in global.css.
  */

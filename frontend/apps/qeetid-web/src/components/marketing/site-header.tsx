@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Sheet, SheetContent, SheetTrigger, cn } from "@qeetid/ui";
+import { Button, Sheet, SheetContent, SheetTrigger, cn } from "@qeetrix/ui";
 import { MenuIcon, ShieldCheckIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";

@@ -1,4 +1,4 @@
-import { Avatar, AvatarFallback, AvatarImage } from "@qeetid/ui";
+import { Avatar, AvatarFallback, AvatarImage } from "@qeetrix/ui";
 
 const quotes = [
   {

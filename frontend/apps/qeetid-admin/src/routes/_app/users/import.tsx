@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
   cn,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { useMutation } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import {

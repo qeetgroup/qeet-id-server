@@ -1,4 +1,4 @@
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 
 /**
  * Customer logo block: a curated grid (not a marquee) suitable for

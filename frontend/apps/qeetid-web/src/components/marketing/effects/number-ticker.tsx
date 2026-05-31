@@ -1,6 +1,6 @@
 "use client";
 
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 import { useEffect, useRef, useState } from "react";
 
 type NumberTickerProps = {

@@ -5,7 +5,7 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link, useLocation } from "@tanstack/react-router";
 import { lookupNavTitle } from "@/config/navigation";
 

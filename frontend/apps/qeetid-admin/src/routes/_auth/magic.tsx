@@ -1,4 +1,4 @@
-import { Button, Card, CardContent, buttonVariants } from "@qeetid/ui";
+import { Button, Card, CardContent, buttonVariants } from "@qeetrix/ui";
 import { Link, createFileRoute, useSearch } from "@tanstack/react-router";
 import {
   AlertTriangleIcon,

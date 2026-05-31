@@ -1,4 +1,4 @@
-import { cn } from "@qeetid/ui";
+import { cn } from "@qeetrix/ui";
 import type { CSSProperties, ReactNode } from "react";
 
 type MarqueeProps = {

@@ -26,7 +26,7 @@ import {
   TableRow,
   Textarea,
   TimeSince,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon, UsersRoundIcon } from "lucide-react";

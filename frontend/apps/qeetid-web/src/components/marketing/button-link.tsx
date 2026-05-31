@@ -1,4 +1,4 @@
-import { Button } from "@qeetid/ui";
+import { Button } from "@qeetrix/ui";
 import Link from "next/link";
 import type { ComponentProps } from "react";
 

@@ -13,7 +13,7 @@ import {
   FieldLabel,
   Input,
   Skeleton,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, ConstructionIcon, GlobeIcon, Loader2Icon } from "lucide-react";

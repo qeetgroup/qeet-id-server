@@ -1,4 +1,4 @@
-@import "@qeetid/ui/styles.css";
+@import "@qeetrix/ui/styles.css";
 
 @theme inline {
   /* Override qeetid-ui's --font-mono so code blocks use Fira Code (with ligatures). */

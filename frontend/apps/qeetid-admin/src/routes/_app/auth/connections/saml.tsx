@@ -18,7 +18,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2Icon, DownloadIcon, PlusIcon, UploadIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";

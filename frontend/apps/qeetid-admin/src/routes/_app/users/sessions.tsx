@@ -19,7 +19,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { MonitorSmartphoneIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";

@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
   Switch,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { ServerIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";

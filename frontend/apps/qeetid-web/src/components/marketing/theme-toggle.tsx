@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   useTheme,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 
 export function ThemeToggle() {

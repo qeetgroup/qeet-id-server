@@ -5,7 +5,7 @@ import {
   CardHeader,
   CardTitle,
   Skeleton,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ShieldCheckIcon } from "lucide-react";

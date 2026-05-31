@@ -1,4 +1,4 @@
-import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from "@qeetid/ui";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from "@qeetrix/ui";
 import type * as React from "react";
 import { navGroups } from "@/config/navigation";
 import { NavMain } from "./nav-main";

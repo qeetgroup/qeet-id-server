@@ -6,7 +6,7 @@ import {
   CardTitle,
   StatusPill,
   buttonVariants,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import {
   FingerprintIcon,

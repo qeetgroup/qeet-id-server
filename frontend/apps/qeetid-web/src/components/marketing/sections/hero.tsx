@@ -2,7 +2,7 @@ import { Aurora } from "@/components/marketing/effects/aurora";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { DotPattern } from "@/components/marketing/effects/dot-pattern";
 import { ButtonLink } from "@/components/marketing/button-link";
-import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetid/ui";
+import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetrix/ui";
 import {
   ArrowRightIcon,
   CheckCircle2Icon,

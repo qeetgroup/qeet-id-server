@@ -40,7 +40,7 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {

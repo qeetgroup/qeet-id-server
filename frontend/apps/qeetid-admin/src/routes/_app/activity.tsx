@@ -15,7 +15,7 @@ import {
   TableRow,
   TimeSince,
   cn,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ActivityIcon, RadioIcon } from "lucide-react";

@@ -10,7 +10,7 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { ActivityIcon, KeyRoundIcon, ShieldAlertIcon, UsersIcon } from "lucide-react";
 

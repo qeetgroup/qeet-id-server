@@ -6,7 +6,7 @@ import {
   CardHeader,
   CardTitle,
   buttonVariants,
-} from "@qeetid/ui";
+} from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import { FingerprintIcon, XIcon, ZapIcon } from "lucide-react";
 import { useState } from "react";
