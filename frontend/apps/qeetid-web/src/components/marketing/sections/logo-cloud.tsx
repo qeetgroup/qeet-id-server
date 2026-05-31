@@ -1,3 +1,4 @@
+import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
 import { Marquee } from "@/components/marketing/effects/marquee";
 
 const row1 = ["Acme", "Globex", "Initech", "Umbrella", "Hooli", "Pied Piper", "Stark", "Wayne"];
@@ -12,14 +13,6 @@ const row2 = [
   "InGen",
 ];
 
-function LogoBadge({ name }: { name: string }) {
-  return (
-    <span className="font-display text-xl font-medium tracking-tight text-muted-foreground/60 transition-colors hover:text-foreground">
-      {name}
-    </span>
-  );
-}
-
 export function LogoCloud() {
   return (
     <section className="border-b border-border/60 bg-muted/30">
@@ -29,14 +22,14 @@ export function LogoCloud() {
         </p>
 
         <div className="relative mt-8 [mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]">
-          <Marquee duration={50} gap="3rem">
+          <Marquee duration={50} gap="3rem" pauseOnHover>
             {row1.map((name) => (
-              <LogoBadge key={name} name={name} />
+              <LogoLockup key={name} name={name} />
             ))}
           </Marquee>
-          <Marquee duration={60} reverse gap="3rem" className="mt-6">
+          <Marquee duration={60} reverse gap="3rem" className="mt-6" pauseOnHover>
             {row2.map((name) => (
-              <LogoBadge key={name} name={name} />
+              <LogoLockup key={name} name={name} />
             ))}
           </Marquee>
         </div>

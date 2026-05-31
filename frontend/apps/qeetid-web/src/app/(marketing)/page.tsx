@@ -6,6 +6,7 @@ import { Integrations } from "@/components/marketing/sections/integrations";
 import { LogoCloud } from "@/components/marketing/sections/logo-cloud";
 import { Stats } from "@/components/marketing/sections/stats";
 import { Testimonials } from "@/components/marketing/sections/testimonials";
+import { StickyCtaBar } from "@/components/marketing/sticky-cta-bar";
 import { ProductJsonLd, WebSiteJsonLd } from "@/components/marketing/structured-data";
 
 export default function HomePage() {
@@ -21,6 +22,7 @@ export default function HomePage() {
       <Integrations />
       <Testimonials />
       <CTA />
+      <StickyCtaBar />
     </>
   );
 }

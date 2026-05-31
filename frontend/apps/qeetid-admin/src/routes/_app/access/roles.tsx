@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldError,
   FieldGroup,
@@ -33,9 +34,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
 
+import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { useListView } from "@/lib/list-view";
 
 export const Route = createFileRoute("/_app/access/roles")({ component: RolesPage });
 
@@ -48,6 +52,14 @@ type Role = {
   is_system: boolean;
   created_at: string;
 };
+
+const roleCsvColumns: CsvColumn<Role>[] = [
+  { header: "id", value: (r) => r.id },
+  { header: "name", value: (r) => r.name },
+  { header: "description", value: (r) => r.description },
+  { header: "type", value: (r) => (r.is_system ? "system" : "custom") },
+  { header: "created_at", value: (r) => r.created_at },
+];
 
 function RolesPage() {
   const tenantId = useTenantId();
@@ -65,6 +77,15 @@ function RolesPage() {
     queryKey: ["permissions"],
     queryFn: () => api<{ items: Permission[] }>("/v1/permissions"),
   });
+
+  const items = rolesQ.data?.items ?? [];
+  const lv = useListView(items, {
+    searchFields: (r) => [r.name, r.description],
+    filterFields: { type: (r) => (r.is_system ? "system" : "custom") },
+    sortFields: { name: (r) => r.name, created: (r) => r.created_at },
+  });
+  const rows = lv.view;
+  const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -86,31 +107,69 @@ function RolesPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Roles</CardTitle>
-          <CardDescription>{rolesQ.data?.items?.length ?? 0} role{rolesQ.data?.items?.length === 1 ? "" : "s"}</CardDescription>
+          <CardDescription>
+            {rows.length} of {items.length} role{items.length === 1 ? "" : "s"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {rolesQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-          ) : rolesQ.isError ? (
-            <div className="p-6 text-sm text-destructive">{(rolesQ.error as Error).message}</div>
-          ) : !rolesQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <ShieldCheckIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No roles defined.</p>
-            </div>
-          ) : (
-            <Table>
+          <ListToolbar
+            search={lv.search}
+            onSearchChange={lv.setSearch}
+            searchPlaceholder="Search name or description…"
+            filters={[
+              {
+                id: "type",
+                label: "Type",
+                value: lv.filters.type ?? "",
+                options: [
+                  { label: "System", value: "system" },
+                  { label: "Custom", value: "custom" },
+                ],
+                onChange: (v) => lv.setFilter("type", v),
+              },
+            ]}
+            columns={[
+              { id: "description", label: "Description" },
+              { id: "created", label: "Created" },
+            ]}
+            isColumnVisible={lv.isVisible}
+            onToggleColumn={lv.toggleColumn}
+            density={lv.density}
+            onDensityChange={lv.setDensity}
+            onExport={(fmt) =>
+              fmt === "csv" ? exportToCsv("roles", rows, roleCsvColumns) : exportToJson("roles", rows)
+            }
+            exportDisabled={rows.length === 0}
+            hasActiveFilters={lv.hasActiveFilters}
+            onClear={lv.clear}
+          />
+          <DataState
+            isLoading={rolesQ.isLoading}
+            isError={rolesQ.isError}
+            error={rolesQ.error}
+            isEmpty={rows.length === 0}
+            emptyIcon={ShieldCheckIcon}
+            emptyTitle={lv.hasActiveFilters ? "No roles match your filters." : "No roles defined."}
+            skeletonRows={3}
+          >
+            <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Description</TableHead>
+                  <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
+                    Name
+                  </SortHeader>
+                  {lv.isVisible("description") && <TableHead>Description</TableHead>}
                   <TableHead>Type</TableHead>
-                  <TableHead>Created</TableHead>
+                  {lv.isVisible("created") && (
+                    <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Created
+                    </SortHeader>
+                  )}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rolesQ.data.items.map((r) => (
+                {rows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="font-medium">
                       <Link
@@ -121,11 +180,15 @@ function RolesPage() {
                         {r.name}
                       </Link>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{r.description || "—"}</TableCell>
+                    {lv.isVisible("description") && (
+                      <TableCell className="text-muted-foreground">{r.description || "—"}</TableCell>
+                    )}
                     <TableCell>
                       {r.is_system ? <Badge variant="muted">System</Badge> : <Badge variant="outline">Custom</Badge>}
                     </TableCell>
-                    <TableCell><TimeSince value={r.created_at} /></TableCell>
+                    {lv.isVisible("created") && (
+                      <TableCell><TimeSince value={r.created_at} /></TableCell>
+                    )}
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => setEditingRole(r)}>
                         Permissions
@@ -135,7 +198,7 @@ function RolesPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
+          </DataState>
         </CardContent>
       </Card>
 

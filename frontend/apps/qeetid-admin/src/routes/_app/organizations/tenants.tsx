@@ -13,6 +13,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
   FieldError,
@@ -31,7 +32,6 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-  Skeleton,
   StatusPill,
   Table,
   TableBody,
@@ -53,9 +53,12 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { tokenStore } from "@/lib/api";
+import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { useListView } from "@/lib/list-view";
 
 export const Route = createFileRoute("/_app/organizations/tenants")({ component: TenantsPage });
 
@@ -69,6 +72,16 @@ type Tenant = {
   created_at: string;
 };
 
+const tenantCsvColumns: CsvColumn<Tenant>[] = [
+  { header: "id", value: (t) => t.id },
+  { header: "name", value: (t) => t.name },
+  { header: "slug", value: (t) => t.slug },
+  { header: "plan", value: (t) => t.plan },
+  { header: "region", value: (t) => t.region },
+  { header: "status", value: (t) => t.status },
+  { header: "created_at", value: (t) => t.created_at },
+];
+
 function TenantsPage() {
   const qc = useQueryClient();
   const currentTenantId = tokenStore.getTenantId();
@@ -81,12 +94,22 @@ function TenantsPage() {
     queryFn: () => api<{ items: Tenant[] }>("/v1/tenants"),
   });
 
+  const items = listQ.data?.items ?? [];
+  const lv = useListView(items, {
+    searchFields: (t) => [t.name, t.slug, t.region],
+    filterFields: { status: (t) => t.status, plan: (t) => t.plan },
+    sortFields: { name: (t) => t.name, plan: (t) => t.plan, created: (t) => t.created_at },
+  });
+  const rows = lv.view;
+  const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
+
   const deleteM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/tenants/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       setConfirmingDelete(null);
       qc.invalidateQueries({ queryKey: ["tenants"] });
     },
+    meta: { successMessage: "Tenant deleted" },
   });
 
   return (
@@ -109,33 +132,89 @@ function TenantsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Tenants</CardTitle>
-          <CardDescription>{listQ.data?.items?.length ?? 0} total</CardDescription>
+          <CardDescription>
+            {rows.length} of {items.length} tenant{items.length === 1 ? "" : "s"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {listQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-          ) : listQ.isError ? (
-            <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
-          ) : !listQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <Building2Icon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No tenants yet.</p>
-            </div>
-          ) : (
-            <Table>
+          <ListToolbar
+            search={lv.search}
+            onSearchChange={lv.setSearch}
+            searchPlaceholder="Search name, slug, region…"
+            filters={[
+              {
+                id: "status",
+                label: "Status",
+                value: lv.filters.status ?? "",
+                options: [
+                  { label: "Active", value: "active" },
+                  { label: "Suspended", value: "suspended" },
+                  { label: "Deleted", value: "deleted" },
+                ],
+                onChange: (v) => lv.setFilter("status", v),
+              },
+              {
+                id: "plan",
+                label: "Plan",
+                value: lv.filters.plan ?? "",
+                options: [
+                  { label: "Free", value: "free" },
+                  { label: "Pro", value: "pro" },
+                  { label: "Enterprise", value: "enterprise" },
+                ],
+                onChange: (v) => lv.setFilter("plan", v),
+              },
+            ]}
+            columns={[
+              { id: "slug", label: "Slug" },
+              { id: "plan", label: "Plan" },
+              { id: "region", label: "Region" },
+              { id: "created", label: "Created" },
+            ]}
+            isColumnVisible={lv.isVisible}
+            onToggleColumn={lv.toggleColumn}
+            density={lv.density}
+            onDensityChange={lv.setDensity}
+            onExport={(fmt) =>
+              fmt === "csv" ? exportToCsv("tenants", rows, tenantCsvColumns) : exportToJson("tenants", rows)
+            }
+            exportDisabled={rows.length === 0}
+            hasActiveFilters={lv.hasActiveFilters}
+            onClear={lv.clear}
+          />
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={rows.length === 0}
+            emptyIcon={Building2Icon}
+            emptyTitle={lv.hasActiveFilters ? "No tenants match your filters." : "No tenants yet."}
+            skeletonRows={3}
+          >
+            <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Slug</TableHead>
-                  <TableHead>Plan</TableHead>
-                  <TableHead>Region</TableHead>
+                  <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
+                    Name
+                  </SortHeader>
+                  {lv.isVisible("slug") && <TableHead>Slug</TableHead>}
+                  {lv.isVisible("plan") && (
+                    <SortHeader columnKey="plan" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Plan
+                    </SortHeader>
+                  )}
+                  {lv.isVisible("region") && <TableHead>Region</TableHead>}
                   <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
+                  {lv.isVisible("created") && (
+                    <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Created
+                    </SortHeader>
+                  )}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {listQ.data.items.map((t) => (
+                {rows.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium">
                       {t.name}
@@ -145,11 +224,19 @@ function TenantsPage() {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{t.slug}</TableCell>
-                    <TableCell><Badge variant="muted">{t.plan}</Badge></TableCell>
-                    <TableCell className="text-muted-foreground">{t.region}</TableCell>
+                    {lv.isVisible("slug") && (
+                      <TableCell className="font-mono text-xs text-muted-foreground">{t.slug}</TableCell>
+                    )}
+                    {lv.isVisible("plan") && (
+                      <TableCell><Badge variant="muted">{t.plan}</Badge></TableCell>
+                    )}
+                    {lv.isVisible("region") && (
+                      <TableCell className="text-muted-foreground">{t.region}</TableCell>
+                    )}
                     <TableCell><StatusPill status={t.status} /></TableCell>
-                    <TableCell><TimeSince value={t.created_at} /></TableCell>
+                    {lv.isVisible("created") && (
+                      <TableCell><TimeSince value={t.created_at} /></TableCell>
+                    )}
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Button
@@ -192,7 +279,7 @@ function TenantsPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
+          </DataState>
         </CardContent>
       </Card>
 
@@ -267,6 +354,7 @@ function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetP
       onCreated();
       onOpenChange(false);
     },
+    meta: { successMessage: "Tenant created" },
   });
 
   return (
@@ -363,6 +451,7 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
     mutationFn: (body: UpdateBody) =>
       api<Tenant>(`/v1/tenants/${tenant!.id}`, { method: "PATCH", body }),
     onSuccess: onSaved,
+    meta: { successMessage: "Tenant updated" },
   });
 
   return (

@@ -1,11 +1,14 @@
-import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetrix/ui";
+import { cn } from "@qeetrix/ui";
 import { ArrowRightIcon, QuoteIcon } from "lucide-react";
 
+import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
+import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { ButtonLink } from "@/components/marketing/button-link";
 
 /**
  * One full case-study tile: company badge + headline + summary +
- * metrics grid + pull quote with photo + "read the full story" link.
+ * metrics grid + pull quote with initials avatar + "read the full
+ * story" link.
  *
  * Drop one of these on any marketing page to surface social proof
  * without re-skinning a custom layout each time. Use multiple stacked
@@ -21,7 +24,6 @@ export interface CaseStudyQuote {
   text: string;
   name: string;
   role: string;
-  avatar?: string;
 }
 
 export interface CaseStudy {
@@ -37,22 +39,30 @@ export interface CaseStudy {
   href?: string;
 }
 
+/** Company name → URL slug, shared with the case-study detail route. */
+export function caseStudySlug(company: string): string {
+  return company.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
 export interface CaseStudyCardProps {
   data: CaseStudy;
   className?: string;
+  /** Render a subtle BorderBeam — use sparingly on a single featured card. */
+  featured?: boolean;
 }
 
-export function CaseStudyCard({ data, className }: CaseStudyCardProps) {
-  const slug = data.company.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+export function CaseStudyCard({ data, className, featured = false }: CaseStudyCardProps) {
+  const slug = caseStudySlug(data.company);
   const href = data.href ?? `/customers/${slug}`;
   return (
     <article
       className={cn(
-        "grid gap-8 rounded-3xl border border-border/60 bg-background p-8 lg:grid-cols-[1.4fr_1fr] lg:p-12",
+        "relative grid gap-8 overflow-hidden rounded-3xl border border-border/60 bg-card p-8 lg:grid-cols-[1.4fr_1fr] lg:p-12",
         className,
       )}
       aria-labelledby={`cs-${slug}-headline`}
     >
+      {featured && <BorderBeam size={320} duration={12} />}
       <div className="flex flex-col gap-6">
         <div className="flex items-center gap-3">
           <span className="grid size-10 place-items-center rounded-lg bg-foreground font-display text-lg font-semibold text-background">
@@ -85,20 +95,17 @@ export function CaseStudyCard({ data, className }: CaseStudyCardProps) {
       </div>
       {data.quote && (
         <figure className="flex flex-col gap-6 rounded-2xl bg-muted/40 p-6">
-          <QuoteIcon className="size-6 text-primary" />
-          <blockquote className="text-base leading-relaxed text-foreground/90 sm:text-lg">
-            &ldquo;{data.quote.text}&rdquo;
+          <QuoteIcon aria-hidden className="size-7 text-primary/70" />
+          <blockquote className="text-lg font-medium leading-relaxed text-foreground text-balance sm:text-xl">
+            {data.quote.text}
           </blockquote>
-          <figcaption className="mt-auto flex items-center gap-3">
-            <Avatar className="size-10">
-              {data.quote.avatar && (
-                <AvatarImage src={data.quote.avatar} alt={data.quote.name} />
-              )}
-              <AvatarFallback>{data.quote.name.charAt(0)}</AvatarFallback>
-            </Avatar>
+          <figcaption className="mt-auto flex items-center gap-3 border-t border-border/60 pt-5">
+            <InitialsAvatar name={data.quote.name} />
             <div className="flex flex-col">
-              <span className="text-sm font-medium">{data.quote.name}</span>
-              <span className="text-xs text-muted-foreground">{data.quote.role}</span>
+              <span className="text-sm font-semibold text-foreground">{data.quote.name}</span>
+              <span className="text-xs text-muted-foreground">
+                {data.quote.role} · {data.company}
+              </span>
             </div>
           </figcaption>
         </figure>

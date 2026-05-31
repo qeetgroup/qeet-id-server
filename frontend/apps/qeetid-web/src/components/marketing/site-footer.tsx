@@ -1,5 +1,6 @@
-import { ShieldCheckIcon } from "lucide-react";
 import Link from "next/link";
+import { QeetMark } from "./qeet-mark";
+
 
 function GithubGlyph() {
   return (
@@ -33,8 +34,8 @@ const columns = [
     title: "Developers",
     links: [
       { href: "/docs", label: "Documentation" },
-      { href: "/docs/quickstart", label: "Quickstart" },
-      { href: "/docs/api", label: "API reference" },
+      { href: "/docs#quickstart", label: "Quickstart" },
+      { href: "/docs#api-reference", label: "API reference" },
       { href: "https://github.com/qeetid", label: "GitHub" },
     ],
   },
@@ -64,9 +65,7 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.5fr_repeat(4,1fr)] lg:px-8">
         <div className="flex flex-col gap-4">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center rounded-md bg-foreground text-background">
-              <ShieldCheckIcon className="size-4" />
-            </span>
+            <QeetMark size={28} className="size-7" />
             <span className="text-base">Identity</span>
           </Link>
           <p className="max-w-xs text-sm text-muted-foreground">
@@ -113,9 +112,12 @@ export function SiteFooter() {
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:px-6 lg:px-8">
           <p>© {new Date().getFullYear()} Qeet Group, Inc. All rights reserved.</p>
           <p className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-1.5">
+            <Link
+              href="/status"
+              className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+            >
               <span className="size-1.5 rounded-full bg-emerald-500" /> All systems normal
-            </span>
+            </Link>
             <span>·</span>
             <span>SOC 2 Type II</span>
             <span>·</span>

@@ -3,6 +3,8 @@
 import { cn } from "@qeetrix/ui";
 import { useEffect, useRef, useState } from "react";
 
+import { useReducedMotion } from "@/lib/use-reduced-motion";
+
 type NumberTickerProps = {
   value: number;
   decimals?: number;
@@ -23,6 +25,7 @@ export function NumberTicker({
   const ref = useRef<HTMLSpanElement>(null);
   const [display, setDisplay] = useState(0);
   const [seen, setSeen] = useState(false);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     const el = ref.current;
@@ -43,7 +46,7 @@ export function NumberTicker({
   }, []);
 
   useEffect(() => {
-    if (!seen) return;
+    if (!seen || reduced) return;
     const start = performance.now();
     let raf = 0;
     const step = (now: number) => {
@@ -54,9 +57,11 @@ export function NumberTicker({
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [seen, value, duration]);
+  }, [seen, value, duration, reduced]);
 
-  const formatted = display.toLocaleString("en-US", {
+  // Reduced motion: render the final value with no count-up.
+  const shown = reduced ? value : display;
+  const formatted = shown.toLocaleString("en-US", {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });

@@ -2,7 +2,8 @@ import { Aurora } from "@/components/marketing/effects/aurora";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { DotPattern } from "@/components/marketing/effects/dot-pattern";
 import { ButtonLink } from "@/components/marketing/button-link";
-import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetrix/ui";
+import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
+import { cn } from "@qeetrix/ui";
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
@@ -13,13 +14,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 
-const trustAvatars = [
-  "https://i.pravatar.cc/96?img=5",
-  "https://i.pravatar.cc/96?img=12",
-  "https://i.pravatar.cc/96?img=32",
-  "https://i.pravatar.cc/96?img=47",
-  "https://i.pravatar.cc/96?img=68",
-];
+const trustNames = ["Priya Anand", "Marcus Hale", "Sofía Reyes", "Dev Patel", "Jun Park"];
 
 function GoogleGlyph() {
   return (
@@ -53,7 +48,7 @@ function AuthMockup() {
         className="absolute -inset-x-6 -bottom-8 -top-4 -z-10 rounded-[2rem] bg-[radial-gradient(60%_60%_at_50%_50%,var(--color-primary)/0.35,transparent_70%)] opacity-50 blur-3xl"
       />
 
-      <div className="relative overflow-hidden rounded-2xl border border-border/80 bg-card/90 shadow-2xl shadow-primary/10 backdrop-blur-xl animate-scale-in">
+      <div className="relative overflow-hidden rounded-2xl border border-border/80 bg-card/70 shadow-2xl shadow-primary/10 ring-1 ring-white/10 backdrop-blur-2xl animate-scale-in">
         <BorderBeam size={260} duration={9} />
 
         {/* Window chrome */}
@@ -270,15 +265,13 @@ export function Hero() {
 
           <div className="flex items-center gap-3 pt-2">
             <div className="flex -space-x-2">
-              {trustAvatars.map((src, i) => (
-                <Avatar
-                  // Static decorative list has no stable source id.
-                  key={i}
-                  className="size-7 border-2 border-background"
-                >
-                  <AvatarImage src={src} alt="" />
-                  <AvatarFallback>·</AvatarFallback>
-                </Avatar>
+              {trustNames.map((name) => (
+                <InitialsAvatar
+                  key={name}
+                  name={name}
+                  size="sm"
+                  className="border-2 border-background"
+                />
               ))}
             </div>
             <div className="flex flex-col text-xs text-muted-foreground">

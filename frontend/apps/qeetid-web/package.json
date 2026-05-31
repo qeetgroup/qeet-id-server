@@ -12,11 +12,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@qeetrix/brand": "^0.0.1",
     "@qeetrix/ui": "^0.0.2",
+    "@thesvg/react": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:",
-    "@thesvg/react": "catalog:"
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@qeetid/tsconfig": "workspace:*",

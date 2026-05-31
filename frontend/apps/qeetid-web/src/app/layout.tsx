@@ -20,6 +20,25 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/",
   },
+  icons: {
+    // Theme-adaptive favicon: dark artwork on light UI, light artwork on dark
+    // UI. The .ico is the universal fallback for browsers without SVG support.
+    icon: [
+      {
+        url: "/qeet-logo-on-light.svg",
+        type: "image/svg+xml",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        url: "/qeet-logo-on-dark.svg",
+        type: "image/svg+xml",
+        media: "(prefers-color-scheme: dark)",
+      },
+      { url: "/favicon.ico", sizes: "48x48" },
+    ],
+    shortcut: ["/favicon.ico"],
+    apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "180x180" }],
+  },
   openGraph: {
     title: "Qeet ID — One Identity. Every Platform.",
     description:

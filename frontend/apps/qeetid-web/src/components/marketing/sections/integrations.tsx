@@ -50,7 +50,7 @@ export function Integrations() {
               50+ identity providers and directories supported out of the box. Add your own SAML or
               OIDC source in minutes.
             </p>
-            <ButtonLink variant="outline" className="mt-2 w-fit" href="/docs/integrations">
+            <ButtonLink variant="outline" className="mt-2 w-fit" href="/docs#guides">
               Browse all integrations <ArrowRightIcon className="size-4" />
             </ButtonLink>
           </div>

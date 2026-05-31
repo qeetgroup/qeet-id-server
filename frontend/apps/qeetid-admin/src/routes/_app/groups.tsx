@@ -5,6 +5,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldError,
   FieldGroup,
@@ -32,9 +33,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon, UsersRoundIcon } from "lucide-react";
 import { useState } from "react";
 
+import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { useListView } from "@/lib/list-view";
 
 export const Route = createFileRoute("/_app/groups")({ component: GroupsPage });
 
@@ -49,6 +53,14 @@ type Group = {
 
 type Member = { user_id: string; email?: string; display_name?: string | null };
 
+const groupCsvColumns: CsvColumn<Group>[] = [
+  { header: "id", value: (g) => g.id },
+  { header: "name", value: (g) => g.name },
+  { header: "description", value: (g) => g.description },
+  { header: "parent_id", value: (g) => g.parent_id },
+  { header: "created_at", value: (g) => g.created_at },
+];
+
 function GroupsPage() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -60,6 +72,15 @@ function GroupsPage() {
     queryFn: () => api<{ items: Group[] }>(`/v1/tenants/${tenantId}/groups`),
     enabled: !!tenantId,
   });
+
+  const items = groupsQ.data?.items ?? [];
+  const lv = useListView(items, {
+    searchFields: (g) => [g.name, g.description],
+    filterFields: { scope: (g) => (g.parent_id ? "nested" : "top-level") },
+    sortFields: { name: (g) => g.name, created: (g) => g.created_at },
+  });
+  const rows = lv.view;
+  const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
 
   const deleteM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/groups/${id}`, { method: "DELETE" }),
@@ -77,6 +98,7 @@ function GroupsPage() {
       ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups"] }),
+    meta: { successMessage: "Group deleted" },
   });
 
   return (
@@ -99,31 +121,70 @@ function GroupsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Groups</CardTitle>
-          <CardDescription>{groupsQ.data?.items?.length ?? 0} group{groupsQ.data?.items?.length === 1 ? "" : "s"}</CardDescription>
+          <CardDescription>
+            {rows.length} of {items.length} group{items.length === 1 ? "" : "s"}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {groupsQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-          ) : groupsQ.isError ? (
-            <div className="p-6 text-sm text-destructive">{(groupsQ.error as Error).message}</div>
-          ) : !groupsQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <UsersRoundIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No groups yet.</p>
-            </div>
-          ) : (
-            <Table>
+          <ListToolbar
+            search={lv.search}
+            onSearchChange={lv.setSearch}
+            searchPlaceholder="Search name or description…"
+            filters={[
+              {
+                id: "scope",
+                label: "Scope",
+                value: lv.filters.scope ?? "",
+                options: [
+                  { label: "Top-level", value: "top-level" },
+                  { label: "Nested", value: "nested" },
+                ],
+                onChange: (v) => lv.setFilter("scope", v),
+              },
+            ]}
+            columns={[
+              { id: "description", label: "Description" },
+              { id: "parent", label: "Parent" },
+              { id: "created", label: "Created" },
+            ]}
+            isColumnVisible={lv.isVisible}
+            onToggleColumn={lv.toggleColumn}
+            density={lv.density}
+            onDensityChange={lv.setDensity}
+            onExport={(fmt) =>
+              fmt === "csv" ? exportToCsv("groups", rows, groupCsvColumns) : exportToJson("groups", rows)
+            }
+            exportDisabled={rows.length === 0}
+            hasActiveFilters={lv.hasActiveFilters}
+            onClear={lv.clear}
+          />
+          <DataState
+            isLoading={groupsQ.isLoading}
+            isError={groupsQ.isError}
+            error={groupsQ.error}
+            isEmpty={rows.length === 0}
+            emptyIcon={UsersRoundIcon}
+            emptyTitle={lv.hasActiveFilters ? "No groups match your filters." : "No groups yet."}
+            skeletonRows={3}
+          >
+            <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Parent</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
+                    Name
+                  </SortHeader>
+                  {lv.isVisible("description") && <TableHead>Description</TableHead>}
+                  {lv.isVisible("parent") && <TableHead>Parent</TableHead>}
+                  {lv.isVisible("created") && (
+                    <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Created
+                    </SortHeader>
+                  )}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {groupsQ.data.items.map((g) => (
+                {rows.map((g) => (
                   <TableRow key={g.id}>
                     <TableCell className="font-medium">
                       <Link
@@ -134,11 +195,17 @@ function GroupsPage() {
                         {g.name}
                       </Link>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{g.description || "—"}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {g.parent_id ? g.parent_id.slice(0, 8) + "…" : "—"}
-                    </TableCell>
-                    <TableCell><TimeSince value={g.created_at} /></TableCell>
+                    {lv.isVisible("description") && (
+                      <TableCell className="text-muted-foreground">{g.description || "—"}</TableCell>
+                    )}
+                    {lv.isVisible("parent") && (
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {g.parent_id ? g.parent_id.slice(0, 8) + "…" : "—"}
+                      </TableCell>
+                    )}
+                    {lv.isVisible("created") && (
+                      <TableCell><TimeSince value={g.created_at} /></TableCell>
+                    )}
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => setExpandedId(g.id)}>
                         <UserPlusIcon /> Members
@@ -158,7 +225,7 @@ function GroupsPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
+          </DataState>
         </CardContent>
       </Card>
 
@@ -197,6 +264,7 @@ function CreateGroupSheet({ open, onOpenChange, tenantId, groups, onCreated }: C
       onCreated();
       onOpenChange(false);
     },
+    meta: { successMessage: "Group created" },
   });
 
   return (
@@ -274,12 +342,14 @@ function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
       setNewMemberId("");
       qc.invalidateQueries({ queryKey: ["group-members", groupId] });
     },
+    meta: { successMessage: "Member added" },
   });
 
   const removeM = useMutation({
     mutationFn: (userId: string) =>
       api<void>(`/v1/groups/${groupId}/members/${userId}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["group-members", groupId] }),
+    meta: { successMessage: "Member removed" },
   });
 
   return (

@@ -111,3 +111,30 @@
     transform: scale(1);
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-marquee-vertical,
+  .animate-shimmer,
+  .animate-aurora,
+  .animate-border-beam,
+  .animate-float,
+  .animate-grid-pan,
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-scale-in,
+  [class*="animate-"] {
+    /* Neutralize motion; keep the visible end-state (opacity 1, no offset). */
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* Stop transition-driven large movements while keeping fast color/opacity feedback. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

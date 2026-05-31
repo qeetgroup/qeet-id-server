@@ -6,8 +6,8 @@ import {
   SidebarTrigger,
 } from "@qeetrix/ui";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
-import { SearchIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { KeyboardIcon, SearchIcon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 import { AppSidebar } from "@/features/dashboard/components/app-sidebar";
 import { CommandPaletteLauncher } from "@/features/dashboard/components/command-palette-launcher";
@@ -15,9 +15,11 @@ import { DynamicBreadcrumb } from "@/features/dashboard/components/dynamic-bread
 import { HeaderUser } from "@/features/dashboard/components/header-user";
 import { ImpersonationBanner } from "@/features/dashboard/components/impersonation-banner";
 import { NotificationsInbox } from "@/features/dashboard/components/notifications-inbox";
+import { ShortcutsDialog } from "@/features/dashboard/components/shortcuts-dialog";
 import { ThemeToggle } from "@/features/dashboard/components/theme-toggle";
 import { WhatsNewDropdown } from "@/features/dashboard/components/whats-new-dropdown";
 import { isAuthenticated } from "@/lib/auth";
+import { useGlobalShortcuts } from "@/lib/shortcuts";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
@@ -29,12 +31,18 @@ export const Route = createFileRoute("/_app")({ component: AppLayout });
 function AppLayout() {
   const navigate = useNavigate();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated()) {
       navigate({ to: "/sign-in", replace: true });
     }
   }, [navigate]);
+
+  useGlobalShortcuts({
+    onHelp: useCallback(() => setShortcutsOpen(true), []),
+    navigate: useCallback((path: string) => navigate({ to: path }), [navigate]),
+  });
 
   return (
     <SidebarProvider>
@@ -74,6 +82,16 @@ function AppLayout() {
             >
               <SearchIcon />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="hidden sm:inline-flex"
+              aria-label="Keyboard shortcuts"
+              title="Keyboard shortcuts (?)"
+              onClick={() => setShortcutsOpen(true)}
+            >
+              <KeyboardIcon />
+            </Button>
             <WhatsNewDropdown />
             <NotificationsInbox />
             <ThemeToggle />
@@ -86,6 +104,7 @@ function AppLayout() {
         </div>
       </SidebarInset>
       <CommandPaletteLauncher open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </SidebarProvider>
   );
 }

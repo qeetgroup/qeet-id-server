@@ -13,6 +13,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
   FieldError,
@@ -32,7 +33,6 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-  Skeleton,
   StatusPill,
   Table,
   TableBody,
@@ -55,12 +55,15 @@ import {
   UploadCloudIcon,
   UserIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 
+import { BulkBar, ListToolbar, MasterCheckbox, RowCheckbox, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api, tokenStore } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { useListView } from "@/lib/list-view";
 
 export const Route = createFileRoute("/_app/users")({ component: UsersPage });
 
@@ -77,6 +80,23 @@ type User = {
 
 type UsersResponse = { items: User[]; next_cursor?: string };
 
+const STATUS_OPTIONS = [
+  { label: "Active", value: "active" },
+  { label: "Invited", value: "invited" },
+  { label: "Suspended", value: "suspended" },
+  { label: "Deleted", value: "deleted" },
+];
+
+const userCsvColumns: CsvColumn<User>[] = [
+  { header: "id", value: (u) => u.id },
+  { header: "email", value: (u) => u.email },
+  { header: "display_name", value: (u) => u.display_name },
+  { header: "phone", value: (u) => u.phone },
+  { header: "status", value: (u) => u.status },
+  { header: "email_verified_at", value: (u) => u.email_verified_at },
+  { header: "created_at", value: (u) => u.created_at },
+];
+
 function UsersPage() {
   const tenantId = useTenantId();
   const currentUserId = tokenStore.getUserId();
@@ -89,9 +109,6 @@ function UsersPage() {
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   // Cursor stack lets us pop back to the previous page without re-walking
   // from the start, while the API itself is forward-only (next_cursor).
-  // Plain state (not URL) is fine here — users get a stable bookmark
-  // anyway because /users renders the first page, and deep-linking past
-  // page 1 doesn't carry much practical value for an admin index.
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const currentCursor = cursorStack[cursorStack.length - 1];
 
@@ -104,10 +121,22 @@ function UsersPage() {
     enabled: !!tenantId,
   });
 
-  // Bulk delete: the backend doesn't expose a /v1/users/bulk DELETE
-  // endpoint today, so we fan out N parallel single deletes (capped at
-  // a small concurrency limit so we don't accidentally DoS the admin
-  // session). Promise.allSettled lets us surface partial successes.
+  const items = usersQ.data?.items ?? [];
+  const lv = useListView(items, {
+    searchFields: (u) => [u.email, u.display_name, u.phone],
+    filterFields: { status: (u) => u.status },
+    sortFields: {
+      email: (u) => u.email,
+      name: (u) => u.display_name ?? "",
+      status: (u) => u.status,
+      created: (u) => u.created_at,
+    },
+  });
+  const rows = lv.view;
+  const selectableIds = rows.filter((u) => u.id !== currentUserId).map((u) => u.id);
+
+  // Bulk delete fans out N single deletes (capped concurrency) since the
+  // backend has no bulk endpoint; allSettled surfaces partial successes.
   const bulkDeleteM = useMutation({
     mutationFn: async (ids: string[]): Promise<{ ok: number; failed: number }> => {
       setBulkProgress({ done: 0, total: ids.length });
@@ -143,10 +172,6 @@ function UsersPage() {
 
   const deleteM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/users/${id}`, { method: "DELETE" }),
-    // Optimistic remove: drop the row from every active users-query
-    // cache, remember a snapshot, and roll back on error. The list
-    // feels instant; if the server rejects, we restore + show a toast
-    // via the global mutation handler.
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["users"] });
       const snapshots = qc.getQueriesData<UsersResponse>({ queryKey: ["users"] });
@@ -164,6 +189,27 @@ function UsersPage() {
     },
     meta: { successMessage: "User deleted" },
   });
+
+  function runBulkDelete() {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} user${ids.length === 1 ? "" : "s"}? This can't be undone.`)) {
+      return;
+    }
+    bulkDeleteM.mutate(ids, {
+      onSuccess: (res) => {
+        if (res.failed === 0) {
+          toast.success(`Deleted ${res.ok} user${res.ok === 1 ? "" : "s"}`);
+        } else if (res.ok === 0) {
+          toast.error(`All ${res.failed} delete${res.failed === 1 ? "" : "s"} failed`);
+        } else {
+          toast.warning(`Deleted ${res.ok}, failed ${res.failed}`);
+        }
+      },
+    });
+  }
+
+  const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -194,186 +240,217 @@ function UsersPage() {
         <CardHeader>
           <CardTitle className="text-base">Members</CardTitle>
           <CardDescription>
-            {usersQ.data?.items?.length ?? 0} user{usersQ.data?.items?.length === 1 ? "" : "s"} in
-            this tenant
+            {rows.length} of {items.length} user{items.length === 1 ? "" : "s"} on this page
           </CardDescription>
         </CardHeader>
-        {selectedIds.size > 0 && (
-          <BulkActionsToolbar
-            count={selectedIds.size}
-            isPending={bulkDeleteM.isPending}
-            progress={bulkProgress}
-            onClear={() => setSelectedIds(new Set())}
-            onDelete={() => {
-              const ids = Array.from(selectedIds);
-              if (
-                confirm(
-                  `Delete ${ids.length} user${ids.length === 1 ? "" : "s"}? This can't be undone.`,
-                )
-              ) {
-                bulkDeleteM.mutate(ids, {
-                  onSuccess: (res) => {
-                    if (res.failed === 0) {
-                      toast.success(`Deleted ${res.ok} user${res.ok === 1 ? "" : "s"}`);
-                    } else if (res.ok === 0) {
-                      toast.error(`All ${res.failed} delete${res.failed === 1 ? "" : "s"} failed`);
-                    } else {
-                      toast.warning(`Deleted ${res.ok}, failed ${res.failed}`);
-                    }
-                  },
-                });
-              }
-            }}
-          />
-        )}
         <CardContent className="p-0">
-          {usersQ.isLoading ? (
-            <UsersTableSkeleton />
-          ) : usersQ.isError ? (
-            <div className="p-6 text-sm text-destructive">
-              {(usersQ.error as Error).message ?? "Failed to load users"}
-            </div>
-          ) : !usersQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <UserIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                No users yet. Click <strong>New user</strong> to add the first one.
-              </p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8">
-                    <MasterCheckbox
-                      items={usersQ.data.items}
-                      currentUserId={currentUserId}
-                      selectedIds={selectedIds}
-                      onChange={setSelectedIds}
-                    />
-                  </TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Email verified</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {usersQ.data.items.map((u) => {
-                  const isSelf = u.id === currentUserId;
-                  const isSelected = selectedIds.has(u.id);
-                  return (
-                    <TableRow
-                      key={u.id}
-                      className={isSelected ? "bg-muted/40" : undefined}
-                    >
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          disabled={isSelf}
-                          aria-label={`Select ${u.email}`}
-                          onChange={(e) =>
-                            setSelectedIds((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(u.id);
-                              else next.delete(u.id);
-                              return next;
-                            })
-                          }
-                          className="size-4 cursor-pointer rounded border-input accent-primary disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        <Link
-                          to="/users/$userId"
-                          params={{ userId: u.id }}
-                          className="hover:underline"
-                        >
-                          {u.email}
-                        </Link>
-                        {isSelf && (
-                          <Badge variant="muted" className="ml-2">
-                            You
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {u.display_name ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        <StatusPill status={u.status} />
-                      </TableCell>
-                      <TableCell>
-                        {u.email_verified_at ? (
-                          <TimeSince value={u.email_verified_at} />
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <TimeSince value={u.created_at} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Edit user"
-                            onClick={() => setEditing(u)}
-                          >
-                            <PencilIcon />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Set password"
-                            onClick={() => setSettingPassword(u)}
-                          >
-                            <KeyRoundIcon />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Delete user"
+          <ListToolbar
+            search={lv.search}
+            onSearchChange={lv.setSearch}
+            searchPlaceholder="Search email, name, phone…"
+            filters={[
+              {
+                id: "status",
+                label: "Status",
+                value: lv.filters.status ?? "",
+                options: STATUS_OPTIONS,
+                onChange: (v) => lv.setFilter("status", v),
+              },
+            ]}
+            columns={[
+              { id: "name", label: "Name" },
+              { id: "verified", label: "Email verified" },
+              { id: "created", label: "Created" },
+            ]}
+            isColumnVisible={lv.isVisible}
+            onToggleColumn={lv.toggleColumn}
+            density={lv.density}
+            onDensityChange={lv.setDensity}
+            onExport={(fmt) =>
+              fmt === "csv" ? exportToCsv("users", rows, userCsvColumns) : exportToJson("users", rows)
+            }
+            exportDisabled={rows.length === 0}
+            hasActiveFilters={lv.hasActiveFilters}
+            onClear={lv.clear}
+          />
+
+          {selectedIds.size > 0 && (
+            <BulkBar
+              count={selectedIds.size}
+              progress={bulkProgress}
+              disabled={bulkDeleteM.isPending}
+              onClear={() => setSelectedIds(new Set())}
+            >
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={runBulkDelete}
+                disabled={bulkDeleteM.isPending}
+              >
+                {bulkDeleteM.isPending ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
+                Delete {selectedIds.size} user{selectedIds.size === 1 ? "" : "s"}
+              </Button>
+            </BulkBar>
+          )}
+
+          <DataState
+            isLoading={usersQ.isLoading}
+            isError={usersQ.isError}
+            error={usersQ.error}
+            isEmpty={rows.length === 0}
+            emptyIcon={UserIcon}
+            emptyTitle={lv.hasActiveFilters ? "No users match your filters." : "No users yet."}
+            emptyDescription={
+              lv.hasActiveFilters ? "Adjust or clear the filters above." : "Click New user to add the first one."
+            }
+          >
+            <>
+              <Table className={denseCls}>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-8">
+                      <MasterCheckbox
+                        selectableIds={selectableIds}
+                        selectedIds={selectedIds}
+                        onChange={setSelectedIds}
+                        label="Select all users"
+                      />
+                    </TableHead>
+                    <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Email
+                    </SortHeader>
+                    {lv.isVisible("name") && (
+                      <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
+                        Name
+                      </SortHeader>
+                    )}
+                    <SortHeader columnKey="status" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Status
+                    </SortHeader>
+                    {lv.isVisible("verified") && <TableHead>Email verified</TableHead>}
+                    {lv.isVisible("created") && (
+                      <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
+                        Created
+                      </SortHeader>
+                    )}
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((u) => {
+                    const isSelf = u.id === currentUserId;
+                    const isSelected = selectedIds.has(u.id);
+                    return (
+                      <TableRow key={u.id} className={isSelected ? "bg-muted/40" : undefined}>
+                        <TableCell>
+                          <RowCheckbox
+                            id={u.id}
+                            checked={isSelected}
                             disabled={isSelf}
-                            title={
-                              isSelf ? "You can't delete your own account here" : "Delete user"
+                            label={`Select ${u.email}`}
+                            onChange={(id, checked) =>
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(id);
+                                else next.delete(id);
+                                return next;
+                              })
                             }
-                            onClick={() => setConfirmingDelete(u.id)}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          <Link
+                            to="/users/$userId"
+                            params={{ userId: u.id }}
+                            className="hover:underline"
                           >
-                            <Trash2Icon className="text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-          {(cursorStack.length > 0 || !!usersQ.data?.next_cursor) && (
-            <PaginationBar
-              hasPrev={cursorStack.length > 0}
-              hasNext={!!usersQ.data?.next_cursor}
-              onFirst={() => {
-                setCursorStack([]);
-                setSelectedIds(new Set());
-              }}
-              onNext={() => {
-                const next = usersQ.data?.next_cursor;
-                if (next) {
-                  setCursorStack((s) => [...s, next]);
-                  setSelectedIds(new Set());
-                }
-              }}
-              itemsOnPage={usersQ.data?.items?.length ?? 0}
-              pageSize={50}
-              loading={usersQ.isFetching}
-            />
-          )}
+                            {u.email}
+                          </Link>
+                          {isSelf && (
+                            <Badge variant="muted" className="ml-2">
+                              You
+                            </Badge>
+                          )}
+                        </TableCell>
+                        {lv.isVisible("name") && (
+                          <TableCell className="text-muted-foreground">
+                            {u.display_name ?? "—"}
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          <StatusPill status={u.status} />
+                        </TableCell>
+                        {lv.isVisible("verified") && (
+                          <TableCell>
+                            {u.email_verified_at ? (
+                              <TimeSince value={u.email_verified_at} />
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                        )}
+                        {lv.isVisible("created") && (
+                          <TableCell>
+                            <TimeSince value={u.created_at} />
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Edit user"
+                              onClick={() => setEditing(u)}
+                            >
+                              <PencilIcon />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Set password"
+                              onClick={() => setSettingPassword(u)}
+                            >
+                              <KeyRoundIcon />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Delete user"
+                              disabled={isSelf}
+                              title={isSelf ? "You can't delete your own account here" : "Delete user"}
+                              onClick={() => setConfirmingDelete(u.id)}
+                            >
+                              <Trash2Icon className="text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              {(cursorStack.length > 0 || !!usersQ.data?.next_cursor) && (
+                <PaginationBar
+                  hasPrev={cursorStack.length > 0}
+                  hasNext={!!usersQ.data?.next_cursor}
+                  onFirst={() => {
+                    setCursorStack([]);
+                    setSelectedIds(new Set());
+                  }}
+                  onNext={() => {
+                    const next = usersQ.data?.next_cursor;
+                    if (next) {
+                      setCursorStack((s) => [...s, next]);
+                      setSelectedIds(new Set());
+                    }
+                  }}
+                  itemsOnPage={rows.length}
+                  pageSize={50}
+                  loading={usersQ.isFetching}
+                />
+              )}
+            </>
+          </DataState>
         </CardContent>
       </Card>
 
@@ -411,7 +488,7 @@ function UsersPage() {
             <AlertDialogTitle>Delete this user?</AlertDialogTitle>
             <AlertDialogDescription>
               {(() => {
-                const target = usersQ.data?.items?.find((u) => u.id === confirmingDelete);
+                const target = items.find((u) => u.id === confirmingDelete);
                 return target ? (
                   <>
                     This soft-deletes{" "}
@@ -438,107 +515,6 @@ function UsersPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Bulk-selection helpers
-// ---------------------------------------------------------------------------
-
-interface MasterCheckboxProps {
-  items: User[];
-  currentUserId: string | null;
-  selectedIds: Set<string>;
-  onChange: (next: Set<string>) => void;
-}
-
-/** Header checkbox that selects every row except the signed-in admin
- *  (we never want to bulk-delete yourself). Renders indeterminate when
- *  some-but-not-all selectable rows are checked. */
-function MasterCheckbox({ items, currentUserId, selectedIds, onChange }: MasterCheckboxProps) {
-  const selectable = items.filter((u) => u.id !== currentUserId);
-  const allChecked = selectable.length > 0 && selectable.every((u) => selectedIds.has(u.id));
-  const someChecked = selectable.some((u) => selectedIds.has(u.id));
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = !allChecked && someChecked;
-  }, [allChecked, someChecked]);
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      checked={allChecked}
-      aria-label="Select all users"
-      onChange={(e) => {
-        if (e.target.checked) {
-          onChange(new Set(selectable.map((u) => u.id)));
-        } else {
-          onChange(new Set());
-        }
-      }}
-      className="size-4 cursor-pointer rounded border-input accent-primary"
-    />
-  );
-}
-
-interface BulkActionsToolbarProps {
-  count: number;
-  isPending: boolean;
-  progress: { done: number; total: number } | null;
-  onClear: () => void;
-  onDelete: () => void;
-}
-
-/** Sticky strip rendered between the card header and the table when
- *  at least one row is selected. Shows the count, a Clear action, and
- *  the destructive bulk-delete CTA. Progress is rendered live during
- *  the parallel-fan-out deletion. */
-function BulkActionsToolbar({
-  count,
-  isPending,
-  progress,
-  onClear,
-  onDelete,
-}: BulkActionsToolbarProps) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-y bg-muted/40 px-4 py-2 text-sm">
-      <span className="font-medium">
-        {count} selected
-      </span>
-      {progress && (
-        <span className="text-xs text-muted-foreground">
-          ({progress.done} / {progress.total} processed…)
-        </span>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="ms-auto"
-        onClick={onClear}
-        disabled={isPending}
-      >
-        Clear
-      </Button>
-      <Button
-        variant="destructive"
-        size="sm"
-        onClick={onDelete}
-        disabled={isPending}
-      >
-        {isPending ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
-        Delete {count} user{count === 1 ? "" : "s"}
-      </Button>
-    </div>
-  );
-}
-
-function UsersTableSkeleton() {
-  return (
-    <div className="space-y-3 p-4">
-      {[...Array(4)].map((_, i) => (
-        <Skeleton key={i} className="h-10 w-full" />
-      ))}
     </div>
   );
 }
@@ -798,8 +774,6 @@ function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps
               const confirm = String(data.get("confirm") ?? "");
               if (password !== confirm) {
                 setM.reset();
-                // Surface the mismatch by throwing into the form. Easiest:
-                // rely on browser validity by setting the custom message.
                 const el = e.currentTarget.elements.namedItem("confirm") as HTMLInputElement;
                 el.setCustomValidity("Passwords don't match");
                 el.reportValidity();

@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
   FieldError,
@@ -24,7 +25,6 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-  Skeleton,
   StatusPill,
   Table,
   TableBody,
@@ -39,9 +39,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { useListView } from "@/lib/list-view";
 
 export const Route = createFileRoute("/_app/invitations")({ component: InvitationsPage });
 
@@ -78,7 +81,29 @@ function InvitationsPage() {
   const revokeM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/invites/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invites"] }),
+    meta: { successMessage: "Invitation revoked" },
   });
+
+  const roleName = (id?: string | null) =>
+    rolesQ.data?.items.find((r) => r.id === id)?.name ?? "—";
+
+  const items = listQ.data?.items ?? [];
+  const lv = useListView(items, {
+    searchFields: (i) => [i.email, roleName(i.role_id)],
+    filterFields: { status: (i) => i.status },
+    sortFields: { email: (i) => i.email, expires: (i) => i.expires_at, sent: (i) => i.created_at },
+  });
+  const rows = lv.view;
+  const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
+
+  const inviteCsvColumns: CsvColumn<Invite>[] = [
+    { header: "id", value: (i) => i.id },
+    { header: "email", value: (i) => i.email },
+    { header: "role", value: (i) => roleName(i.role_id) },
+    { header: "status", value: (i) => i.status },
+    { header: "expires_at", value: (i) => i.expires_at },
+    { header: "created_at", value: (i) => i.created_at },
+  ];
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -106,71 +131,117 @@ function InvitationsPage() {
         <CardHeader>
           <CardTitle className="text-base">Invitations</CardTitle>
           <CardDescription>
-            {listQ.data?.items?.length ?? 0} invitation{listQ.data?.items?.length === 1 ? "" : "s"}
+            {rows.length} of {items.length} invitation{items.length === 1 ? "" : "s"}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {listQ.isLoading ? (
-            <div className="space-y-3 p-4">
-              {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
-              ))}
-            </div>
-          ) : listQ.isError ? (
-            <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
-          ) : !listQ.data?.items?.length ? (
-            <div className="flex flex-col items-center gap-2 p-10 text-center">
-              <MailIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No invitations sent yet.</p>
-            </div>
-          ) : (
-            <Table>
+          <ListToolbar
+            search={lv.search}
+            onSearchChange={lv.setSearch}
+            searchPlaceholder="Search email or role…"
+            filters={[
+              {
+                id: "status",
+                label: "Status",
+                value: lv.filters.status ?? "",
+                options: [
+                  { label: "Pending", value: "pending" },
+                  { label: "Accepted", value: "accepted" },
+                  { label: "Expired", value: "expired" },
+                  { label: "Revoked", value: "revoked" },
+                ],
+                onChange: (v) => lv.setFilter("status", v),
+              },
+            ]}
+            columns={[
+              { id: "role", label: "Role" },
+              { id: "expires", label: "Expires" },
+              { id: "sent", label: "Sent" },
+            ]}
+            isColumnVisible={lv.isVisible}
+            onToggleColumn={lv.toggleColumn}
+            density={lv.density}
+            onDensityChange={lv.setDensity}
+            onExport={(fmt) =>
+              fmt === "csv"
+                ? exportToCsv("invitations", rows, inviteCsvColumns)
+                : exportToJson("invitations", rows)
+            }
+            exportDisabled={rows.length === 0}
+            hasActiveFilters={lv.hasActiveFilters}
+            onClear={lv.clear}
+          />
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={rows.length === 0}
+            emptyIcon={MailIcon}
+            emptyTitle={
+              lv.hasActiveFilters ? "No invitations match your filters." : "No invitations sent yet."
+            }
+            skeletonRows={3}
+          >
+            <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
+                  <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
+                    Email
+                  </SortHeader>
+                  {lv.isVisible("role") && <TableHead>Role</TableHead>}
                   <TableHead>Status</TableHead>
-                  <TableHead>Expires</TableHead>
-                  <TableHead>Sent</TableHead>
+                  {lv.isVisible("expires") && (
+                    <SortHeader columnKey="expires" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Expires
+                    </SortHeader>
+                  )}
+                  {lv.isVisible("sent") && (
+                    <SortHeader columnKey="sent" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Sent
+                    </SortHeader>
+                  )}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {listQ.data.items.map((i) => {
-                  const roleName = rolesQ.data?.items.find((r) => r.id === i.role_id)?.name ?? "—";
-                  return (
-                    <TableRow key={i.id}>
-                      <TableCell className="font-medium">{i.email}</TableCell>
+                {rows.map((i) => (
+                  <TableRow key={i.id}>
+                    <TableCell className="font-medium">{i.email}</TableCell>
+                    {lv.isVisible("role") && (
                       <TableCell>
-                        <Badge variant="muted">{roleName}</Badge>
+                        <Badge variant="muted">{roleName(i.role_id)}</Badge>
                       </TableCell>
-                      <TableCell>
-                        <StatusPill status={i.status} />
-                      </TableCell>
+                    )}
+                    <TableCell>
+                      <StatusPill status={i.status} />
+                    </TableCell>
+                    {lv.isVisible("expires") && (
                       <TableCell>
                         <TimeSince value={i.expires_at} />
                       </TableCell>
+                    )}
+                    {lv.isVisible("sent") && (
                       <TableCell>
                         <TimeSince value={i.created_at} />
                       </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={i.status !== "pending" || revokeM.isPending}
-                          onClick={() => {
-                            if (confirm(`Revoke invitation for ${i.email}?`)) revokeM.mutate(i.id);
-                          }}
-                        >
-                          <Trash2Icon /> Revoke
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                    )}
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={i.status !== "pending" || revokeM.isPending}
+                        onClick={() => {
+                          if (confirm(`Revoke invitation for ${i.email}?`)) revokeM.mutate(i.id);
+                        }}
+                      >
+                        <Trash2Icon /> Revoke
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
-          )}
+          </DataState>
         </CardContent>
       </Card>
 
@@ -208,6 +279,7 @@ function CreateInviteSheet({
       onCreated();
       onOpenChange(false);
     },
+    meta: { successMessage: "Invitation sent" },
   });
 
   return (
@@ -241,7 +313,7 @@ function CreateInviteSheet({
               </Field>
               <Field>
                 <FieldLabel>Role</FieldLabel>
-                <Select value={roleId} onValueChange={setRoleId}>
+                <Select value={roleId} onValueChange={(v) => setRoleId(v ?? "")}>
                   <SelectTrigger>
                     <SelectValue placeholder="No role (basic member)" />
                   </SelectTrigger>

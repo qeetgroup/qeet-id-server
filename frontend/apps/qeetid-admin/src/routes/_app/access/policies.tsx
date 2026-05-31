@@ -163,7 +163,7 @@ function PoliciesPage() {
                     <FieldLabel>Complexity</FieldLabel>
                     <Select
                       value={draft.password_complexity}
-                      onValueChange={(v) => set("password_complexity", v)}
+                      onValueChange={(v) => set("password_complexity", v ?? "")}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -210,7 +210,7 @@ function PoliciesPage() {
                   <FieldLabel>Mode</FieldLabel>
                   <Select
                     value={draft.mfa_enforcement}
-                    onValueChange={(v) => set("mfa_enforcement", v)}
+                    onValueChange={(v) => set("mfa_enforcement", v ?? "")}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>

@@ -10,9 +10,23 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { ActivityIcon, KeyRoundIcon, ShieldAlertIcon, UsersIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  GaugeIcon,
+  KeyRoundIcon,
+  RepeatIcon,
+  ShieldAlertIcon,
+  UserCheckIcon,
+  UsersIcon,
+} from "lucide-react";
+import { useState } from "react";
 
 import { useAnalyticsOverview, formatShortDate } from "@/lib/analytics";
 import { OnboardingChecklist } from "@/features/dashboard/components/onboarding-checklist";
@@ -73,9 +87,6 @@ const sparkConfig = {
   v: { label: "Value", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
-// Map a server-side method label to the chart-config key. The server
-// uses lower-case (`password`, `passkey`, …); the chart uses the same
-// keys plus normalised aliases.
 const METHOD_KEYS = ["password", "passkey", "social", "saml", "oidc"] as const;
 
 function methodFill(method: string): string {
@@ -99,6 +110,11 @@ function formatDelta(pct: number, unit: "%" | "pp" = "%"): string {
   return `${sign}${pct.toFixed(1)}${unit}`;
 }
 
+// Subtle lift on hover, suppressed for reduced-motion users.
+const cardLift = "motion-safe:transition-transform motion-safe:duration-200 motion-safe:hover:-translate-y-0.5";
+
+type RangeKey = "7d" | "14d";
+
 // ---- Components ----
 
 type StatCardProps = {
@@ -113,7 +129,7 @@ type StatCardProps = {
 
 function StatCard({ icon, title, value, delta, positive, data, variant = "area" }: StatCardProps) {
   return (
-    <Card className="overflow-hidden">
+    <Card className={`overflow-hidden ${cardLift}`}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
         <div className="text-muted-foreground [&_svg]:size-4">{icon}</div>
@@ -153,6 +169,27 @@ function StatCard({ icon, title, value, delta, positive, data, variant = "area" 
   );
 }
 
+type MiniStatProps = { icon: React.ReactNode; label: string; value: string; sub?: string };
+
+function MiniStat({ icon, label, value, sub }: MiniStatProps) {
+  return (
+    <Card className={cardLift}>
+      <CardContent className="flex items-center gap-3 py-4">
+        <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground [&_svg]:size-4">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="text-lg font-semibold tabular-nums leading-tight">{value}</div>
+          <div className="truncate text-xs text-muted-foreground">
+            {label}
+            {sub ? ` · ${sub}` : ""}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function StatSkeleton() {
   return (
     <Card className="overflow-hidden">
@@ -183,6 +220,8 @@ function EmptyState({ message }: { message: string }) {
 
 function DashboardPage() {
   const { data, isLoading, isError, error } = useAnalyticsOverview();
+  const [range, setRange] = useState<RangeKey>("14d");
+  const take = range === "7d" ? 7 : 14;
 
   if (isError) {
     return (
@@ -198,12 +237,14 @@ function DashboardPage() {
   }
 
   const overview = data;
-  const sparkUsers = (overview?.user_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
-  const sparkLogins = (overview?.login_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
-  const sparkMFA = (overview?.mfa_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
-  const sparkFailed = (overview?.failed_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
+  const tail = <T,>(arr: T[]): T[] => (arr.length > take ? arr.slice(-take) : arr);
 
-  const activityRows = (overview?.login_activity_14d ?? []).map((p) => ({
+  const sparkUsers = tail(overview?.user_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
+  const sparkLogins = tail(overview?.login_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
+  const sparkMFA = tail(overview?.mfa_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
+  const sparkFailed = tail(overview?.failed_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
+
+  const activityRows = tail(overview?.login_activity_14d ?? []).map((p) => ({
     day: formatShortDate(p.date),
     password: p.password,
     passkey: p.passkey,
@@ -230,6 +271,25 @@ function DashboardPage() {
     <div className="flex min-w-0 flex-col gap-4">
       <OnboardingChecklist />
       <PasskeyPromptCard />
+
+      {/* Title row + trend-window control */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+          <p className="text-sm text-muted-foreground">
+            Identity health for this workspace at a glance.
+          </p>
+        </div>
+        <Select value={range} onValueChange={(v) => v && setRange(v as RangeKey)}>
+          <SelectTrigger size="sm" className="w-auto min-w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="7d">Last 7 days</SelectItem>
+            <SelectItem value="14d">Last 14 days</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
 
       {/* KPI cards */}
       <div className="grid auto-rows-min gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -280,18 +340,45 @@ function DashboardPage() {
         )}
       </div>
 
-      {/* Authentication Activity + Login Methods Mix */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      {/* Secondary glance stats */}
+      {overview && !isLoading && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MiniStat
+            icon={<UsersIcon />}
+            label="Total users"
+            value={overview.kpis.total_users.value.toLocaleString("en-US")}
+          />
+          <MiniStat
+            icon={<UserCheckIcon />}
+            label="Daily active"
+            value={overview.kpis.dau.value.toLocaleString("en-US")}
+            sub={formatDelta(overview.kpis.dau.delta_pct)}
+          />
+          <MiniStat
+            icon={<GaugeIcon />}
+            label="Stickiness (DAU/MAU)"
+            value={`${overview.kpis.stickiness_pct.value.toFixed(0)}%`}
+          />
+          <MiniStat
+            icon={<RepeatIcon />}
+            label="Avg sessions / user"
+            value={overview.kpis.avg_sessions_per_user.value.toFixed(1)}
+          />
+        </div>
+      )}
+
+      {/* Bento: activity (wide) + method mix */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-6">
+        <Card className={`lg:col-span-4 ${cardLift}`}>
           <CardHeader>
             <CardTitle>Authentication Activity</CardTitle>
-            <CardDescription>Daily logins by method · last 14 days</CardDescription>
+            <CardDescription>Daily logins by method · last {take} days</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <ChartSkeleton heightClass="h-72" />
             ) : activityRows.length === 0 ? (
-              <EmptyState message="No logins recorded in the last 14 days." />
+              <EmptyState message="No logins recorded in this window." />
             ) : (
               <ChartContainer config={activityConfig} className="aspect-auto h-72 w-full">
                 <AreaChart data={activityRows}>
@@ -325,7 +412,7 @@ function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className={`lg:col-span-2 ${cardLift}`}>
           <CardHeader>
             <CardTitle>Login Methods Mix</CardTitle>
             <CardDescription>Last 30 days</CardDescription>
@@ -384,9 +471,9 @@ function DashboardPage() {
         </Card>
       </div>
 
-      {/* MFA Adoption + Failed Logins */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+      {/* Bento: MFA adoption + failed logins */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-6">
+        <Card className={`lg:col-span-3 ${cardLift}`}>
           <CardHeader>
             <CardTitle>MFA Methods Adoption</CardTitle>
             <CardDescription>Users by second factor</CardDescription>
@@ -416,7 +503,7 @@ function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className={`lg:col-span-3 ${cardLift}`}>
           <CardHeader>
             <CardTitle>Failed Login Attempts</CardTitle>
             <CardDescription>Hourly · last 24h (threshold 250)</CardDescription>

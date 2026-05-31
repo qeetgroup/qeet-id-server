@@ -17,7 +17,6 @@ function SignupPage() {
           email: values.email,
           password: values.password,
           display_name: values.display_name || undefined,
-          tenant: values.tenant,
         });
       }}
     />

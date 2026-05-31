@@ -1,26 +1,32 @@
-import { Avatar, AvatarFallback, AvatarImage } from "@qeetrix/ui";
+import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
+import { BorderBeam } from "@/components/marketing/effects/border-beam";
+import { cn } from "@qeetrix/ui";
+import { QuoteIcon } from "lucide-react";
 
 const quotes = [
   {
     quote:
       "We ripped out our home-grown auth in two sprints. Passkeys, SAML, MFA — all working on day one. Qeet ID paid for itself the week we shipped.",
     name: "Priya Anand",
-    role: "Staff Engineer, Lattice",
-    avatar: "https://i.pravatar.cc/96?img=5",
+    role: "Staff Engineer",
+    company: "Lattice",
+    featured: true,
   },
   {
     quote:
       "The RBAC layer is the cleanest we've used. Sub-30ms permission checks, no cache invalidation foot-guns. Our platform team got their weekends back.",
     name: "Marcus Hale",
-    role: "VP Engineering, Vercel",
-    avatar: "https://i.pravatar.cc/96?img=12",
+    role: "VP Engineering",
+    company: "Vercel",
+    featured: false,
   },
   {
     quote:
       "Multi-tenant isolation and per-org branding without lifting a finger. We onboarded a Fortune 100 customer in three days.",
     name: "Sofía Reyes",
-    role: "CTO, Linear",
-    avatar: "https://i.pravatar.cc/96?img=32",
+    role: "CTO",
+    company: "Linear",
+    featured: false,
   },
 ];
 
@@ -39,19 +45,23 @@ export function Testimonials() {
           {quotes.map((q) => (
             <figure
               key={q.name}
-              className="flex flex-col gap-6 rounded-2xl border border-border/60 bg-background p-6"
+              className={cn(
+                "relative flex flex-col gap-6 overflow-hidden rounded-2xl border border-border/60 bg-card p-7 transition-colors hover:border-foreground/20",
+                q.featured && "lg:bg-card/80 lg:backdrop-blur",
+              )}
             >
-              <blockquote className="text-sm leading-relaxed text-foreground/90">
-                &ldquo;{q.quote}&rdquo;
+              {q.featured && <BorderBeam size={220} duration={10} />}
+              <QuoteIcon aria-hidden className="size-7 text-primary/70" />
+              <blockquote className="text-lg font-medium leading-relaxed text-foreground text-balance">
+                {q.quote}
               </blockquote>
-              <figcaption className="mt-auto flex items-center gap-3">
-                <Avatar className="size-10">
-                  <AvatarImage src={q.avatar} alt={q.name} />
-                  <AvatarFallback>{q.name.charAt(0)}</AvatarFallback>
-                </Avatar>
+              <figcaption className="mt-auto flex items-center gap-3 border-t border-border/60 pt-5">
+                <InitialsAvatar name={q.name} />
                 <div className="flex flex-col">
-                  <span className="text-sm font-medium">{q.name}</span>
-                  <span className="text-xs text-muted-foreground">{q.role}</span>
+                  <span className="text-sm font-semibold text-foreground">{q.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {q.role} · {q.company}
+                  </span>
                 </div>
               </figcaption>
             </figure>

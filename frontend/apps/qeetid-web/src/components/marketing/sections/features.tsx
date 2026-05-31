@@ -11,19 +11,24 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+type Accent = "primary" | "violet" | "cyan" | "emerald" | "amber" | "rose" | "indigo" | "teal";
+
 type FeatureCard = {
   icon: LucideIcon;
   title: string;
   body: string;
-  accent: "primary" | "violet" | "cyan" | "emerald" | "amber" | "rose" | "indigo" | "teal";
+  accent: Accent;
+  /** Bento span: wide cells take two columns on large screens. */
+  span?: "wide";
 };
 
 const cards: FeatureCard[] = [
   {
     icon: KeyRoundIcon,
     title: "Single sign-on",
-    body: "SAML 2.0, OIDC, Google, Microsoft, Apple, GitHub, and 40+ more — one config away.",
+    body: "SAML 2.0, OIDC, Google, Microsoft, Apple, GitHub, and 40+ more — one config away. Toggle providers from the dashboard, no deploys.",
     accent: "primary",
+    span: "wide",
   },
   {
     icon: FingerprintIcon,
@@ -66,10 +71,11 @@ const cards: FeatureCard[] = [
     title: "Drop-in SDKs",
     body: "TypeScript, Go, Python, Rust — first-class. React, Next.js, mobile included.",
     accent: "teal",
+    span: "wide",
   },
 ];
 
-const accent: Record<FeatureCard["accent"], { icon: string; glow: string }> = {
+const accent: Record<Accent, { icon: string; glow: string }> = {
   primary: { icon: "text-primary", glow: "from-primary/40" },
   violet: { icon: "text-violet-500", glow: "from-violet-500/40" },
   cyan: { icon: "text-cyan-500", glow: "from-cyan-500/40" },
@@ -79,6 +85,37 @@ const accent: Record<FeatureCard["accent"], { icon: string; glow: string }> = {
   indigo: { icon: "text-indigo-500", glow: "from-indigo-500/40" },
   teal: { icon: "text-teal-500", glow: "from-teal-500/40" },
 };
+
+// Small live visual for the SSO hero cell: a stack of provider chips.
+function SsoVisual() {
+  const providers = ["SAML 2.0", "OIDC", "Google", "Okta", "Azure AD", "GitHub"];
+  return (
+    <div aria-hidden className="mt-auto flex flex-wrap gap-2 pt-2">
+      {providers.map((p) => (
+        <span
+          key={p}
+          className="rounded-md border border-border/60 bg-background/60 px-2.5 py-1 font-mono text-[11px] text-muted-foreground backdrop-blur"
+        >
+          {p}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Small live visual for the SDK hero cell: an install command line.
+function SdkVisual() {
+  return (
+    <div
+      aria-hidden
+      className="mt-auto rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-[11px] backdrop-blur"
+    >
+      <span className="text-emerald-500">$</span>{" "}
+      <span className="text-muted-foreground">pnpm add</span>{" "}
+      <span className="text-foreground">@qeetid/react</span>
+    </div>
+  );
+}
 
 export function Features() {
   return (
@@ -93,33 +130,45 @@ export function Features() {
           </h2>
         </div>
 
-        <div className="mt-14 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {cards.map(({ icon: Icon, title, body, accent: key }) => (
-            <article
-              key={title}
-              className="group relative flex h-full flex-col gap-3 overflow-hidden rounded-2xl border border-border/60 bg-background p-6 transition-colors hover:border-foreground/20"
-            >
-              <span
-                aria-hidden
+        <div className="mt-14 grid auto-rows-fr grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {cards.map(({ icon: Icon, title, body, accent: key, span }) => {
+            const wide = span === "wide";
+            return (
+              <article
+                key={title}
                 className={cn(
-                  "pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-gradient-to-br to-transparent opacity-30 blur-3xl transition-opacity duration-500 group-hover:opacity-90",
-                  accent[key].glow,
-                )}
-              />
-              <span
-                className={cn(
-                  "relative grid size-10 place-items-center rounded-lg bg-muted/60",
-                  accent[key].icon,
+                  "group relative flex h-full flex-col gap-3 overflow-hidden rounded-2xl border border-border/60 p-6 transition-colors hover:border-foreground/20",
+                  wide
+                    ? "bg-card/60 backdrop-blur lg:col-span-2 lg:p-8"
+                    : "bg-background",
                 )}
               >
-                <Icon className="size-5" />
-              </span>
-              <h3 className="relative font-display text-lg font-semibold tracking-tight">
-                {title}
-              </h3>
-              <p className="relative text-sm text-muted-foreground">{body}</p>
-            </article>
-          ))}
+                <span
+                  aria-hidden
+                  className={cn(
+                    "pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-gradient-to-br to-transparent opacity-30 blur-3xl transition-opacity duration-500 group-hover:opacity-90",
+                    accent[key].glow,
+                  )}
+                />
+                <span
+                  className={cn(
+                    "relative grid size-10 place-items-center rounded-lg bg-muted/60 ring-1 ring-border/50",
+                    accent[key].icon,
+                  )}
+                >
+                  <Icon className="size-5" />
+                </span>
+                <h3 className="relative font-display text-lg font-semibold tracking-tight">
+                  {title}
+                </h3>
+                <p className={cn("relative text-sm text-muted-foreground", wide && "max-w-md")}>
+                  {body}
+                </p>
+                {wide && title === "Single sign-on" && <SsoVisual />}
+                {wide && title === "Drop-in SDKs" && <SdkVisual />}
+              </article>
+            );
+          })}
         </div>
       </div>
     </section>

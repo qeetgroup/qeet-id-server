@@ -29,7 +29,24 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Qeet Identity" },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      // Theme-adaptive Qeet favicon, with the branded .ico as universal fallback.
+      {
+        rel: "icon",
+        href: "/qeet-logo-on-light.svg",
+        type: "image/svg+xml",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        rel: "icon",
+        href: "/qeet-logo-on-dark.svg",
+        type: "image/svg+xml",
+        media: "(prefers-color-scheme: dark)",
+      },
+      { rel: "icon", href: "/favicon.ico", sizes: "48x48" },
+      { rel: "apple-touch-icon", href: "/apple-icon.png" },
+    ],
   }),
   shellComponent: RootDocument,
 });

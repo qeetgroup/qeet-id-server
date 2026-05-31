@@ -1,6 +1,8 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 import { ShieldCheckIcon } from "lucide-react";
 import { appName, dashboardUrl, gitConfig, productUrl } from "./shared";
+import { QeetLogo} from "@qeetrix/brand";
+
 
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -8,7 +10,7 @@ export function baseOptions(): BaseLayoutProps {
       title: (
         <span className="flex items-center gap-2 font-semibold tracking-tight">
           <span className="grid size-7 place-items-center rounded-md bg-foreground text-background">
-            <ShieldCheckIcon className="size-4" />
+            <QeetLogo className="size-4" />
           </span>
           <span className="text-[15px]">{appName}</span>
         </span>

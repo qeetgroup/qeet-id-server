@@ -1,4 +1,4 @@
-import { Button, Input, Label, Textarea } from "@qeetrix/ui";
+import { ContactForm } from "@/components/marketing/contact-form";
 import { BuildingIcon, LifeBuoyIcon, MailIcon, NewspaperIcon } from "lucide-react";
 import type { Metadata } from "next";
 
@@ -74,53 +74,7 @@ export default function ContactPage() {
             ))}
           </div>
 
-          <form
-            className="flex flex-col gap-5 rounded-2xl border border-border/60 bg-background p-6 lg:p-8"
-            action="/api/contact"
-            method="post"
-          >
-            <h2 className="font-display text-2xl font-semibold tracking-tight">
-              Send us a message
-            </h2>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="firstName">First name</Label>
-                <Input id="firstName" name="firstName" required autoComplete="given-name" />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="lastName">Last name</Label>
-                <Input id="lastName" name="lastName" required autoComplete="family-name" />
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="email">Work email</Label>
-              <Input id="email" name="email" type="email" required autoComplete="email" />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="company">Company</Label>
-              <Input id="company" name="company" autoComplete="organization" />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="topic">How can we help?</Label>
-              <Input id="topic" name="topic" placeholder="Sales, support, partnership…" />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="message">Message</Label>
-              <Textarea id="message" name="message" rows={5} required />
-            </div>
-
-            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-muted-foreground">
-                By submitting, you agree to our privacy policy.
-              </p>
-              <Button type="submit">Send message</Button>
-            </div>
-          </form>
+          <ContactForm />
         </div>
       </section>
     </>

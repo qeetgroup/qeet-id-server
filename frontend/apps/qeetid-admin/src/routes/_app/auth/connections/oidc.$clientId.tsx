@@ -70,15 +70,7 @@ function OidcClientDetailPage() {
         isEmpty={listQ.isSuccess && !client}
         emptyIcon={KeySquareIcon}
         emptyTitle={`No application "${clientId}" in this tenant`}
-        emptyDescription={
-          <>
-            It may have been deleted, or you may not have permission to view it.{" "}
-            <Link to="/auth/connections/oidc" className="underline">
-              Back to the list
-            </Link>
-            .
-          </>
-        }
+        emptyDescription="It may have been deleted, or you may not have permission to view it. Use the back link above to return to the list."
       >
         {client && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

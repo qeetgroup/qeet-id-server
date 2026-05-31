@@ -1,12 +1,14 @@
 "use client";
 
 import { Button, Sheet, SheetContent, SheetTrigger, cn } from "@qeetrix/ui";
-import { MenuIcon, ShieldCheckIcon } from "lucide-react";
+import { MenuIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { ButtonLink } from "./button-link";
+import { QeetMark } from "./qeet-mark";
 import { ThemeToggle } from "./theme-toggle";
+
 
 const nav = [
   { href: "/features", label: "Features" },
@@ -21,12 +23,10 @@ export function SiteHeader() {
   const [open, setOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-40 w-full border-b border-border/60 bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/55">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-6 px-4 sm:px-6 lg:px-8">
         <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-          <span className="grid size-7 place-items-center rounded-md bg-foreground text-background">
-            <ShieldCheckIcon className="size-4" />
-          </span>
+          <QeetMark size={28} className="size-7" />
           <span className="text-base">Identity</span>
         </Link>
 

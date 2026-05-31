@@ -328,6 +328,9 @@ importers:
 
   apps/qeetid-web:
     dependencies:
+      '@qeetrix/brand':
+        specifier: ^0.0.1
+        version: 0.0.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@qeetrix/ui':
         specifier: ^0.0.2
         version: 0.0.2(@types/node@22.19.19)(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(typescript@6.0.3)
@@ -1361,6 +1364,12 @@ packages:
 
   '@oxc-project/types@0.133.0':
     resolution: {integrity: sha512-KzkdCd6Uxqnf6l3HOw1xfatAlUURA0g14cvBYFyJ5SaNOQbOUvBr9PKArcPcrNIeRsBdgcUzOGrhKveVpvOIGA==}
+
+  '@qeetrix/brand@0.0.1':
+    resolution: {integrity: sha512-jGtlDgYppdh0IyHs/TAMfi69RbsXWKH1vpK+cin7vKx5NEcxEIV7bG9ildSWx0LnbGtCRoFWTy8NRcVSvvnzmg==}
+    peerDependencies:
+      react: '>=19'
+      react-dom: '>=19'
 
   '@qeetrix/tokens@0.0.2':
     resolution: {integrity: sha512-V4InuL2Y5UoVBr+ahRVa3rnOKeiuFI7CasAa8+rJHbuqchm/hz4uIXzONimo2y0rrAiKPJ2+lUIWY4dF9ku6Vg==}
@@ -7252,6 +7261,11 @@ snapshots:
 
   '@oxc-project/types@0.133.0': {}
 
+  '@qeetrix/brand@0.0.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+    dependencies:
+      react: 19.2.6
+      react-dom: 19.2.6(react@19.2.6)
+
   '@qeetrix/tokens@0.0.2': {}
 
   '@qeetrix/ui@0.0.2(@types/node@22.19.19)(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(typescript@6.0.3)':
@@ -7660,7 +7674,7 @@ snapshots:
 
   '@radix-ui/rect@1.1.1': {}
 
-  '@reduxjs/toolkit@2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6))(react@19.2.6)':
+  '@reduxjs/toolkit@2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6)(redux@5.0.1))(react@19.2.6)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@standard-schema/utils': 0.3.0
@@ -11636,7 +11650,7 @@ snapshots:
 
   recharts@3.8.1(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(redux@5.0.1):
     dependencies:
-      '@reduxjs/toolkit': 2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6))(react@19.2.6)
+      '@reduxjs/toolkit': 2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6)(redux@5.0.1))(react@19.2.6)
       clsx: 2.1.1
       decimal.js-light: 2.5.1
       es-toolkit: 1.47.0

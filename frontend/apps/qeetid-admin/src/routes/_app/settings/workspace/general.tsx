@@ -106,7 +106,7 @@ function WorkspaceGeneralPage() {
                     <Field className="grid grid-cols-2 gap-4">
                       <Field>
                         <FieldLabel>Plan</FieldLabel>
-                        <Select value={draft.plan ?? "free"} onValueChange={(v) => setDraft((d) => ({ ...d, plan: v }))}>
+                        <Select value={draft.plan ?? "free"} onValueChange={(v) => setDraft((d) => ({ ...d, plan: v ?? "free" }))}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="free">Free</SelectItem>

@@ -98,15 +98,7 @@ function GroupDetailPage() {
         isEmpty={listQ.isSuccess && !group}
         emptyIcon={FolderIcon}
         emptyTitle={`No group with id "${groupId.slice(0, 8)}…" in this tenant`}
-        emptyDescription={
-          <>
-            It may have been deleted, or you may not have permission to view it.{" "}
-            <Link to="/groups" className="underline">
-              Back to the list
-            </Link>
-            .
-          </>
-        }
+        emptyDescription="It may have been deleted, or you may not have permission to view it. Use the back link above to return to the list."
       >
         {group && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

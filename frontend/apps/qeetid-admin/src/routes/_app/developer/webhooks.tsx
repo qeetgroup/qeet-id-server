@@ -34,9 +34,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlayIcon, PlusIcon, RefreshCwIcon, Trash2Icon, WebhookIcon } from "lucide-react";
 import { useState } from "react";
 
+import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { useListView } from "@/lib/list-view";
 
 export const Route = createFileRoute("/_app/developer/webhooks")({ component: WebhooksPage });
 
@@ -62,6 +65,14 @@ const KNOWN_EVENTS = [
   "auth.failed",
 ];
 
+const webhookCsvColumns: CsvColumn<Webhook>[] = [
+  { header: "id", value: (w) => w.id },
+  { header: "url", value: (w) => w.url },
+  { header: "events", value: (w) => w.events.join("; ") },
+  { header: "status", value: (w) => (w.disabled_at ? "disabled" : "active") },
+  { header: "created_at", value: (w) => w.created_at },
+];
+
 function WebhooksPage() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -72,6 +83,15 @@ function WebhooksPage() {
     queryFn: () => api<{ items: Webhook[] }>(`/v1/tenants/${tenantId}/webhooks`),
     enabled: !!tenantId,
   });
+
+  const items = listQ.data?.items ?? [];
+  const lv = useListView(items, {
+    searchFields: (w) => [w.url, ...w.events],
+    filterFields: { status: (w) => (w.disabled_at ? "disabled" : "active") },
+    sortFields: { url: (w) => w.url, created: (w) => w.created_at },
+  });
+  const rows = lv.view;
+  const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
 
   const disableM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/webhooks/${id}`, { method: "DELETE" }),
@@ -118,32 +138,71 @@ function WebhooksPage() {
         <CardHeader>
           <CardTitle className="text-base">Subscriptions</CardTitle>
           <CardDescription>
-            {listQ.data?.items?.length ?? 0} subscription{listQ.data?.items?.length === 1 ? "" : "s"}
+            {rows.length} of {items.length} subscription{items.length === 1 ? "" : "s"}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
+          <ListToolbar
+            search={lv.search}
+            onSearchChange={lv.setSearch}
+            searchPlaceholder="Search URL or event…"
+            filters={[
+              {
+                id: "status",
+                label: "Status",
+                value: lv.filters.status ?? "",
+                options: [
+                  { label: "Active", value: "active" },
+                  { label: "Disabled", value: "disabled" },
+                ],
+                onChange: (v) => lv.setFilter("status", v),
+              },
+            ]}
+            columns={[
+              { id: "events", label: "Events" },
+              { id: "created", label: "Created" },
+            ]}
+            isColumnVisible={lv.isVisible}
+            onToggleColumn={lv.toggleColumn}
+            density={lv.density}
+            onDensityChange={lv.setDensity}
+            onExport={(fmt) =>
+              fmt === "csv"
+                ? exportToCsv("webhooks", rows, webhookCsvColumns)
+                : exportToJson("webhooks", rows)
+            }
+            exportDisabled={rows.length === 0}
+            hasActiveFilters={lv.hasActiveFilters}
+            onClear={lv.clear}
+          />
           <DataState
             isLoading={listQ.isLoading}
             isError={listQ.isError}
             error={listQ.error}
-            isEmpty={!listQ.data?.items?.length}
+            isEmpty={rows.length === 0}
             emptyIcon={WebhookIcon}
-            emptyTitle="No webhooks yet."
+            emptyTitle={lv.hasActiveFilters ? "No webhooks match your filters." : "No webhooks yet."}
             skeletonRows={3}
           >
             {listQ.data && (
-            <Table>
+            <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>URL</TableHead>
-                  <TableHead>Events</TableHead>
+                  <SortHeader columnKey="url" sort={lv.sort} onToggle={lv.toggleSort}>
+                    URL
+                  </SortHeader>
+                  {lv.isVisible("events") && <TableHead>Events</TableHead>}
                   <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
+                  {lv.isVisible("created") && (
+                    <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
+                      Created
+                    </SortHeader>
+                  )}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {listQ.data.items.map((w) => (
+                {rows.map((w) => (
                   <TableRow key={w.id}>
                     <TableCell className="font-mono text-xs">
                       <Link
@@ -154,16 +213,20 @@ function WebhooksPage() {
                         {w.url}
                       </Link>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {w.events.slice(0, 3).map((e) => <Badge key={e} variant="muted">{e}</Badge>)}
-                        {w.events.length > 3 && <Badge variant="muted">+{w.events.length - 3}</Badge>}
-                      </div>
-                    </TableCell>
+                    {lv.isVisible("events") && (
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {w.events.slice(0, 3).map((e) => <Badge key={e} variant="muted">{e}</Badge>)}
+                          {w.events.length > 3 && <Badge variant="muted">+{w.events.length - 3}</Badge>}
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <StatusPill status={w.disabled_at ? "disabled" : "active"} />
                     </TableCell>
-                    <TableCell><TimeSince value={w.created_at} /></TableCell>
+                    {lv.isVisible("created") && (
+                      <TableCell><TimeSince value={w.created_at} /></TableCell>
+                    )}
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
@@ -219,6 +282,7 @@ function CreateWebhookSheet({ open, onOpenChange, tenantId, onCreated }: CreateW
       onCreated();
       onOpenChange(false);
     },
+    meta: { successMessage: "Webhook created" },
   });
 
   const toggle = (ev: string) =>
