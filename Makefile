@@ -3,14 +3,14 @@
         test test-backend test-frontend test-api test-api-ci \
         lint typecheck format \
         migrate-up migrate-down migrate-force \
-        db-up db-down db-reset db-wipe \
+        db-up db-down db-reset db-wipe db-psql \
         kill kill-backend kill-frontend kill-admin kill-web kill-docs \
         clean
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 GO         ?= go
 PNPM       ?= pnpm
-DB_URL     ?= postgres://postgres:password@localhost:5001/qeet_identity?sslmode=disable
+DB_URL     ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
 
 help:                       ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -114,11 +114,14 @@ db-up:                      ## Start Postgres via docker compose
 db-down:                    ## Stop Postgres
 	cd backend && docker compose down
 
-db-reset:                   ## Wipe all app data: drop schemas via psql, remigrate from zero
+db-reset:                   ## Wipe all app data: drop schemas via container psql, remigrate from zero
 	cd backend && $(MAKE) db-reset
 
-db-wipe:                    ## Same idea, but uses `migrate down -all` instead of psql (no psql needed)
+db-wipe:                    ## Same idea, but uses `migrate down -all` instead of psql
 	cd backend && $(MAKE) db-wipe
+
+db-psql:                    ## Open an interactive psql shell inside the Postgres container
+	cd backend && $(MAKE) db-psql
 
 migrate-up:                 ## Apply all pending migrations
 	cd backend && $(MAKE) migrate-up

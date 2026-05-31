@@ -15,7 +15,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: qeet_identity
+      POSTGRES_DB: qeet_id
       # Listen on 5001 inside the container so host:5001 maps 1:1.
       PGPORT: "5001"
     ports:
@@ -23,7 +23,7 @@ services:
     volumes:
       - qeet_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d qeet_identity -p 5001"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qeet_id -p 5001"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -41,7 +41,7 @@ services:
       SERVICE_ENV: dev
       HTTP_PORT: "4001"
       LOG_LEVEL: info
-      DB_URL: postgres://postgres:password@postgres:5001/qeet_identity?sslmode=disable
+      DB_URL: postgres://postgres:password@postgres:5001/qeet_id?sslmode=disable
       JWT_SECRET: dev-secret-do-not-use-in-prod-32b
       JWT_ISSUER: qeet-identity
       JWT_AUDIENCE: qeet-identity
