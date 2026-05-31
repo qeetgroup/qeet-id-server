@@ -1,43 +1,24 @@
+# Local dev: Postgres only. App tiers run on the host (make dev).
+# Credentials come from backend/.env (gitignored); see .env.example.
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: qeet_id
-      # Make Postgres listen on 5001 inside the container so host:5001 maps
-      # 1:1 to container:5001 and matches the .env DB_URL exactly.
-      PGPORT: "5001"
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in backend/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-qeet_id}
+      PGPORT: ${POSTGRES_PORT:-5001}
     ports:
-      - "5001:5001"
+      - "${POSTGRES_PORT:-5001}:${POSTGRES_PORT:-5001}"
     volumes:
       - qeet_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d qeet_id -p 5001"]
+      # $$VAR so the container shell expands it, not compose.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -p $${PGPORT}"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  backend:
-    build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      SERVICE_NAME: qeet-id
-      SERVICE_ENV: dev
-      HTTP_PORT: "4001"
-      LOG_LEVEL: info
-      DB_URL: postgres://postgres:password@postgres:5001/qeet_id?sslmode=disable
-      JWT_SECRET: dev-secret-do-not-use-in-prod-32b
-      JWT_ISSUER: qeet-id
-      JWT_AUDIENCE: qeet-id
-      ACCESS_TOKEN_TTL: 15m
-      REFRESH_TOKEN_TTL: 720h
-      ALLOWED_ORIGINS: http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:3000,http://localhost:5173
-      AUTH_DEV_TRUST_HEADERS: "true"
-    ports:
-      - "4001:4001"
 
 volumes:
   qeet_pgdata:

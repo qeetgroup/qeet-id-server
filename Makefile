@@ -1,4 +1,4 @@
-.PHONY: help install dev dev-backend dev-frontend dev-admin dev-web dev-docs \
+.PHONY: help env install dev dev-backend dev-frontend dev-admin dev-web dev-docs \
         build build-backend build-frontend \
         test test-backend test-frontend test-api test-api-ci \
         lint typecheck format \
@@ -10,13 +10,12 @@
 # ── Defaults ────────────────────────────────────────────────────────────────
 GO         ?= go
 PNPM       ?= pnpm
-DB_URL     ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
+# DB creds live in backend/.env; db-*/migrate-* targets delegate to backend/Makefile.
 
 help:                       ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
 	      /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-# ── Install ─────────────────────────────────────────────────────────────────
 install:                    ## Install all dependencies (backend + frontend)
 	cd backend  && $(GO) mod tidy
 	cd frontend && $(PNPM) install
@@ -25,7 +24,7 @@ install:                    ## Install all dependencies (backend + frontend)
 dev:                        ## Run backend + all 3 frontend apps in parallel
 	@$(MAKE) -j2 dev-backend dev-frontend
 
-dev-backend:                ## Run backend API only (:8080)
+dev-backend:                ## Run backend API only (:4001, from backend/.env)
 	cd backend && $(MAKE) run
 
 dev-frontend:               ## Run all 3 frontend apps (admin/web/docs)
@@ -108,7 +107,8 @@ format:                     ## Format the frontend
 	cd frontend && $(PNPM) format
 
 # ── Database & migrations ───────────────────────────────────────────────────
-db-up:                      ## Start Postgres via docker compose
+# Postgres is the only containerised service; app tiers run on the host.
+db-up:                      ## Start Postgres (Docker, Postgres-only)
 	cd backend && docker compose up -d
 
 db-down:                    ## Stop Postgres
