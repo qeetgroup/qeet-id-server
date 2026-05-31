@@ -1,7 +1,7 @@
 // Package oidc implements the OpenID Connect provider role for Qeet.
 // Implemented: client_credentials grant (via principal pkg),
 // authorization_code grant skeleton, discovery + JWKS endpoints,
-// userinfo. Refresh-token grant for OIDC clients is TODO.
+// userinfo, and the refresh-token grant.
 package oidc
 
 import (
@@ -26,16 +26,16 @@ import (
 )
 
 type Client struct {
-	ID              uuid.UUID `json:"id"`
-	TenantID        uuid.UUID `json:"tenant_id"`
-	ClientID        string    `json:"client_id"`
-	Type            string    `json:"type"`
-	Name            string    `json:"name"`
-	RedirectURIs    []string  `json:"redirect_uris"`
-	PostLogoutURIs  []string  `json:"post_logout_uris"`
-	GrantTypes      []string  `json:"grant_types"`
-	Scopes          []string  `json:"scopes"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID             uuid.UUID `json:"id"`
+	TenantID       uuid.UUID `json:"tenant_id"`
+	ClientID       string    `json:"client_id"`
+	Type           string    `json:"type"`
+	Name           string    `json:"name"`
+	RedirectURIs   []string  `json:"redirect_uris"`
+	PostLogoutURIs []string  `json:"post_logout_uris"`
+	GrantTypes     []string  `json:"grant_types"`
+	Scopes         []string  `json:"scopes"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type Service struct {
@@ -70,6 +70,14 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	}
 	if len(in.Scopes) == 0 {
 		in.Scopes = []string{"openid", "profile", "email"}
+	}
+	// The columns are NOT NULL DEFAULT '{}'; a nil Go slice encodes as SQL NULL,
+	// so coalesce to empty to honour callers that omit these arrays.
+	if in.RedirectURIs == nil {
+		in.RedirectURIs = []string{}
+	}
+	if in.PostLogoutURIs == nil {
+		in.PostLogoutURIs = []string{}
 	}
 	clientID := "qci_" + uuid.NewString()
 	var secretHash *string
@@ -147,18 +155,20 @@ func (s *Service) Authorize(ctx context.Context, userID, tenantID uuid.UUID, cli
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	IDToken      string `json:"id_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 	Scope        string `json:"scope,omitempty"`
 }
 
-// ExchangeCode swaps an authorization_code for tokens.
-func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier string) (*TokenResponse, error) {
+// authenticateClient verifies a confidential client's secret and returns its grant types.
+func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) ([]string, error) {
 	var secretHash *string
 	var dbType string
+	var grantTypes []string
 	err := s.pool.QueryRow(ctx, `
-		SELECT client_secret_hash, type FROM auth.oidc_clients WHERE client_id = $1
-	`, clientID).Scan(&secretHash, &dbType)
+		SELECT client_secret_hash, type, grant_types FROM auth.oidc_clients WHERE client_id = $1
+	`, clientID).Scan(&secretHash, &dbType, &grantTypes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown client")
 	}
@@ -169,6 +179,15 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 		if secretHash == nil || !password.Verify(*secretHash, clientSecret) {
 			return nil, errs.ErrUnauthorized.WithDetail("invalid client secret")
 		}
+	}
+	return grantTypes, nil
+}
+
+// ExchangeCode swaps an authorization_code for tokens.
+func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier string) (*TokenResponse, error) {
+	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
+		return nil, err
 	}
 	hash := codes.Hash(code)
 	tx, err := s.pool.Begin(ctx)
@@ -240,13 +259,166 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 		}
 		idTok = t
 	}
+	refresh := ""
+	if contains(grantTypes, "refresh_token") {
+		refresh, err = s.issueRefreshToken(ctx, clientID, userID, tenantID, scopes)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &TokenResponse{
-		AccessToken: access,
-		IDToken:     idTok,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(s.issuer.AccessTTL().Seconds()),
-		Scope:       strings.Join(scopes, " "),
+		AccessToken:  access,
+		IDToken:      idTok,
+		RefreshToken: refresh,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.issuer.AccessTTL().Seconds()),
+		Scope:        strings.Join(scopes, " "),
 	}, nil
+}
+
+// issueRefreshToken persists a refresh token bound to the client+user and returns the raw value.
+func (s *Service) issueRefreshToken(ctx context.Context, clientID string, userID, tenantID uuid.UUID, scopes []string) (string, error) {
+	raw, hash, err := tokens.NewRefreshToken()
+	if err != nil {
+		return "", err
+	}
+	exp := time.Now().UTC().Add(s.issuer.RefreshTTL())
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, hash, clientID, userID, tenantID, scopes, exp)
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
+// RefreshToken handles the refresh_token grant: it rotates the presented token and re-issues
+// tokens scoped to the original grant. Replay of a used token revokes every live token for the (client, user).
+func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawRefresh string) (*TokenResponse, error) {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return nil, err
+	}
+	if rawRefresh == "" {
+		return nil, errs.ErrBadRequest.WithDetail("refresh_token required")
+	}
+	hash := tokens.HashRefresh(rawRefresh)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		id          uuid.UUID
+		rowClientID string
+		userID      uuid.UUID
+		tenantID    uuid.UUID
+		scopes      []string
+		expiresAt   time.Time
+		usedAt      *time.Time
+		revokedAt   *time.Time
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT id, client_id, user_id, tenant_id, scopes, expires_at, used_at, revoked_at
+		FROM auth.oidc_refresh_tokens
+		WHERE token_hash = $1
+		FOR UPDATE
+	`, hash).Scan(&id, &rowClientID, &userID, &tenantID, &scopes, &expiresAt, &usedAt, &revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrUnauthorized.WithDetail("unknown refresh token")
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A refresh token may only be redeemed by the client it was issued to.
+	if rowClientID != clientID {
+		return nil, errs.ErrUnauthorized.WithDetail("client mismatch")
+	}
+	if revokedAt != nil {
+		return nil, errs.ErrUnauthorized.WithDetail("refresh token revoked")
+	}
+	if usedAt != nil {
+		// Reuse — assume theft: revoke every live token for this (client, user) and audit it.
+		if err := s.handleRefreshReuse(ctx, tx, clientID, userID, tenantID, id); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, errs.ErrUnauthorized.WithDetail("refresh token reuse — tokens revoked")
+	}
+	if time.Now().After(expiresAt) {
+		return nil, errs.ErrUnauthorized.WithDetail("refresh token expired")
+	}
+
+	newRaw, newHash, err := tokens.NewRefreshToken()
+	if err != nil {
+		return nil, err
+	}
+	newExp := time.Now().UTC().Add(s.issuer.RefreshTTL())
+	var newID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`, newHash, clientID, userID, tenantID, scopes, newExp).Scan(&newID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.oidc_refresh_tokens SET used_at = NOW(), replaced_by = $1 WHERE id = $2
+	`, newID, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	access, _, err := s.issuer.IssueAccess(userID, tenantID, uuid.New(), strings.Join(scopes, " "))
+	if err != nil {
+		return nil, err
+	}
+	idTok := ""
+	if contains(scopes, "openid") {
+		t, err := s.signIDToken(userID, tenantID, clientID, "")
+		if err != nil {
+			return nil, err
+		}
+		idTok = t
+	}
+	return &TokenResponse{
+		AccessToken:  access,
+		IDToken:      idTok,
+		RefreshToken: newRaw,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.issuer.AccessTTL().Seconds()),
+		Scope:        strings.Join(scopes, " "),
+	}, nil
+}
+
+// handleRefreshReuse revokes every live refresh token for a (client, user) on replay and audits it.
+func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID string, userID, tenantID, tokenID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+		WHERE client_id = $1 AND user_id = $2 AND revoked_at IS NULL
+	`, clientID, userID); err != nil {
+		return err
+	}
+	tid, uid, rid := tenantID, userID, tokenID
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  &uid,
+		ActorType:    "system",
+		Action:       "oidc.refresh_reuse_detected",
+		ResourceType: "oidc_refresh_token",
+		ResourceID:   &rid,
+		Metadata: map[string]any{
+			"client_id":        clientID,
+			"refresh_token_id": tokenID,
+			"reason":           "refresh_token_reuse",
+		},
+	})
 }
 
 func (s *Service) signIDToken(userID, tenantID uuid.UUID, audience, nonce string) (string, error) {
@@ -401,13 +573,20 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	if u, p, ok := r.BasicAuth(); ok {
 		clientID, clientSecret = u, p
 	}
-	if r.Form.Get("grant_type") != "authorization_code" {
+	var resp *TokenResponse
+	var err error
+	switch r.Form.Get("grant_type") {
+	case "authorization_code":
+		resp, err = h.Service.ExchangeCode(r.Context(),
+			clientID, clientSecret,
+			r.Form.Get("code"), r.Form.Get("redirect_uri"), r.Form.Get("code_verifier"))
+	case "refresh_token":
+		resp, err = h.Service.RefreshToken(r.Context(),
+			clientID, clientSecret, r.Form.Get("refresh_token"))
+	default:
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("unsupported grant_type"))
 		return
 	}
-	resp, err := h.Service.ExchangeCode(r.Context(),
-		clientID, clientSecret,
-		r.Form.Get("code"), r.Form.Get("redirect_uri"), r.Form.Get("code_verifier"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

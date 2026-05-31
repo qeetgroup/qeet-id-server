@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mattn/go-isatty"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/group"
 	httpapi "github.com/qeetgroup/qeet-identity/internal/http"
 	"github.com/qeetgroup/qeet-identity/internal/invite"
+	"github.com/qeetgroup/qeet-identity/internal/ldap"
 	"github.com/qeetgroup/qeet-identity/internal/mfa"
 	"github.com/qeetgroup/qeet-identity/internal/oidc"
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
@@ -40,6 +42,8 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/principal"
 	"github.com/qeetgroup/qeet-identity/internal/rbac"
 	"github.com/qeetgroup/qeet-identity/internal/recovery"
+	"github.com/qeetgroup/qeet-identity/internal/saml"
+	"github.com/qeetgroup/qeet-identity/internal/scim"
 	"github.com/qeetgroup/qeet-identity/internal/social"
 	"github.com/qeetgroup/qeet-identity/internal/tenant"
 	"github.com/qeetgroup/qeet-identity/internal/user"
@@ -214,7 +218,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	authService := auth.NewService(pool, userRepo, issuer)
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
-	mfaService := mfa.NewService(pool, cfg.JWTIssuer)
+	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
@@ -227,9 +231,18 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	healthHandler.AddReadiness("db", health.PingDB(pool))
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
-	passkeyService := passkey.NewService(pool)
-	socialService := social.NewService(pool)
+	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
+	wa, err := webauthn.New(&webauthn.Config{RPID: rpID, RPDisplayName: rpDisplayName, RPOrigins: rpOrigins})
+	if err != nil {
+		slog.Error("webauthn init", "err", err)
+		os.Exit(1)
+	}
+	passkeyService := passkey.NewService(pool, wa, authService)
+	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
 	groupService := group.NewService(pool)
+	scimService := scim.NewService(pool, userRepo)
+	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
+	ldapService := ldap.NewService(pool, authService)
 
 	v := validator.New(validator.WithRequiredStructEnabled())
 	deps := httpapi.Deps{
@@ -255,6 +268,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Passkey:       &passkey.Handler{Service: passkeyService},
 		Social:        &social.Handler{Service: socialService},
 		Group:         &group.Handler{Service: groupService},
+		SCIM:          &scim.Handler{Service: scimService},
+		SAML:          &saml.Handler{Service: samlService},
+		LDAP:          &ldap.Handler{Service: ldapService},
 		Health:        healthHandler,
 		InFlight:      inFlight,
 

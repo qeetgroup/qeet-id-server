@@ -1,18 +1,24 @@
 // Package social manages tenant-configured external identity providers
-// (Google, GitHub, Microsoft, ...) and the externally-issued identity
-// rows that link to a Qeet user. The OAuth/OIDC exchange ceremony is a
-// stub — callbacks return 501 until per-provider clients are wired.
+// (Google, Microsoft, Okta, ...) and the externally-issued identity rows that
+// link to a Qeet user. It also drives the OIDC authorization-code login
+// ceremony for discovery-based providers (see oauthclient.go).
 package social
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-identity/internal/auth"
+	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
@@ -38,11 +44,19 @@ type ExternalIdentity struct {
 }
 
 type Service struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	auth       *auth.Service
+	appBaseURL string
+	oauth      *oauthClient
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
+	return &Service{
+		pool:       pool,
+		auth:       authSvc,
+		appBaseURL: strings.TrimRight(appBaseURL, "/"),
+		oauth:      newOAuthClient(),
+	}
 }
 
 type CreateProviderInput struct {
@@ -129,6 +143,281 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID) error {
 	return nil
 }
 
+const (
+	socialStateTTL = 10 * time.Minute
+	socialCodeTTL  = 2 * time.Minute
+	socialScopes   = "openid email profile"
+)
+
+// providerConfig is a tenant's stored config for one OIDC provider.
+type providerConfig struct {
+	clientID     string
+	clientSecret string
+	discoveryURL string
+}
+
+// resolveTenant maps a tenant id (uuid) or slug to a tenant id.
+func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, error) {
+	if ref == "" {
+		return uuid.Nil, errs.ErrBadRequest.WithDetail("tenant required")
+	}
+	if id, err := uuid.Parse(ref); err == nil {
+		return id, nil
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `SELECT id FROM tenant.tenants WHERE slug = $1`, ref).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, errs.ErrNotFound.WithDetail("unknown tenant")
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return id, nil
+}
+
+// loadProvider returns an enabled, discovery-based provider config for a tenant.
+func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider string) (providerConfig, error) {
+	var pc providerConfig
+	var discovery *string
+	var enabled bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT client_id, client_secret, discovery_url, enabled
+		FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2
+	`, tenantID, provider).Scan(&pc.clientID, &pc.clientSecret, &discovery, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pc, errs.ErrNotFound.WithDetail("provider not configured")
+	}
+	if err != nil {
+		return pc, err
+	}
+	if !enabled {
+		return pc, errs.ErrBadRequest.WithDetail("provider disabled")
+	}
+	if discovery == nil || *discovery == "" {
+		return pc, errs.ErrBadRequest.WithDetail("provider has no discovery_url (OIDC discovery required)")
+	}
+	pc.discoveryURL = *discovery
+	return pc, nil
+}
+
+// BeginLogin resolves the tenant + provider, persists CSRF state with a PKCE
+// verifier, and returns the upstream authorization URL to redirect the user to.
+func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectURI string) (string, error) {
+	tenantID, err := s.resolveTenant(ctx, tenantRef)
+	if err != nil {
+		return "", err
+	}
+	pc, err := s.loadProvider(ctx, tenantID, provider)
+	if err != nil {
+		return "", err
+	}
+	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
+	if err != nil {
+		return "", errs.ErrUnprocessable.WithDetail("provider discovery failed")
+	}
+	// PKCE S256: verifier is the raw token, challenge is its SHA-256 (codes.Hash).
+	verifier, challenge, err := codes.URLToken()
+	if err != nil {
+		return "", err
+	}
+	state, stateHash, err := codes.URLToken()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.social_oauth_states (state_hash, tenant_id, provider, code_verifier, redirect_uri, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, stateHash, tenantID, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL)); err != nil {
+		return "", err
+	}
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {pc.clientID},
+		"redirect_uri":          {redirectURI},
+		"scope":                 {socialScopes},
+		"state":                 {state},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+	}
+	sep := "?"
+	if strings.Contains(doc.AuthorizationEndpoint, "?") {
+		sep = "&"
+	}
+	return doc.AuthorizationEndpoint + sep + q.Encode(), nil
+}
+
+// CompleteCallback consumes the CSRF state, exchanges the code with the upstream
+// provider, find-or-creates the local user + external identity, and mints a
+// one-time code the SPA trades for a session.
+func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string) (string, error) {
+	if state == "" || code == "" {
+		return "", errs.ErrBadRequest.WithDetail("missing state or code")
+	}
+	stateHash := codes.Hash(state)
+
+	var (
+		tenantID       uuid.UUID
+		dbProvider     string
+		verifier       string
+		storedRedirect string
+		expiresAt      time.Time
+	)
+	// Single-use: delete the state row as we read it.
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM auth.social_oauth_states WHERE state_hash = $1
+		RETURNING tenant_id, provider, code_verifier, redirect_uri, expires_at
+	`, stateHash).Scan(&tenantID, &dbProvider, &verifier, &storedRedirect, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrBadRequest.WithDetail("invalid or used state")
+	}
+	if err != nil {
+		return "", err
+	}
+	if dbProvider != provider {
+		return "", errs.ErrBadRequest.WithDetail("provider mismatch")
+	}
+	if time.Now().After(expiresAt) {
+		return "", errs.ErrBadRequest.WithDetail("state expired")
+	}
+
+	pc, err := s.loadProvider(ctx, tenantID, provider)
+	if err != nil {
+		return "", err
+	}
+	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
+	if err != nil {
+		return "", errs.ErrUnprocessable.WithDetail("provider discovery failed")
+	}
+	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, storedRedirect, verifier)
+	if err != nil {
+		return "", errs.ErrUnprocessable.WithDetail("token exchange failed")
+	}
+	ui, err := s.oauth.userinfo(ctx, doc, accessToken)
+	if err != nil {
+		return "", errs.ErrUnprocessable.WithDetail("userinfo failed")
+	}
+	if ui.Email == "" {
+		return "", errs.ErrBadRequest.WithDetail("provider did not return an email")
+	}
+
+	userID, err := s.findOrCreateUser(ctx, tenantID, provider, ui)
+	if err != nil {
+		return "", err
+	}
+
+	rawCode, codeHash, err := codes.URLToken()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
+		VALUES ($1, $2, $3, $4)
+	`, codeHash, userID, tenantID, time.Now().UTC().Add(socialCodeTTL)); err != nil {
+		return "", err
+	}
+	return rawCode, nil
+}
+
+// findOrCreateUser links the external identity to an existing user (matched by
+// provider subject, then by globally-unique email) or provisions a new
+// password-less one. All in one tx so concurrent logins can't duplicate rows.
+func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) (uuid.UUID, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var userID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT user_id FROM "user".external_identities
+		WHERE tenant_id = $1 AND provider = $2 AND subject = $3
+	`, tenantID, provider, ui.Subject).Scan(&userID)
+	if err == nil {
+		return userID, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, err
+	}
+
+	// No linked identity yet: reuse a user with the same (globally-unique)
+	// email, else create one.
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
+	`, ui.Email).Scan(&userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var displayName any
+		if ui.Name != "" {
+			displayName = ui.Name
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+			VALUES ($1, $2, NOW(), $3, 'active')
+			RETURNING id
+		`, tenantID, ui.Email, displayName).Scan(&userID); err != nil {
+			return uuid.Nil, err
+		}
+	} else if err != nil {
+		return uuid.Nil, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (tenant_id, provider, subject) DO NOTHING
+	`, userID, tenantID, provider, ui.Subject, ui.Email); err != nil {
+		return uuid.Nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return userID, nil
+}
+
+// ExchangeLogin trades a one-time social login code for a Qeet token pair.
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+	if rawCode == "" {
+		return nil, errs.ErrBadRequest.WithDetail("code required")
+	}
+	codeHash := codes.Hash(rawCode)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		userID    uuid.UUID
+		tenantID  uuid.UUID
+		expiresAt time.Time
+		usedAt    *time.Time
+	)
+	err = tx.QueryRow(ctx, `
+		SELECT user_id, tenant_id, expires_at, used_at
+		FROM auth.social_login_codes WHERE code_hash = $1 FOR UPDATE
+	`, codeHash).Scan(&userID, &tenantID, &expiresAt, &usedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrUnauthorized.WithDetail("invalid code")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if usedAt != nil {
+		return nil, errs.ErrUnauthorized.WithDetail("code already used")
+	}
+	if time.Now().After(expiresAt) {
+		return nil, errs.ErrUnauthorized.WithDetail("code expired")
+	}
+	if _, err := tx.Exec(ctx, `UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = $1`, codeHash); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, "social")
+}
+
 type Handler struct {
 	Service *Service
 }
@@ -138,9 +427,23 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/social/providers", h.listProviders)
 	r.Get("/users/{userID}/social/identities", h.listIdentities)
 	r.Delete("/social/identities/{id}", h.unlink)
-	// OAuth ceremony — wires up per-provider exchange in a later iteration.
+}
+
+// MountPublic mounts the browser-facing OAuth ceremony, which carries no JWT.
+func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/social/{provider}/start", h.start)
 	r.Get("/social/{provider}/callback", h.callback)
+	r.Post("/social/exchange", h.exchange)
+}
+
+// callbackURL reconstructs the public callback URL the upstream provider must
+// redirect back to; it must match between start and the token exchange.
+func callbackURL(r *http.Request, provider string) string {
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + "/v1/social/" + provider + "/callback"
 }
 
 func (h *Handler) upsertProvider(w http.ResponseWriter, r *http.Request) {
@@ -223,18 +526,51 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// start redirects the browser to the provider's authorization endpoint.
+// Tenant is supplied as ?tenant=<slug> or ?tenant_id=<uuid> (no JWT here).
 func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteError(w, r, &errs.Error{
-		Code:    "not_implemented",
-		Status:  http.StatusNotImplemented,
-		Message: "social OAuth start pending per-provider client config",
-	})
+	provider := chi.URLParam(r, "provider")
+	tenantRef := r.URL.Query().Get("tenant")
+	if tenantRef == "" {
+		tenantRef = r.URL.Query().Get("tenant_id")
+	}
+	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, callbackURL(r, provider))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
+// callback handles the provider redirect, then bounces to the SPA with a
+// one-time code (tokens are never placed in the URL).
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteError(w, r, &errs.Error{
-		Code:    "not_implemented",
-		Status:  http.StatusNotImplemented,
-		Message: "social OAuth callback pending per-provider client config",
-	})
+	provider := chi.URLParam(r, "provider")
+	q := r.URL.Query()
+	code, err := h.Service.CompleteCallback(r.Context(), provider, q.Get("state"), q.Get("code"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	target := h.Service.appBaseURL + "/auth/social/callback?code=" + url.QueryEscape(code)
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+type exchangeInput struct {
+	Code string `json:"code"`
+}
+
+// exchange trades a one-time social login code for a token pair.
+func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
+	var in exchangeInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pair, err := h.Service.ExchangeLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pair)
 }

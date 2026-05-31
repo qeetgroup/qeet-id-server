@@ -79,7 +79,7 @@ func main() {
 	groupSvc := group.NewService(pool)
 	apikeySvc := apikey.NewService(pool)
 	webhookSvc := webhook.NewService(pool)
-	socialSvc := social.NewService(pool)
+	socialSvc := social.NewService(pool, authSvc, cfg.AppBaseURL)
 	brandingRepo := branding.NewRepository(pool)
 	policyRepo := policy.NewRepository(pool)
 

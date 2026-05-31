@@ -5,17 +5,25 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-identity/internal/analytics"
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/auth"
 	"github.com/qeetgroup/qeet-identity/internal/group"
+	"github.com/qeetgroup/qeet-identity/internal/oidc"
+	"github.com/qeetgroup/qeet-identity/internal/passkey"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-identity/internal/social"
 	"github.com/qeetgroup/qeet-identity/internal/tenant"
 	"github.com/qeetgroup/qeet-identity/internal/user"
 	"github.com/qeetgroup/qeet-identity/internal/webhook"
@@ -63,6 +71,230 @@ func TestAuthSignupLoginRefreshReuse(t *testing.T) {
 	// ...and that revokes the session, so the freshly-rotated token is dead too.
 	if _, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: rotated.RefreshToken}); err == nil {
 		t.Fatal("session should be revoked after reuse, rotated token must fail")
+	}
+}
+
+// OIDC authorization_code issues a refresh token; the refresh_token grant rotates
+// it, and replaying a consumed refresh token is treated as theft (revokes the chain).
+func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	issuer := tokens.NewIssuer("integration-test-signing-secret-key", "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	svc := oidc.NewService(testPool, issuer)
+
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID:     tenantID,
+		Name:         "RP",
+		RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	code, err := svc.Authorize(ctx, userID, tenantID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	if err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+	if issued.RefreshToken == "" {
+		t.Fatal("authorization_code exchange should return a refresh_token")
+	}
+
+	rotated, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if rotated.RefreshToken == "" || rotated.RefreshToken == issued.RefreshToken {
+		t.Fatal("refresh_token grant should rotate the token")
+	}
+	if rotated.AccessToken == "" {
+		t.Fatal("refresh_token grant should mint a new access token")
+	}
+
+	// Replaying the consumed refresh token is theft → revoke the chain.
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken); err == nil {
+		t.Fatal("reusing a consumed refresh token should fail")
+	}
+	// ...so the freshly-rotated token is dead too.
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken); err == nil {
+		t.Fatal("rotated token must fail after reuse revokes the chain")
+	}
+}
+
+// fakeIdP stands up an httptest server that plays a discovery-based OIDC
+// provider: a discovery document plus token + userinfo endpoints.
+func fakeIdP(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	var base string
+	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"authorization_endpoint":%q,"token_endpoint":%q,"userinfo_endpoint":%q}`,
+			base+"/authorize", base+"/token", base+"/userinfo")
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"fake-access-token","token_type":"Bearer"}`)
+	})
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"sub":"idp-subject-123","email":"social-user@example.com","name":"Social User"}`)
+	})
+	srv := httptest.NewServer(mux)
+	base = srv.URL
+	return srv
+}
+
+// The social OIDC login flow against a fake IdP: start stores PKCE state, the
+// callback provisions the user + external identity and mints a one-time code,
+// and that code exchanges for a token pair exactly once.
+func TestSocialOIDCLoginFlow(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	idp := fakeIdP(t)
+	defer idp.Close()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("soc"))
+	provider := "testidp"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, discovery_url)
+		VALUES ($1, $2, 'cid', 'csecret', $3)
+	`, tenantID, provider, idp.URL+"/.well-known/openid-configuration"); err != nil {
+		t.Fatalf("insert provider: %v", err)
+	}
+
+	authSvc, _ := newAuth()
+	svc := social.NewService(testPool, authSvc, "http://app.local")
+
+	redirectURI := "http://api.local/v1/social/" + provider + "/callback"
+	authURL, err := svc.BeginLogin(ctx, provider, tenantID.String(), redirectURI)
+	if err != nil {
+		t.Fatalf("begin login: %v", err)
+	}
+	u, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("parse auth url: %v", err)
+	}
+	state := u.Query().Get("state")
+	if state == "" {
+		t.Fatal("authorize URL missing state")
+	}
+	if u.Query().Get("code_challenge_method") != "S256" {
+		t.Fatal("expected PKCE S256 challenge")
+	}
+
+	oneTime, err := svc.CompleteCallback(ctx, provider, state, "upstream-auth-code")
+	if err != nil {
+		t.Fatalf("callback: %v", err)
+	}
+	if oneTime == "" {
+		t.Fatal("callback should return a one-time code")
+	}
+
+	var n int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM "user".external_identities
+		WHERE tenant_id = $1 AND provider = $2 AND subject = 'idp-subject-123'
+	`, tenantID, provider).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("external identity rows = %d (err %v), want 1", n, err)
+	}
+
+	pair, err := svc.ExchangeLogin(ctx, oneTime, "1.2.3.4", "test-agent")
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatal("exchange should return access + refresh tokens")
+	}
+
+	// One-time: a second exchange of the same code must fail.
+	if _, err := svc.ExchangeLogin(ctx, oneTime, "1.2.3.4", "test-agent"); err == nil {
+		t.Fatal("reusing a social login code should fail")
+	}
+}
+
+// WebAuthn begin paths that don't require a real authenticator: register/begin
+// stores a 'register' session + challenge; username-first login scopes
+// allowCredentials to the user's stored passkeys; discoverable login stores a
+// 'login_discoverable' session. (The signed finish path is covered manually in
+// the browser — it needs a real authenticator.)
+func TestPasskeyBeginCeremonies(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("pk"))
+	email := uniqueSlug("pk") + "@example.com"
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, email).Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	authSvc, _ := newAuth()
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID: "localhost", RPDisplayName: "Qeet ID", RPOrigins: []string{"http://localhost:3000"},
+	})
+	if err != nil {
+		t.Fatalf("webauthn new: %v", err)
+	}
+	svc := passkey.NewService(testPool, wa, authSvc)
+
+	sid, options, err := svc.BeginRegister(ctx, userID)
+	if err != nil {
+		t.Fatalf("begin register: %v", err)
+	}
+	if len(options.Response.Challenge) == 0 {
+		t.Fatal("registration options missing a challenge")
+	}
+	var kind string
+	if err := testPool.QueryRow(ctx, `SELECT kind FROM auth.webauthn_sessions WHERE id = $1`, sid).Scan(&kind); err != nil || kind != "register" {
+		t.Fatalf("register session kind = %q (err %v), want register", kind, err)
+	}
+
+	// Seed a credential so username-first login can resolve + scope it.
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, transports)
+		VALUES ($1, $2, $3, 0, $4)
+	`, userID, []byte("test-credential-id"), []byte("fake-public-key"), []string{"internal"}); err != nil {
+		t.Fatalf("seed credential: %v", err)
+	}
+	_, assertion, err := svc.BeginLogin(ctx, email)
+	if err != nil {
+		t.Fatalf("begin login (username): %v", err)
+	}
+	if len(assertion.Response.AllowedCredentials) != 1 {
+		t.Fatalf("allowCredentials = %d, want 1 (loadCredentials round-trip)", len(assertion.Response.AllowedCredentials))
+	}
+
+	dsid, _, err := svc.BeginLogin(ctx, "")
+	if err != nil {
+		t.Fatalf("begin login (discoverable): %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT kind FROM auth.webauthn_sessions WHERE id = $1`, dsid).Scan(&kind); err != nil || kind != "login_discoverable" {
+		t.Fatalf("discoverable session kind = %q (err %v), want login_discoverable", kind, err)
 	}
 }
 
