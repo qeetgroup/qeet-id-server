@@ -12,7 +12,7 @@ services:
     ports:
       - "${POSTGRES_PORT:-5001}:${POSTGRES_PORT:-5001}"
     volumes:
-      - qeet_pgdata:/var/lib/postgresql/data
+      - qeet-id_pgdata:/var/lib/postgresql/data
     healthcheck:
       # $$VAR so the container shell expands it, not compose.
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -p $${PGPORT}"]
@@ -21,4 +21,5 @@ services:
       retries: 10
 
 volumes:
-  qeet_pgdata:
+  qeet-id_pgdata:
+    name: qeet-id_pgdata   # exact name, no "backend_" project prefix
