@@ -1,204 +1,150 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
   FieldLabel,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Slider,
+  StatusPill,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { DatabaseIcon, Trash2Icon } from "lucide-react";
+import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import {
+  type RetentionPolicy,
+  useRetentionPolicy,
+  useRetentionPreview,
+  useRunRetention,
+  useUpdateRetentionPolicy,
+} from "@/lib/retention";
 
 export const Route = createFileRoute("/_app/security/compliance/retention")({ component: RetentionPage });
 
-const policies = [
-  {
-    key: "audit-events",
-    label: "Audit events",
-    hot: "30 days",
-    cold: "12 months",
-    legal: "tamper-evident",
-    enforced: true,
-  },
-  {
-    key: "admin-audit",
-    label: "Admin / compliance audit",
-    hot: "90 days",
-    cold: "3 years",
-    legal: "tamper-evident",
-    enforced: true,
-  },
-  {
-    key: "sessions",
-    label: "Authentication sessions",
-    hot: "expired-on-rotate",
-    cold: "30 days",
-    legal: "—",
-    enforced: true,
-  },
-  {
-    key: "deleted-users",
-    label: "Soft-deleted users",
-    hot: "30 days",
-    cold: "180 days",
-    legal: "Article 17 GDPR",
-    enforced: true,
-  },
-  {
-    key: "webhook-deliveries",
-    label: "Webhook deliveries",
-    hot: "7 days",
-    cold: "—",
-    legal: "—",
-    enforced: false,
-  },
-  {
-    key: "tokens",
-    label: "Refresh tokens (hash)",
-    hot: "until-rotated",
-    cold: "—",
-    legal: "—",
-    enforced: true,
-  },
-];
-
 function RetentionPage() {
+  const policyQ = useRetentionPolicy();
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="Lifecycle policies that govern how long each data class is retained before deletion or archival." />
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Active policies</CardDescription>
-            <DatabaseIcon className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {policies.filter((p) => p.enforced).length}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Data purged (30d)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">12.4M rows</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Outstanding GDPR purges</CardDescription>
-            <Trash2Icon className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">3</div>
-            <p className="text-xs text-muted-foreground">complete in 30-day grace window</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Per-class policy</CardTitle>
-          <CardDescription>Hot storage is queryable; cold storage is S3 / archive tier.</CardDescription>
-        </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Data class</TableHead>
-                <TableHead>Hot retention</TableHead>
-                <TableHead>Cold retention</TableHead>
-                <TableHead>Legal hold</TableHead>
-                <TableHead>Enforced</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {policies.map((p) => (
-                <TableRow key={p.key}>
-                  <TableCell className="font-medium">{p.label}</TableCell>
-                  <TableCell className="text-sm">{p.hot}</TableCell>
-                  <TableCell className="text-sm">{p.cold}</TableCell>
-                  <TableCell>
-                    {p.legal === "—" ? (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    ) : (
-                      <Badge variant="outline">{p.legal}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Switch defaultChecked={p.enforced} />
-                  </TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="ghost">
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Default tenant policy</CardTitle>
-          <CardDescription>Applies to new data classes added in the future.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-6 md:grid-cols-2">
-          <Field>
-            <FieldLabel>Default hot retention</FieldLabel>
-            <Select defaultValue="30d">
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7d">7 days</SelectItem>
-                <SelectItem value="30d">30 days</SelectItem>
-                <SelectItem value="90d">90 days</SelectItem>
-                <SelectItem value="1y">12 months</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel>Default cold retention</FieldLabel>
-            <Select defaultValue="1y">
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="6m">6 months</SelectItem>
-                <SelectItem value="1y">12 months</SelectItem>
-                <SelectItem value="3y">3 years</SelectItem>
-                <SelectItem value="7y">7 years</SelectItem>
-              </SelectContent>
-            </Select>
-            <FieldDescription>Some regulations require ≥ 7 years for financial-related audit data.</FieldDescription>
-          </Field>
-        </CardContent>
-      </Card>
+      <PageHeader description="How long deleted data is kept before it's permanently purged. Retention runs automatically once enabled; you can also preview or run it on demand." />
+      <DataState
+        isLoading={policyQ.isLoading}
+        isError={policyQ.isError}
+        error={policyQ.error}
+        isEmpty={false}
+        skeletonRows={3}
+      >
+        {policyQ.data && <RetentionForm initial={policyQ.data} />}
+      </DataState>
     </div>
+  );
+}
+
+function RetentionForm({ initial }: { initial: RetentionPolicy }) {
+  const updateM = useUpdateRetentionPolicy();
+  const previewM = useRetentionPreview();
+  const runM = useRunRetention();
+  const [draft, setDraft] = useState<RetentionPolicy>(initial);
+  const dirty =
+    draft.deleted_users_enabled !== initial.deleted_users_enabled ||
+    draft.deleted_users_days !== initial.deleted_users_days;
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Soft-deleted users</CardTitle>
+              <CardDescription>
+                Permanently purge users that have been in the recycle bin longer than the window.
+              </CardDescription>
+            </div>
+            <StatusPill kind={draft.deleted_users_enabled ? "success" : "muted"}>
+              {draft.deleted_users_enabled ? "Enabled" : "Disabled"}
+            </StatusPill>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-6">
+          <Field>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <FieldLabel>Automatic purge</FieldLabel>
+                <FieldDescription>A background job purges ripe users hourly when enabled.</FieldDescription>
+              </div>
+              <Switch
+                checked={draft.deleted_users_enabled}
+                onCheckedChange={(v) => setDraft((d) => ({ ...d, deleted_users_enabled: v }))}
+              />
+            </div>
+          </Field>
+          <Field>
+            <FieldLabel>Retention window: {draft.deleted_users_days} days</FieldLabel>
+            <Slider
+              value={[draft.deleted_users_days]}
+              onValueChange={(v) =>
+                setDraft((d) => ({ ...d, deleted_users_days: Array.isArray(v) ? (v[0] ?? 30) : v }))
+              }
+              min={1}
+              max={365}
+              step={1}
+            />
+            <FieldDescription>Users soft-deleted longer ago than this are purged. 1–3650 days.</FieldDescription>
+          </Field>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" onClick={() => previewM.mutate()} disabled={previewM.isPending}>
+              Preview
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (
+                  confirm(
+                    "Permanently purge all soft-deleted users older than the retention window? This cannot be undone.",
+                  )
+                ) {
+                  runM.mutate();
+                }
+              }}
+              disabled={runM.isPending}
+            >
+              Run purge now
+            </Button>
+            <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending || !dirty}>
+              {updateM.isPending ? "Saving…" : "Save policy"}
+            </Button>
+          </div>
+
+          {previewM.data && (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              <span className="font-medium">{previewM.data.ripe_deleted_users}</span> user
+              {previewM.data.ripe_deleted_users === 1 ? "" : "s"} would be purged at the current{" "}
+              {previewM.data.deleted_users_days}-day window.
+            </p>
+          )}
+          {runM.data && (
+            <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              Purged <span className="font-medium">{runM.data.purged}</span> user
+              {runM.data.purged === 1 ? "" : "s"}.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Other data classes</CardTitle>
+          <CardDescription>
+            Audit logs are append-only and retained for the compliance window; session and event
+            retention are managed by the platform. Configurable per-class policies are on the roadmap.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    </>
   );
 }

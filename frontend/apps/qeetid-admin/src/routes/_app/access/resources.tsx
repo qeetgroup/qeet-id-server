@@ -1,21 +1,11 @@
 import {
   Badge,
-  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  Input,
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-  Field,
-  FieldDescription,
-  FieldLabel,
+  DataState,
   Table,
   TableBody,
   TableCell,
@@ -23,225 +13,127 @@ import {
   TableHeader,
   TableRow,
 } from "@qeetrix/ui";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { BoxIcon, PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { BoxesIcon, KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
+import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/access/resources")({ component: ResourcesPage });
 
+type Permission = { id: string; key: string; description: string };
+
 type Resource = {
-  id: string;
-  identifier: string;
   name: string;
-  audience: string;
-  scopes: string[];
-  permissions: number;
-  status: "active" | "draft";
+  actions: string[];
+  count: number;
 };
 
-const seed: Resource[] = [
-  {
-    id: "1",
-    identifier: "https://api.acme.com",
-    name: "Acme Public API",
-    audience: "acme-api",
-    scopes: ["read:orders", "write:orders", "read:invoices"],
-    permissions: 12,
-    status: "active",
-  },
-  {
-    id: "2",
-    identifier: "https://billing.acme.com",
-    name: "Billing service",
-    audience: "billing",
-    scopes: ["read:subscription", "write:subscription"],
-    permissions: 4,
-    status: "active",
-  },
-  {
-    id: "3",
-    identifier: "https://reports.internal",
-    name: "Internal reports",
-    audience: "reports",
-    scopes: ["read:reports"],
-    permissions: 2,
-    status: "active",
-  },
-  {
-    id: "4",
-    identifier: "https://lab.acme.com",
-    name: "Lab Sandbox",
-    audience: "lab",
-    scopes: [],
-    permissions: 0,
-    status: "draft",
-  },
-];
+// A resource is the prefix of a permission key ("users.read" → "users"); the
+// action is everything after the first dot.
+function groupResources(perms: Permission[]): Resource[] {
+  const map = new Map<string, Set<string>>();
+  for (const p of perms) {
+    const dot = p.key.indexOf(".");
+    const resource = dot === -1 ? p.key : p.key.slice(0, dot);
+    const action = dot === -1 ? "*" : p.key.slice(dot + 1);
+    if (!map.has(resource)) map.set(resource, new Set());
+    map.get(resource)!.add(action);
+  }
+  return [...map.entries()]
+    .map(([name, actions]) => ({ name, actions: [...actions].sort(), count: actions.size }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
 
 function ResourcesPage() {
-  const [open, setOpen] = useState(false);
-  const [resources, setResources] = useState(seed);
+  const permsQ = useQuery({
+    queryKey: ["permissions"],
+    queryFn: () => api<{ items: Permission[] }>("/v1/permissions"),
+  });
+
+  const perms = permsQ.data?.items ?? [];
+  const resources = groupResources(perms);
+  const totalActions = resources.reduce((s, r) => s + r.count, 0);
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader
-        description="Protected resources — APIs and services this tenant issues access tokens for. Each one defines its own scopes."
-        actions={
-          <Button onClick={() => setOpen(true)}>
-            <PlusIcon className="mr-2 size-4" />
-            New resource
-          </Button>
-        }
-      />
+      <PageHeader description="The protected resources RBAC permissions are scoped to. Derived from the permission catalogue — each resource exposes a set of actions you can grant to roles." />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Active resources</CardDescription>
-            <BoxIcon className="size-4 text-muted-foreground" />
+            <CardDescription>Resources</CardDescription>
+            <BoxesIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {resources.filter((r) => r.status === "active").length}
-            </div>
+            <div className="text-2xl font-semibold tracking-tight">{resources.length}</div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardDescription>Total scopes</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardDescription>Actions</CardDescription>
+            <ShieldCheckIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {resources.reduce((s, r) => s + r.scopes.length, 0)}
-            </div>
+            <div className="text-2xl font-semibold tracking-tight">{totalActions}</div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader>
-            <CardDescription>Permissions defined</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardDescription>Permission keys</CardDescription>
+            <KeyRoundIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {resources.reduce((s, r) => s + r.permissions, 0)}
-            </div>
+            <div className="text-2xl font-semibold tracking-tight">{perms.length}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Resources</CardTitle>
-          <CardDescription>Each row maps 1:1 to an OAuth audience (<code>aud</code> claim).</CardDescription>
+          <CardTitle>Resource catalogue</CardTitle>
+          <CardDescription>One row per resource, with the actions it exposes.</CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Identifier (audience URL)</TableHead>
-                <TableHead>Scopes</TableHead>
-                <TableHead>Permissions</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {resources.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.name}</TableCell>
-                  <TableCell className="max-w-[280px] truncate font-mono text-xs">
-                    {r.identifier}
-                  </TableCell>
-                  <TableCell className="max-w-[260px]">
-                    {r.scopes.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    ) : (
+        <CardContent className="p-0">
+          <DataState
+            isLoading={permsQ.isLoading}
+            isError={permsQ.isError}
+            error={permsQ.error}
+            isEmpty={resources.length === 0}
+            emptyIcon={BoxesIcon}
+            emptyTitle="No permissions registered, so no resources to show."
+            skeletonRows={4}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Resource</TableHead>
+                  <TableHead>Actions</TableHead>
+                  <TableHead className="text-right">Count</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {resources.map((r) => (
+                  <TableRow key={r.name}>
+                    <TableCell className="font-medium capitalize">{r.name}</TableCell>
+                    <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {r.scopes.slice(0, 3).map((s) => (
-                          <Badge key={s} variant="outline" className="font-mono text-[10px]">
-                            {s}
+                        {r.actions.map((a) => (
+                          <Badge key={a} variant="muted" className="font-mono text-xs">
+                            {a}
                           </Badge>
                         ))}
-                        {r.scopes.length > 3 && (
-                          <Badge variant="outline" className="text-[10px]">
-                            +{r.scopes.length - 3}
-                          </Badge>
-                        )}
                       </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">{r.permissions}</TableCell>
-                  <TableCell>
-                    {r.status === "active" ? (
-                      <Badge>active</Badge>
-                    ) : (
-                      <Badge variant="secondary">draft</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm">
-                      Open
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">{r.count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
-
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent className="sm:max-w-md">
-          <SheetHeader>
-            <SheetTitle>New resource</SheetTitle>
-            <SheetDescription>Define an API that Qeet ID issues access tokens for.</SheetDescription>
-          </SheetHeader>
-          <div className="mt-4 grid gap-4">
-            <Field>
-              <FieldLabel>Display name</FieldLabel>
-              <Input placeholder="Acme Public API" />
-            </Field>
-            <Field>
-              <FieldLabel>Identifier (audience)</FieldLabel>
-              <Input placeholder="https://api.acme.com" className="font-mono" />
-              <FieldDescription>
-                Becomes the <code>aud</code> claim on issued tokens. Use the production URL.
-              </FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel>Initial scopes</FieldLabel>
-              <Input placeholder="read:orders write:orders" />
-              <FieldDescription>Whitespace-separated. Can be edited later.</FieldDescription>
-            </Field>
-          </div>
-          <SheetFooter className="mt-6 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                setResources((rs) => [
-                  ...rs,
-                  {
-                    id: String(Date.now()),
-                    identifier: "https://new.example.com",
-                    name: "New resource",
-                    audience: "new",
-                    scopes: [],
-                    permissions: 0,
-                    status: "draft",
-                  },
-                ]);
-                setOpen(false);
-              }}
-            >
-              Create
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

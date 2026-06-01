@@ -28,6 +28,7 @@ import { Route as AppAnalyticsRouteImport } from './routes/_app/analytics'
 import { Route as AppActivityRouteImport } from './routes/_app/activity'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
 import { Route as AppUsersIndexRouteImport } from './routes/_app/users/index'
+import { Route as AuthSsoCallbackRouteImport } from './routes/_auth/sso.callback'
 import { Route as AppUsersSessionsRouteImport } from './routes/_app/users/sessions'
 import { Route as AppUsersInvitationsRouteImport } from './routes/_app/users/invitations'
 import { Route as AppUsersImportRouteImport } from './routes/_app/users/import'
@@ -171,6 +172,11 @@ const AppUsersIndexRoute = AppUsersIndexRouteImport.update({
   id: '/users/',
   path: '/users/',
   getParentRoute: () => AppRoute,
+} as any)
+const AuthSsoCallbackRoute = AuthSsoCallbackRouteImport.update({
+  id: '/sso/callback',
+  path: '/sso/callback',
+  getParentRoute: () => AuthRoute,
 } as any)
 const AppUsersSessionsRoute = AppUsersSessionsRouteImport.update({
   id: '/users/sessions',
@@ -478,6 +484,7 @@ export interface FileRoutesByFullPath {
   '/users/import': typeof AppUsersImportRoute
   '/users/invitations': typeof AppUsersInvitationsRoute
   '/users/sessions': typeof AppUsersSessionsRoute
+  '/sso/callback': typeof AuthSsoCallbackRoute
   '/users/': typeof AppUsersIndexRoute
   '/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
   '/auth/api/keys': typeof AppAuthApiKeysRoute
@@ -547,6 +554,7 @@ export interface FileRoutesByTo {
   '/users/import': typeof AppUsersImportRoute
   '/users/invitations': typeof AppUsersInvitationsRoute
   '/users/sessions': typeof AppUsersSessionsRoute
+  '/sso/callback': typeof AuthSsoCallbackRoute
   '/users': typeof AppUsersIndexRoute
   '/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
   '/auth/api/keys': typeof AppAuthApiKeysRoute
@@ -619,6 +627,7 @@ export interface FileRoutesById {
   '/_app/users/import': typeof AppUsersImportRoute
   '/_app/users/invitations': typeof AppUsersInvitationsRoute
   '/_app/users/sessions': typeof AppUsersSessionsRoute
+  '/_auth/sso/callback': typeof AuthSsoCallbackRoute
   '/_app/users/': typeof AppUsersIndexRoute
   '/_app/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
   '/_app/auth/api/keys': typeof AppAuthApiKeysRoute
@@ -690,6 +699,7 @@ export interface FileRouteTypes {
     | '/users/import'
     | '/users/invitations'
     | '/users/sessions'
+    | '/sso/callback'
     | '/users/'
     | '/access/roles/$roleId'
     | '/auth/api/keys'
@@ -759,6 +769,7 @@ export interface FileRouteTypes {
     | '/users/import'
     | '/users/invitations'
     | '/users/sessions'
+    | '/sso/callback'
     | '/users'
     | '/access/roles/$roleId'
     | '/auth/api/keys'
@@ -830,6 +841,7 @@ export interface FileRouteTypes {
     | '/_app/users/import'
     | '/_app/users/invitations'
     | '/_app/users/sessions'
+    | '/_auth/sso/callback'
     | '/_app/users/'
     | '/_app/access/roles/$roleId'
     | '/_app/auth/api/keys'
@@ -1003,6 +1015,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/users/'
       preLoaderRoute: typeof AppUsersIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_auth/sso/callback': {
+      id: '/_auth/sso/callback'
+      path: '/sso/callback'
+      fullPath: '/sso/callback'
+      preLoaderRoute: typeof AuthSsoCallbackRouteImport
+      parentRoute: typeof AuthRoute
     }
     '/_app/users/sessions': {
       id: '/_app/users/sessions'
@@ -1526,6 +1545,7 @@ interface AuthRouteChildren {
   AuthMagicRoute: typeof AuthMagicRoute
   AuthSignInRoute: typeof AuthSignInRoute
   AuthSignUpRoute: typeof AuthSignUpRoute
+  AuthSsoCallbackRoute: typeof AuthSsoCallbackRoute
 }
 
 const AuthRouteChildren: AuthRouteChildren = {
@@ -1533,6 +1553,7 @@ const AuthRouteChildren: AuthRouteChildren = {
   AuthMagicRoute: AuthMagicRoute,
   AuthSignInRoute: AuthSignInRoute,
   AuthSignUpRoute: AuthSignUpRoute,
+  AuthSsoCallbackRoute: AuthSsoCallbackRoute,
 }
 
 const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)

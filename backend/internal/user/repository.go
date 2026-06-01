@@ -272,6 +272,63 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// ListDeleted returns a tenant's soft-deleted users (most recent first).
+func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit int) ([]DeletedUser, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, display_name, deleted_at, created_at
+		FROM "user".users
+		WHERE tenant_id = $1 AND deleted_at IS NOT NULL
+		ORDER BY deleted_at DESC
+		LIMIT $2
+	`, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DeletedUser{}
+	for rows.Next() {
+		var d DeletedUser
+		if err := rows.Scan(&d.ID, &d.Email, &d.DisplayName, &d.DeletedAt, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// Restore reverses a soft delete. Returns ErrNotFound if the user isn't
+// currently soft-deleted.
+func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE "user".users
+		SET deleted_at = NULL, status = 'active', updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NOT NULL
+	`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+// Purge permanently removes a soft-deleted user (and, via ON DELETE CASCADE,
+// its sessions/credentials/identities). Only acts on already-soft-deleted rows.
+func (r *Repository) Purge(ctx context.Context, id uuid.UUID) error {
+	ct, err := r.pool.Exec(ctx, `DELETE FROM "user".users WHERE id = $1 AND deleted_at IS NOT NULL`, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
 func (r *Repository) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE "user".users
