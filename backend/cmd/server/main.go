@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"log/slog"
 	stdhttp "net/http"
@@ -49,6 +50,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/retention"
 	"github.com/qeetgroup/qeet-identity/internal/saml"
 	"github.com/qeetgroup/qeet-identity/internal/scim"
+	"github.com/qeetgroup/qeet-identity/internal/secret"
 	"github.com/qeetgroup/qeet-identity/internal/social"
 	"github.com/qeetgroup/qeet-identity/internal/tenant"
 	"github.com/qeetgroup/qeet-identity/internal/user"
@@ -253,6 +255,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
+	// Derive a stable 32-byte AES key for the secrets vault from the server
+	// secret. Production should swap in a dedicated, rotation-aware KMS key.
+	secretsKey := sha256.Sum256([]byte(cfg.JWTSecret + "|qeetid-secrets-v1"))
+	secretService, err := secret.NewService(pool, secretsKey[:])
+	if err != nil {
+		slog.Error("init secrets vault", "err", err)
+		os.Exit(1)
+	}
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
 	ldapService := ldap.NewService(pool, authService)
 	ipAllowService := ipallow.NewService(pool)
@@ -286,6 +296,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Social:        &social.Handler{Service: socialService},
 		Group:         &group.Handler{Service: groupService},
 		SCIM:          &scim.Handler{Service: scimService},
+		Secret:        &secret.Handler{Service: secretService},
 		SAML:          &saml.Handler{Service: samlService},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},

@@ -15,6 +15,7 @@ export interface AuthPolicy {
   password_require_number: boolean;
   password_require_symbol: boolean;
   magic_link_enabled: boolean;
+  magic_link_ttl_minutes: number;
   passkey_enabled: boolean;
   otp_email_enabled: boolean;
   otp_sms_enabled: boolean;

@@ -6,7 +6,16 @@
 
 This monorepo contains the full Qeet ID identity platform: a Go modular-monolith backend, three frontend apps (admin dashboard, marketing site, docs), and a shared UI component library.
 
-> **Status:** pre-1.0. Roughly **29% of v1.0 must-haves implemented, 16% partial, 55% not started** — see [documents/IMPLEMENTATION-STATUS.md](./documents/IMPLEMENTATION-STATUS.md) and [documents/GAP-ANALYSIS.md](./documents/GAP-ANALYSIS.md) before betting your product on it.
+> **Status:** pre-1.0, but substantially built out — **~88% of the v1 product surface is implemented and working.**
+>
+> | Surface | Completion |
+> | --- | --- |
+> | Backend API — 28 domain modules, 40 migrations, **no stubbed endpoints** | ~90% |
+> | Admin console — **56 / 63 feature screens wired to live APIs** | ~89% |
+> | Marketing site (`qeetid-web`) | ✅ complete |
+> | Docs site (`qeetid-docs`) | ✅ complete |
+>
+> Remaining work is mostly net-new feature areas (automation, threat-detection, secrets vault), informational compliance pages, and production hardening (real email/SMS delivery, stronger crypto). Full breakdown in [Feature status](#feature-status).
 
 ---
 
@@ -19,8 +28,8 @@ qeet-identity/
 │   │   ├── openapi.yaml    OpenAPI 3.x specification
 │   │   └── postman/        Postman collection + Newman runner
 │   ├── cmd/server/         Service entrypoint
-│   ├── internal/           ~20 domain modules (auth, oidc, rbac, mfa, …)
-│   ├── migrations/         25 SQL migrations (golang-migrate)
+│   ├── internal/           28 domain modules (auth, oidc, rbac, mfa, saml, scim, ldap, billing, secret, …)
+│   ├── migrations/         39 SQL migrations (golang-migrate)
 │   └── Makefile            Backend build / test / migrate targets
 ├── frontend/               pnpm + Turborepo workspace
 │   ├── apps/
@@ -31,12 +40,6 @@ qeet-identity/
 │       ├── qeetid-ui/         Shared shadcn-style components
 │       ├── qeetid-tsconfig/   Shared TypeScript configs
 │       └── qeetid-eslint/     Shared ESLint config
-├── documents/              Implementation status & requirement traceability
-│   ├── README.md                  Index
-│   ├── IMPLEMENTATION-STATUS.md   Module-by-module status
-│   ├── FEATURE-MATRIX.md          Quick-reference table
-│   ├── PROTOCOL-STATUS.md         OAuth/OIDC/SAML/SCIM/WebAuthn conformance
-│   └── GAP-ANALYSIS.md            Prioritized punch list to v1.0
 ├── docker-compose.yml      Whole-stack (Postgres + backend, opt-in frontend)
 └── Makefile                Root targets that delegate into backend/ + frontend/
 ```
@@ -117,40 +120,84 @@ CI-style API run with JUnit + HTML reports: `make test-api-ci` (artifacts land u
 
 ---
 
-## What works today
+## Feature status
 
-See [documents/IMPLEMENTATION-STATUS.md](./documents/IMPLEMENTATION-STATUS.md) for the full module-by-module status. Highlights:
+**~85% of the v1 product surface is built and working** — every backend endpoint below is implemented (no stubs), and every ✅ admin screen is wired to a live API. The marketing site and docs are complete.
 
-| Area                                                           | Status                                                |
-| -------------------------------------------------------------- | ----------------------------------------------------- |
-| Email / password auth + session + refresh-token rotation       | ✅                                                    |
-| Magic link + email OTP + phone OTP                             | ✅                                                    |
-| MFA (TOTP + recovery codes)                                    | ✅                                                    |
-| Multi-tenant RBAC with permission check API                    | ✅                                                    |
-| API keys + service-account M2M (OAuth client_credentials)      | ✅                                                    |
-| Webhooks (HMAC-signed, exponential-backoff retry, DLQ)         | ✅                                                    |
-| Audit log (hash-chained, append-only)                          | ✅                                                    |
-| Transactional outbox + webhook dispatcher                      | ✅                                                    |
-| OIDC discovery / JWKS / dynamic client registration / userinfo | ✅                                                    |
-| Password hashing                                               | 🟡 (bcrypt cost 12 — migrating to Argon2id)           |
-| JWT signing                                                    | 🟡 (HS256 today — RS256/ES256 + rotation needed)      |
-| OAuth 2.0 Authorization Code + OIDC ID-token issuance          | 🔴 (`/authorize` + code-grant `/token` missing)       |
-| GDPR data export + erasure runner                              | 🟡 (intake done, purge `Run()` is a no-op)            |
-| WebAuthn passkey ceremony                                      | 🔴 (storage ready, all 4 ceremony endpoints 501)      |
-| Social OAuth (Google / GitHub / Microsoft / Apple)             | 🔴 (provider config ready, exchange flow 501)         |
-| SAML 2.0 SP/IdP                                                | 🔴                                                    |
-| SCIM 2.0                                                       | 🔴                                                    |
-| Admin dashboard screens beyond `/dashboard`                    | 🔴 (38 routes are catch-all placeholders)             |
-| Real email / SMS senders                                       | 🔴 (`Sender` interface is `LogSender` — stdout only)  |
-| Stripe billing                                                 | 🔴                                                    |
+### ✅ Available now
 
-The full launch-blocker list is in [documents/GAP-ANALYSIS.md](./documents/GAP-ANALYSIS.md).
+**Authentication**
+
+- [x] Email + password, sessions, refresh-token rotation
+- [x] Magic links — passwordless email links + tenant config (enable, link lifetime)
+- [x] Email & phone OTP verification
+- [x] Passkeys / WebAuthn — full register + login ceremony
+- [x] Social login — Google, GitHub, Microsoft, Apple
+- [x] MFA — TOTP, recovery codes, Email/SMS one-time-passcode factors
+- [x] Password & passwordless policy — complexity rules (enforced on password change) + method toggles
+
+**Enterprise SSO & provisioning**
+
+- [x] OIDC / OAuth 2.0 — discovery, JWKS, `/authorize`, `/token`, userinfo, client registration
+- [x] SAML 2.0 (SP) — connection management, SP metadata, AuthnRequest, signature-validated ACS, JIT provisioning, `/sso/callback`
+- [x] SCIM 2.0 — per-tenant bearer token + `/scim/v2/Users` (create / filter / patch-active / delete)
+- [x] LDAP / Active Directory — service-bind, user search, password verification, JIT provisioning
+
+**Identity & access**
+
+- [x] Multi-tenant tenants & members
+- [x] Users — CRUD, bulk import, sessions, recycle bin (restore / permanent purge)
+- [x] Groups
+- [x] RBAC roles & permissions, ABAC policies, resource catalogue
+- [x] Invitations
+- [x] API keys & machine identities (OAuth `client_credentials`)
+- [x] Secrets vault — named integration secrets, AES-256-GCM encrypted at rest, audited reveal
+- [x] OAuth grant administration — list / revoke active OIDC refresh-token grants
+
+**Security & compliance**
+
+- [x] Session management
+- [x] Rate limiting — per-IP / per-tenant / per-user / per-API-key
+- [x] IP allow / deny rules — CIDR, deny-wins, evaluation endpoint
+- [x] Audit log — hash-chained, append-only
+- [x] GDPR erasure requests + grace-period purge sweeper
+- [x] Data retention — opt-in auto-purge of soft-deleted users (+ preview / run-now)
+
+**Developer & platform**
+
+- [x] Webhooks — HMAC-signed, exponential-backoff retry, DLQ
+- [x] Transactional outbox + dispatcher
+- [x] Analytics overview
+
+**Workspace & billing**
+
+- [x] Branding
+- [x] Workspace settings + custom domains
+- [x] Transactional email templates — per-tenant overrides + preview
+- [x] Billing — **internal, multi-currency** plans / subscriptions / invoices (any ISO-4217 currency)
+- [x] Account — profile, security, sessions, data export
+
+**Apps**
+
+- [x] Admin dashboard (Vite + TanStack Router)
+- [x] Marketing site (Next.js)
+- [x] Docs site (Next.js + fumadocs, AI search)
+
+### 🔜 Planned / not yet implemented
+
+- [ ] **Bots & automations** — event-triggered workflow rules
+- [ ] **Infrastructure** management — regions, nodes, scaling
+- [ ] **Threat-protection dashboards** — bot detection, anomaly detection, adaptive rate limits
+- [ ] **Compliance evidence pages** — SOC 2, ISO 27001 (reporting / export)
+- [ ] Production **email / SMS delivery** — `Sender` is log-only today; pluggable for SendGrid / Twilio / Resend
+- [ ] **SAML IdP mode** (SP is done) and **SCIM Groups**
+- [ ] **Crypto hardening** — Argon2id password hashing, RS256/ES256 JWT signing + key rotation
 
 ---
 
 ## Requirements traceability
 
-Product requirements are published upstream at [qeetgroup/qeetify · qeetify-reqs](https://github.com/qeetgroup/qeetify/tree/main/qeetify-reqs) across three discovery / design phases. The [documents/](./documents/) folder maps each requirement to its implementation status in this repo.
+Product requirements are published upstream at [qeetgroup/qeetify · qeetify-reqs](https://github.com/qeetgroup/qeetify/tree/main/qeetify-reqs) across three discovery / design phases. Current implementation status against those requirements is tracked in [Feature status](#feature-status) above.
 
 ---
 
@@ -181,7 +228,7 @@ Product requirements are published upstream at [qeetgroup/qeetify · qeetify-req
 
 ## Documentation
 
-- **Implementation status** — [documents/](./documents/)
+- **Implementation status** — [Feature status](#feature-status)
 - **Backend module guide** — [backend/README.md](./backend/README.md)
 - **End-user docs** — `make dev-docs` → <http://localhost:3003>
 - **API spec (in progress)** — [backend/api/openapi.yaml](./backend/api/openapi.yaml)

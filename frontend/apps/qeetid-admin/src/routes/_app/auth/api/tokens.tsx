@@ -6,173 +6,99 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  DataState,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { ClockIcon, KeyRoundIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react";
+import { KeyRoundIcon, Trash2Icon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
+import { useOAuthGrants, useRevokeOAuthGrant } from "@/lib/oauth-grants";
 
-export const Route = createFileRoute("/_app/auth/api/tokens")({ component: AccessTokensPage });
+export const Route = createFileRoute("/_app/auth/api/tokens")({ component: TokensPage });
 
-const tokens = [
-  {
-    id: "t_4f1a",
-    type: "access",
-    user: "alice@acme.com",
-    client: "Acme Web",
-    scopes: ["openid", "profile", "email"],
-    issued: "2m ago",
-    expires: "13m",
-  },
-  {
-    id: "t_92cb",
-    type: "refresh",
-    user: "alice@acme.com",
-    client: "Acme Web",
-    scopes: ["offline_access"],
-    issued: "12m ago",
-    expires: "29d 23h",
-  },
-  {
-    id: "t_8d12",
-    type: "access",
-    user: "bob@acme.com",
-    client: "Acme iOS",
-    scopes: ["openid", "profile", "email", "offline_access"],
-    issued: "9m ago",
-    expires: "6m",
-  },
-  {
-    id: "t_1e7f",
-    type: "access",
-    user: "—",
-    client: "build-bot (service)",
-    scopes: ["user.read", "tenant.read"],
-    issued: "44s ago",
-    expires: "59m",
-  },
-  {
-    id: "t_b21c",
-    type: "refresh",
-    user: "carol@acme.com",
-    client: "Internal Admin",
-    scopes: ["offline_access"],
-    issued: "2h ago",
-    expires: "29d 21h",
-  },
-];
+function TokensPage() {
+  const listQ = useOAuthGrants();
+  const revokeM = useRevokeOAuthGrant();
+  const items = listQ.data?.items ?? [];
 
-const stats = [
-  { label: "Active access tokens", value: "18,402", icon: <KeyRoundIcon className="size-4" /> },
-  { label: "Active refresh tokens", value: "21,108", icon: <RotateCcwIcon className="size-4" /> },
-  { label: "Avg. access TTL", value: "15m", icon: <ClockIcon className="size-4" /> },
-];
-
-function AccessTokensPage() {
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader
-        description="Inspect or revoke OAuth access and refresh tokens currently outstanding."
-        actions={
-          <>
-            <Button variant="outline">
-              <RefreshCwIcon className="mr-2 size-4" />
-              Refresh
-            </Button>
-            <Button variant="destructive">Revoke all (this tenant)</Button>
-          </>
-        }
-      />
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {stats.map((s) => (
-          <Card key={s.label}>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardDescription>{s.label}</CardDescription>
-              <span className="text-muted-foreground">{s.icon}</span>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold tracking-tight">{s.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <PageHeader description="Active OAuth / OIDC grants. Access tokens are short-lived JWTs that expire on their own; revoking a grant invalidates its refresh-token chain so it can't be renewed." />
 
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Outstanding tokens</CardTitle>
-            <CardDescription>Last 100 issued; use search to find a specific principal.</CardDescription>
-          </div>
-          <div className="flex gap-2">
-            <Input placeholder="email, client, or token id…" className="w-[260px]" />
-            <Select defaultValue="all">
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                <SelectItem value="access">Access</SelectItem>
-                <SelectItem value="refresh">Refresh</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+        <CardHeader>
+          <CardTitle>Active grants</CardTitle>
+          <CardDescription>
+            One row per (client, user) refresh-token grant. {items.length} active.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Token ID</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>User / Service</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Scopes</TableHead>
-                <TableHead>Issued</TableHead>
-                <TableHead>Expires in</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {tokens.map((t) => (
-                <TableRow key={t.id}>
-                  <TableCell className="font-mono text-xs">{t.id}</TableCell>
-                  <TableCell>
-                    <Badge variant={t.type === "refresh" ? "secondary" : "default"}>{t.type}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm">{t.user}</TableCell>
-                  <TableCell className="text-sm">{t.client}</TableCell>
-                  <TableCell className="max-w-[260px]">
-                    <div className="flex flex-wrap gap-1">
-                      {t.scopes.map((s) => (
-                        <Badge key={s} variant="outline" className="font-mono text-[10px]">
-                          {s}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{t.issued}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{t.expires}</TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="ghost">
-                      Revoke
-                    </Button>
-                  </TableCell>
+        <CardContent className="p-0">
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={items.length === 0}
+            emptyIcon={KeyRoundIcon}
+            emptyTitle="No active OAuth grants."
+            skeletonRows={3}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Client</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Scopes</TableHead>
+                  <TableHead>Issued</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {items.map((g) => (
+                  <TableRow key={g.id}>
+                    <TableCell className="max-w-[200px] truncate font-mono text-xs">{g.client_id}</TableCell>
+                    <TableCell>{g.user_email || g.user_id}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {g.scopes.map((s) => (
+                          <Badge key={s} variant="muted" className="text-xs">
+                            {s}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <TimeSince value={g.issued_at} />
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <TimeSince value={g.expires_at} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (confirm(`Revoke ${g.user_email || "this user"}'s grant for ${g.client_id}?`)) {
+                            revokeM.mutate(g.id);
+                          }
+                        }}
+                        disabled={revokeM.isPending}
+                      >
+                        <Trash2Icon /> Revoke
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
     </div>

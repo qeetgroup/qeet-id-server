@@ -463,6 +463,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/oauth/authorize", h.authorize)
 	r.Post("/oauth/token-code", h.tokenCode) // distinct from /oauth/token (client_credentials)
 	r.Get("/oauth/userinfo", h.userinfo)
+	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
+	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
 }
 
 func (h *Handler) MountPublic(r chi.Router) {
@@ -630,4 +632,143 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 // you swap to RS256 you'll list the public JWK here.
 func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": []any{}})
+}
+
+// =====================================================================
+// OAuth grant administration (live OIDC refresh-token grants)
+// =====================================================================
+
+// Grant is the current (non-revoked, non-rotated, unexpired) refresh token in
+// an OIDC authorization_code grant chain — what an admin sees as an active
+// "access token" for a (client, user) pair.
+type Grant struct {
+	ID        uuid.UUID `json:"id"`
+	ClientID  string    `json:"client_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	UserEmail string    `json:"user_email"`
+	Scopes    []string  `json:"scopes"`
+	IssuedAt  time.Time `json:"issued_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (s *Service) ListGrants(ctx context.Context, tenantID uuid.UUID) ([]Grant, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.id, t.client_id, t.user_id, COALESCE(u.email, ''), t.scopes, t.issued_at, t.expires_at
+		FROM auth.oidc_refresh_tokens t
+		LEFT JOIN "user".users u ON u.id = t.user_id
+		WHERE t.tenant_id = $1 AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
+		ORDER BY t.issued_at DESC
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Grant{}
+	for rows.Next() {
+		var g Grant
+		if err := rows.Scan(&g.ID, &g.ClientID, &g.UserID, &g.UserEmail, &g.Scopes, &g.IssuedAt, &g.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// RevokeGrant revokes the entire (client, user) refresh-token chain the given
+// token belongs to, so a rotated sibling can't keep the grant alive. Returns
+// the client_id for the audit row.
+func (s *Service) RevokeGrant(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, uuid.UUID, error) {
+	var clientID string
+	var userID uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT client_id, user_id FROM auth.oidc_refresh_tokens WHERE id = $1 AND tenant_id = $2`, id, tenantID).Scan(&clientID, &userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", uuid.Nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return "", uuid.Nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+		WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL
+	`, clientID, userID, tenantID); err != nil {
+		return "", uuid.Nil, err
+	}
+	return clientID, userID, nil
+}
+
+func requirePathTenant(r *http.Request) (uuid.UUID, error) {
+	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+	}
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if pathTenant != scope {
+		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+	}
+	return scope, nil
+}
+
+func (h *Handler) listGrants(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListGrants(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) revokeGrant(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	clientID, targetUser, err := h.Service.RevokeGrant(ctx, tx, tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var actorID *uuid.UUID
+	actorType := "system"
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID = p.UserID
+		if p.ActorType != "" {
+			actorType = p.ActorType
+		}
+	}
+	tid := tenantID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		Action: "oauth.grant_revoked", ResourceType: "oidc_grant", ResourceID: &targetUser,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		Metadata: map[string]any{"client_id": clientID},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

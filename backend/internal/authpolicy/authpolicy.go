@@ -33,6 +33,7 @@ type Policy struct {
 	PasswordRequireNumber    bool `json:"password_require_number"`
 	PasswordRequireSymbol    bool `json:"password_require_symbol"`
 	MagicLinkEnabled         bool `json:"magic_link_enabled"`
+	MagicLinkTTLMinutes      int  `json:"magic_link_ttl_minutes"`
 	PasskeyEnabled           bool `json:"passkey_enabled"`
 	OTPEmailEnabled          bool `json:"otp_email_enabled"`
 	OTPSMSEnabled            bool `json:"otp_sms_enabled"`
@@ -42,10 +43,11 @@ type Policy struct {
 // explicit row yet.
 func DefaultPolicy() Policy {
 	return Policy{
-		PasswordEnabled:   true,
-		PasswordMinLength: 8,
-		MagicLinkEnabled:  true,
-		PasskeyEnabled:    true,
+		PasswordEnabled:     true,
+		PasswordMinLength:   8,
+		MagicLinkEnabled:    true,
+		MagicLinkTTLMinutes: 60,
+		PasskeyEnabled:      true,
 	}
 }
 
@@ -79,13 +81,13 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 const cols = `password_enabled, password_min_length, password_require_uppercase,
               password_require_number, password_require_symbol, magic_link_enabled,
-              passkey_enabled, otp_email_enabled, otp_sms_enabled`
+              magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled`
 
 func scan(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.PasswordEnabled, &p.PasswordMinLength, &p.PasswordRequireUppercase,
 		&p.PasswordRequireNumber, &p.PasswordRequireSymbol, &p.MagicLinkEnabled,
-		&p.PasskeyEnabled, &p.OTPEmailEnabled, &p.OTPSMSEnabled); err != nil {
+		&p.MagicLinkTTLMinutes, &p.PasskeyEnabled, &p.OTPEmailEnabled, &p.OTPSMSEnabled); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -111,12 +113,18 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	if p.PasswordMinLength > 128 {
 		p.PasswordMinLength = 128
 	}
+	if p.MagicLinkTTLMinutes < 5 {
+		p.MagicLinkTTLMinutes = 5
+	}
+	if p.MagicLinkTTLMinutes > 1440 {
+		p.MagicLinkTTLMinutes = 1440
+	}
 	return scan(tx.QueryRow(ctx, `
 		INSERT INTO tenant.auth_policy
 			(tenant_id, password_enabled, password_min_length, password_require_uppercase,
 			 password_require_number, password_require_symbol, magic_link_enabled,
-			 passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+			 magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
 		ON CONFLICT (tenant_id) DO UPDATE SET
 			password_enabled = EXCLUDED.password_enabled,
 			password_min_length = EXCLUDED.password_min_length,
@@ -124,6 +132,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 			password_require_number = EXCLUDED.password_require_number,
 			password_require_symbol = EXCLUDED.password_require_symbol,
 			magic_link_enabled = EXCLUDED.magic_link_enabled,
+			magic_link_ttl_minutes = EXCLUDED.magic_link_ttl_minutes,
 			passkey_enabled = EXCLUDED.passkey_enabled,
 			otp_email_enabled = EXCLUDED.otp_email_enabled,
 			otp_sms_enabled = EXCLUDED.otp_sms_enabled,
@@ -131,7 +140,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 		RETURNING `+cols,
 		tenantID, p.PasswordEnabled, p.PasswordMinLength, p.PasswordRequireUppercase,
 		p.PasswordRequireNumber, p.PasswordRequireSymbol, p.MagicLinkEnabled,
-		p.PasskeyEnabled, p.OTPEmailEnabled, p.OTPSMSEnabled))
+		p.MagicLinkTTLMinutes, p.PasskeyEnabled, p.OTPEmailEnabled, p.OTPSMSEnabled))
 }
 
 // ValidateForTenant loads the tenant policy and validates a password against

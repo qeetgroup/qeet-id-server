@@ -35,6 +35,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/retention"
 	"github.com/qeetgroup/qeet-identity/internal/saml"
 	"github.com/qeetgroup/qeet-identity/internal/scim"
+	"github.com/qeetgroup/qeet-identity/internal/secret"
 	"github.com/qeetgroup/qeet-identity/internal/social"
 	"github.com/qeetgroup/qeet-identity/internal/tenant"
 	"github.com/qeetgroup/qeet-identity/internal/user"
@@ -70,6 +71,7 @@ type Deps struct {
 	Social        *social.Handler
 	Group         *group.Handler
 	SCIM          *scim.Handler
+	Secret        *secret.Handler
 	SAML          *saml.Handler
 	LDAP          *ldap.Handler
 	IPAllow       *ipallow.Handler
@@ -191,6 +193,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Social.Mount(r)
 			d.Group.Mount(r)
 			d.SCIM.Mount(r)    // /tenants/{id}/scim admin: token rotate/revoke/status
+			d.Secret.Mount(r)  // /tenants/{id}/secrets: encrypted secrets vault
 			d.SAML.Mount(r)    // /tenants/{id}/saml admin: connection CRUD
 			d.LDAP.Mount(r)    // /tenants/{id}/ldap admin: connection CRUD + test bind
 			d.IPAllow.Mount(r) // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
