@@ -1,179 +1,106 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  Field,
-  FieldDescription,
-  FieldLabel,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  DataState,
   Switch,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { MailIcon, SmartphoneIcon, SparklesIcon } from "lucide-react";
+import { FingerprintIcon, KeyRoundIcon, MailIcon, MessageSquareIcon, WandSparklesIcon } from "lucide-react";
 import { useState } from "react";
+import type { ComponentType } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { type AuthPolicy, useAuthPolicy, useUpdateAuthPolicy } from "@/lib/auth-policy";
 
-export const Route = createFileRoute("/_app/auth/login-methods/passwordless")({
-  component: PasswordlessPage,
-});
+export const Route = createFileRoute("/_app/auth/login-methods/passwordless")({ component: PasswordlessPage });
 
 function PasswordlessPage() {
-  const [email, setEmail] = useState(true);
-  const [sms, setSms] = useState(false);
-  const [magicLink, setMagicLink] = useState(true);
-  const [ttl, setTtl] = useState("10m");
-
+  const policyQ = useAuthPolicy();
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="Configure OTP- and link-based passwordless flows." />
+      <PageHeader description="Passwordless sign-in methods your members can use instead of a password." />
+      <DataState
+        isLoading={policyQ.isLoading}
+        isError={policyQ.isError}
+        error={policyQ.error}
+        isEmpty={false}
+        skeletonRows={3}
+      >
+        {policyQ.data && <PasswordlessForm initial={policyQ.data} />}
+      </DataState>
+    </div>
+  );
+}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <MailIcon className="size-4" />
-              Email OTP
-            </CardTitle>
-            <CardDescription>One-time codes delivered by email.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <Badge variant={email ? "default" : "outline"}>{email ? "enabled" : "off"}</Badge>
-            <Switch checked={email} onCheckedChange={setEmail} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <SmartphoneIcon className="size-4" />
-              SMS OTP
-            </CardTitle>
-            <CardDescription>One-time codes via Twilio.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <Badge variant={sms ? "default" : "outline"}>{sms ? "enabled" : "off"}</Badge>
-            <Switch checked={sms} onCheckedChange={setSms} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <SparklesIcon className="size-4" />
-              Magic links
-            </CardTitle>
-            <CardDescription>Single-use URLs that complete login.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <Badge variant={magicLink ? "default" : "outline"}>{magicLink ? "enabled" : "off"}</Badge>
-            <Switch checked={magicLink} onCheckedChange={setMagicLink} />
-          </CardContent>
-        </Card>
+type MethodKey = "passkey_enabled" | "magic_link_enabled" | "otp_email_enabled" | "otp_sms_enabled";
+
+const METHODS: {
+  key: MethodKey;
+  title: string;
+  description: string;
+  icon: ComponentType<{ className?: string }>;
+}[] = [
+  { key: "passkey_enabled", title: "Passkeys", description: "WebAuthn / FIDO2 — phishing-resistant, the recommended default.", icon: FingerprintIcon },
+  { key: "magic_link_enabled", title: "Magic links", description: "A one-time sign-in link sent to the member's email.", icon: WandSparklesIcon },
+  { key: "otp_email_enabled", title: "Email OTP", description: "A one-time passcode delivered by email.", icon: MailIcon },
+  { key: "otp_sms_enabled", title: "SMS OTP", description: "A one-time passcode delivered by text message.", icon: MessageSquareIcon },
+];
+
+function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
+  const updateM = useUpdateAuthPolicy();
+  const [draft, setDraft] = useState<AuthPolicy>(initial);
+
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {METHODS.map((m) => {
+          const Icon = m.icon;
+          const on = draft[m.key];
+          return (
+            <Card key={m.key}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Icon className="size-4" />
+                  {m.title}
+                </CardTitle>
+                <CardDescription>{m.description}</CardDescription>
+              </CardHeader>
+              <CardContent className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">{on ? "Enabled" : "Off"}</span>
+                <Switch
+                  checked={on}
+                  aria-label={m.title}
+                  onCheckedChange={(v) => setDraft((d) => ({ ...d, [m.key]: v }))}
+                />
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Common settings</CardTitle>
-          <CardDescription>Applied to all enabled passwordless factors.</CardDescription>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <KeyRoundIcon className="size-4" /> Passkeys management
+          </CardTitle>
+          <CardDescription>
+            Individual passkeys are registered and revoked per device under Login methods → Passkeys.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-6 md:grid-cols-2">
-          <Field>
-            <FieldLabel>Code / link TTL</FieldLabel>
-            <Select value={ttl} onValueChange={(v) => v && setTtl(v)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="5m">5 minutes</SelectItem>
-                <SelectItem value="10m">10 minutes</SelectItem>
-                <SelectItem value="15m">15 minutes</SelectItem>
-                <SelectItem value="1h">1 hour</SelectItem>
-              </SelectContent>
-            </Select>
-            <FieldDescription>Tokens older than this are rejected automatically.</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel>Code length</FieldLabel>
-            <Select defaultValue="6">
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="6">6 digits</SelectItem>
-                <SelectItem value="8">8 digits</SelectItem>
-              </SelectContent>
-            </Select>
-            <FieldDescription>Only applies to email and SMS OTP.</FieldDescription>
-          </Field>
-          <Field>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <FieldLabel>Single-use only</FieldLabel>
-                <FieldDescription>Codes and links are invalidated on first use.</FieldDescription>
-              </div>
-              <Switch defaultChecked />
-            </div>
-          </Field>
-          <Field>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <FieldLabel>Auto-verify email on first use</FieldLabel>
-                <FieldDescription>Mark the user's email as verified once they complete OTP.</FieldDescription>
-              </div>
-              <Switch defaultChecked />
-            </div>
-          </Field>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Delivery providers</CardTitle>
-          <CardDescription>Where OTPs and links are sent from.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2">
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <div className="flex items-center gap-2">
-              <MailIcon className="size-4 text-muted-foreground" />
-              <span className="text-sm font-medium">SendGrid</span>
-            </div>
-            <Badge variant="outline">primary · email</Badge>
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <div className="flex items-center gap-2">
-              <MailIcon className="size-4 text-muted-foreground" />
-              <span className="text-sm font-medium">AWS SES</span>
-            </div>
-            <Badge variant="outline">failover · email</Badge>
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <div className="flex items-center gap-2">
-              <SmartphoneIcon className="size-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Twilio</span>
-            </div>
-            <Badge variant="outline">primary · sms</Badge>
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <div className="flex items-center gap-2">
-              <SmartphoneIcon className="size-4 text-muted-foreground" />
-              <span className="text-sm font-medium">AWS SNS</span>
-            </div>
-            <Badge variant="outline">failover · sms</Badge>
-          </div>
-        </CardContent>
       </Card>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline">Discard</Button>
-        <Button>Save changes</Button>
+        <Button variant="outline" onClick={() => setDraft(initial)} disabled={updateM.isPending}>
+          Reset
+        </Button>
+        <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending}>
+          {updateM.isPending ? "Saving…" : "Save changes"}
+        </Button>
       </div>
-    </div>
+    </>
   );
 }

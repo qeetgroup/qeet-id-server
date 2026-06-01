@@ -1,143 +1,142 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  Input,
+  DataState,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetrix/ui";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { RotateCcwIcon, Trash2Icon, UserMinusIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
+import { api } from "@/lib/api";
+import { useTenantId } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app/users/deleted")({ component: DeletedUsersPage });
 
-type Deleted = {
+type DeletedUser = {
   id: string;
   email: string;
-  deletedAt: string;
-  by: string;
-  reason: string;
-  daysLeft: number;
+  display_name: string | null;
+  deleted_at: string;
+  created_at: string;
 };
 
-const seed: Deleted[] = [
-  { id: "1", email: "frank.miller@acme.com", deletedAt: "2026-05-22", by: "alice@acme.com", reason: "User request — account closure", daysLeft: 27 },
-  { id: "2", email: "redacted-9f3a@acme.com", deletedAt: "2026-05-18", by: "system (GDPR purge)", reason: "GDPR Article 17", daysLeft: 23 },
-  { id: "3", email: "test+1@acme.com", deletedAt: "2026-05-10", by: "alice@acme.com", reason: "Duplicate account", daysLeft: 15 },
-  { id: "4", email: "ginny@acme.com", deletedAt: "2026-04-30", by: "carol@acme.com", reason: "Offboarding", daysLeft: 5 },
-  { id: "5", email: "hugh@acme.com", deletedAt: "2026-04-27", by: "system (SCIM)", reason: "active=false from Okta", daysLeft: 2 },
-  { id: "6", email: "redacted-1c44@acme.com", deletedAt: "2026-04-15", by: "system (GDPR purge)", reason: "GDPR Article 17 — purged", daysLeft: 0 },
-];
-
 function DeletedUsersPage() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+
+  const listQ = useQuery({
+    queryKey: ["users", "deleted", tenantId],
+    enabled: !!tenantId,
+    queryFn: () => api<{ items: DeletedUser[] }>("/v1/users/deleted"),
+  });
+
+  const restoreM = useMutation({
+    mutationFn: (id: string) => api(`/v1/users/${id}/restore`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    meta: { successMessage: "User restored" },
+  });
+
+  const purgeM = useMutation({
+    mutationFn: (id: string) => api<void>(`/v1/users/${id}/purge`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users", "deleted"] }),
+    meta: { successMessage: "User permanently deleted" },
+  });
+
+  const items = listQ.data?.items ?? [];
+
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader
-        description="Soft-deleted users. PII is redacted on permanent purge; the row remains for audit trail."
-        actions={
-          <Button variant="outline">Export CSV</Button>
-        }
-      />
+      <PageHeader description="Soft-deleted users. Restore brings an account back; permanent deletion removes it and its sessions for good." />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>In grace period</CardDescription>
+            <CardDescription>Soft-deleted</CardDescription>
             <UserMinusIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {seed.filter((d) => d.daysLeft > 0).length}
-            </div>
-            <p className="text-xs text-muted-foreground">restorable</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Purged (90d)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">142</div>
-            <p className="text-xs text-muted-foreground">PII redacted</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Grace window</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">30 days</div>
-            <p className="text-xs text-muted-foreground">tenant policy</p>
+            <div className="text-2xl font-semibold tracking-tight">{items.length}</div>
+            <p className="text-xs text-muted-foreground">Recoverable until permanently deleted</p>
           </CardContent>
         </Card>
       </div>
 
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle>Soft-deleted users</CardTitle>
-            <CardDescription>Newest first.</CardDescription>
-          </div>
-          <Input placeholder="Filter email or reason…" className="w-[280px]" />
+        <CardHeader>
+          <CardTitle>Recycle bin</CardTitle>
+          <CardDescription>Accounts removed from this tenant.</CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Email</TableHead>
-                <TableHead>Deleted at</TableHead>
-                <TableHead>By</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Days left</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {seed.map((d) => (
-                <TableRow key={d.id}>
-                  <TableCell className="font-mono text-xs">{d.email}</TableCell>
-                  <TableCell className="text-sm">{d.deletedAt}</TableCell>
-                  <TableCell className="text-sm">{d.by}</TableCell>
-                  <TableCell className="max-w-[280px] truncate text-sm text-muted-foreground">
-                    {d.reason}
-                  </TableCell>
-                  <TableCell>
-                    {d.daysLeft === 0 ? (
-                      <Badge variant="outline">purged</Badge>
-                    ) : d.daysLeft < 7 ? (
-                      <Badge variant="destructive">{d.daysLeft}d</Badge>
-                    ) : (
-                      <Badge variant="secondary">{d.daysLeft}d</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      {d.daysLeft > 0 && (
-                        <Button size="sm" variant="ghost">
-                          <RotateCcwIcon className="mr-2 size-3" />
-                          Restore
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost">
-                        <Trash2Icon className="mr-2 size-3" />
-                        Purge now
-                      </Button>
-                    </div>
-                  </TableCell>
+        <CardContent className="p-0">
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={items.length === 0}
+            emptyIcon={UserMinusIcon}
+            emptyTitle="No deleted users."
+            skeletonRows={3}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User</TableHead>
+                  <TableHead>Deleted</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {items.map((u) => (
+                  <TableRow key={u.id}>
+                    <TableCell>
+                      <div className="font-medium">{u.display_name || u.email}</div>
+                      {u.display_name && <div className="text-xs text-muted-foreground">{u.email}</div>}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <TimeSince value={u.deleted_at} />
+                    </TableCell>
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => restoreM.mutate(u.id)}
+                        disabled={restoreM.isPending}
+                      >
+                        <RotateCcwIcon /> Restore
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (
+                            confirm(
+                              `Permanently delete ${u.email}? This removes the account and its sessions and cannot be undone.`,
+                            )
+                          ) {
+                            purgeM.mutate(u.id);
+                          }
+                        }}
+                        disabled={purgeM.isPending}
+                      >
+                        <Trash2Icon /> Delete forever
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
     </div>

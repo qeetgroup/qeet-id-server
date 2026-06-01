@@ -20,12 +20,16 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/apikey"
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/auth"
+	"github.com/qeetgroup/qeet-identity/internal/authpolicy"
+	"github.com/qeetgroup/qeet-identity/internal/billing"
 	"github.com/qeetgroup/qeet-identity/internal/branding"
 	"github.com/qeetgroup/qeet-identity/internal/config"
+	"github.com/qeetgroup/qeet-identity/internal/emailtemplate"
 	"github.com/qeetgroup/qeet-identity/internal/gdpr"
 	"github.com/qeetgroup/qeet-identity/internal/group"
 	httpapi "github.com/qeetgroup/qeet-identity/internal/http"
 	"github.com/qeetgroup/qeet-identity/internal/invite"
+	"github.com/qeetgroup/qeet-identity/internal/ipallow"
 	"github.com/qeetgroup/qeet-identity/internal/ldap"
 	"github.com/qeetgroup/qeet-identity/internal/mfa"
 	"github.com/qeetgroup/qeet-identity/internal/oidc"
@@ -42,6 +46,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/principal"
 	"github.com/qeetgroup/qeet-identity/internal/rbac"
 	"github.com/qeetgroup/qeet-identity/internal/recovery"
+	"github.com/qeetgroup/qeet-identity/internal/retention"
 	"github.com/qeetgroup/qeet-identity/internal/saml"
 	"github.com/qeetgroup/qeet-identity/internal/scim"
 	"github.com/qeetgroup/qeet-identity/internal/social"
@@ -208,14 +213,21 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	if err := rbacRepo.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("rbac seed", "err", err)
 	}
+	billingService := billing.NewService(pool)
+	if err := billingService.SeedBuiltins(rootCtx); err != nil {
+		slog.Warn("billing seed", "err", err)
+	}
 	brandingRepo := branding.NewRepository(pool)
+	emailTemplateService := emailtemplate.NewService(pool)
 	policyRepo := policy.NewRepository(pool)
 
 	sender := notifier.LogSender{}
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
+	retentionService := retention.NewService(pool)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
+	authPolicyService := authpolicy.NewService(pool)
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)
@@ -243,17 +255,21 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	scimService := scim.NewService(pool, userRepo)
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
 	ldapService := ldap.NewService(pool, authService)
+	ipAllowService := ipallow.NewService(pool)
 
 	v := validator.New(validator.WithRequiredStructEnabled())
 	deps := httpapi.Deps{
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
-		User:          &user.Handler{Repo: userRepo, Validate: v},
+		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant},
+		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbac.NewService(rbacRepo), Validate: v},
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService},
+		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
+		EmailTemplate: &emailtemplate.Handler{Service: emailTemplateService},
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
@@ -262,6 +278,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Policy:        &policy.Handler{Repo: policyRepo},
 		GDPR:          &gdpr.Handler{Service: gdprService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
+		Billing:       &billing.Handler{Service: billingService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
 		OIDC:          &oidc.Handler{Service: oidcService},
@@ -271,6 +288,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		SCIM:          &scim.Handler{Service: scimService},
 		SAML:          &saml.Handler{Service: samlService},
 		LDAP:          &ldap.Handler{Service: ldapService},
+		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Health:        healthHandler,
 		InFlight:      inFlight,
 
@@ -287,6 +305,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "webhook", run: webhookService.RunDispatcher},
 		{name: "gdpr", run: gdprService.Run},
+		{name: "retention", run: retentionService.Run},
 	}
 	return deps, workers
 }

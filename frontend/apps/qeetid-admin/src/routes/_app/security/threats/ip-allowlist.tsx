@@ -6,10 +6,17 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
   FieldLabel,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  StatusPill,
   Switch,
   Table,
   TableBody,
@@ -17,177 +24,189 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  Textarea,
+  TimeSince,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2Icon, GlobeIcon, PlusIcon, XCircleIcon } from "lucide-react";
+import { ShieldIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import {
+  type IpAction,
+  useAddIpRule,
+  useCheckIp,
+  useDeleteIpRule,
+  useIpRules,
+  useSetIpEnforcement,
+} from "@/lib/ip-allowlist";
 
 export const Route = createFileRoute("/_app/security/threats/ip-allowlist")({ component: IpAllowlistPage });
 
-type Rule = {
-  id: string;
-  cidr: string;
-  label: string;
-  type: "allow" | "deny";
-  scope: "admin" | "all";
-};
-
-const seedRules: Rule[] = [
-  { id: "1", cidr: "10.0.0.0/8", label: "Internal VPN", type: "allow", scope: "all" },
-  { id: "2", cidr: "203.0.113.0/24", label: "Office NYC", type: "allow", scope: "admin" },
-  { id: "3", cidr: "198.51.100.0/24", label: "Office LDN", type: "allow", scope: "admin" },
-  { id: "4", cidr: "185.220.100.0/22", label: "Tor exit nodes", type: "deny", scope: "all" },
-  { id: "5", cidr: "104.244.72.0/21", label: "Reported abuse", type: "deny", scope: "all" },
-];
-
 function IpAllowlistPage() {
-  const [rules, setRules] = useState(seedRules);
-  const [enabled, setEnabled] = useState(true);
+  const listQ = useIpRules();
+  const setEnforce = useSetIpEnforcement();
+  const addM = useAddIpRule();
+  const deleteM = useDeleteIpRule();
+  const checkM = useCheckIp();
+
   const [cidr, setCidr] = useState("");
   const [label, setLabel] = useState("");
+  const [action, setAction] = useState<IpAction>("allow");
+  const [testIp, setTestIp] = useState("");
 
-  const addAllow = () => {
-    if (!cidr) return;
-    setRules((rs) => [...rs, { id: String(Date.now()), cidr, label: label || cidr, type: "allow", scope: "all" }]);
-    setCidr("");
-    setLabel("");
-  };
+  const enabled = listQ.data?.enabled ?? false;
+  const rules = listQ.data?.items ?? [];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
-        description="CIDR ranges that may or may not reach this tenant. Deny rules win over allow rules."
+        description="CIDR ranges that may or may not reach this tenant. Deny rules win over allow rules; if any allow rule exists, an address must match one."
         actions={
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">Enforcement</span>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
+            <Switch
+              checked={enabled}
+              onCheckedChange={(v) => setEnforce.mutate(v)}
+              disabled={setEnforce.isPending || listQ.isLoading}
+            />
           </div>
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Allow rules</CardDescription>
-            <CheckCircle2Icon className="size-4 text-emerald-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {rules.filter((r) => r.type === "allow").length}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Deny rules</CardDescription>
-            <XCircleIcon className="size-4 text-rose-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {rules.filter((r) => r.type === "deny").length}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Last enforcement</CardDescription>
-            <GlobeIcon className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm">Blocked <span className="font-mono text-xs">185.220.101.42</span></div>
-            <div className="text-xs text-muted-foreground">3 minutes ago</div>
-          </CardContent>
-        </Card>
-      </div>
+      {!enabled && rules.length > 0 && (
+        <p className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+          Enforcement is off — these rules are saved but not applied. Toggle it on once you&apos;ve confirmed your own address is allowed.
+        </p>
+      )}
 
       <Card>
         <CardHeader>
           <CardTitle>Quick add</CardTitle>
-          <CardDescription>Append an allow rule. Use the form for full options.</CardDescription>
+          <CardDescription>Add a CIDR range or a single IP address.</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-          <Field>
-            <FieldLabel>CIDR</FieldLabel>
-            <Input
-              placeholder="203.0.113.0/24"
-              value={cidr}
-              onChange={(e) => setCidr(e.target.value)}
-              className="font-mono"
-            />
-            <FieldDescription>IPv4 or IPv6 range</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel>Label</FieldLabel>
-            <Input placeholder="Office NYC" value={label} onChange={(e) => setLabel(e.target.value)} />
-          </Field>
-          <div className="flex items-end">
-            <Button onClick={addAllow}>
-              <PlusIcon className="mr-2 size-4" />
-              Add allow
+        <CardContent>
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!cidr.trim()) return;
+              addM.mutate(
+                { cidr: cidr.trim(), label: label.trim(), action },
+                { onSuccess: () => { setCidr(""); setLabel(""); } },
+              );
+            }}
+          >
+            <Field className="flex-1 min-w-[180px]">
+              <FieldLabel>CIDR / IP</FieldLabel>
+              <Input value={cidr} onChange={(e) => setCidr(e.target.value)} placeholder="203.0.113.0/24" className="font-mono" />
+            </Field>
+            <Field className="flex-1 min-w-[160px]">
+              <FieldLabel>Label</FieldLabel>
+              <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Office NYC" />
+            </Field>
+            <Field>
+              <FieldLabel>Action</FieldLabel>
+              <Select value={action} onValueChange={(v) => setAction(v as IpAction)}>
+                <SelectTrigger className="w-[120px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="allow">Allow</SelectItem>
+                  <SelectItem value="deny">Deny</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Button type="submit" disabled={addM.isPending || !cidr.trim()}>
+              Add rule
             </Button>
-          </div>
+          </form>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Rules</CardTitle>
-          <CardDescription>Edit or remove individual entries.</CardDescription>
+          <CardDescription>{rules.length} rule{rules.length === 1 ? "" : "s"}</CardDescription>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>CIDR</TableHead>
-                <TableHead>Label</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Scope</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rules.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-mono text-xs">{r.cidr}</TableCell>
-                  <TableCell className="text-sm">{r.label}</TableCell>
-                  <TableCell>
-                    {r.type === "allow" ? (
-                      <Badge variant="outline" className="text-emerald-600">allow</Badge>
-                    ) : (
-                      <Badge variant="destructive">deny</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{r.scope}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm" onClick={() => setRules((rs) => rs.filter((x) => x.id !== r.id))}>
-                      Remove
-                    </Button>
-                  </TableCell>
+        <CardContent className="p-0">
+          <DataState
+            isLoading={listQ.isLoading}
+            isError={listQ.isError}
+            error={listQ.error}
+            isEmpty={rules.length === 0}
+            emptyIcon={ShieldIcon}
+            emptyTitle="No IP rules yet."
+            skeletonRows={3}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>CIDR</TableHead>
+                  <TableHead>Label</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Added</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {rules.map((rule) => (
+                  <TableRow key={rule.id}>
+                    <TableCell className="font-mono text-xs">{rule.cidr}</TableCell>
+                    <TableCell>{rule.label || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant={rule.action === "deny" ? "destructive" : "default"}>{rule.action}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <TimeSince value={rule.created_at} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => deleteM.mutate(rule.id)}
+                        disabled={deleteM.isPending}
+                      >
+                        <Trash2Icon /> Remove
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Bulk import</CardTitle>
-          <CardDescription>One CIDR per line. Lines starting with <code>#</code> are ignored.</CardDescription>
+          <CardTitle>Test an address</CardTitle>
+          <CardDescription>Evaluate an IP against the current rules before turning enforcement on.</CardDescription>
         </CardHeader>
         <CardContent>
-          <Textarea
-            className="min-h-[120px] font-mono text-xs"
-            placeholder={"# Office\n203.0.113.0/24\n198.51.100.0/24"}
-          />
-          <div className="mt-3 flex justify-end">
-            <Button variant="outline">Import as allow rules</Button>
-          </div>
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (testIp.trim()) checkM.mutate(testIp.trim());
+            }}
+          >
+            <Field className="flex-1 min-w-[200px]">
+              <FieldLabel>IP address</FieldLabel>
+              <Input value={testIp} onChange={(e) => setTestIp(e.target.value)} placeholder="198.51.100.7" className="font-mono" />
+              <FieldDescription>Checked exactly as the rules would apply at request time.</FieldDescription>
+            </Field>
+            <Button type="submit" variant="outline" disabled={checkM.isPending || !testIp.trim()}>
+              Check
+            </Button>
+            {checkM.data && (
+              <div className="flex items-center gap-2 pb-2">
+                <StatusPill kind={checkM.data.allowed ? "success" : "danger"}>
+                  {checkM.data.allowed ? "Allowed" : "Blocked"}
+                </StatusPill>
+                <span className="text-xs text-muted-foreground">{checkM.data.reason}</span>
+              </div>
+            )}
+          </form>
         </CardContent>
       </Card>
     </div>

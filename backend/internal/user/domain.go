@@ -20,6 +20,16 @@ type User struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+// DeletedUser is the soft-deleted view shown in the recycle bin — enough to
+// identify the record and decide whether to restore or permanently purge it.
+type DeletedUser struct {
+	ID          uuid.UUID `json:"id"`
+	Email       string    `json:"email"`
+	DisplayName *string   `json:"display_name"`
+	DeletedAt   time.Time `json:"deleted_at"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 type CreateInput struct {
 	TenantID    uuid.UUID      `json:"tenant_id" validate:"required"`
 	Email       string         `json:"email" validate:"required,email"`
@@ -30,8 +40,8 @@ type CreateInput struct {
 }
 
 type UpdateInput struct {
-	DisplayName *string         `json:"display_name,omitempty" validate:"omitempty,max=200"`
-	Phone       *string         `json:"phone,omitempty" validate:"omitempty,e164"`
-	Status      *string         `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
-	Metadata    map[string]any  `json:"metadata,omitempty"`
+	DisplayName *string        `json:"display_name,omitempty" validate:"omitempty,max=200"`
+	Phone       *string        `json:"phone,omitempty" validate:"omitempty,e164"`
+	Status      *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }

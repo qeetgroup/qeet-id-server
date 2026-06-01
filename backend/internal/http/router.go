@@ -12,10 +12,14 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/apikey"
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/auth"
+	"github.com/qeetgroup/qeet-identity/internal/authpolicy"
+	"github.com/qeetgroup/qeet-identity/internal/billing"
 	"github.com/qeetgroup/qeet-identity/internal/branding"
+	"github.com/qeetgroup/qeet-identity/internal/emailtemplate"
 	"github.com/qeetgroup/qeet-identity/internal/gdpr"
 	"github.com/qeetgroup/qeet-identity/internal/group"
 	"github.com/qeetgroup/qeet-identity/internal/invite"
+	"github.com/qeetgroup/qeet-identity/internal/ipallow"
 	"github.com/qeetgroup/qeet-identity/internal/ldap"
 	"github.com/qeetgroup/qeet-identity/internal/mfa"
 	"github.com/qeetgroup/qeet-identity/internal/oidc"
@@ -28,6 +32,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/principal"
 	"github.com/qeetgroup/qeet-identity/internal/rbac"
 	"github.com/qeetgroup/qeet-identity/internal/recovery"
+	"github.com/qeetgroup/qeet-identity/internal/retention"
 	"github.com/qeetgroup/qeet-identity/internal/saml"
 	"github.com/qeetgroup/qeet-identity/internal/scim"
 	"github.com/qeetgroup/qeet-identity/internal/social"
@@ -41,11 +46,14 @@ type Deps struct {
 	Tenant        *tenant.Handler
 	User          *user.Handler
 	Auth          *auth.Handler
+	AuthPolicy    *authpolicy.Handler
 	RBAC          *rbac.Handler
 	Verification  *verification.Handler
 	Recovery      *recovery.Handler
+	Retention     *retention.Handler
 	Invite        *invite.Handler
 	Branding      *branding.Handler
+	EmailTemplate *emailtemplate.Handler
 	APIKey        *apikey.Handler
 	APIKeyService *apikey.Service
 	Principal     *principal.Handler
@@ -54,6 +62,7 @@ type Deps struct {
 	Policy        *policy.Handler
 	GDPR          *gdpr.Handler
 	Audit         *audit.Handler
+	Billing       *billing.Handler
 	Analytics     *analytics.Handler
 	Outbox        *outbox.Handler
 	OIDC          *oidc.Handler
@@ -63,6 +72,7 @@ type Deps struct {
 	SCIM          *scim.Handler
 	SAML          *saml.Handler
 	LDAP          *ldap.Handler
+	IPAllow       *ipallow.Handler
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
@@ -163,22 +173,27 @@ func NewRouter(d Deps) http.Handler {
 			d.Verification.Mount(r)
 			d.Invite.MountAuthed(r)
 			d.Branding.Mount(r)
+			d.EmailTemplate.Mount(r) // /tenants/{id}/email-templates: transactional email overrides
 			d.APIKey.Mount(r)
 			d.Principal.Mount(r)
 			d.MFA.Mount(r)
 			d.Webhook.Mount(r)
 			d.Policy.Mount(r)
+			d.AuthPolicy.Mount(r) // /tenants/{id}/auth-policy: password rules + login methods
 			d.GDPR.Mount(r)
+			d.Retention.Mount(r) // /tenants/{id}/retention: auto-purge soft-deleted users
 			d.Audit.Mount(r)
+			d.Billing.Mount(r) // /billing/plans + /tenants/{id}/billing/*
 			d.Analytics.Mount(r)
 			d.Outbox.Mount(r)
 			d.OIDC.Mount(r)
 			d.Passkey.Mount(r)
 			d.Social.Mount(r)
 			d.Group.Mount(r)
-			d.SCIM.Mount(r) // /tenants/{id}/scim admin: token rotate/revoke/status
-			d.SAML.Mount(r) // /tenants/{id}/saml admin: connection CRUD
-			d.LDAP.Mount(r) // /tenants/{id}/ldap admin: connection CRUD + test bind
+			d.SCIM.Mount(r)    // /tenants/{id}/scim admin: token rotate/revoke/status
+			d.SAML.Mount(r)    // /tenants/{id}/saml admin: connection CRUD
+			d.LDAP.Mount(r)    // /tenants/{id}/ldap admin: connection CRUD + test bind
+			d.IPAllow.Mount(r) // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
 		})
 	})
 

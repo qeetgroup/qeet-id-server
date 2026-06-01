@@ -72,6 +72,32 @@ export function useConsumeMagicLink() {
 }
 
 /**
+ * Exchange a one-time SAML login code (delivered to /sso/callback in the URL
+ * fragment after a successful assertion) for a Qeet ID session. Persists the
+ * tokens exactly like the other login flows.
+ */
+export function useConsumeSamlCode() {
+  const navigate = useNavigate();
+  return useMutation({
+    mutationFn: (code: string) =>
+      api<TokenPair & { tenant_id?: string }>("/saml/exchange", {
+        method: "POST",
+        body: { code },
+        anonymous: true,
+      }),
+    onSuccess: (pair) => {
+      tokenStore.clear();
+      tokenStore.set(pair.access_token);
+      tokenStore.setRefresh(pair.refresh_token);
+      if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
+      tokenStore.setUserId(pair.user_id);
+      navigate({ to: "/dashboard" });
+    },
+    meta: { silent: true },
+  });
+}
+
+/**
  * Kick off a password-reset email. Endpoint returns 200 regardless of
  * whether the email exists (constant-time no-leak design), so the
  * caller can unconditionally show "check your inbox" UX. The mutation
