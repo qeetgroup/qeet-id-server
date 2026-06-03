@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qeetid"
+version = "0.1.0"
+description = "Server-side Python SDK for Qeet ID: manage users and tenants, run authorization checks, and verify sessions/JWTs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Qeet Group" }]
+keywords = ["qeetid", "identity", "auth", "authentication", "authorization", "jwt", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.24",
+    "cryptography>=41",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.urls]
+Homepage = "https://qeetid.com"
+Documentation = "https://qeetid.com/docs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qeetid"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

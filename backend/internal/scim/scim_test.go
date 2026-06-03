@@ -1,6 +1,11 @@
 package scim
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func TestParseUserNameFilter(t *testing.T) {
 	cases := []struct {
@@ -72,4 +77,148 @@ func TestScimUserPayload_Display(t *testing.T) {
 	if got := (scimUserPayload{}).display(); got != "" {
 		t.Errorf("no name → empty, got %q", got)
 	}
+}
+
+func TestParseDisplayNameFilter(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"standard okta filter", `displayName eq "Engineering"`, "Engineering"},
+		{"case-insensitive operator", `DISPLAYNAME EQ "Sales"`, "Sales"},
+		{"extra whitespace", `displayName eq   "Ops Team"  `, "Ops Team"},
+		{"unsupported attribute returns all", `id eq "x"`, ""},
+		{"unsupported operator returns all", `displayName co "Eng"`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseDisplayNameFilter(c.in); got != c.want {
+				t.Errorf("parseDisplayNameFilter(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestScimGroupPayload_MemberIDs(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	p := scimGroupPayload{Members: []scimGroupMemberRef{
+		{Value: "  " + a.String() + "  "}, // trimmed
+		{Value: "not-a-uuid"},             // dropped
+		{Value: b.String()},
+	}}
+	got := p.memberIDs()
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("memberIDs() = %v, want [%s %s]", got, a, b)
+	}
+}
+
+func TestMemberIDFromFilterPath(t *testing.T) {
+	id := uuid.New()
+	cases := []struct {
+		name   string
+		path   string
+		want   uuid.UUID
+		wantOK bool
+	}{
+		{"okta value eq", `members[value eq "` + id.String() + `"]`, id, true},
+		{"case-insensitive EQ", `members[VALUE EQ "` + id.String() + `"]`, id, true},
+		{"missing bracket", `members value eq "` + id.String() + `"`, uuid.Nil, false},
+		{"bad uuid", `members[value eq "nope"]`, uuid.Nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := memberIDFromFilterPath(c.path)
+			if ok != c.wantOK || got != c.want {
+				t.Errorf("memberIDFromFilterPath(%q) = (%s, %v), want (%s, %v)", c.path, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
+func TestDecodeMemberRefs(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	// Array form.
+	got := decodeMemberRefs(json.RawMessage(`[{"value":"` + a.String() + `"},{"value":"` + b.String() + `"}]`))
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("array form = %v, want [%s %s]", got, a, b)
+	}
+	// Single-object form (some IdPs).
+	got = decodeMemberRefs(json.RawMessage(`{"value":"` + a.String() + `"}`))
+	if len(got) != 1 || got[0] != a {
+		t.Fatalf("object form = %v, want [%s]", got, a)
+	}
+	// Junk dropped.
+	got = decodeMemberRefs(json.RawMessage(`[{"value":"nope"}]`))
+	if len(got) != 0 {
+		t.Fatalf("junk should be dropped, got %v", got)
+	}
+	// Empty.
+	if got := decodeMemberRefs(nil); got != nil {
+		t.Fatalf("nil raw → nil, got %v", got)
+	}
+}
+
+// parseGroupPatch is the heart of Okta/Entra membership sync — verify each op
+// shape resolves to the right effect.
+func TestParseGroupPatch(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+
+	mkBody := func(ops string) patchBody {
+		var body patchBody
+		if err := json.Unmarshal([]byte(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":`+ops+`}`), &body); err != nil {
+			t.Fatalf("bad test body: %v", err)
+		}
+		return body
+	}
+
+	t.Run("add members", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"add","path":"members","value":[{"value":"` + a.String() + `"}]}]`))
+		if len(p.addMembers) != 1 || p.addMembers[0] != a || p.replaceMembers {
+			t.Fatalf("add: got %+v", p)
+		}
+	})
+
+	t.Run("remove member via value list", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"remove","path":"members","value":[{"value":"` + a.String() + `"}]}]`))
+		if len(p.removeMembers) != 1 || p.removeMembers[0] != a {
+			t.Fatalf("remove list: got %+v", p)
+		}
+	})
+
+	t.Run("remove member via okta filter path", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"remove","path":"members[value eq \"` + a.String() + `\"]"}]`))
+		if len(p.removeMembers) != 1 || p.removeMembers[0] != a {
+			t.Fatalf("remove filter path: got %+v", p)
+		}
+	})
+
+	t.Run("replace whole member set", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"replace","path":"members","value":[{"value":"` + a.String() + `"},{"value":"` + b.String() + `"}]}]`))
+		if !p.replaceMembers || len(p.addMembers) != 2 {
+			t.Fatalf("replace members: got %+v", p)
+		}
+	})
+
+	t.Run("remove all members (no value)", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"remove","path":"members"}]`))
+		if !p.replaceMembers || len(p.addMembers) != 0 {
+			t.Fatalf("remove all: got %+v", p)
+		}
+	})
+
+	t.Run("replace displayName", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"replace","path":"displayName","value":"Renamed"}]`))
+		if p.setName == nil || *p.setName != "Renamed" {
+			t.Fatalf("displayName: got %+v", p)
+		}
+	})
+
+	t.Run("path-less replace object", func(t *testing.T) {
+		p, _ := parseGroupPatch(mkBody(`[{"op":"replace","value":{"displayName":"X","members":[{"value":"` + a.String() + `"}]}}]`))
+		if p.setName == nil || *p.setName != "X" || !p.replaceMembers || len(p.addMembers) != 1 {
+			t.Fatalf("path-less replace: got %+v", p)
+		}
+	})
 }

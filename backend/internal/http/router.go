@@ -29,6 +29,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/platform/metrics"
 	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
 	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
+	"github.com/qeetgroup/qeet-identity/internal/platform/tracing"
 	"github.com/qeetgroup/qeet-identity/internal/policy"
 	"github.com/qeetgroup/qeet-identity/internal/principal"
 	"github.com/qeetgroup/qeet-identity/internal/rbac"
@@ -100,6 +101,11 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
 	r.Use(httpx.AccessLog)
+	// Tracing wraps metrics so the server span spans the whole request; both
+	// derive low-cardinality names from the matched chi route pattern. When no
+	// OTLP endpoint is configured the global tracer is a no-op, so this is a
+	// cheap pass-through.
+	r.Use(tracing.Middleware)
 	r.Use(metrics.Middleware)
 	// CSRF: enforced on browser cookie-bearing requests; bearer-token
 	// (Authorization: Bearer …) traffic bypasses. Lives above the route
@@ -115,11 +121,13 @@ func NewRouter(d Deps) http.Handler {
 			CookieSecure:   d.ServiceEnv != "dev",
 			CookieDomain:   d.CSRFCookieDomain,
 			// SAML ACS is a cross-site form-POST from the IdP, authenticated
-			// by XML-signature validation rather than a CSRF cookie. The OAuth
-			// revocation/introspection endpoints are machine-to-machine and
-			// authenticated by client credentials (RFC 7009/7662), not a
+			// by XML-signature validation rather than a CSRF cookie. The SAML
+			// IdP SSO endpoint receives a cross-origin SP-initiated POST binding
+			// (AuthnRequest), gated by the SSO cookie + registered SP, not CSRF.
+			// The OAuth revocation/introspection endpoints are machine-to-machine
+			// and authenticated by client credentials (RFC 7009/7662), not a
 			// browser session, so they're exempt for the same reason.
-			ExemptPaths: []string{"/saml/acs/", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code"},
+			ExemptPaths: []string{"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code"},
 		}))
 	}
 	r.Use(cors.Handler(cors.Options{

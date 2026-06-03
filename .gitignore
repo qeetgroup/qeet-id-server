@@ -1,4 +1,5 @@
 # macOS
+.venv
 .DS_Store
 .AppleDouble
 .LSOverride

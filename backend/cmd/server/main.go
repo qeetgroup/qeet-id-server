@@ -45,6 +45,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
 	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-identity/internal/platform/tracing"
 	"github.com/qeetgroup/qeet-identity/internal/platform/worker"
 	"github.com/qeetgroup/qeet-identity/internal/policy"
 	"github.com/qeetgroup/qeet-identity/internal/principal"
@@ -102,6 +103,19 @@ func main() {
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Distributed tracing. No-op (no exporter, no network) when
+	// OTEL_EXPORTER_OTLP_ENDPOINT is unset — the common case in dev/CI.
+	tracerShutdown, err := tracing.Init(rootCtx, cfg.TracingConfig())
+	if err != nil {
+		slog.Error("init tracing", "err", err)
+		os.Exit(1)
+	}
+	if cfg.OTelEndpoint != "" {
+		slog.Info("tracing enabled", "endpoint", cfg.OTelEndpoint, "sample_ratio", cfg.OTelSampleRatio)
+	} else {
+		slog.Info("tracing disabled (no-op): set OTEL_EXPORTER_OTLP_ENDPOINT to enable")
+	}
+
 	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
 		slog.Error("connect db", "err", err)
@@ -158,6 +172,11 @@ func main() {
 	case <-workerDone:
 	case <-shutdownCtx.Done():
 		slog.Warn("worker drain timed out", "in_flight", deps.InFlight.Count())
+	}
+
+	// Flush any buffered spans before exit. No-op when tracing is disabled.
+	if err := tracerShutdown(shutdownCtx); err != nil {
+		slog.Warn("tracing shutdown", "err", err)
 	}
 
 	dropped := deps.InFlight.Count()
@@ -312,6 +331,29 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		os.Exit(1)
 	}
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
+
+	// SAML IdP signing identity: configured RSA key+cert in prod, or an
+	// ephemeral self-signed cert in dev when unset.
+	samlIdPKeyPEM, samlIdPCertPEM := cfg.SAMLIdPKey, cfg.SAMLIdPCert
+	if samlIdPKeyPEM == "" || samlIdPCertPEM == "" {
+		if cfg.ServiceEnv != "dev" {
+			slog.Error("SAML_IDP_KEY and SAML_IDP_CERT are required outside dev (RSA private key + X.509 cert, PEM)")
+			os.Exit(1)
+		}
+		k, c, gerr := saml.GenerateIdPKeyPEM("Qeet ID SAML IdP")
+		if gerr != nil {
+			slog.Error("generate ephemeral SAML IdP signing cert", "err", gerr)
+			os.Exit(1)
+		}
+		samlIdPKeyPEM, samlIdPCertPEM = k, c
+		slog.Warn("SAML_IDP_KEY/SAML_IDP_CERT unset — generated an ephemeral SAML IdP signing cert; SPs must re-import IdP metadata after a restart (dev only)")
+	}
+	samlIdP, err := saml.NewIdP(pool, samlIdPKeyPEM, samlIdPCertPEM, cfg.LoginBaseURL, authService)
+	if err != nil {
+		slog.Error("init saml idp", "err", err)
+		os.Exit(1)
+	}
+
 	ldapService := ldap.NewService(pool, authService)
 	ipAllowService := ipallow.NewService(pool)
 
@@ -363,7 +405,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Group:         &group.Handler{Service: groupService},
 		SCIM:          &scim.Handler{Service: scimService},
 		Secret:        &secret.Handler{Service: secretService},
-		SAML:          &saml.Handler{Service: samlService},
+		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Health:        healthHandler,

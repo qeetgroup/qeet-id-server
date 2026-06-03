@@ -331,22 +331,44 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 
 type Handler struct {
 	Service *Service
+	// IdP is the SAML *identity-provider* side (Qeet as an SSO source). Optional;
+	// when nil the /saml/idp/* endpoints report 501 and the SP-registry admin
+	// routes are not mounted.
+	IdP *IdP
+	// CookieSecure marks browser cookies Secure; set from SERVICE_ENV != "dev".
+	CookieSecure bool
 }
 
 func (h *Handler) Mount(r chi.Router) {
+	// SP side: external-IdP connections Qeet consumes.
 	r.Get("/tenants/{tenantID}/saml", h.list)
 	r.Post("/tenants/{tenantID}/saml", h.create)
 	r.Get("/tenants/{tenantID}/saml/{id}", h.get)
 	r.Patch("/tenants/{tenantID}/saml/{id}", h.update)
 	r.Delete("/tenants/{tenantID}/saml/{id}", h.del)
+
+	// IdP side: downstream Service Providers that consume Qeet as their IdP.
+	if h.IdP != nil {
+		r.Get("/tenants/{tenantID}/saml-providers", h.listSP)
+		r.Post("/tenants/{tenantID}/saml-providers", h.createSP)
+		r.Get("/tenants/{tenantID}/saml-providers/{id}", h.getSP)
+		r.Patch("/tenants/{tenantID}/saml-providers/{id}", h.updateSP)
+		r.Delete("/tenants/{tenantID}/saml-providers/{id}", h.delSP)
+	}
 }
 
 // MountPublic registers the browser/IdP-facing SSO ceremony (no user JWT).
 func (h *Handler) MountPublic(r chi.Router) {
+	// SP side (Qeet as SP): metadata, login redirect, ACS, code exchange.
 	r.Get("/saml/metadata/{id}", h.metadata)
 	r.Get("/saml/login/{id}", h.login)
 	r.Post("/saml/acs/{id}", h.acs) // CSRF-exempt (see router.go); validated by signature
 	r.Post("/saml/exchange", h.exchange)
+
+	// IdP side (Qeet as IdP): metadata + SingleSignOnService (redirect + POST).
+	r.Get("/saml/idp/metadata", h.idpMetadata)
+	r.Get("/saml/idp/sso", h.idpSSO)
+	r.Post("/saml/idp/sso", h.idpSSO) // CSRF-exempt (see router.go); SP-initiated cross-origin POST
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
