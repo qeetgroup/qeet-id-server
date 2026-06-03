@@ -1,13 +1,46 @@
 import { LoginForm } from "./login-form";
 
-// Server component: searchParams is async in this Next.js. We await it and hand
-// the (already authenticated-against) authorize URL to the client form, which
-// posts credentials and then navigates the browser back to it.
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
+
+type LoginContext = { client_name?: string; tenant_id?: string; providers?: string[] };
+
+function clientIDFromReturnTo(returnTo: string): string {
+  try {
+    return new URL(returnTo).searchParams.get("client_id") ?? "";
+  } catch {
+    return "";
+  }
+}
+
+// Fetched server-side: the client's display name + the tenant's enabled social
+// providers, so the form can greet the user and render the right buttons.
+async function fetchContext(clientID: string): Promise<LoginContext> {
+  if (!clientID) return {};
+  try {
+    const res = await fetch(`${API}/v1/oauth/login-context?client_id=${encodeURIComponent(clientID)}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return {};
+    return (await res.json()) as LoginContext;
+  } catch {
+    return {};
+  }
+}
+
 export default async function LoginPage({
   searchParams,
 }: {
   searchParams: Promise<{ return_to?: string }>;
 }) {
   const { return_to } = await searchParams;
-  return <LoginForm returnTo={return_to ?? ""} />;
+  const returnTo = return_to ?? "";
+  const ctx = await fetchContext(clientIDFromReturnTo(returnTo));
+  return (
+    <LoginForm
+      returnTo={returnTo}
+      clientName={ctx.client_name ?? ""}
+      tenantId={ctx.tenant_id ?? ""}
+      providers={ctx.providers ?? []}
+    />
+  );
 }

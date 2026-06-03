@@ -156,6 +156,34 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 	return raw, tenantID, nil
 }
 
+// ClientName resolves a client's display name and tenant from its client_id —
+// used to render the hosted login/consent screens. Returns ErrNotFound for an
+// unknown client.
+func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
+	err = s.pool.QueryRow(ctx,
+		`SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = $1`, clientID).
+		Scan(&name, &tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", uuid.Nil, errs.ErrNotFound
+	}
+	return name, tenantID, err
+}
+
+// ValidatePostLogoutRedirect reports whether uri is one of the client's
+// registered post-logout redirect URIs (RP-Initiated Logout).
+func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri string) (bool, error) {
+	var uris []string
+	err := s.pool.QueryRow(ctx,
+		`SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = $1`, clientID).Scan(&uris)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return contains(uris, uri), nil
+}
+
 // HasConsent reports whether the user has already granted the client every
 // requested scope (so the consent screen can be skipped).
 func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (bool, error) {
@@ -490,19 +518,31 @@ func derefStr(s *string) string {
 	return *s
 }
 
-// SessionResolver resolves a hosted-login SSO cookie value to a user id.
-// Satisfied by *auth.Service; an interface keeps the dependency one-way.
-type SessionResolver interface {
+// SessionManager resolves and revokes the hosted-login SSO cookie. Satisfied by
+// *auth.Service; an interface keeps the dependency one-way.
+type SessionManager interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
+	RevokeLoginSession(ctx context.Context, raw string) error
+}
+
+// ProviderLister lists a tenant's enabled social providers, so the hosted login
+// app can render the right social buttons. Satisfied by *social.Service.
+type ProviderLister interface {
+	EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error)
 }
 
 type Handler struct {
 	Service *Service
 	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
 	// flow. LoginBaseURL is the origin of the hosted login app (qeetid-login)
-	// the browser is redirected to for login/consent.
-	Sessions     SessionResolver
+	// the browser is redirected to for login/consent. Providers lists a tenant's
+	// social providers for the login-context endpoint (optional).
+	Sessions     SessionManager
+	Providers    ProviderLister
 	LoginBaseURL string
+	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
+	// clearing it on logout; set from SERVICE_ENV != "dev".
+	CookieSecure bool
 }
 
 // Mount registers the authenticated admin/RP endpoints (require a user JWT or
@@ -523,6 +563,32 @@ func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/authorize", h.authorize)
 	r.Post("/oauth/authorize/decision", h.decision)
 	r.Post("/oauth/token-code", h.tokenCode)
+	r.Get("/oauth/login-context", h.loginContext)
+	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
+	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
+}
+
+// loginContext gives the hosted login app what it needs to render itself for a
+// given client_id: the client's display name, its tenant, and the tenant's
+// enabled social providers.
+func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
+	clientID := r.URL.Query().Get("client_id")
+	name, tenantID, err := h.Service.ClientName(r.Context(), clientID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	providers := []string{}
+	if h.Providers != nil {
+		if p, perr := h.Providers.EnabledProviderNames(r.Context(), tenantID); perr == nil {
+			providers = p
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"client_name": name,
+		"tenant_id":   tenantID,
+		"providers":   providers,
+	})
 }
 
 func (h *Handler) MountPublic(r chi.Router) {
@@ -683,6 +749,28 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// endSession is the OIDC RP-Initiated Logout endpoint. It clears the hosted SSO
+// session + cookie, then — if the client supplied a registered
+// post_logout_redirect_uri — redirects there (carrying state); otherwise it
+// shows the hosted logged-out page.
+func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
+		_ = h.Sessions.RevokeLoginSession(r.Context(), c.Value)
+	}
+	auth.ClearLoginSessionCookie(w, h.CookieSecure)
+
+	q := r.URL.Query()
+	redirect := q.Get("post_logout_redirect_uri")
+	clientID := q.Get("client_id")
+	if redirect != "" && clientID != "" {
+		if ok, err := h.Service.ValidatePostLogoutRedirect(r.Context(), clientID, redirect); err == nil && ok {
+			http.Redirect(w, r, appendQuery(redirect, "state", q.Get("state")), http.StatusFound)
+			return
+		}
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+}
+
 // sessionUser resolves the hosted-login SSO cookie to a user id.
 func (h *Handler) sessionUser(r *http.Request) (uuid.UUID, bool) {
 	c, err := r.Cookie(auth.LoginSessionCookie)
@@ -824,6 +912,7 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"jwks_uri":                              base + "/.well-known/jwks.json",
 		"revocation_endpoint":                   base + "/oauth/revoke",
 		"introspection_endpoint":                base + "/oauth/introspect",
+		"end_session_endpoint":                  base + "/v1/oauth/logout",
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},

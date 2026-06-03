@@ -375,10 +375,20 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	return s.auth.IssuePair(ctx, loginUserID, tenantID, ip, ua, "passkey")
 }
 
+// StartLoginSession mints a hosted-login SSO session for a freshly-authenticated
+// passkey user, so a passkey login can also drive the OAuth authorize/consent
+// flow (the cookie is set by the handler).
+func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
+}
+
 // --- HTTP ---
 
 type Handler struct {
 	Service *Service
+	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only); set
+	// from SERVICE_ENV != "dev".
+	CookieSecure bool
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -507,6 +517,12 @@ func (h *Handler) loginFinish(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	// Also establish the hosted-login SSO cookie so a passkey login can drive
+	// the OAuth authorize flow. Best-effort and harmless for the admin SPA,
+	// which authenticates with the bearer token and ignores the cookie.
+	if raw, serr := h.Service.StartLoginSession(r.Context(), pair.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
+		auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
 }

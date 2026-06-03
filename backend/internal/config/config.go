@@ -35,12 +35,22 @@ type Config struct {
 	// during the rotation grace window; new tokens are never signed with them.
 	JWTRetiredKeys string `envconfig:"JWT_RETIRED_KEYS" default:""`
 
+	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) for the
+	// per-tenant secrets vault — independent of JWT_SECRET. Required outside dev
+	// (gated); in dev an ephemeral key is generated if unset. Generate with
+	// `openssl rand -base64 32`.
+	SecretsKey string `envconfig:"SECRETS_KEY" default:""`
+
 	HTTPReadTimeout  time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
 	HTTPWriteTimeout time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
 
 	AllowedOriginsRaw   string `envconfig:"ALLOWED_ORIGINS" default:""`
 	AuthDevTrustHeaders bool   `envconfig:"AUTH_DEV_TRUST_HEADERS" default:"false"`
 	CSRFDisabled        bool   `envconfig:"CSRF_DISABLED" default:"false"`
+	// CSRFCookieDomain scopes the CSRF cookie so the double-submit token is
+	// readable across sibling subdomains (e.g. ".qeetid.com" lets the hosted
+	// login app read a token issued by the API). Empty = host-only.
+	CSRFCookieDomain string `envconfig:"CSRF_COOKIE_DOMAIN" default:""`
 
 	// AppBaseURL is the frontend origin used to build links in emails
 	// (password reset, magic links, invites).
@@ -49,6 +59,19 @@ type Config struct {
 	// LoginBaseURL is the origin of the hosted login app (qeetid-login) that
 	// the OAuth authorize flow redirects to for sign-in and consent.
 	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3004"`
+
+	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
+	// Empty SMTPHost leaves email on the log-only fallback (dev).
+	SMTPHost     string `envconfig:"SMTP_HOST" default:""`
+	SMTPPort     string `envconfig:"SMTP_PORT" default:"587"`
+	SMTPUsername string `envconfig:"SMTP_USERNAME" default:""`
+	SMTPPassword string `envconfig:"SMTP_PASSWORD" default:""`
+	SMTPFrom     string `envconfig:"SMTP_FROM" default:""`
+
+	// SMS (Twilio). Empty credentials leave SMS on the log-only fallback.
+	TwilioAccountSID string `envconfig:"TWILIO_ACCOUNT_SID" default:""`
+	TwilioAuthToken  string `envconfig:"TWILIO_AUTH_TOKEN" default:""`
+	TwilioFrom       string `envconfig:"TWILIO_FROM" default:""`
 
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
@@ -87,6 +110,9 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.JWTSigningKey) == "" {
 		problems = append(problems, "JWT_SIGNING_KEY is required (PEM EC P-256 private key for ES256 token signing)")
+	}
+	if strings.TrimSpace(c.SecretsKey) == "" {
+		problems = append(problems, "SECRETS_KEY is required (base64 AES key for the secrets vault; `openssl rand -base64 32`)")
 	}
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")

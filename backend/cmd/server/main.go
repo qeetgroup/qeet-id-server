@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	stdhttp "net/http"
@@ -243,7 +244,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	emailTemplateService := emailtemplate.NewService(pool)
 	policyRepo := policy.NewRepository(pool)
 
-	sender := notifier.LogSender{}
+	sender := notifier.New(notifier.Config{
+		SMTPHost:         cfg.SMTPHost,
+		SMTPPort:         cfg.SMTPPort,
+		SMTPUsername:     cfg.SMTPUsername,
+		SMTPPassword:     cfg.SMTPPassword,
+		SMTPFrom:         cfg.SMTPFrom,
+		TwilioAccountSID: cfg.TwilioAccountSID,
+		TwilioAuthToken:  cfg.TwilioAuthToken,
+		TwilioFrom:       cfg.TwilioFrom,
+	})
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	retentionService := retention.NewService(pool)
@@ -275,10 +285,26 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
-	// Derive a stable 32-byte AES key for the secrets vault from the server
-	// secret. Production should swap in a dedicated, rotation-aware KMS key.
-	secretsKey := sha256.Sum256([]byte(cfg.JWTSecret + "|qeetid-secrets-v1"))
-	secretService, err := secret.NewService(pool, secretsKey[:])
+	// Secrets-vault data key: a dedicated key from SECRETS_KEY (independent of
+	// JWT_SECRET), or an ephemeral key in dev when unset. Wrapped in a
+	// KeyProvider so an AWS KMS provider can drop in later (see secret pkg).
+	var secretsKey []byte
+	if cfg.SecretsKey != "" {
+		secretsKey, err = base64.StdEncoding.DecodeString(cfg.SecretsKey)
+		if err != nil {
+			slog.Error("SECRETS_KEY must be base64", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		// Reached only in dev — Validate() requires SECRETS_KEY otherwise.
+		secretsKey = make([]byte, 32)
+		if _, err := rand.Read(secretsKey); err != nil {
+			slog.Error("generate ephemeral secrets key", "err", err)
+			os.Exit(1)
+		}
+		slog.Warn("SECRETS_KEY unset — generated an ephemeral vault key; stored secrets will not survive a restart (dev only)")
+	}
+	secretService, err := secret.NewService(rootCtx, pool, secret.StaticKeyProvider{Key: secretsKey})
 	if err != nil {
 		slog.Error("init secrets vault", "err", err)
 		os.Exit(1)
@@ -311,9 +337,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Billing:       &billing.Handler{Service: billingService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, LoginBaseURL: cfg.LoginBaseURL},
-		Passkey:       &passkey.Handler{Service: passkeyService},
-		Social:        &social.Handler{Service: socialService},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
+		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: cfg.ServiceEnv != "dev"},
+		Social:        &social.Handler{Service: socialService, CookieSecure: cfg.ServiceEnv != "dev"},
 		Group:         &group.Handler{Service: groupService},
 		SCIM:          &scim.Handler{Service: scimService},
 		Secret:        &secret.Handler{Service: secretService},
@@ -323,12 +349,13 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Health:        healthHandler,
 		InFlight:      inFlight,
 
-		AuthVerifier:   verifier,
-		AllowedOrigins: cfg.AllowedOrigins(),
-		ServiceName:    cfg.ServiceName,
-		ServiceEnv:     cfg.ServiceEnv,
-		StartedAt:      startedAt,
-		CSRFDisabled:   cfg.CSRFDisabled,
+		AuthVerifier:     verifier,
+		AllowedOrigins:   cfg.AllowedOrigins(),
+		ServiceName:      cfg.ServiceName,
+		ServiceEnv:       cfg.ServiceEnv,
+		StartedAt:        startedAt,
+		CSRFDisabled:     cfg.CSRFDisabled,
+		CSRFCookieDomain: cfg.CSRFCookieDomain,
 	}
 
 	outboxDispatcher := outbox.NewDispatcher(pool, outbox.LogPublisher{}, 2*time.Second, 50)

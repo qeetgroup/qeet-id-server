@@ -202,7 +202,7 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 
 // BeginLogin resolves the tenant + provider, persists CSRF state with a PKCE
 // verifier, and returns the upstream authorization URL to redirect the user to.
-func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectURI string) (string, error) {
+func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectURI, returnTo string) (string, error) {
 	tenantID, err := s.resolveTenant(ctx, tenantRef)
 	if err != nil {
 		return "", err
@@ -225,9 +225,9 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.social_oauth_states (state_hash, tenant_id, provider, code_verifier, redirect_uri, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, stateHash, tenantID, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL)); err != nil {
+		INSERT INTO auth.social_oauth_states (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, stateHash, tenantID, provider, verifier, redirectURI, returnTo, time.Now().UTC().Add(socialStateTTL)); err != nil {
 		return "", err
 	}
 	q := url.Values{
@@ -246,12 +246,22 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	return doc.AuthorizationEndpoint + sep + q.Encode(), nil
 }
 
+// CallbackResult is what a successful provider callback yields: a one-time code
+// the SPA trades for a session, plus the hosted return_to and the resolved user
+// (used by the hosted flow to set an SSO cookie and redirect).
+type CallbackResult struct {
+	Code     string
+	ReturnTo string
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
 // CompleteCallback consumes the CSRF state, exchanges the code with the upstream
 // provider, find-or-creates the local user + external identity, and mints a
 // one-time code the SPA trades for a session.
-func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string) (string, error) {
+func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string) (*CallbackResult, error) {
 	if state == "" || code == "" {
-		return "", errs.ErrBadRequest.WithDetail("missing state or code")
+		return nil, errs.ErrBadRequest.WithDetail("missing state or code")
 	}
 	stateHash := codes.Hash(state)
 
@@ -260,62 +270,89 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		dbProvider     string
 		verifier       string
 		storedRedirect string
+		returnTo       string
 		expiresAt      time.Time
 	)
 	// Single-use: delete the state row as we read it.
 	err := s.pool.QueryRow(ctx, `
 		DELETE FROM auth.social_oauth_states WHERE state_hash = $1
-		RETURNING tenant_id, provider, code_verifier, redirect_uri, expires_at
-	`, stateHash).Scan(&tenantID, &dbProvider, &verifier, &storedRedirect, &expiresAt)
+		RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at
+	`, stateHash).Scan(&tenantID, &dbProvider, &verifier, &storedRedirect, &returnTo, &expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrBadRequest.WithDetail("invalid or used state")
+		return nil, errs.ErrBadRequest.WithDetail("invalid or used state")
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if dbProvider != provider {
-		return "", errs.ErrBadRequest.WithDetail("provider mismatch")
+		return nil, errs.ErrBadRequest.WithDetail("provider mismatch")
 	}
 	if time.Now().After(expiresAt) {
-		return "", errs.ErrBadRequest.WithDetail("state expired")
+		return nil, errs.ErrBadRequest.WithDetail("state expired")
 	}
 
 	pc, err := s.loadProvider(ctx, tenantID, provider)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 	if err != nil {
-		return "", errs.ErrUnprocessable.WithDetail("provider discovery failed")
+		return nil, errs.ErrUnprocessable.WithDetail("provider discovery failed")
 	}
 	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, storedRedirect, verifier)
 	if err != nil {
-		return "", errs.ErrUnprocessable.WithDetail("token exchange failed")
+		return nil, errs.ErrUnprocessable.WithDetail("token exchange failed")
 	}
 	ui, err := s.oauth.userinfo(ctx, doc, accessToken)
 	if err != nil {
-		return "", errs.ErrUnprocessable.WithDetail("userinfo failed")
+		return nil, errs.ErrUnprocessable.WithDetail("userinfo failed")
 	}
 	if ui.Email == "" {
-		return "", errs.ErrBadRequest.WithDetail("provider did not return an email")
+		return nil, errs.ErrBadRequest.WithDetail("provider did not return an email")
 	}
 
 	userID, err := s.findOrCreateUser(ctx, tenantID, provider, ui)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
 		VALUES ($1, $2, $3, $4)
 	`, codeHash, userID, tenantID, time.Now().UTC().Add(socialCodeTTL)); err != nil {
-		return "", err
+		return nil, err
 	}
-	return rawCode, nil
+	return &CallbackResult{Code: rawCode, ReturnTo: returnTo, UserID: userID, TenantID: tenantID}, nil
+}
+
+// EnabledProviderNames returns the names of a tenant's enabled social providers
+// (for the hosted login app to render buttons). Satisfies oidc.ProviderLister.
+func (s *Service) EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT provider FROM tenant.social_providers WHERE tenant_id = $1 AND enabled ORDER BY provider`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// StartLoginSession mints a hosted-login SSO session for a social-authenticated
+// user, so social login can drive the OAuth authorize/consent flow.
+func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
+	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
 }
 
 // findOrCreateUser links the external identity to an existing user (matched by
@@ -420,6 +457,9 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 
 type Handler struct {
 	Service *Service
+	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only); set
+	// from SERVICE_ENV != "dev".
+	CookieSecure bool
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -528,13 +568,15 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 
 // start redirects the browser to the provider's authorization endpoint.
 // Tenant is supplied as ?tenant=<slug> or ?tenant_id=<uuid> (no JWT here).
+// ?return_to=<url> opts into the hosted flow: the callback sets the SSO cookie
+// and bounces back there instead of handing a one-time code to the SPA.
 func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	tenantRef := r.URL.Query().Get("tenant")
 	if tenantRef == "" {
 		tenantRef = r.URL.Query().Get("tenant_id")
 	}
-	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, callbackURL(r, provider))
+	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, callbackURL(r, provider), r.URL.Query().Get("return_to"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -542,17 +584,26 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// callback handles the provider redirect, then bounces to the SPA with a
-// one-time code (tokens are never placed in the URL).
+// callback handles the provider redirect. In the hosted flow (return_to set) it
+// establishes the SSO cookie and bounces back to the authorize URL; otherwise it
+// bounces to the SPA with a one-time code (tokens are never placed in the URL).
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	q := r.URL.Query()
-	code, err := h.Service.CompleteCallback(r.Context(), provider, q.Get("state"), q.Get("code"))
+	res, err := h.Service.CompleteCallback(r.Context(), provider, q.Get("state"), q.Get("code"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	target := h.Service.appBaseURL + "/auth/social/callback?code=" + url.QueryEscape(code)
+	if res.ReturnTo != "" {
+		// Hosted flow: set the SSO cookie and return to /oauth/authorize.
+		if raw, serr := h.Service.StartLoginSession(r.Context(), res.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
+			auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+		}
+		http.Redirect(w, r, res.ReturnTo, http.StatusFound)
+		return
+	}
+	target := h.Service.appBaseURL + "/auth/social/callback?code=" + url.QueryEscape(res.Code)
 	http.Redirect(w, r, target, http.StatusFound)
 }
 

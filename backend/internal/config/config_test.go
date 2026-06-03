@@ -9,6 +9,7 @@ func prodOK() *Config {
 		ServiceEnv:        "prod",
 		JWTSecret:         "a-32-byte-or-longer-random-server-secret",
 		JWTSigningKey:     "-----BEGIN PRIVATE KEY-----\nMIG...\n-----END PRIVATE KEY-----",
+		SecretsKey:        "c2VjcmV0cy1rZXktMzItYnl0ZXMtYmFzZTY0LXh4eHg=",
 		AllowedOriginsRaw: "https://app.acme.com",
 		AppBaseURL:        "https://app.acme.com",
 	}
@@ -34,6 +35,7 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"placeholder secret":  func(c *Config) { c.JWTSecret = "please-change-me-please-change-me" },
 		"short secret":        func(c *Config) { c.JWTSecret = "too-short" },
 		"missing signing key": func(c *Config) { c.JWTSigningKey = "" },
+		"missing secrets key": func(c *Config) { c.SecretsKey = "" },
 		"wildcard origins":    func(c *Config) { c.AllowedOriginsRaw = "*" },
 		"empty origins":       func(c *Config) { c.AllowedOriginsRaw = "" },
 		"localhost base url":  func(c *Config) { c.AppBaseURL = "http://localhost:3000" },

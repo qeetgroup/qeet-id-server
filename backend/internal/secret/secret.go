@@ -1,9 +1,9 @@
 // Package secret is a per-tenant secrets vault. Values are encrypted at rest
 // with AES-256-GCM and never returned except via an explicit, audited reveal.
 //
-// The encryption key is derived once at startup (see cmd/server) from a stable
-// server secret. NOTE: a production deployment should use a dedicated,
-// rotation-aware KMS key rather than a key derived from the JWT secret.
+// The data-encryption key comes from a KeyProvider (see keyprovider.go),
+// unwrapped once at startup — a dedicated key independent of the JWT secret,
+// and swappable for a KMS-backed provider without changing the Service.
 package secret
 
 import (
@@ -41,8 +41,13 @@ type Service struct {
 	gcm  cipher.AEAD
 }
 
-// NewService builds the vault. key must be 16, 24, or 32 bytes (AES-128/192/256).
-func NewService(pool *pgxpool.Pool, key []byte) (*Service, error) {
+// NewService builds the vault, unwrapping the data key from the provider once.
+// The key must be 16, 24, or 32 bytes (AES-128/192/256).
+func NewService(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider) (*Service, error) {
+	key, err := kp.DataKey(ctx)
+	if err != nil {
+		return nil, err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
