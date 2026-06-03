@@ -73,6 +73,10 @@ type Config struct {
 	TwilioAuthToken  string `envconfig:"TWILIO_AUTH_TOKEN" default:""`
 	TwilioFrom       string `envconfig:"TWILIO_FROM" default:""`
 
+	// RedisURL enables shared (cross-replica) rate limiting, e.g.
+	// redis://:pass@host:6379/0. Empty = in-process limits (single instance).
+	RedisURL string `envconfig:"REDIS_URL" default:""`
+
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.

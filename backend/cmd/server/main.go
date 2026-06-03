@@ -17,6 +17,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mattn/go-isatty"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/qeetgroup/qeet-identity/internal/analytics"
 	"github.com/qeetgroup/qeet-identity/internal/apikey"
@@ -42,6 +43,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/platform/logger"
 	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
 	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
+	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
 	"github.com/qeetgroup/qeet-identity/internal/platform/worker"
 	"github.com/qeetgroup/qeet-identity/internal/policy"
@@ -313,6 +315,24 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	ldapService := ldap.NewService(pool, authService)
 	ipAllowService := ipallow.NewService(pool)
 
+	// Rate-limit store: Redis (shared across replicas) when REDIS_URL is set,
+	// otherwise in-process. Required for correct limits when scaling out.
+	var rlStore ratelimit.Store
+	if cfg.RedisURL != "" {
+		opt, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			slog.Error("parse REDIS_URL", "err", err)
+			os.Exit(1)
+		}
+		rdb := redis.NewClient(opt)
+		if err := rdb.Ping(rootCtx).Err(); err != nil {
+			slog.Error("redis ping", "err", err)
+			os.Exit(1)
+		}
+		rlStore = ratelimit.NewRedisStore(rdb)
+		slog.Info("rate limiting via Redis (shared across replicas)")
+	}
+
 	v := validator.New(validator.WithRequiredStructEnabled())
 	deps := httpapi.Deps{
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
@@ -356,6 +376,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		StartedAt:        startedAt,
 		CSRFDisabled:     cfg.CSRFDisabled,
 		CSRFCookieDomain: cfg.CSRFCookieDomain,
+		RateLimitStore:   rlStore,
 	}
 
 	outboxDispatcher := outbox.NewDispatcher(pool, outbox.LogPublisher{}, 2*time.Second, 50)

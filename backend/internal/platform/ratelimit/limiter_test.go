@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,43 +13,45 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
 
-func TestAllow_BurstThenRefill(t *testing.T) {
+var ctx = context.Background()
+
+func TestTake_BurstThenRefill(t *testing.T) {
 	l := New(10, 3) // 10 tok/s, burst 3
 	for i := 0; i < 3; i++ {
-		if !l.Allow("k") {
+		if ok, _ := l.Take(ctx, "k"); !ok {
 			t.Fatalf("first %d requests must be allowed (burst=3); failed at %d", i+1, i)
 		}
 	}
-	if l.Allow("k") {
+	if ok, _ := l.Take(ctx, "k"); ok {
 		t.Fatal("4th immediate request must be denied")
 	}
 }
 
-func TestAllow_DifferentKeysIndependent(t *testing.T) {
+func TestTake_DifferentKeysIndependent(t *testing.T) {
 	l := New(1, 1)
-	if !l.Allow("a") {
+	if ok, _ := l.Take(ctx, "a"); !ok {
 		t.Fatal("a should be allowed")
 	}
-	if !l.Allow("b") {
+	if ok, _ := l.Take(ctx, "b"); !ok {
 		t.Fatal("b should be allowed even after a (independent buckets)")
 	}
-	if l.Allow("a") {
+	if ok, _ := l.Take(ctx, "a"); ok {
 		t.Fatal("a's second request must be denied")
 	}
 }
 
-func TestRetryAfter_ZeroWhenTokensAvailable(t *testing.T) {
+func TestTake_RetryAfterZeroWhenAllowed(t *testing.T) {
 	l := New(1, 5)
-	if got := l.RetryAfter("k"); got != 0 {
-		t.Errorf("RetryAfter with full bucket = %d, want 0", got)
+	if ok, retry := l.Take(ctx, "k"); !ok || retry != 0 {
+		t.Errorf("allowed take: ok=%v retry=%d, want true/0", ok, retry)
 	}
 }
 
-func TestRetryAfter_AtLeastOneWhenEmpty(t *testing.T) {
+func TestTake_RetryAfterPositiveWhenEmpty(t *testing.T) {
 	l := New(1, 1)
-	l.Allow("k") // drain
-	if got := l.RetryAfter("k"); got < 1 {
-		t.Errorf("RetryAfter on empty bucket = %d, want >=1", got)
+	l.Take(ctx, "k") // drain
+	if ok, retry := l.Take(ctx, "k"); ok || retry < 1 {
+		t.Errorf("empty take: ok=%v retry=%d, want false/>=1", ok, retry)
 	}
 }
 
@@ -161,9 +164,9 @@ func TestPerUser_ReturnsUserUUID(t *testing.T) {
 
 func TestPerAPIKey_OnlyForAPIKeyPrincipal(t *testing.T) {
 	cases := []struct {
-		name   string
-		p      *httpx.Principal
-		want   string
+		name string
+		p    *httpx.Principal
+		want string
 	}{
 		{"nil_principal", nil, ""},
 		{"user_principal", &httpx.Principal{ActorType: "user", Subject: "u_1"}, ""},

@@ -86,6 +86,9 @@ type Deps struct {
 	StartedAt        time.Time
 	CSRFDisabled     bool
 	CSRFCookieDomain string
+	// RateLimitStore, when set, backs every limiter (shared across replicas).
+	// Nil = in-process limits.
+	RateLimitStore ratelimit.Store
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -147,15 +150,23 @@ func NewRouter(d Deps) http.Handler {
 	// LDAP username/password login is end-user-facing (no JWT).
 	d.LDAP.MountPublic(r)
 
+	// newLimiter builds an in-process limiter, or a Redis-backed one when a
+	// shared store is configured (so limits hold across replicas).
+	newLimiter := func(rate float64, capacity int) *ratelimit.Limiter {
+		if d.RateLimitStore != nil {
+			return ratelimit.NewWithStore(d.RateLimitStore, rate, capacity)
+		}
+		return ratelimit.New(rate, capacity)
+	}
 	// Per-IP throttle on auth-burning endpoints.
-	loginLimiter := ratelimit.New(5, 20)
+	loginLimiter := newLimiter(5, 20)
 	// Per-tenant + per-user throttles on authenticated endpoints. Rates
 	// here are intentionally generous; the per-tenant bucket guards
 	// against a single tenant exhausting shared resources, the per-user
 	// bucket guards against a single compromised principal.
-	tenantLimiter := ratelimit.New(100, 500)
-	userLimiter := ratelimit.New(30, 100)
-	apiKeyLimiter := ratelimit.New(50, 200)
+	tenantLimiter := newLimiter(100, 500)
+	userLimiter := newLimiter(30, 100)
+	apiKeyLimiter := newLimiter(50, 200)
 
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).

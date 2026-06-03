@@ -14,6 +14,7 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/prometheus/client_golang v1.23.2
+	github.com/redis/go-redis/v9 v9.20.0
 	github.com/russellhaering/gosaml2 v0.11.0
 	github.com/russellhaering/goxmldsig v1.6.0
 	github.com/testcontainers/testcontainers-go v0.42.0
@@ -92,6 +93,7 @@ require (
 	go.opentelemetry.io/otel v1.41.0 // indirect
 	go.opentelemetry.io/otel/metric v1.41.0 // indirect
 	go.opentelemetry.io/otel/trace v1.41.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect

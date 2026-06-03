@@ -1,11 +1,14 @@
-// Package ratelimit ships a simple token-bucket limiter keyed by string.
-// Suitable for in-process protection of unauth endpoints (login, magic
-// link) and for per-tenant / per-user / per-api-key throttling on
-// authenticated endpoints. Swap for Redis when the monolith grows beyond
-// one node.
+// Package ratelimit ships a token-bucket limiter keyed by string, used for
+// in-process protection of unauth endpoints (login, magic link) and per-tenant
+// / per-user / per-api-key throttling on authenticated endpoints.
+//
+// The bucket math lives behind a Store: the default in-memory store is
+// per-process; a Redis store (redis.go) shares limits across replicas so a
+// horizontally-scaled deployment enforces one global limit.
 package ratelimit
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"sync"
@@ -14,86 +17,95 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
 
+// Store is the token-bucket backend.
+type Store interface {
+	// Take attempts to consume one token for key (rate tokens/sec, burst
+	// capacity). Returns whether it was allowed and, if not, the integer
+	// seconds until a token frees up.
+	Take(ctx context.Context, key string, rate, capacity float64) (allowed bool, retryAfter int, err error)
+}
+
 type bucket struct {
-	tokens   float64
-	last     time.Time
-	rate     float64 // tokens per second
-	capacity float64
+	tokens float64
+	last   time.Time
 }
 
-type Limiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*bucket
-	rate     float64
-	capacity float64
+type memStore struct {
+	mu      sync.Mutex
+	buckets map[string]*bucket
 }
 
-func New(rate float64, capacity int) *Limiter {
-	return &Limiter{
-		buckets:  make(map[string]*bucket),
-		rate:     rate,
-		capacity: float64(capacity),
-	}
-}
+func newMemStore() *memStore { return &memStore{buckets: make(map[string]*bucket)} }
 
-// Allow consumes one token for the bucket identified by key. Returns true
-// when the request is allowed; false when the bucket is empty.
-func (l *Limiter) Allow(key string) bool {
+func (s *memStore) Take(_ context.Context, key string, rate, capacity float64) (bool, int, error) {
 	now := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.bucketLocked(key, now)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.buckets[key]
+	if !ok {
+		b = &bucket{tokens: capacity, last: now}
+		s.buckets[key] = b
+	} else {
+		b.tokens += now.Sub(b.last).Seconds() * rate
+		if b.tokens > capacity {
+			b.tokens = capacity
+		}
+		b.last = now
+	}
 	if b.tokens < 1 {
-		return false
+		return false, retryAfterSecs(b.tokens, rate), nil
 	}
 	b.tokens--
-	return true
+	return true, 0, nil
 }
 
-// RetryAfter returns the integer seconds until the bucket regenerates
-// enough tokens for one more request. Returns 0 when the bucket already
-// has at least one token available, 1 minimum otherwise.
-func (l *Limiter) RetryAfter(key string) int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.bucketLocked(key, time.Now())
-	if b.tokens >= 1 {
-		return 0
-	}
-	secs := (1 - b.tokens) / b.rate
+// retryAfterSecs is the integer seconds until `tokens` reaches 1 at `rate`,
+// minimum 1.
+func retryAfterSecs(tokens, rate float64) int {
+	secs := (1 - tokens) / rate
 	if secs < 1 {
 		return 1
 	}
 	return int(secs + 0.999)
 }
 
-// bucketLocked fetches or initialises a bucket and refills it based on
-// elapsed time. Caller must hold l.mu.
-func (l *Limiter) bucketLocked(key string, now time.Time) *bucket {
-	b, ok := l.buckets[key]
-	if !ok {
-		b = &bucket{tokens: l.capacity, last: now, rate: l.rate, capacity: l.capacity}
-		l.buckets[key] = b
-		return b
+type Limiter struct {
+	store    Store
+	rate     float64
+	capacity float64
+}
+
+// New builds an in-process limiter: rate tokens/sec with the given burst capacity.
+func New(rate float64, capacity int) *Limiter {
+	return &Limiter{store: newMemStore(), rate: rate, capacity: float64(capacity)}
+}
+
+// NewWithStore builds a limiter over a shared store (e.g. Redis) so the limit
+// holds across replicas.
+func NewWithStore(store Store, rate float64, capacity int) *Limiter {
+	return &Limiter{store: store, rate: rate, capacity: float64(capacity)}
+}
+
+// Take consumes one token for key, returning (allowed, retryAfterSeconds). It
+// fails open (allowed) when the store errors, so an infra blip never
+// hard-blocks traffic.
+func (l *Limiter) Take(ctx context.Context, key string) (bool, int) {
+	allowed, retry, err := l.store.Take(ctx, key, l.rate, l.capacity)
+	if err != nil {
+		return true, 0
 	}
-	elapsed := now.Sub(b.last).Seconds()
-	b.tokens += elapsed * b.rate
-	if b.tokens > b.capacity {
-		b.tokens = b.capacity
-	}
-	b.last = now
-	return b
+	return allowed, retry
 }
 
 // KeyFunc extracts a bucket key from a request. Returning the empty string
-// disables rate limiting for that request — useful when the desired
-// identifier is not present (e.g. PerTenant on a pre-auth endpoint).
+// disables rate limiting for that request — useful when the desired identifier
+// is not present (e.g. PerTenant on a pre-auth endpoint).
 type KeyFunc func(r *http.Request) string
 
-// MiddlewareBy applies the limiter using a custom key extractor. The
-// scopeName is prefixed to the key so the same Limiter can safely host
-// buckets for multiple scopes ("ip:1.2.3.4" never collides with
-// "tenant:1.2.3.4"). On rejection it returns 429 with Retry-After.
+// MiddlewareBy applies the limiter using a custom key extractor. scopeName is
+// prefixed to the key so one Limiter/Store can host buckets for multiple scopes
+// ("ip:1.2.3.4" never collides with "tenant:1.2.3.4"). On rejection it returns
+// 429 with Retry-After.
 func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,9 +114,9 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			key := scopeName + ":" + id
-			if !l.Allow(key) {
-				w.Header().Set("Retry-After", strconv.Itoa(l.RetryAfter(key)))
+			allowed, retry := l.Take(r.Context(), scopeName+":"+id)
+			if !allowed {
+				w.Header().Set("Retry-After", strconv.Itoa(retry))
 				w.WriteHeader(http.StatusTooManyRequests)
 				return
 			}
@@ -113,9 +125,7 @@ func (l *Limiter) MiddlewareBy(scopeName string, extract KeyFunc) func(http.Hand
 	}
 }
 
-// Middleware applies the limiter using client IP as the bucket key. Kept
-// for backwards compatibility with existing callers; new code should
-// prefer MiddlewareBy with an explicit scope name.
+// Middleware applies the limiter using client IP as the bucket key.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
 	return l.MiddlewareBy("ip", PerIP)(next)
 }
@@ -125,8 +135,7 @@ func PerIP(r *http.Request) string {
 	return httpx.ClientIP(r)
 }
 
-// PerTenant keys requests by the principal's tenant ID. Returns the empty
-// string when the request is unauthenticated or has no tenant.
+// PerTenant keys requests by the principal's tenant ID. Empty when unauthenticated.
 func PerTenant(r *http.Request) string {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.TenantID == nil {
@@ -144,8 +153,8 @@ func PerUser(r *http.Request) string {
 	return p.UserID.String()
 }
 
-// PerAPIKey keys requests by the API key ID when the principal was
-// authenticated via API key (ActorType == "api_key"); empty otherwise.
+// PerAPIKey keys requests by the API key ID when the principal was authenticated
+// via API key (ActorType == "api_key"); empty otherwise.
 func PerAPIKey(r *http.Request) string {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.ActorType != "api_key" {
