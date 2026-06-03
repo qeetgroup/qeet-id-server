@@ -1,10 +1,15 @@
-import { listEntries, type ChangelogTag } from "@/lib/changelog";
 import { Badge } from "@qeetrix/ui";
 import type { Metadata } from "next";
 
+import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
+import { PageHero } from "@/components/marketing/page-hero";
+import { CTA } from "@/components/marketing/sections/cta";
+import { listGrouped, type ChangelogTag } from "@/lib/changelog";
+
 export const metadata: Metadata = {
   title: "Changelog",
-  description: "Every release, fix, and security improvement shipped to Qeet ID.",
+  description:
+    "Every release shipped to Qeet ID — passkeys, ES256 / JWKS signing, SAML IdP, SCIM groups, the device grant, OpenTelemetry, and more.",
 };
 
 const tagVariant: Record<ChangelogTag, "default" | "secondary" | "success" | "warning"> = {
@@ -24,63 +29,96 @@ function formatDate(iso: string) {
 }
 
 export default function ChangelogPage() {
-  const releases = listEntries();
-  return (
-    <section className="border-b border-border/60">
-      <div className="mx-auto max-w-3xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-        <div className="max-w-2xl">
-          <p className="text-sm font-medium uppercase tracking-widest text-primary">Changelog</p>
-          <h1 className="mt-2 font-display text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-            What&apos;s new in Qeet ID
-          </h1>
-          <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-            Product updates, performance work, and security improvements — shipped continuously.
-          </p>
-        </div>
+  const groups = listGrouped();
 
-        <ol className="mt-16 flex flex-col">
-          {releases.map((r) => (
-            <li
-              key={r.version}
-              className="relative border-l border-border/60 pb-12 pl-8 last:border-l-transparent last:pb-0"
-            >
-              <span
-                aria-hidden
-                className="absolute -left-[5px] top-1.5 size-2.5 rounded-full border-2 border-background bg-primary"
-              />
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-sm font-medium text-foreground">v{r.version}</span>
-                  <span aria-hidden className="text-muted-foreground/50">
-                    ·
-                  </span>
-                  <time dateTime={r.date} className="text-xs text-muted-foreground">
-                    {formatDate(r.date)}
-                  </time>
-                  <span className="ml-1 flex flex-wrap gap-1.5">
-                    {r.tags.map((t) => (
-                      <Badge key={t} variant={tagVariant[t]} className="capitalize">
-                        {t}
-                      </Badge>
-                    ))}
-                  </span>
-                </div>
-                <h2 className="font-display text-xl font-semibold tracking-tight text-balance">
-                  {r.title}
+  return (
+    <>
+      <PageHero
+        eyebrow="Changelog"
+        title="Everything we've"
+        titleAccent="shipped lately"
+        subtitle="Product updates, performance work, and security improvements — released continuously and noted here in full."
+      />
+
+      <section className="border-b border-border/60">
+        <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8 lg:py-24">
+          {groups.map((group) => (
+            <div key={group.label} className="mb-14 last:mb-0">
+              <Reveal>
+                <h2 className="mb-8 font-display text-sm font-medium uppercase tracking-widest text-brand-text">
+                  {group.label}
                 </h2>
-                <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
-                  {r.points.map((p) => (
-                    <li key={p} className="flex gap-2">
-                      <span aria-hidden className="mt-1.5 size-1 shrink-0 rounded-full bg-primary" />
-                      {p}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </li>
+              </Reveal>
+
+              <Stagger staggerDelay={0.08} className="flex flex-col">
+                {group.entries.map((r, i) => {
+                  const last = i === group.entries.length - 1;
+                  return (
+                    <StaggerItem key={r.version}>
+                      <article
+                        aria-labelledby={`cl-${r.version}`}
+                        className={`relative border-l pl-8 ${
+                          last
+                            ? "border-l-transparent pb-2"
+                            : "border-l-border/60 pb-12"
+                        }`}
+                      >
+                        {/* Brand accent rail node */}
+                        <span
+                          aria-hidden
+                          className="absolute -left-1.5 top-1.5 size-3 rounded-full border-2 border-background bg-[image:var(--brand-gradient)]"
+                        />
+
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-sm font-medium text-foreground">
+                              v{r.version}
+                            </span>
+                            <span aria-hidden className="text-muted-foreground/50">
+                              ·
+                            </span>
+                            <time dateTime={r.date} className="text-xs text-muted-foreground">
+                              {formatDate(r.date)}
+                            </time>
+                            <span className="ml-1 flex flex-wrap gap-1.5">
+                              {r.tags.map((t) => (
+                                <Badge key={t} variant={tagVariant[t]} className="capitalize">
+                                  {t}
+                                </Badge>
+                              ))}
+                            </span>
+                          </div>
+
+                          <h3
+                            id={`cl-${r.version}`}
+                            className="font-display text-xl font-semibold tracking-tight text-balance"
+                          >
+                            {r.title}
+                          </h3>
+
+                          <ul className="flex flex-col gap-2 text-sm text-muted-foreground">
+                            {r.points.map((p) => (
+                              <li key={p} className="flex gap-2.5">
+                                <span
+                                  aria-hidden
+                                  className="mt-1.5 size-1.5 shrink-0 rounded-full bg-brand"
+                                />
+                                <span>{p}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </article>
+                    </StaggerItem>
+                  );
+                })}
+              </Stagger>
+            </div>
           ))}
-        </ol>
-      </div>
-    </section>
+        </div>
+      </section>
+
+      <CTA />
+    </>
   );
 }

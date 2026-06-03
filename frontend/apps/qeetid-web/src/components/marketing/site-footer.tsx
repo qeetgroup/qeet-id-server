@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { QeetMark } from "./qeet-mark";
-
+import { Reveal } from "./motion";
 
 function GithubGlyph() {
   return (
@@ -59,54 +59,72 @@ const columns = [
   },
 ];
 
+const compliance = ["SOC 2 Type II", "ISO 27001", "GDPR"];
+
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border/60 bg-background">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.5fr_repeat(4,1fr)] lg:px-8">
-        <div className="flex flex-col gap-4">
-          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <QeetMark size={28} className="size-7" />
-            <span className="text-base">Identity</span>
-          </Link>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            One identity. Every platform. Auth infrastructure for modern teams.
-          </p>
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Link
-              href="https://github.com/qeetid"
-              aria-label="GitHub"
-              className="rounded-md p-1.5 hover:bg-accent hover:text-foreground"
-            >
-              <GithubGlyph />
-            </Link>
-            <Link
-              href="https://twitter.com/qeetid"
-              aria-label="X (Twitter)"
-              className="rounded-md p-1.5 hover:bg-accent hover:text-foreground"
-            >
-              <XGlyph />
-            </Link>
-          </div>
-        </div>
+    <footer className="relative overflow-hidden border-t border-border/60 bg-background">
+      {/* Subtle brand wash at the very top edge of the footer. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--brand-500)/0.6,transparent)]"
+      />
 
-        {columns.map((col) => (
-          <div key={col.title} className="flex flex-col gap-3">
-            <h4 className="text-sm font-medium">{col.title}</h4>
-            <ul className="flex flex-col gap-2">
-              {col.links.map((l) => (
-                <li key={l.href}>
-                  <Link
-                    href={l.href}
-                    className="text-sm text-muted-foreground hover:text-foreground"
-                  >
-                    {l.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+      <Reveal duration={0.7} distance={20}>
+        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-[1.5fr_repeat(4,1fr)] lg:px-8">
+          <div className="flex flex-col gap-4">
+            <Link
+              href="/"
+              className="flex items-center gap-2 font-semibold tracking-tight focus-ring-brand"
+            >
+              <QeetMark size={28} className="size-7" />
+              <span className="text-base">Identity</span>
+            </Link>
+            <p className="max-w-xs text-sm text-muted-foreground">
+              One identity. Every platform. Auth infrastructure for modern teams.
+            </p>
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Link
+                href="https://github.com/qeetid"
+                aria-label="GitHub"
+                className="rounded-md p-1.5 transition-colors hover:bg-accent hover:text-brand-text focus-ring-brand"
+              >
+                <GithubGlyph />
+              </Link>
+              <Link
+                href="https://twitter.com/qeetid"
+                aria-label="X (Twitter)"
+                className="rounded-md p-1.5 transition-colors hover:bg-accent hover:text-brand-text focus-ring-brand"
+              >
+                <XGlyph />
+              </Link>
+            </div>
           </div>
-        ))}
-      </div>
+
+          {columns.map((col) => (
+            <div key={col.title} className="flex flex-col gap-3">
+              <h4 className="text-sm font-medium">{col.title}</h4>
+              <ul className="flex flex-col gap-2.5">
+                {col.links.map((l) => (
+                  <li key={l.href}>
+                    <Link
+                      href={l.href}
+                      className="group inline-flex items-center text-sm text-muted-foreground transition-colors hover:text-foreground focus-ring-brand"
+                    >
+                      {/* Brand accent that grows on hover. */}
+                      <span
+                        aria-hidden
+                        className="mr-0 h-px w-0 bg-brand transition-[width,margin] duration-200 group-hover:mr-2 group-hover:w-3"
+                      />
+                      {l.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </Reveal>
 
       <div className="border-t border-border/60">
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:px-6 lg:px-8">
@@ -114,16 +132,20 @@ export function SiteFooter() {
           <p className="flex flex-wrap items-center gap-3">
             <Link
               href="/status"
-              className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+              className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground focus-ring-brand"
             >
-              <span className="size-1.5 rounded-full bg-emerald-500" /> All systems normal
+              <span className="relative flex size-1.5">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+              </span>
+              All systems normal
             </Link>
-            <span>·</span>
-            <span>SOC 2 Type II</span>
-            <span>·</span>
-            <span>ISO 27001</span>
-            <span>·</span>
-            <span>GDPR</span>
+            {compliance.map((c) => (
+              <span key={c} className="flex items-center gap-3">
+                <span aria-hidden>·</span>
+                <span>{c}</span>
+              </span>
+            ))}
           </p>
         </div>
       </div>

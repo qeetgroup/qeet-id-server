@@ -1,116 +1,219 @@
-import { ButtonLink } from "@/components/marketing/button-link";
 import { Badge } from "@qeetrix/ui";
 import {
   ArrowRightIcon,
+  CompassIcon,
   GlobeIcon,
   HeartPulseIcon,
   LaptopIcon,
+  LockKeyholeIcon,
   PlaneIcon,
+  ShieldCheckIcon,
   SproutIcon,
+  UsersIcon,
   WalletIcon,
 } from "lucide-react";
 import type { Metadata } from "next";
 
+import { ButtonLink } from "@/components/marketing/button-link";
+import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
+import { PageHero } from "@/components/marketing/page-hero";
+import { Section, SectionHeader } from "@/components/marketing/section";
+
 export const metadata: Metadata = {
   title: "Careers",
   description:
-    "Help us make secure identity the default for every product team. Remote-first, async, and deeply technical.",
+    "Help us make secure identity the default for every product team. Remote-first, async, deeply technical, and security-obsessed.",
 };
 
+const values = [
+  {
+    icon: ShieldCheckIcon,
+    title: "Security is the product",
+    body: "We hold ourselves to the standard our customers trust us with. Secure-by-default isn't a slogan here — it's the review bar.",
+  },
+  {
+    icon: LockKeyholeIcon,
+    title: "Earn trust, then keep it",
+    body: "We're honest about what's shipped versus planned, internally and on the marketing site. Credibility compounds.",
+  },
+  {
+    icon: CompassIcon,
+    title: "Default to ownership",
+    body: "Small, senior team. You'll own problems end-to-end and ship the fix, not file it for someone else.",
+  },
+  {
+    icon: UsersIcon,
+    title: "Async, written, kind",
+    body: "Decisions live in docs, not in heads. We write things down, disagree well, and keep meetings rare.",
+  },
+];
+
 const perks = [
-  { icon: GlobeIcon, title: "Remote-first", body: "Work from anywhere across nine time zones. Async by default." },
-  { icon: WalletIcon, title: "Top-of-market pay", body: "Competitive salary, meaningful equity, transparent bands." },
-  { icon: HeartPulseIcon, title: "Health & wellness", body: "Full medical, dental, vision, and a wellness stipend." },
-  { icon: PlaneIcon, title: "Real time off", body: "Minimum PTO we actually enforce, plus company-wide recharge weeks." },
-  { icon: LaptopIcon, title: "Home-office budget", body: "Pick your hardware. We cover the setup that makes you productive." },
-  { icon: SproutIcon, title: "Growth", body: "Learning budget, conference travel, and mentorship from day one." },
+  {
+    icon: GlobeIcon,
+    title: "Remote-first",
+    body: "Work from anywhere across many time zones. Async by default, with deliberate overlap.",
+  },
+  {
+    icon: WalletIcon,
+    title: "Top-of-market pay",
+    body: "Competitive salary, meaningful equity, and transparent compensation bands.",
+  },
+  {
+    icon: HeartPulseIcon,
+    title: "Health & wellness",
+    body: "Comprehensive medical, dental, vision, and a wellness stipend.",
+  },
+  {
+    icon: PlaneIcon,
+    title: "Real time off",
+    body: "A minimum PTO we actually enforce, plus company-wide recharge weeks.",
+  },
+  {
+    icon: LaptopIcon,
+    title: "Home-office budget",
+    body: "Pick your hardware — we cover the setup that makes you productive.",
+  },
+  {
+    icon: SproutIcon,
+    title: "Growth",
+    body: "Learning budget, conference travel, and mentorship from day one.",
+  },
 ];
 
 const roles = [
-  { title: "Senior Backend Engineer (Go)", team: "Platform", location: "Remote · Global" },
-  { title: "Security Engineer", team: "Security", location: "Remote · Global" },
-  { title: "Developer Advocate", team: "DevRel", location: "Remote · Americas" },
-  { title: "Product Designer", team: "Design", location: "Remote · EU/UK" },
-  { title: "Site Reliability Engineer", team: "Infrastructure", location: "Remote · Global" },
+  {
+    title: "Senior Backend Engineer (Go)",
+    team: "Platform",
+    location: "Remote · Global",
+    blurb: "Own core auth, OIDC, and RBAC paths in the Go modular monolith.",
+  },
+  {
+    title: "Security Engineer",
+    team: "Security",
+    location: "Remote · Global",
+    blurb: "Threat-model new surfaces, drive the SOC 2 / pen-test program, and harden defaults.",
+  },
+  {
+    title: "Developer Advocate",
+    team: "DevRel",
+    location: "Remote · Americas",
+    blurb: "Build SDK samples, write the docs people actually finish, and meet developers where they are.",
+  },
+  {
+    title: "Product Designer",
+    team: "Design",
+    location: "Remote · EU / UK",
+    blurb: "Design login, dashboard, and developer flows that feel effortless and trustworthy.",
+  },
+  {
+    title: "Site Reliability Engineer",
+    team: "Infrastructure",
+    location: "Remote · Global",
+    blurb: "Keep the identity layer fast and available — it's in everyone's critical path.",
+  },
 ];
 
 export default function CareersPage() {
   return (
     <>
-      <section className="border-b border-border/60">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          <div className="mx-auto max-w-3xl text-center">
-            <p className="text-sm font-medium uppercase tracking-widest text-primary">Careers</p>
-            <h1 className="mt-2 font-display text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-              Build the identity layer the internet runs on
-            </h1>
-            <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-              We&apos;re a small, senior, remote-first team that cares deeply about security and
-              craft. If you want your work in the critical path of thousands of products, you&apos;ll
-              fit right in.
-            </p>
-            <div className="mt-8 flex justify-center">
-              <ButtonLink href="#open-roles">
-                See open roles <ArrowRightIcon className="size-4" />
-              </ButtonLink>
-            </div>
-          </div>
-        </div>
-      </section>
+      <PageHero
+        eyebrow="Careers"
+        title="Build the identity layer"
+        titleAccent="the internet runs on"
+        subtitle="We're a small, senior, remote-first team that cares deeply about security and craft. If you want your work in the critical path of thousands of products, you'll fit right in."
+        cta={
+          <ButtonLink href="#open-roles">
+            See open roles <ArrowRightIcon className="size-4" aria-hidden />
+          </ButtonLink>
+        }
+      />
 
-      <section className="border-b border-border/60 bg-muted/30">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-            Why you&apos;ll like it here
-          </h2>
-          <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {perks.map(({ icon: Icon, title, body }) => (
-              <div
-                key={title}
-                className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-background p-6"
-              >
-                <span className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary">
-                  <Icon className="size-5" />
+      {/* Values */}
+      <Section>
+        <SectionHeader
+          eyebrow="How we work"
+          title="What we"
+          titleAccent="value"
+          subtitle="A short list we actually hold each other to — not a poster on the wall."
+        />
+        <Stagger staggerDelay={0.07} className="mt-12 grid gap-6 sm:grid-cols-2">
+          {values.map(({ icon: Icon, title, body }) => (
+            <StaggerItem key={title} className="h-full">
+              <article className="flex h-full flex-col gap-3 rounded-2xl border border-border/60 bg-card p-6">
+                <span className="grid size-10 place-items-center rounded-lg bg-brand/10 text-brand">
+                  <Icon className="size-5" aria-hidden />
+                </span>
+                <h3 className="font-display text-lg font-semibold tracking-tight">{title}</h3>
+                <p className="text-sm text-muted-foreground">{body}</p>
+              </article>
+            </StaggerItem>
+          ))}
+        </Stagger>
+      </Section>
+
+      {/* Benefits */}
+      <Section muted>
+        <SectionHeader
+          eyebrow="Benefits"
+          title="Why you'll like it"
+          titleAccent="here"
+        />
+        <Stagger staggerDelay={0.06} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {perks.map(({ icon: Icon, title, body }) => (
+            <StaggerItem key={title} className="h-full">
+              <div className="flex h-full flex-col gap-3 rounded-2xl border border-border/60 bg-background p-6">
+                <span className="grid size-10 place-items-center rounded-lg bg-brand/10 text-brand">
+                  <Icon className="size-5" aria-hidden />
                 </span>
                 <h3 className="font-display text-lg font-semibold tracking-tight">{title}</h3>
                 <p className="text-sm text-muted-foreground">{body}</p>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+            </StaggerItem>
+          ))}
+        </Stagger>
+      </Section>
 
-      <section id="open-roles" className="scroll-mt-20 border-b border-border/60">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-            Open roles
-          </h2>
-          <ul className="mt-10 flex flex-col gap-3">
-            {roles.map((r) => (
-              <li key={r.title}>
-                <a
-                  href="mailto:careers@qeetid.com"
-                  className="group flex flex-col gap-2 rounded-2xl border border-border/60 bg-card p-6 transition-colors hover:border-foreground/20 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="flex flex-col gap-2">
-                    <span className="font-display text-lg font-semibold tracking-tight">
-                      {r.title}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                      <Badge variant="secondary">{r.team}</Badge>
-                      <span>{r.location}</span>
-                    </div>
-                  </div>
-                  <span className="inline-flex items-center gap-1 text-sm font-medium text-primary">
-                    Apply{" "}
-                    <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+      {/* Open roles */}
+      <Section id="open-roles" className="scroll-mt-20">
+        <SectionHeader
+          align="left"
+          eyebrow="Open roles"
+          title="Come build"
+          titleAccent="with us"
+          subtitle="Roles below are illustrative of the team we're growing. Apply by email and tell us what you'd own."
+        />
+        <Stagger staggerDelay={0.06} className="mt-10 flex flex-col gap-3">
+          {roles.map((r) => (
+            <StaggerItem key={r.title}>
+              <a
+                href={`mailto:careers@qeet.id?subject=${encodeURIComponent(`Application: ${r.title}`)}`}
+                className="group flex flex-col gap-3 rounded-2xl border border-border/60 bg-card p-6 transition-colors hover:border-brand/50 focus-ring-brand sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex flex-col gap-2">
+                  <span className="font-display text-lg font-semibold tracking-tight">
+                    {r.title}
                   </span>
-                </a>
-              </li>
-            ))}
-          </ul>
+                  <p className="text-sm text-muted-foreground">{r.blurb}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                    <Badge variant="secondary">{r.team}</Badge>
+                    <span>{r.location}</span>
+                  </div>
+                </div>
+                <span className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-brand-text">
+                  Apply
+                  <ArrowRightIcon
+                    className="size-4 transition-transform group-hover:translate-x-0.5"
+                    aria-hidden
+                  />
+                </span>
+              </a>
+            </StaggerItem>
+          ))}
+        </Stagger>
 
-          <div className="mt-12 flex flex-col items-start gap-3 rounded-2xl border border-border/60 bg-muted/30 p-8 sm:flex-row sm:items-center sm:justify-between">
+        <Reveal className="mt-12">
+          <div className="flex flex-col items-start gap-4 rounded-2xl border border-border/60 bg-muted/30 p-8 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-1">
               <h3 className="font-display text-lg font-semibold tracking-tight">
                 Don&apos;t see your role?
@@ -119,12 +222,12 @@ export default function CareersPage() {
                 We&apos;re always glad to meet exceptional people. Tell us what you&apos;d build.
               </p>
             </div>
-            <ButtonLink variant="outline" href="mailto:careers@qeetid.com">
+            <ButtonLink variant="outline" href="mailto:careers@qeet.id">
               Get in touch
             </ButtonLink>
           </div>
-        </div>
-      </section>
+        </Reveal>
+      </Section>
     </>
   );
 }

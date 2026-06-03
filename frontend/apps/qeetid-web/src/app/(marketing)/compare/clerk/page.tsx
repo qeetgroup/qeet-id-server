@@ -27,14 +27,14 @@ const data: ComparisonData = {
     { label: "Self-host", value: "First-class" },
     { label: "Stack", value: "Go + Postgres" },
     { label: "Multi-tenant", value: "Built-in" },
-    { label: "Frameworks", value: "React, Next, Node, Go" },
+    { label: "SDKs", value: "TS · Next · React · Go · Py" },
   ],
   factsCompetitor: [
     { label: "License", value: "Proprietary SaaS" },
     { label: "Self-host", value: "Not available" },
     { label: "Stack", value: "Closed (managed)" },
     { label: "Multi-tenant", value: "Organizations add-on" },
-    { label: "Frameworks", value: "React-first" },
+    { label: "SDKs", value: "React-first" },
   ],
   rows: [
     // ---- Authentication ----
@@ -45,9 +45,9 @@ const data: ComparisonData = {
     { section: "Authentication", feature: "MFA (TOTP, SMS, email, recovery codes)", qeetid: true, competitor: true },
 
     // ---- Frontend ----
-    { section: "Frontend", feature: "Drop-in React `<SignIn />` components", qeetid: "Roadmap (sdk-react)", competitor: true },
-    { section: "Frontend", feature: "Hosted, brandable auth pages", qeetid: "Roadmap v1.1", competitor: true },
-    { section: "Frontend", feature: "Headless primitives (useSession, useUser, …)", qeetid: "Roadmap (sdk-react)", competitor: true },
+    { section: "Frontend", feature: "Hosted, brandable login + consent UI", qeetid: true, competitor: true, note: "Qeet ID ships a hosted login app (password + passkey + social + scope consent + device-grant)." },
+    { section: "Frontend", feature: "React SDK (sessions, silent refresh)", qeetid: true, competitor: true, note: "@qeetid/react + @qeetid/nextjs with HttpOnly sealed-cookie sessions." },
+    { section: "Frontend", feature: "Prebuilt drop-in `<SignIn />` components", qeetid: "partial", competitor: true, note: "Clerk's component kit is its signature strength; Qeet ID's prebuilt components are in progress." },
     { section: "Frontend", feature: "Native admin dashboard", qeetid: true, competitor: true },
 
     // ---- B2B / Tenant model ----
@@ -68,9 +68,15 @@ const data: ComparisonData = {
     { section: "Pricing", feature: "B2B SSO included", qeetid: true, competitor: false, note: "Clerk SSO is reserved for higher tiers." },
     { section: "Pricing", feature: "Audit log retention", qeetid: "7 days / S3 export", competitor: "Paid" },
 
+    // ---- Authorization & audit ----
+    { section: "Authorization & audit", feature: "RBAC + single-call /check", qeetid: true, competitor: true },
+    { section: "Authorization & audit", feature: "ABAC policy engine", qeetid: true, competitor: false },
+    { section: "Authorization & audit", feature: "Explainable authz (“why?” grant-path trace)", qeetid: true, competitor: false },
+    { section: "Authorization & audit", feature: "Tamper-evident hash-chained audit + /verify", qeetid: true, competitor: "partial" },
+
     // ---- Compliance ----
-    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap v1.0", competitor: true },
-    { section: "Compliance", feature: "GDPR / DPA", qeetid: true, competitor: true },
+    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap (pre-GA)", competitor: true },
+    { section: "Compliance", feature: "GDPR erasure / data export", qeetid: true, competitor: true },
     { section: "Compliance", feature: "Self-hosted compliance boundary", qeetid: true, competitor: false },
   ],
   cta: {

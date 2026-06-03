@@ -7,12 +7,12 @@ import { LogoCloud } from "@/components/marketing/sections/logo-cloud";
 import { Stats } from "@/components/marketing/sections/stats";
 import { Testimonials } from "@/components/marketing/sections/testimonials";
 import { StickyCtaBar } from "@/components/marketing/sticky-cta-bar";
-import { ProductJsonLd, WebSiteJsonLd } from "@/components/marketing/structured-data";
+import { ProductJsonLd } from "@/components/marketing/structured-data";
 
 export default function HomePage() {
   return (
     <>
-      <WebSiteJsonLd />
+      {/* WebSite + Organization schema live in the root layout. */}
       <ProductJsonLd />
       <Hero />
       <LogoCloud />

@@ -135,6 +135,72 @@ export function SoftwareApplicationJsonLd() {
 }
 
 /**
+ * BlogPosting/Article block for a single post. Ties the post back to the
+ * site-wide Organization as publisher/author fallback so Google can attribute
+ * it. Render on the post detail page.
+ */
+export function ArticleJsonLd({
+  title,
+  description,
+  url,
+  datePublished,
+  author,
+  image,
+}: {
+  title: string;
+  description: string;
+  /** Absolute or root-relative URL of the post. */
+  url: string;
+  /** ISO date string, e.g. "2026-05-20". */
+  datePublished: string;
+  author: string;
+  /** Absolute or root-relative OG image URL. */
+  image?: string;
+}) {
+  const abs = (u: string) => (u.startsWith("http") ? u : `${BASE}${u}`);
+  return (
+    <JsonLd
+      data={{
+        "@context": "https://schema.org",
+        "@type": "BlogPosting",
+        headline: title,
+        description,
+        url: abs(url),
+        mainEntityOfPage: { "@type": "WebPage", "@id": abs(url) },
+        datePublished,
+        author: { "@type": "Person", name: author },
+        publisher: { "@id": `${BASE}/#organization` },
+        ...(image ? { image: abs(image) } : {}),
+      }}
+    />
+  );
+}
+
+/**
+ * FAQPage block — drives Google's FAQ rich result. Pass the same Q/A list the
+ * visible FAQ accordion renders so the structured data always matches what's
+ * on the page (Google requires the answer text to be present in the markup).
+ */
+export function FaqJsonLd({ items }: { items: { q: string; a: string }[] }) {
+  return (
+    <JsonLd
+      data={{
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: items.map((item) => ({
+          "@type": "Question",
+          name: item.q,
+          acceptedAnswer: {
+            "@type": "Answer",
+            text: item.a,
+          },
+        })),
+      }}
+    />
+  );
+}
+
+/**
  * Breadcrumb helper for a route. Pass an ordered list of segments —
  * Schema.org expects 1-indexed positions.
  */

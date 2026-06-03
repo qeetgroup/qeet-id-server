@@ -63,9 +63,11 @@ const data: ComparisonData = {
     { section: "Operator UX", feature: "Branding customisation (logo, colours)", qeetid: true, competitor: "Hosted email templates" },
 
     // ---- Security ----
-    { section: "Security", feature: "Tamper-evident audit log (SHA-256 chain)", qeetid: true, competitor: false },
-    { section: "Security", feature: "Device fingerprinting", qeetid: "Roadmap v1.5", competitor: true },
-    { section: "Security", feature: "Impossible-travel risk signals", qeetid: "Roadmap v1.5", competitor: true },
+    { section: "Security", feature: "Tamper-evident audit log (SHA-256 chain) + /verify", qeetid: true, competitor: "partial", note: "Qeet ID hash-chains every audit row; an integrity endpoint proves the chain is intact." },
+    { section: "Security", feature: "Refresh-token theft detection", qeetid: true, competitor: true },
+    { section: "Security", feature: "Breached-password rejection (HIBP)", qeetid: true, competitor: true },
+    { section: "Security", feature: "Device fingerprinting", qeetid: "Roadmap", competitor: true, note: "Device intelligence is Stytch's signature strength; Qeet ID's is planned." },
+    { section: "Security", feature: "Impossible-travel / adaptive risk signals", qeetid: "Roadmap", competitor: true },
 
     // ---- Deployment ----
     { section: "Deployment", feature: "Self-host (single binary + Postgres)", qeetid: true, competitor: false },

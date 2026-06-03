@@ -51,8 +51,10 @@ const data: ComparisonData = {
     { section: "Federation", feature: "Bring-your-own social provider", qeetid: true, competitor: true },
 
     // ---- Authorization ----
-    { section: "Authorization", feature: "RBAC (per-tenant roles)", qeetid: true, competitor: true },
-    { section: "Authorization", feature: "ABAC / fine-grained policies", qeetid: "Roadmap v1.5", competitor: true },
+    { section: "Authorization", feature: "RBAC + single-call /check API", qeetid: true, competitor: true },
+    { section: "Authorization", feature: "ABAC policy engine", qeetid: true, competitor: "partial", note: "Qeet ID ships a per-tenant ABAC policy engine; Auth0 leans on Rules/Actions for attribute logic." },
+    { section: "Authorization", feature: "Explainable authz (grant-path “why?” trace)", qeetid: true, competitor: false, note: "Qeet ID returns the role/group grant path (or denial reason) on every check." },
+    { section: "Authorization", feature: "Fine-grained / ReBAC", qeetid: "Roadmap", competitor: true, note: "Auth0 ships FGA; Qeet ID's ReBAC is planned." },
     { section: "Authorization", feature: "Multi-tenant isolation by default", qeetid: true, competitor: "Organizations add-on" },
 
     // ---- Deployment ----
@@ -67,17 +69,24 @@ const data: ComparisonData = {
     { section: "Pricing", feature: "SSO included on entry plan", qeetid: true, competitor: false, note: "Auth0 reserves SAML/OIDC SSO for paid B2B tiers." },
     { section: "Pricing", feature: "MAU overage billing", qeetid: "Linear", competitor: "Tier jump" },
 
+    // ---- Security & audit ----
+    { section: "Security & audit", feature: "Tamper-evident hash-chained audit log + /verify", qeetid: true, competitor: "partial", note: "Qeet ID SHA-256 chains every audit row; an integrity endpoint proves no row was altered." },
+    { section: "Security & audit", feature: "Refresh-token theft detection", qeetid: true, competitor: true },
+    { section: "Security & audit", feature: "Breached-password rejection (HIBP)", qeetid: true, competitor: true },
+    { section: "Security & audit", feature: "Adaptive / risk-based MFA + bot detection", qeetid: "Roadmap", competitor: true, note: "Auth0 ships attack protection; Qeet ID's adaptive MFA / bot detection are planned." },
+
     // ---- Compliance ----
-    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap v1.0", competitor: true },
-    { section: "Compliance", feature: "GDPR / DPA", qeetid: true, competitor: true },
-    { section: "Compliance", feature: "HIPAA BAA", qeetid: "Roadmap v1.5", competitor: true },
+    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap (pre-GA)", competitor: true, note: "Independent audit + external pen-test are scheduled before GA." },
+    { section: "Compliance", feature: "GDPR erasure / data export", qeetid: true, competitor: true },
     { section: "Compliance", feature: "Self-hosted = your compliance boundary", qeetid: true, competitor: false },
 
     // ---- Developer experience ----
     { section: "Developer experience", feature: "OpenAPI + Postman", qeetid: true, competitor: true },
     { section: "Developer experience", feature: "Webhook events with HMAC + retries", qeetid: true, competitor: true },
     { section: "Developer experience", feature: "Audit log API + CSV/JSON export", qeetid: true, competitor: "Paid tiers" },
-    { section: "Developer experience", feature: "First-party SDKs", qeetid: "React, Node, Go, Python (beta)", competitor: "20+ languages" },
+    { section: "Developer experience", feature: "First-party SDKs", qeetid: "TS · Next · React · Go · Python", competitor: "20+ languages" },
+    { section: "Developer experience", feature: "OpenAPI spec (100% route coverage, CI-guarded)", qeetid: true, competitor: true },
+    { section: "Developer experience", feature: "Prebuilt React components", qeetid: "partial", competitor: true, note: "Auth0 ships polished hosted UI + Lock; Qeet ID's React component kit is in progress." },
   ],
   cta: {
     headline: "Try Qeet ID in 60 seconds",

@@ -46,8 +46,10 @@ const data: ComparisonData = {
     // ---- Federation ----
     { section: "Federation", feature: "SAML 2.0 SSO", qeetid: true, competitor: true },
     { section: "Federation", feature: "OIDC SSO", qeetid: true, competitor: true },
-    { section: "Federation", feature: "SCIM 2.0", qeetid: true, competitor: true },
-    { section: "Federation", feature: "Directory Sync (Google, Okta, Entra)", qeetid: "Roadmap v1.5", competitor: true },
+    { section: "Federation", feature: "SCIM 2.0 (Users + Groups)", qeetid: true, competitor: true },
+    { section: "Federation", feature: "SAML 2.0 IdP (be an SSO source)", qeetid: true, competitor: "partial", note: "Qeet ID is both a SAML SP and a SAML IdP; WorkOS focuses on consuming customer IdPs." },
+    { section: "Federation", feature: "LDAP / AD federation", qeetid: true, competitor: true },
+    { section: "Federation", feature: "Hosted Directory Sync connectors (Google, Okta, Entra)", qeetid: "partial", competitor: true, note: "Qeet ID consumes SCIM today; turnkey directory-sync connectors are on the roadmap." },
     { section: "Federation", feature: "Magic links", qeetid: true, competitor: true },
 
     // ---- Auth methods ----
@@ -57,8 +59,8 @@ const data: ComparisonData = {
 
     // ---- Compliance ----
     { section: "Compliance", feature: "Audit logs (search, export)", qeetid: true, competitor: true },
-    { section: "Compliance", feature: "Tamper-evident audit chain (SHA-256)", qeetid: true, competitor: false, note: "Qeet ID chains every audit row by hash; tampering breaks the chain." },
-    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap v1.0", competitor: true },
+    { section: "Compliance", feature: "Tamper-evident audit chain (SHA-256) + /verify", qeetid: true, competitor: "partial", note: "Qeet ID chains every audit row by hash; tampering breaks the chain, and /verify proves it." },
+    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap (pre-GA)", competitor: true },
     { section: "Compliance", feature: "Self-hosted = your compliance boundary", qeetid: true, competitor: false },
 
     // ---- Deployment ----

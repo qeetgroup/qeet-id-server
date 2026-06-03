@@ -1,6 +1,10 @@
 import { ThemeProvider } from "@qeetrix/ui";
 import type { Metadata } from "next";
 import { Fira_Code } from "next/font/google";
+import {
+  OrganizationJsonLd,
+  WebSiteJsonLd,
+} from "@/components/marketing/structured-data";
 import "./globals.css";
 
 const firaCode = Fira_Code({
@@ -99,6 +103,10 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body className="font-sans">
+        {/* Site-wide publisher + website schema. Emitted once in the root
+            layout so it covers every route (marketing + any future surface). */}
+        <OrganizationJsonLd />
+        <WebSiteJsonLd />
         <ThemeProvider defaultTheme="system" storageKey={STORAGE_KEY}>
           {children}
         </ThemeProvider>

@@ -1,84 +1,128 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon } from "lucide-react";
+
+import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
+import { PageHero } from "@/components/marketing/page-hero";
+import { Section, SectionHeader } from "@/components/marketing/section";
 
 export const metadata: Metadata = {
   title: "Compare Qeet ID",
   description:
-    "Honest, side-by-side comparisons of Qeet ID against Auth0, Clerk, WorkOS, and Stytch — feature parity, deployment, pricing.",
+    "Honest, side-by-side comparisons of Qeet ID against Auth0, Clerk, WorkOS, and Stytch — feature parity, deployment model, and pricing, verified against what we ship.",
 };
 
 const competitors = [
   {
     slug: "auth0",
     name: "Auth0",
+    category: "Enterprise CIAM",
     tagline:
-      "Auth0 (Okta) is the enterprise CIAM market leader. Compare on self-hosting, transparent pricing, and federation parity.",
+      "The Okta-owned market leader for federation. Compare on self-hosting, transparent per-MAU pricing, and the no-SSO-tax model.",
   },
   {
     slug: "clerk",
     name: "Clerk",
+    category: "Developer-first auth",
     tagline:
-      "Clerk is the developer-friendly React-first auth-as-a-service. Compare on self-hosting, multi-tenant B2B, and infrastructure ownership.",
+      "The polished React-first auth-as-a-service. Compare on self-hosting, multi-tenant B2B defaults, and owning your own database.",
   },
   {
     slug: "workos",
     name: "WorkOS",
+    category: "Enterprise-readiness APIs",
     tagline:
-      "WorkOS sells enterprise-readiness APIs (SSO, SCIM, Audit). Compare on whether you also want the user store and admin UI in one place.",
+      "SSO / SCIM / Audit APIs you bolt onto your own user store. Compare when you want the user store, MFA, and admin in one place.",
   },
   {
     slug: "stytch",
     name: "Stytch",
+    category: "Passwordless + fraud",
     tagline:
-      "Stytch is a passwordless-first auth API with strong fraud signals. Compare on built-in admin UI, multi-tenant B2B, and self-hosting.",
+      "A passwordless-first API with strong device intelligence. Compare on the built-in admin UI, B2B multi-tenancy, and self-hosting.",
   },
+];
+
+const edges = [
+  "Open-source core, self-hostable down to air-gapped — you own your data and deployment.",
+  "Both an OIDC and a SAML IdP, with SCIM Users + Groups, and no “SSO tax.”",
+  "A tamper-evident, hash-chained audit log with a /verify endpoint most platforms don't ship.",
+  "Refresh-token theft detection, per-account lockout, and a prod boot-gate — secure by default.",
+  "Five first-party SDKs and a 100%-route-covered OpenAPI spec, guarded in CI.",
+  "Linear per-MAU pricing with a real 5,000-MAU free tier — no tier-jump surprises.",
 ];
 
 export default function ComparePage() {
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-16 sm:px-6 sm:py-24">
-      <div className="mb-12">
-        <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-          Compare
-        </p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-5xl">
-          How does Qeet ID stack up?
-        </h1>
-        <p className="mt-4 max-w-2xl text-balance text-lg text-muted-foreground">
-          We&apos;ve put together honest, side-by-side comparisons against the identity
-          platforms you&apos;ve probably already evaluated. Each comparison links to public
-          docs so you can verify our claims.
-        </p>
-      </div>
+    <>
+      <PageHero
+        eyebrow="Compare"
+        title="Qeet ID vs."
+        titleAccent="the field"
+        subtitle="We've put together honest, side-by-side comparisons against the identity platforms you've probably already evaluated. Each one is verified against what Qeet ID actually ships today — gaps included — and against the competitor's public docs."
+      />
 
-      <ul className="grid gap-4 sm:grid-cols-2">
-        {competitors.map((c) => (
-          <li key={c.slug}>
-            <Link
-              href={`/compare/${c.slug}`}
-              className="group flex h-full flex-col gap-3 rounded-2xl border bg-card p-6 transition-colors hover:border-primary"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold tracking-tight">
+      <Section innerClassName="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
+        <Stagger staggerDelay={0.08} className="grid gap-4 sm:grid-cols-2">
+          {competitors.map((c) => (
+            <StaggerItem key={c.slug} className="h-full">
+              <Link
+                href={`/compare/${c.slug}`}
+                className="group flex h-full flex-col gap-3 rounded-2xl border border-border/60 bg-card p-6 transition-colors hover:border-brand/50 focus-ring-brand"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-medium uppercase tracking-widest text-brand-text">
+                    {c.category}
+                  </span>
+                  <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-foreground" />
+                </div>
+                <h2 className="font-display text-xl font-semibold tracking-tight">
                   Qeet ID <span className="text-muted-foreground">vs.</span> {c.name}
                 </h2>
-                <ArrowRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-foreground" />
-              </div>
-              <p className="text-sm text-muted-foreground">{c.tagline}</p>
-            </Link>
-          </li>
-        ))}
-      </ul>
+                <p className="text-sm text-muted-foreground">{c.tagline}</p>
+              </Link>
+            </StaggerItem>
+          ))}
+        </Stagger>
+      </Section>
 
-      <p className="mt-12 text-xs text-muted-foreground">
-        Comparisons are based on publicly-available product information at the time of
-        writing. Spotted something inaccurate?{" "}
-        <Link href="/contact" className="underline">
-          Let us know
-        </Link>
-        .
-      </p>
-    </div>
+      <Section muted innerClassName="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
+        <div className="grid gap-12 lg:grid-cols-[1fr_1.3fr] lg:items-start">
+          <SectionHeader
+            align="left"
+            eyebrow="Positioning"
+            title="Where Qeet ID"
+            titleAccent="wins"
+            subtitle="The developer experience of Clerk, the enterprise model of WorkOS, and an audit log nobody else ships — open-source and without the SSO tax."
+          />
+          <Stagger staggerDelay={0.07} className="grid gap-3 sm:grid-cols-2">
+            {edges.map((e) => (
+              <StaggerItem key={e}>
+                <div className="flex h-full items-start gap-2.5 rounded-xl border border-border/60 bg-background p-4 text-sm">
+                  <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-brand/15 text-brand">
+                    <CheckIcon className="size-3" aria-hidden />
+                  </span>
+                  <span>{e}</span>
+                </div>
+              </StaggerItem>
+            ))}
+          </Stagger>
+        </div>
+      </Section>
+
+      <Section innerClassName="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:px-8">
+        <Reveal className="text-center">
+          <p className="text-sm text-muted-foreground text-balance">
+            Comparisons reflect publicly-available product information at the time of writing, and
+            Qeet ID&apos;s implemented status as of mid-2026. We try hard to be accurate — and to be
+            candid about where we&apos;re still building. Spotted something inaccurate?{" "}
+            <Link href="/contact" className="underline">
+              Let us know
+            </Link>
+            .
+          </p>
+        </Reveal>
+      </Section>
+    </>
   );
 }

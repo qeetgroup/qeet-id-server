@@ -1,9 +1,15 @@
 import { ButtonLink } from "@/components/marketing/button-link";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
+import { FaqAccordion } from "@/components/marketing/faq-accordion";
+import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { PricingCalculator } from "@/components/marketing/pricing-calculator";
+import { Section, SectionHeader } from "@/components/marketing/section";
+import { FaqJsonLd } from "@/components/marketing/structured-data";
 import { cn } from "@qeetrix/ui";
 import { CheckIcon } from "lucide-react";
 import type { Metadata } from "next";
+
+import { PageHero } from "@/components/marketing/page-hero";
 
 export const metadata: Metadata = {
   title: "Pricing",
@@ -95,46 +101,62 @@ const faq = [
   },
   {
     q: "Is there a self-hosted option?",
-    a: "Yes, on Enterprise contracts. We ship a Kubernetes deploy with Terraform modules, monitored by your team.",
+    a: "Yes, on Enterprise contracts. We ship a Kubernetes deploy with a Helm chart and a DR runbook, monitored by your team.",
   },
 ];
 
 export default function PricingPage() {
   return (
     <>
-      <section className="border-b border-border/60">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
-          <div className="mx-auto max-w-2xl text-center">
-            <p className="text-sm font-medium uppercase tracking-widest text-primary">Pricing</p>
-            <h1 className="mt-2 font-display text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-              Simple pricing. Real free tier.
-            </h1>
-            <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-              Free up to 5,000 MAU. No card required. Predictable per-MAU pricing as you grow.
-            </p>
-          </div>
+      <PageHero
+        eyebrow="Pricing"
+        title="Simple pricing."
+        titleAccent="Real free tier."
+        subtitle="Free up to 5,000 MAU. No card required. Predictable per-MAU pricing as you grow — no tier-jump surprises."
+      />
 
-          <div className="mt-14 grid gap-6 lg:grid-cols-3">
-            {tiers.map((t) => (
+      <Section innerClassName="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8 lg:py-20">
+        <Stagger staggerDelay={0.1} className="grid gap-6 lg:grid-cols-3">
+          {tiers.map((t) => (
+            <StaggerItem key={t.name} className="h-full">
               <div
-                key={t.name}
                 className={cn(
-                  "relative flex flex-col gap-6 overflow-hidden rounded-2xl border bg-background p-6",
-                  t.featured ? "border-primary/40 shadow-xl shadow-primary/10" : "border-border/60",
+                  "relative flex h-full flex-col gap-6 overflow-hidden rounded-2xl border bg-background p-6",
+                  t.featured
+                    ? "border-brand/40 shadow-xl shadow-brand/10"
+                    : "border-border/60",
                 )}
               >
-                {t.featured && <BorderBeam size={280} duration={9} />}
+                {t.featured && (
+                  <>
+                    <BorderBeam
+                      size={280}
+                      duration={9}
+                      colorFrom="var(--brand-500)"
+                      colorTo="var(--brand-300)"
+                    />
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[image:var(--brand-gradient)]"
+                    />
+                  </>
+                )}
                 <div className="flex items-center justify-between">
                   <h3 className="font-display text-xl font-semibold tracking-tight">{t.name}</h3>
                   {t.featured && (
-                    <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
+                    <span className="rounded-full bg-[image:var(--brand-gradient)] px-2 py-0.5 text-xs font-medium text-brand-foreground">
                       Most popular
                     </span>
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground">{t.description}</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="font-display text-4xl font-semibold tracking-tight">
+                  <span
+                    className={cn(
+                      "font-display text-4xl font-semibold tracking-tight",
+                      t.featured && "text-gradient-brand",
+                    )}
+                  >
                     {t.price}
                   </span>
                   <span className="text-sm text-muted-foreground">{t.period}</span>
@@ -150,68 +172,66 @@ export default function PricingPage() {
                 <ul className="flex flex-col gap-2.5 border-t border-border/60 pt-6 text-sm">
                   {t.features.map((f) => (
                     <li key={f} className="flex gap-2">
-                      <CheckIcon className="mt-0.5 size-4 shrink-0 text-primary" />
+                      <CheckIcon className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
                       <span className="text-muted-foreground">{f}</span>
                     </li>
                   ))}
                 </ul>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+            </StaggerItem>
+          ))}
+        </Stagger>
+      </Section>
 
       <PricingCalculator />
 
-      <section className="border-b border-border/60 bg-muted/30">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          <div className="mx-auto max-w-2xl text-center">
-            <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Compare plans
-            </h2>
-          </div>
+      <Section muted innerClassName="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
+        <SectionHeader title="Compare" titleAccent="plans" />
 
-          <div className="mt-12 overflow-hidden rounded-2xl border border-border/60 bg-background">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-border/60 bg-muted/40 text-xs uppercase tracking-widest text-muted-foreground">
-                  <th className="px-4 py-3 font-medium">Feature</th>
-                  <th className="px-4 py-3 font-medium">Free</th>
-                  <th className="px-4 py-3 font-medium">Pro</th>
-                  <th className="px-4 py-3 font-medium">Enterprise</th>
+        <Reveal className="mt-12 overflow-hidden rounded-2xl border border-border/60 bg-background">
+          <table className="w-full text-left text-sm">
+            <caption className="sr-only">Feature comparison across Free, Pro, and Enterprise plans</caption>
+            <thead>
+              <tr className="border-b border-border/60 bg-muted/40 text-xs uppercase tracking-widest text-muted-foreground">
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Feature
+                </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Free
+                </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  <span className="text-gradient-brand font-semibold">Pro</span>
+                </th>
+                <th scope="col" className="px-4 py-3 font-medium">
+                  Enterprise
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {compare.map((row, i) => (
+                <tr
+                  key={row.feature}
+                  className={cn(i !== compare.length - 1 && "border-b border-border/60")}
+                >
+                  <th scope="row" className="px-4 py-3 text-left font-medium">
+                    {row.feature}
+                  </th>
+                  <td className="px-4 py-3 text-muted-foreground">{row.free}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{row.pro}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{row.enterprise}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {compare.map((row, i) => (
-                  <tr
-                    key={row.feature}
-                    className={cn(i !== compare.length - 1 && "border-b border-border/60")}
-                  >
-                    <td className="px-4 py-3 font-medium">{row.feature}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.free}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.pro}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.enterprise}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
+              ))}
+            </tbody>
+          </table>
+        </Reveal>
+      </Section>
 
-      <section className="border-b border-border/60">
-        <div className="mx-auto max-w-3xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          <h2 className="font-display text-3xl font-semibold tracking-tight">Pricing FAQ</h2>
-          <dl className="mt-10 flex flex-col gap-6">
-            {faq.map((f) => (
-              <div key={f.q} className="rounded-2xl border border-border/60 bg-background p-6">
-                <dt className="font-medium">{f.q}</dt>
-                <dd className="mt-2 text-sm text-muted-foreground">{f.a}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
+      <Section innerClassName="mx-auto max-w-3xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
+        {/* FAQPage rich-result data — mirrors the visible accordion below. */}
+        <FaqJsonLd items={faq} />
+        <SectionHeader align="left" title="Pricing" titleAccent="FAQ" />
+        <FaqAccordion items={faq} />
+      </Section>
     </>
   );
 }

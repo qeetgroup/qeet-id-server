@@ -1,57 +1,83 @@
+import type { Metadata } from "next";
+
 import { CaseStudyCard } from "@/components/marketing/blocks/case-study-card";
+import { CustomerCard } from "@/components/marketing/blocks/customer-card";
 import { CustomerLogoBlock } from "@/components/marketing/blocks/customer-logo-block";
+import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
+import { PageHero } from "@/components/marketing/page-hero";
+import { Section, SectionHeader } from "@/components/marketing/section";
 import { CTA } from "@/components/marketing/sections/cta";
 import { stories } from "@/lib/customers";
-import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Customers",
   description:
-    "Platform teams at Lattice, Vercel, Linear, and hundreds more trust Qeet ID with their identity layer.",
+    "How platform, fintech, healthcare, and marketplace teams ship secure identity on Qeet ID — passkeys, SSO, SCIM, RBAC, and a tamper-evident audit trail.",
 };
 
+// Representative team archetypes — generic wordmarks, not claims about named
+// customers (see lib/customers.ts).
 const customerLogos = [
-  { name: "Acme" },
-  { name: "Globex" },
-  { name: "Initech" },
-  { name: "Umbrella" },
-  { name: "Hooli" },
-  { name: "Pied Piper" },
-  { name: "Stark" },
-  { name: "Wayne" },
-  { name: "Tyrell" },
-  { name: "Massive" },
-  { name: "Bluebook" },
-  { name: "Aperture" },
+  { name: "Northwind" },
+  { name: "Meridian" },
+  { name: "Atlas" },
+  { name: "Cedar" },
+  { name: "Tidewater" },
+  { name: "Lumen" },
+  { name: "Beacon" },
+  { name: "Harbor" },
+  { name: "Vela" },
+  { name: "Cobalt" },
+  { name: "Summit" },
+  { name: "Ridgeline" },
 ];
 
 export default function CustomersPage() {
+  const [featured, ...rest] = stories;
+
   return (
     <>
-      <section className="border-b border-border/60">
-        <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          <div className="mx-auto max-w-3xl text-center">
-            <p className="text-sm font-medium uppercase tracking-widest text-primary">Customers</p>
-            <h1 className="mt-2 font-display text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
-              The world&apos;s best product teams trust Qeet ID
-            </h1>
-            <p className="mt-5 text-muted-foreground text-balance sm:text-lg">
-              From two-person startups to Fortune 100 platforms — Qeet ID keeps their users signed
-              in, and their security teams happy.
-            </p>
-          </div>
-        </div>
-      </section>
+      <PageHero
+        eyebrow="Customers"
+        title="Teams of every shape"
+        titleAccent="ship identity on Qeet ID"
+        subtitle="From developer platforms to regulated fintech and healthcare — see how teams replace bespoke auth, satisfy compliance, and keep users signed in. Every story below is a representative composite, not a claim about a named customer."
+      />
 
-      <CustomerLogoBlock logos={customerLogos} />
+      <CustomerLogoBlock eyebrow="Representative segments we build for" logos={customerLogos} />
 
-      <section className="border-b border-border/60 bg-muted/30">
-        <div className="mx-auto flex max-w-7xl flex-col gap-12 px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-          {stories.map((s, i) => (
-            <CaseStudyCard key={s.company} data={s} featured={i === 0} />
+      {/* Featured case study */}
+      {featured && (
+        <Section muted>
+          <SectionHeader
+            align="left"
+            eyebrow="Featured story"
+            title="Two sprints to retire"
+            titleAccent="home-grown auth"
+            subtitle="A developer-platform team consolidated onto Qeet ID and deleted the service they'd maintained for years."
+          />
+          <Reveal className="mt-10">
+            <CaseStudyCard data={featured} featured />
+          </Reveal>
+        </Section>
+      )}
+
+      {/* Story grid */}
+      <Section>
+        <SectionHeader
+          eyebrow="More stories"
+          title="Outcomes across"
+          titleAccent="every segment"
+          subtitle="Each tile links to the full challenge → solution → results write-up."
+        />
+        <Stagger staggerDelay={0.06} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          {rest.map((story) => (
+            <StaggerItem key={story.company} className="h-full">
+              <CustomerCard story={story} />
+            </StaggerItem>
           ))}
-        </div>
-      </section>
+        </Stagger>
+      </Section>
 
       <CTA />
     </>

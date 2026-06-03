@@ -15,8 +15,8 @@ export function BorderBeam({
   size = 220,
   duration = 8,
   delay = 0,
-  colorFrom = "var(--color-primary)",
-  colorTo = "#22d3ee",
+  colorFrom = "var(--beam-from, var(--color-primary))",
+  colorTo = "var(--beam-to, #22d3ee)",
 }: BorderBeamProps) {
   return (
     <div

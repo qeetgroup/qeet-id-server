@@ -120,6 +120,25 @@ export function listPosts(): BlogPost[] {
 }
 
 /**
+ * Posts related to a given one — ranked by shared tags, newest-first as the
+ * tiebreaker. Excludes the post itself; capped at `limit`. Used for the
+ * "Keep reading" strip on the post detail page.
+ */
+export function relatedPosts(slug: string, limit = 2): BlogPost[] {
+  const current = getPost(slug);
+  if (!current) return [];
+  return posts
+    .filter((p) => p.slug !== slug)
+    .map((p) => ({
+      post: p,
+      score: p.tags.filter((t) => current.tags.includes(t)).length,
+    }))
+    .sort((a, b) => b.score - a.score || b.post.publishedAt.localeCompare(a.post.publishedAt))
+    .slice(0, limit)
+    .map((x) => x.post);
+}
+
+/**
  * Tiny renderer for the limited blog body format: paragraphs separated
  * by blank lines, with `## Heading` and triple-backtick fences. Avoids
  * pulling in a full MDX/markdown dep for what is currently three posts.

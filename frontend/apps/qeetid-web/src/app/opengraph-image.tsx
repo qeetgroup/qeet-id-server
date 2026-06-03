@@ -1,12 +1,18 @@
 import { ImageResponse } from "next/og";
 
-// Site-wide default Open Graph / Twitter card. Per-route segments can
-// shadow this by adding their own `opengraph-image.tsx`. Generated at
-// build time + statically cached; no runtime dependency.
+import { OG_CONTENT_TYPE, OG_SIZE } from "@/lib/og";
+
+// Site-wide default Open Graph / Twitter card (brand orange #F26D0E on a deep
+// warm-black gradient). Per-route segments shadow this by adding their own
+// `opengraph-image.tsx`. Generated at build time + statically cached; no
+// runtime/network dependency (Satori falls back to the bundled Geist font).
+//
+// This is the marquee card, so it keeps a bespoke layout (wordmark + headline
+// + trust badges) rather than the generic `ogCard` template used elsewhere.
 
 export const alt = "Qeet ID — One Identity. Every Platform.";
-export const size = { width: 1200, height: 630 };
-export const contentType = "image/png";
+export const size = OG_SIZE;
+export const contentType = OG_CONTENT_TYPE;
 
 export default async function Image() {
   return new ImageResponse(
@@ -17,18 +23,44 @@ export default async function Image() {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          background: "linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #312e81 100%)",
-          color: "#fff",
+          background: "#0B0A09",
+          color: "#FAFAF9",
           padding: 80,
-          fontFamily: "system-ui, -apple-system, sans-serif",
+          fontFamily: "Geist, 'Geist Sans', system-ui, -apple-system, sans-serif",
+          position: "relative",
         }}
       >
+        {/* Warm brand glow, top-right. */}
+        <div
+          style={{
+            position: "absolute",
+            top: -260,
+            right: -200,
+            width: 760,
+            height: 760,
+            borderRadius: "9999px",
+            background:
+              "radial-gradient(circle, #F26D0E66 0%, #EA580C22 45%, transparent 70%)",
+          }}
+        />
+        {/* Top brand hairline. */}
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 8,
+            background: "linear-gradient(90deg, #F59E0B 0%, #F26D0E 45%, #EA580C 100%)",
+          }}
+        />
+
         {/* Wordmark */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 16,
+            gap: 18,
             fontSize: 36,
             fontWeight: 600,
             letterSpacing: -0.5,
@@ -36,16 +68,17 @@ export default async function Image() {
         >
           <div
             style={{
-              width: 48,
-              height: 48,
-              borderRadius: 12,
+              width: 56,
+              height: 56,
+              borderRadius: 14,
               background:
-                "linear-gradient(135deg, #818cf8 0%, #4f46e5 50%, #1e1b4b 100%)",
+                "linear-gradient(135deg, #F59E0B 0%, #F26D0E 45%, #EA580C 100%)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               fontWeight: 700,
-              fontSize: 28,
+              fontSize: 34,
+              color: "#FFFFFF",
             }}
           >
             Q
@@ -53,18 +86,17 @@ export default async function Image() {
           Qeet ID
         </div>
 
-        {/* Headline. Satori (the renderer behind ImageResponse) requires
-            every multi-child div to declare display: flex, so we use a
-            column-flex container with two text spans instead of a <br>. */}
+        {/* Headline. Satori requires every multi-child div to declare
+            display: flex, so we use a column-flex container with two spans. */}
         <div
           style={{
             display: "flex",
             flexDirection: "column",
-            marginTop: 80,
-            fontSize: 78,
+            marginTop: 96,
+            fontSize: 84,
             fontWeight: 700,
             letterSpacing: -2,
-            lineHeight: 1.05,
+            lineHeight: 1.04,
             maxWidth: 1000,
           }}
         >
@@ -75,9 +107,10 @@ export default async function Image() {
         {/* Subhead */}
         <div
           style={{
+            display: "flex",
             marginTop: 30,
             fontSize: 28,
-            color: "#cbd5e1",
+            color: "#A8A29E",
             maxWidth: 900,
             lineHeight: 1.3,
           }}
@@ -93,10 +126,10 @@ export default async function Image() {
             alignItems: "center",
             justifyContent: "space-between",
             fontSize: 22,
-            color: "#94a3b8",
+            color: "#78716C",
           }}
         >
-          <div>qeetid.com</div>
+          <div style={{ display: "flex" }}>qeetid.com</div>
           <div style={{ display: "flex", gap: 16 }}>
             <span>SOC 2</span>
             <span style={{ opacity: 0.5 }}>·</span>

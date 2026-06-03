@@ -1,8 +1,11 @@
 "use client";
 
-import { CodeBlock } from "@/components/marketing/effects/code-block";
 import { cn } from "@qeetrix/ui";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useId, useState } from "react";
+
+import { CodeBlock } from "@/components/marketing/effects/code-block";
+import { Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
 
 type Lang = "TypeScript" | "Go" | "Python" | "Rust";
 const langs: Lang[] = ["TypeScript", "Go", "Python", "Rust"];
@@ -73,6 +76,90 @@ const steps: Step[] = [
   },
 ];
 
+/** Animated language tab bar — sliding brand indicator via shared `layoutId`. */
+function LangTabs({
+  lang,
+  onChange,
+  tablistId,
+}: {
+  lang: Lang;
+  onChange: (l: Lang) => void;
+  tablistId: string;
+}) {
+  const reduce = useReducedMotion();
+  return (
+    <div
+      role="tablist"
+      aria-label="SDK language"
+      id={tablistId}
+      className="inline-flex flex-wrap justify-center gap-1 rounded-xl border border-border/60 bg-background/60 p-1 backdrop-blur"
+    >
+      {langs.map((l) => {
+        const selected = l === lang;
+        return (
+          <button
+            key={l}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onChange(l)}
+            className={cn(
+              "relative rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors focus-ring-brand",
+              selected ? "text-background" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {selected &&
+              (reduce ? (
+                <span
+                  aria-hidden
+                  className="absolute inset-0 -z-10 rounded-lg bg-foreground"
+                />
+              ) : (
+                <motion.span
+                  aria-hidden
+                  layoutId={`${tablistId}-indicator`}
+                  className="absolute inset-0 -z-10 rounded-lg bg-foreground"
+                  transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                />
+              ))}
+            <span className="relative">{l}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Code surface that re-reveals when the active language changes. */
+function StepCode({ filename, code }: { filename: string; code: string }) {
+  const reduce = useReducedMotion();
+  if (reduce) {
+    return (
+      <CodeBlock filename={filename} className="flex-1">
+        {code}
+      </CodeBlock>
+    );
+  }
+  return (
+    <div className="relative flex-1">
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div
+          key={code}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          className="h-full"
+        >
+          <CodeBlock filename={filename} className="h-full">
+            {code}
+          </CodeBlock>
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export function HowItWorks() {
   const [lang, setLang] = useState<Lang>("TypeScript");
   const tablistId = useId();
@@ -80,62 +167,42 @@ export function HowItWorks() {
   return (
     <section className="border-b border-border/60 bg-muted/30">
       <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
-        <div className="mx-auto max-w-2xl text-center">
-          <p className="text-sm font-medium uppercase tracking-widest text-primary">How it works</p>
+        <Reveal className="mx-auto max-w-2xl text-center">
+          <p className="text-sm font-medium uppercase tracking-widest text-brand-text">
+            How it works
+          </p>
           <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-            From npm install to production auth in an afternoon
+            <WordReveal text="From npm install to production auth in an afternoon" />
           </h2>
-        </div>
+        </Reveal>
 
-        <div className="mt-10 flex justify-center">
-          <div
-            role="tablist"
-            aria-label="SDK language"
-            id={tablistId}
-            className="inline-flex flex-wrap justify-center gap-1 rounded-xl border border-border/60 bg-background/60 p-1 backdrop-blur"
-          >
-            {langs.map((l) => {
-              const selected = l === lang;
-              return (
-                <button
-                  key={l}
-                  type="button"
-                  role="tab"
-                  aria-selected={selected}
-                  onClick={() => setLang(l)}
-                  className={cn(
-                    "rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
-                    selected
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {l}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <Reveal delay={0.1} className="mt-10 flex justify-center">
+          <LangTabs lang={lang} onChange={setLang} tablistId={tablistId} />
+        </Reveal>
 
-        <ol className="mt-10 grid auto-rows-fr gap-6 lg:grid-cols-3">
+        <Stagger
+          staggerDelay={0.1}
+          className="mt-10 grid auto-rows-fr gap-6 lg:grid-cols-3"
+        >
           {steps.map((s) => (
-            <li
-              key={s.n}
-              className="relative flex h-full flex-col gap-4 rounded-2xl border border-border/60 bg-background p-6"
-            >
-              <div className="flex items-center gap-3">
-                <span className="grid size-9 place-items-center rounded-lg bg-primary/10 font-mono text-xs font-medium text-primary">
-                  {s.n}
-                </span>
-                <h3 className="font-display text-xl font-semibold tracking-tight">{s.title}</h3>
-              </div>
-              <p className="text-sm text-muted-foreground">{s.body}</p>
-              <CodeBlock filename={s.filename[lang]} className="flex-1">
-                {s.code[lang]}
-              </CodeBlock>
-            </li>
+            <StaggerItem key={s.n} className="h-full">
+              <li className="relative flex h-full list-none flex-col gap-4 overflow-hidden rounded-2xl border border-border/60 bg-background p-6 transition-colors hover:border-foreground/20">
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute -left-10 -top-10 size-32 rounded-full bg-linear-to-br from-brand/25 to-transparent opacity-50 blur-3xl"
+                />
+                <div className="relative flex items-center gap-3">
+                  <span className="grid size-9 place-items-center rounded-lg bg-[image:var(--brand-gradient)] font-mono text-xs font-semibold text-brand-foreground shadow-sm shadow-brand/30">
+                    {s.n}
+                  </span>
+                  <h3 className="font-display text-xl font-semibold tracking-tight">{s.title}</h3>
+                </div>
+                <p className="relative text-sm text-muted-foreground">{s.body}</p>
+                <StepCode filename={s.filename[lang]} code={s.code[lang]} />
+              </li>
+            </StaggerItem>
           ))}
-        </ol>
+        </Stagger>
       </div>
     </section>
   );

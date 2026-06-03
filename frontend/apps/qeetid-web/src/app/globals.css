@@ -1,8 +1,78 @@
 @import "@qeetrix/ui/styles.css";
 
+/* ---------------------------------------------------------------------------
+ * Qeet ID brand layer (qeetid-web only)
+ *
+ * This file is imported AFTER `@qeetrix/ui/styles.css` (see app/layout.tsx),
+ * so everything here is scoped to THIS app — the admin/login apps that consume
+ * the same `@qeetrix/ui` package are untouched. `@qeetrix/ui` ships a neutral
+ * grayscale `--primary`; below we re-point the semantic `--primary` runtime
+ * token (which `@theme inline { --color-primary: var(--primary) }` maps to) at
+ * the warm Qeet brand so existing Buttons/links/accents pick up brand orange.
+ *
+ * Contrast notes (WCAG 2.2 AA, sRGB):
+ *   - Pure brand #F26D0E is only ~3.0:1 on white → good for FILLS / large text /
+ *     UI accents, but NOT for body-size text on white.
+ *   - --brand-text (#C2410C, ~5.2:1 on white) is the AA-safe shade for links and
+ *     small text on light backgrounds.
+ *   - Light-mode --primary is set to #C2410C so a primary button (brand fill +
+ *     white --primary-foreground) gives white-on-fill ~5.2:1 (AA).
+ *   - Dark-mode --primary uses bright #F26D0E with a dark --primary-foreground;
+ *     dark text on the orange fill is ~6.2:1, and orange-on-dark text is ~6.6:1.
+ * ------------------------------------------------------------------------- */
+:root {
+  /* Warm brand ramp (lightest → darkest). */
+  --brand-50: #fff7ed;
+  --brand-100: #ffedd5;
+  --brand-200: #fed7aa;
+  --brand-300: #fdba74;
+  --brand-400: #fb923c;
+  --brand-500: #f26d0e; /* core brand */
+  --brand-600: #ea580c;
+  --brand-700: #c2410c;
+
+  --brand: var(--brand-500); /* the canonical brand color (fills / large / UI) */
+  --brand-foreground: #ffffff; /* text/icon color that sits on a brand fill */
+  --brand-text: var(--brand-700); /* AA-safe (~5.2:1 on white) — links / small text */
+
+  /* Tasteful warm gradient for hero accents, clip-text, progress bar, etc. */
+  --brand-gradient: linear-gradient(135deg, #f59e0b 0%, #f26d0e 45%, #ea580c 100%);
+
+  /* Re-point the @qeetrix/ui semantic primary token at the brand for THIS app.
+   * --color-primary (defined via @theme inline in @qeetrix/ui) resolves through
+   * --primary, so overriding --primary here flows everywhere primary is used. */
+  --primary: var(--brand-700); /* AA fill with white text on light bg */
+  --primary-foreground: #ffffff;
+  --ring: var(--brand-500); /* focus ring picks up the brand */
+}
+
+.dark {
+  /* In dark mode the brand can run bright; the foreground on a brand fill is a
+   * near-black so dark-text-on-orange stays AA. Links use the brand directly,
+   * which clears AA against the dark background. */
+  --brand-text: var(--brand-400); /* lighter orange reads AA on dark bg */
+  --primary: var(--brand-500);
+  --primary-foreground: #1a1207; /* dark ink on the orange fill (~6.2:1) */
+  --ring: var(--brand-400);
+}
+
 @theme inline {
   /* Override qeetid-ui's --font-mono so code blocks use Fira Code (with ligatures). */
   --font-mono: var(--font-fira-code), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* Expose the brand ramp + gradient as Tailwind theme tokens for this app, so
+   * utilities like `bg-brand`, `text-brand-text`, `from-brand-500`, etc. work. */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-text: var(--brand-text);
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
 
   --animate-marquee: marquee var(--marquee-duration, 40s) linear infinite;
   --animate-marquee-vertical: marquee-vertical var(--marquee-duration, 40s) linear infinite;
@@ -110,6 +180,46 @@
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Brand effect tokens + utilities
+ *
+ * The Aurora/BorderBeam effects read these vars so their defaults are warm
+ * (brand) instead of the old violet/cyan. We keep ONE cool accent (a soft
+ * teal/cyan) for tasteful contrast against the orange — pure-warm reads flat.
+ * ------------------------------------------------------------------------- */
+:root {
+  --aurora-1: var(--brand-500); /* primary warm glow */
+  --aurora-2: #f59e0b; /* amber, warm */
+  --aurora-3: #22d3ee; /* lone cool accent for depth/contrast */
+  --beam-from: var(--brand-500);
+  --beam-to: #22d3ee;
+}
+
+.dark {
+  --aurora-1: var(--brand-500);
+  --aurora-2: #fb923c;
+  --aurora-3: #22d3ee;
+}
+
+/* Brand gradient clip-text. */
+.text-gradient-brand {
+  background-image: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+/* Reusable brand focus ring for interactive elements. */
+.focus-ring-brand {
+  outline: none;
+}
+.focus-ring-brand:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: 2px;
+  border-radius: var(--radius-md, 0.36rem);
 }
 
 @media (prefers-reduced-motion: reduce) {
