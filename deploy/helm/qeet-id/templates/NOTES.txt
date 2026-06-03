@@ -1,0 +1,18 @@
+Qeet ID {{ .Chart.AppVersion }} deployed as {{ include "qeet-id.fullname" . }}.
+
+Migrations ran via the pre-upgrade Job (image: {{ include "qeet-id.migrateImage" . }}).
+
+Check rollout:
+  kubectl rollout status deploy/{{ include "qeet-id.fullname" . }}
+  kubectl run -it --rm curl --image=curlimages/curl --restart=Never -- \
+    curl -s http://{{ include "qeet-id.fullname" . }}/readyz
+
+{{- if not .Values.ingress.enabled }}
+
+Ingress is disabled — expose the Service ({{ include "qeet-id.fullname" . }}) via
+your gateway/load balancer, or set ingress.enabled=true.
+{{- end }}
+
+Reminder: SERVICE_ENV=prod runs the boot-time safety gate — the app refuses to
+start unless JWT_SECRET, JWT_SIGNING_KEY, SECRETS_KEY, ALLOWED_ORIGINS and a
+non-localhost APP_BASE_URL are set (see deploy/RUNBOOK.md).

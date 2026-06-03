@@ -1,0 +1,45 @@
+# Production-style single-host deploy (when you're not on Kubernetes).
+# Postgres and Redis are expected to be MANAGED services — set DB_URL / REDIS_URL
+# to point at them. Provide secrets via the shell environment or a .env file
+# next to this file.
+#
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+#
+# `migrate` runs to completion first; `api` only starts once it succeeds.
+services:
+  migrate:
+    image: ${MIGRATE_IMAGE:-ghcr.io/qeetgroup/qeet-id-migrate:latest}
+    command: ["-path", "/migrations", "-database", "${DB_URL}", "up"]
+    restart: "no"
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/qeetgroup/qeet-id:latest}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      SERVICE_ENV: prod
+      HTTP_PORT: "4001"
+      LOG_LEVEL: info
+      DB_URL: ${DB_URL:?set DB_URL}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY}
+      SECRETS_KEY: ${SECRETS_KEY:?set SECRETS_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set ALLOWED_ORIGINS}
+      APP_BASE_URL: ${APP_BASE_URL:?set APP_BASE_URL}
+      LOGIN_BASE_URL: ${LOGIN_BASE_URL:-}
+      CSRF_COOKIE_DOMAIN: ${CSRF_COOKIE_DOMAIN:-}
+      REDIS_URL: ${REDIS_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM: ${TWILIO_FROM:-}
+    ports:
+      - "4001:4001"
+    restart: unless-stopped
+    # Distroless has no shell, so health is checked externally (LB/monitor) via
+    # GET /readyz rather than a container HEALTHCHECK.

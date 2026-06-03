@@ -73,7 +73,8 @@ export class HttpClient {
     }
 
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
+      // Qeet ID API keys use the `ApiKey` auth scheme (not Bearer).
+      Authorization: `ApiKey ${this.apiKey}`,
       Accept: "application/json",
     };
     let payload: string | undefined;

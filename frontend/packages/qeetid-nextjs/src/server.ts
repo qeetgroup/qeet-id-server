@@ -17,7 +17,7 @@ export async function auth(): Promise<AuthState> {
   const raw = store.get(SESSION_COOKIE)?.value;
   if (!raw) return { isAuthenticated: false };
 
-  const data = open<SessionData>(raw, cfg.cookieSecret);
+  const data = await open<SessionData>(raw, cfg.cookieSecret);
   if (!data?.accessToken) return { isAuthenticated: false };
 
   try {

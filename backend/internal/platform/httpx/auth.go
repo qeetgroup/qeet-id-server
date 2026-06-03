@@ -20,6 +20,13 @@ type AuthVerifier struct {
 func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// An earlier middleware (e.g. the API-key middleware) may have
+			// already authenticated the request. Honor that principal rather
+			// than insisting on a bearer token / dev header.
+			if PrincipalFromCtx(r.Context()) != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if v.DevTrustHeaders {
 				if devUser := r.Header.Get("X-Dev-User"); devUser != "" {
 					p := &Principal{ActorType: "user", Subject: devUser}

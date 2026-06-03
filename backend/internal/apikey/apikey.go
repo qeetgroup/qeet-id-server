@@ -78,6 +78,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	if err != nil {
 		return nil, "", err
 	}
+	// scopes is NOT NULL DEFAULT '{}'; a nil Go slice encodes as SQL NULL, so
+	// coalesce to empty for callers that omit it.
+	if in.Scopes == nil {
+		in.Scopes = []string{}
+	}
 	var k Key
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash, scopes, expires_at)

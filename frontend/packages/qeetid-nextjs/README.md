@@ -35,7 +35,8 @@ export const GET = handleAuth(); // /api/auth/login | /callback | /logout
 `middleware.ts`:
 
 ```ts
-import { qeetidMiddleware } from "@qeetid/nextjs";
+// Import from the /middleware subpath — it's Edge-runtime safe (Web Crypto only).
+import { qeetidMiddleware } from "@qeetid/nextjs/middleware";
 
 export default qeetidMiddleware({ publicRoutes: ["/", "/pricing"] });
 
@@ -45,7 +46,11 @@ export const config = {
 ```
 
 Unauthenticated requests to protected routes are redirected to the hosted login
-(`/api/auth/login` → Qeet ID), then back to where they started.
+(`/api/auth/login` → Qeet ID), then back to where they started. The middleware
+also **silently refreshes** a near-expiry session — calling the token endpoint,
+persisting the rotated refresh token, and re-running the request with the fresh
+cookie — so users aren't bounced to login when the short-lived access token
+expires.
 
 ## 4. Read the user (Server Components / Route Handlers / Actions)
 
@@ -69,10 +74,13 @@ RP-initiated logout at Qeet ID).
 - **Hosted login.** `/api/auth/login` starts the OAuth Authorization Code + PKCE
   flow against Qeet ID's hosted login; `/api/auth/callback` exchanges the code
   for tokens and stores an **encrypted, HttpOnly session cookie** (AES-256-GCM).
-- **Middleware is a coarse, edge-safe gate** — it only checks for the session
-  cookie's presence. **`auth()` does the real work** in the Node runtime:
-  decrypts the cookie and verifies the access token's ES256 signature against
-  the published JWKS (via `@qeetid/sdk`).
+- **Middleware (Edge runtime)** gates routes and **silently refreshes** the
+  session before the access token expires, persisting the rotated refresh token.
+  It uses Web Crypto only, so it never pulls Node-only code into the Edge bundle.
+- **`auth()` (Node runtime)** does the cryptographic check: decrypts the cookie
+  and verifies the access token's ES256 signature against the published JWKS
+  (via `@qeetid/sdk`). Because middleware refreshes proactively, the token
+  `auth()` sees is valid.
 
 ## API
 
