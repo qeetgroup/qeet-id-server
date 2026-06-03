@@ -30,6 +30,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/users/{userID}/tenants/{tenantID}/roles/{roleID}", h.assign)
 	r.Delete("/users/{userID}/tenants/{tenantID}/roles/{roleID}", h.unassign)
 
+	r.Get("/tenants/{tenantID}/groups/{groupID}/roles", h.listGroupRoles)
+	r.Post("/tenants/{tenantID}/groups/{groupID}/roles/{roleID}", h.assignGroupRole)
+	r.Delete("/tenants/{tenantID}/groups/{groupID}/roles/{roleID}", h.unassignGroupRole)
+
 	r.Get("/users/{userID}/tenants/{tenantID}/permissions", h.effective)
 	r.Get("/check", h.check)
 }
@@ -200,6 +204,10 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys})
 }
 
+// check authorizes an action. By default it returns {"allowed": bool}. With the
+// opt-in query flag explain=true it returns the full Explanation (allowed, the
+// grant path(s), and a reason on denial) computed by the same resolver — the
+// default contract is untouched so existing callers/tests keep working.
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	uid, err := uuid.Parse(q.Get("user_id"))
@@ -217,10 +225,85 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("permission required"))
 		return
 	}
+	if q.Get("explain") == "true" {
+		exp, err := h.Repo.Explain(r.Context(), uid, tid, perm)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, exp)
+		return
+	}
 	ok, err := h.Repo.Check(r.Context(), uid, tid, perm)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"allowed": ok})
+}
+
+func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
+	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid groupID"))
+		return
+	}
+	out, err := h.Repo.ListGroupRoles(r.Context(), gid, tid)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
+	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid groupID"))
+		return
+	}
+	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		return
+	}
+	actor := actorOf(r)
+	if err := h.Service.AssignRoleToGroup(r.Context(), gid, tid, rid, actor.UserID, actor); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
+	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		return
+	}
+	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid groupID"))
+		return
+	}
+	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		return
+	}
+	if err := h.Service.RemoveRoleFromGroup(r.Context(), gid, tid, rid, actorOf(r)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

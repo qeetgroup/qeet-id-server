@@ -148,8 +148,77 @@ func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenant
 	return err
 }
 
-// Check returns true if the user holds any role in tenant that grants
-// the named permission.
+// AssignRoleToGroup grants a role to a group. The role and the group must both
+// belong to tenantID; we enforce that in the INSERT's SELECT so a caller can
+// never bind a role from one tenant to a group in another. ON CONFLICT keeps it
+// idempotent. The returned bool reports whether the role/group pair was valid
+// for this tenant (false => the caller should surface a 404), distinguishing a
+// genuine no-op from a cross-tenant or missing-row attempt.
+func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
+	var valid bool
+	err := tx.QueryRow(ctx, `
+		WITH ins AS (
+			INSERT INTO rbac.group_roles (tenant_id, group_id, role_id, granted_by)
+			SELECT $2, $1, $3, $4
+			WHERE EXISTS (SELECT 1 FROM tenant.groups g WHERE g.id = $1 AND g.tenant_id = $2)
+			  AND EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.tenant_id = $2)
+			ON CONFLICT DO NOTHING
+			RETURNING 1
+		)
+		SELECT
+			EXISTS (SELECT 1 FROM ins)
+			OR EXISTS (SELECT 1 FROM rbac.group_roles WHERE group_id = $1 AND role_id = $3 AND tenant_id = $2)
+	`, groupID, tenantID, roleID, grantedBy).Scan(&valid)
+	if err != nil {
+		return false, err
+	}
+	return valid, nil
+}
+
+// RemoveRoleFromGroup revokes a role from a group within a tenant.
+func (r *Repository) RemoveRoleFromGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		DELETE FROM rbac.group_roles WHERE group_id = $1 AND tenant_id = $2 AND role_id = $3
+	`, groupID, tenantID, roleID)
+	return err
+}
+
+// GroupRole is a role bound to a group, enriched with the role's name so the
+// admin UI can render it without a follow-up call.
+type GroupRole struct {
+	RoleID    uuid.UUID `json:"role_id"`
+	Name      string    `json:"name"`
+	GrantedAt time.Time `json:"granted_at"`
+}
+
+// ListGroupRoles returns every role granted to a group within a tenant.
+func (r *Repository) ListGroupRoles(ctx context.Context, groupID, tenantID uuid.UUID) ([]GroupRole, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT gr.role_id, ro.name, gr.granted_at
+		FROM rbac.group_roles gr
+		JOIN rbac.roles ro ON ro.id = gr.role_id
+		WHERE gr.group_id = $1 AND gr.tenant_id = $2
+		ORDER BY ro.name
+	`, groupID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GroupRole
+	for rows.Next() {
+		var g GroupRole
+		if err := rows.Scan(&g.RoleID, &g.Name, &g.GrantedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+// Check returns true if the user holds any role in tenant that grants the
+// named permission — counting BOTH roles granted directly to the user and
+// roles granted to a group the user belongs to. The two arms are scoped by
+// tenant_id independently so a grant can never leak across tenants.
 func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error) {
 	var ok bool
 	err := r.pool.QueryRow(ctx, `
@@ -159,6 +228,13 @@ func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, perm
 			JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 			JOIN rbac.permissions p ON p.id = rp.permission_id
 			WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
+			UNION ALL
+			SELECT 1
+			FROM tenant.group_members gm
+			JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+			JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+			JOIN rbac.permissions p ON p.id = rp.permission_id
+			WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
 		)
 	`, userID, tenantID, permKey).Scan(&ok)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -167,16 +243,24 @@ func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, perm
 	return ok, nil
 }
 
-// EffectivePermissions returns all permission keys granted to a user
-// within a tenant via any of their roles.
+// EffectivePermissions returns all permission keys granted to a user within a
+// tenant — via roles granted directly to the user UNION roles granted to any
+// group the user belongs to.
 func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID uuid.UUID) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT DISTINCT p.key
+		SELECT p.key
 		FROM rbac.user_roles ur
 		JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
 		JOIN rbac.permissions p ON p.id = rp.permission_id
 		WHERE ur.user_id = $1 AND ur.tenant_id = $2
-		ORDER BY p.key
+		UNION
+		SELECT p.key
+		FROM tenant.group_members gm
+		JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+		JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+		JOIN rbac.permissions p ON p.id = rp.permission_id
+		WHERE gm.user_id = $1 AND gm.tenant_id = $2
+		ORDER BY key
 	`, userID, tenantID)
 	if err != nil {
 		return nil, err
@@ -191,6 +275,91 @@ func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID 
 		out = append(out, k)
 	}
 	return out, nil
+}
+
+// GrantStep is one link in an authorization decision's grant path: a role that
+// confers the requested permission, plus how that role reaches the user.
+type GrantStep struct {
+	Permission string     `json:"permission"`
+	GrantedBy  string     `json:"granted_by"` // e.g. "role:admin"
+	Via        string     `json:"via"`        // "direct" or "group:<name>"
+	GroupID    *uuid.UUID `json:"group_id,omitempty"`
+	RoleID     uuid.UUID  `json:"role_id"`
+}
+
+// Explanation is the structured "why?" for a single Check. Allowed is the same
+// boolean the hot-path Check returns; Paths lists every distinct grant that
+// confers the permission (direct and group-derived), and Reason is set only on
+// a denial.
+type Explanation struct {
+	Allowed bool        `json:"allowed"`
+	Paths   []GrantStep `json:"paths"`
+	Reason  string      `json:"reason,omitempty"`
+}
+
+// Explain resolves the same decision as Check but records the grant path while
+// it computes it (rather than re-deriving), so it stays correct as the rules
+// evolve. It enumerates every role — direct or group-derived — that grants the
+// permission for this user/tenant. allowed == (len(Paths) > 0). Both arms are
+// scoped by tenant_id, so a path can never name a grant from another tenant.
+func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*Explanation, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id, ro.name
+		FROM rbac.user_roles ur
+		JOIN rbac.roles ro ON ro.id = ur.role_id
+		JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+		JOIN rbac.permissions p ON p.id = rp.permission_id
+		WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
+		UNION ALL
+		SELECT 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id, ro.name
+		FROM tenant.group_members gm
+		JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+		JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+		JOIN rbac.roles ro ON ro.id = gr.role_id
+		JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+		JOIN rbac.permissions p ON p.id = rp.permission_id
+		WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
+		ORDER BY via, group_name NULLS FIRST
+	`, userID, tenantID, permKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	exp := &Explanation{Paths: []GrantStep{}}
+	for rows.Next() {
+		var (
+			via       string
+			groupID   *uuid.UUID
+			groupName *string
+			roleID    uuid.UUID
+			roleName  string
+		)
+		if err := rows.Scan(&via, &groupID, &groupName, &roleID, &roleName); err != nil {
+			return nil, err
+		}
+		step := GrantStep{
+			Permission: permKey,
+			GrantedBy:  "role:" + roleName,
+			RoleID:     roleID,
+		}
+		if via == "group" && groupName != nil {
+			step.Via = "group:" + *groupName
+			step.GroupID = groupID
+		} else {
+			step.Via = "direct"
+		}
+		exp.Paths = append(exp.Paths, step)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	exp.Allowed = len(exp.Paths) > 0
+	if !exp.Allowed {
+		exp.Reason = "no role grants this permission for this user in this tenant"
+	}
+	return exp, nil
 }
 
 // SeedBuiltins ensures the platform permissions + per-tenant default

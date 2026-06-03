@@ -23,8 +23,14 @@ import (
 
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
+	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 )
+
+// BreachedPasswordDetail is the user-safe 422 message shown when a password is
+// rejected for appearing in known breaches. It deliberately omits the sighting
+// count so we don't reveal breach-corpus details to the end user.
+const BreachedPasswordDetail = "This password has appeared in known data breaches — choose a different one."
 
 type Policy struct {
 	PasswordEnabled          bool `json:"password_enabled"`
@@ -73,9 +79,18 @@ func isSymbol(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) 
 
 type Service struct {
 	pool *pgxpool.Pool
+	// breach is the optional breached-password checker. Nil disables the check
+	// (a no-op), so dev/CI/offline deploys are unaffected; when set it is
+	// consulted on every tenant-scoped password validation and is itself
+	// fail-open (a HIBP outage allows the password). Set via SetBreachChecker.
+	breach *hibp.Checker
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+
+// SetBreachChecker wires (or clears, with nil) the breached-password checker.
+// Called from cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
@@ -144,13 +159,22 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 }
 
 // ValidateForTenant loads the tenant policy and validates a password against
-// it. Wired into user.Handler so the user package needn't import this one.
+// it, then (when enabled) rejects passwords known from breach corpora. Wired
+// into user.Handler so the user package needn't import this one.
 func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw string) error {
 	p, err := s.Get(ctx, tenantID)
 	if err != nil {
 		return err
 	}
-	return ValidatePassword(*p, pw)
+	if err := ValidatePassword(*p, pw); err != nil {
+		return err
+	}
+	// Breached-password gate. No-op when the checker is nil (feature off) and
+	// fail-open inside PwnedAllowOnError (a HIBP outage allows the password).
+	if s.breach.PwnedAllowOnError(ctx, pw) {
+		return errs.ErrUnprocessable.WithDetail(BreachedPasswordDetail)
+	}
+	return nil
 }
 
 type Handler struct {

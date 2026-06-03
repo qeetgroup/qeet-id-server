@@ -16,6 +16,7 @@ import (
 
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
+	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
 	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
 	"github.com/qeetgroup/qeet-identity/internal/platform/password"
 	"github.com/qeetgroup/qeet-identity/internal/platform/pgxerr"
@@ -27,11 +28,18 @@ type Service struct {
 	pool   *pgxpool.Pool
 	users  *user.Repository
 	tokens *tokens.Issuer
+	// breach is the optional breached-password checker (nil = feature off,
+	// a no-op). Set via SetBreachChecker; consulted on Signup.
+	breach *hibp.Checker
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
 	return &Service{pool: pool, users: users, tokens: t}
 }
+
+// SetBreachChecker wires the breached-password checker. Called from
+// cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 type LoginInput struct {
 	Email     string
@@ -80,6 +88,12 @@ type TokenPair struct {
 
 // Signup creates a tenant-less identity (user + password + session) and logs them in; no tenant or role is created.
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user.User, *TenantBrief, error) {
+	// Breached-password gate. Tenant-less, so there's no per-tenant policy to
+	// consult here — just the global HIBP signal. No-op when disabled (nil
+	// checker) and fail-open inside PwnedAllowOnError.
+	if s.breach.PwnedAllowOnError(ctx, in.Password) {
+		return nil, nil, nil, errs.ErrUnprocessable.WithDetail("This password has appeared in known data breaches — choose a different one.")
+	}
 	hash, err := password.Hash(in.Password)
 	if err != nil {
 		return nil, nil, nil, err

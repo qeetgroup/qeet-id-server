@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
+	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
 	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
 	"github.com/qeetgroup/qeet-identity/internal/platform/password"
 )
@@ -35,6 +36,9 @@ type Service struct {
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string // e.g. "https://app.qeet.com" — used to build links
+	// breach is the optional breached-password checker (nil = feature off, a
+	// no-op). Set via SetBreachChecker; consulted on ConfirmPasswordReset.
+	breach *hibp.Checker
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -43,6 +47,10 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	}
 	return &Service{pool: pool, sender: sender, ttl: ttl, baseAppURL: baseAppURL}
 }
+
+// SetBreachChecker wires the breached-password checker. Called from
+// cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 // StartPasswordReset always succeeds from the caller's perspective so we
 // don't leak whether an email is registered.
@@ -79,6 +87,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, em
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
 	if len(newPassword) < 8 {
 		return errs.ErrUnprocessable.WithDetail("password too short")
+	}
+	// Breached-password gate before any DB work. No-op when disabled (nil
+	// checker) and fail-open inside PwnedAllowOnError.
+	if s.breach.PwnedAllowOnError(ctx, newPassword) {
+		return errs.ErrUnprocessable.WithDetail("This password has appeared in known data breaches — choose a different one.")
 	}
 	hash := codes.Hash(rawToken)
 	tx, err := s.pool.Begin(ctx)

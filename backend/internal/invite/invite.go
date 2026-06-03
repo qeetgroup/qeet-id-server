@@ -15,6 +15,7 @@ import (
 
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
+	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
 	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
 	"github.com/qeetgroup/qeet-identity/internal/platform/password"
 )
@@ -41,6 +42,9 @@ type Service struct {
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string
+	// breach is the optional breached-password checker (nil = feature off, a
+	// no-op). Set via SetBreachChecker; consulted on Accept.
+	breach *hibp.Checker
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -49,6 +53,10 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	}
 	return &Service{pool: pool, sender: sender, ttl: ttl, baseAppURL: baseAppURL}
 }
+
+// SetBreachChecker wires the breached-password checker. Called from
+// cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
 	raw, hash, err := codes.URLToken()
@@ -123,6 +131,11 @@ type AcceptResult struct {
 }
 
 func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, error) {
+	// Breached-password gate before any DB work. No-op when disabled (nil
+	// checker) and fail-open inside PwnedAllowOnError.
+	if s.breach.PwnedAllowOnError(ctx, in.Password) {
+		return nil, errs.ErrUnprocessable.WithDetail("This password has appeared in known data breaches — choose a different one.")
+	}
 	hash := codes.Hash(in.Token)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

@@ -566,6 +566,13 @@ func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/login-context", h.loginContext)
 	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
 	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
+	// Device Authorization Grant (RFC 8628). device_authorization is
+	// client-authenticated M2M (CSRF-exempt in the router, like token-code);
+	// the device context + decision endpoints are SSO-cookie gated like
+	// authorize/decision (the hosted /device page posts the user's choice).
+	r.Post("/oauth/device_authorization", h.deviceAuthorization)
+	r.Get("/oauth/device", h.deviceContext)
+	r.Post("/oauth/device/decision", h.deviceDecision)
 }
 
 // loginContext gives the hosted login app what it needs to render itself for a
@@ -832,6 +839,24 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		resp, err = h.Service.RefreshToken(r.Context(),
 			clientID, clientSecret, r.Form.Get("refresh_token"))
+	case "urn:ietf:params:oauth:grant-type:device_code":
+		// RFC 8628 §3.4 polling. The device authenticates with its client_id +
+		// device_code; the device_code itself is the proof, so a client_secret is
+		// not required (device clients are typically public). Errors here use the
+		// RFC 6749 §5.2 flat {"error","error_description"} shape OAuth clients
+		// parse, rendered by writeOAuthError.
+		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"))
+		if err != nil {
+			var oe *oauthError
+			if errors.As(err, &oe) {
+				writeOAuthError(w, oe)
+				return
+			}
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, resp)
+		return
 	default:
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("unsupported grant_type"))
 		return
@@ -908,6 +933,7 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"issuer":                                base,
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
 		"token_endpoint":                        base + "/v1/oauth/token-code",
+		"device_authorization_endpoint":         base + "/v1/oauth/device_authorization",
 		"userinfo_endpoint":                     base + "/v1/oauth/userinfo",
 		"jwks_uri":                              base + "/.well-known/jwks.json",
 		"revocation_endpoint":                   base + "/oauth/revoke",
@@ -917,7 +943,7 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"scopes_supported":                      []string{"openid", "profile", "email"},
-		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
+		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"},
 		"code_challenge_methods_supported":      []string{"S256"},
 	})
 }

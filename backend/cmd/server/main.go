@@ -39,6 +39,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
 	"github.com/qeetgroup/qeet-identity/internal/platform/db"
 	"github.com/qeetgroup/qeet-identity/internal/platform/health"
+	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
 	"github.com/qeetgroup/qeet-identity/internal/platform/logger"
 	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
@@ -281,6 +282,20 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
+
+	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
+	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
+	// unaffected; when enabled it is injected into every password-setting flow
+	// and is fail-open at runtime (a HIBP outage allows the password). Only the
+	// 5-char SHA-1 prefix ever leaves the process — never the plaintext.
+	if cfg.BreachedPasswordCheck {
+		breachChecker := hibp.New(&stdhttp.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
+		authPolicyService.SetBreachChecker(breachChecker) // user set-password (via ValidateForTenant)
+		authService.SetBreachChecker(breachChecker)       // signup
+		recoveryService.SetBreachChecker(breachChecker)   // password reset
+		inviteService.SetBreachChecker(breachChecker)     // invite accept
+		slog.Info("breached-password check enabled (HIBP k-anonymity; fail-open)", "min_count", cfg.BreachedPasswordMinCount)
+	}
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)

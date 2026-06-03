@@ -96,6 +96,18 @@ type Config struct {
 	// redis://:pass@host:6379/0. Empty = in-process limits (single instance).
 	RedisURL string `envconfig:"REDIS_URL" default:""`
 
+	// BreachedPasswordCheck enables breached-password detection (Have I Been
+	// Pwned k-anonymity range API) on every password-setting flow. OFF by
+	// default so dev/CI and offline deploys are unaffected, and FAIL-OPEN at
+	// runtime so a HIBP outage never blocks signups (see internal/platform/hibp).
+	BreachedPasswordCheck bool `envconfig:"BREACHED_PASSWORD_CHECK" default:"false"`
+	// BreachedPasswordMinCount is the breach-sighting threshold at or above
+	// which a password is rejected (1 = reject anything seen even once).
+	BreachedPasswordMinCount int `envconfig:"BREACHED_PASSWORD_MIN_COUNT" default:"1"`
+	// BreachedPasswordAPIURL overrides the Pwned Passwords base URL (tests /
+	// self-hosted mirrors). Empty uses the public api.pwnedpasswords.com.
+	BreachedPasswordAPIURL string `envconfig:"BREACHED_PASSWORD_API_URL" default:""`
+
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.

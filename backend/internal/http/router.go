@@ -126,8 +126,12 @@ func NewRouter(d Deps) http.Handler {
 			// (AuthnRequest), gated by the SSO cookie + registered SP, not CSRF.
 			// The OAuth revocation/introspection endpoints are machine-to-machine
 			// and authenticated by client credentials (RFC 7009/7662), not a
-			// browser session, so they're exempt for the same reason.
-			ExemptPaths: []string{"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code"},
+			// browser session, so they're exempt for the same reason. The RFC 8628
+			// device-authorization endpoint is likewise a client-authenticated
+			// device call (not a browser), so it's exempt too; the device
+			// verification endpoints (/oauth/device, /oauth/device/decision) are
+			// SSO-cookie browser flows and stay CSRF-protected.
+			ExemptPaths: []string{"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code", "/v1/oauth/device_authorization"},
 		}))
 	}
 	r.Use(cors.Handler(cors.Options{

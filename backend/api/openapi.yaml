@@ -1219,19 +1219,33 @@ paths:
         required: true
         schema:
           type: string
+      - in: query
+        name: explain
+        required: false
+        description: >-
+          When "true", return the full authorization trace (allowed, the grant
+          path(s), and a reason on denial) instead of the bare {allowed} object.
+        schema:
+          type: string
+          enum:
+          - "true"
       security:
       - bearerAuth: []
       - apiKeyAuth: []
       responses:
         '200':
-          description: Decision
+          description: >-
+            Decision. The default shape is {allowed}. With explain=true the
+            response is the Explanation object (allowed, paths, reason).
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  allowed:
-                    type: boolean
+                oneOf:
+                - type: object
+                  properties:
+                    allowed:
+                      type: boolean
+                - $ref: '#/components/schemas/AuthzExplanation'
         '400': *id001
         '401': *id002
   /v1/gdpr/purge:
@@ -2035,6 +2049,120 @@ paths:
       responses:
         '302':
           description: Redirect back to the client with code or error
+        '400': *id001
+        '401': *id002
+  /v1/oauth/device:
+    get:
+      operationId: get_v1_oauth_device
+      summary: Device verification context (RFC 8628) for the hosted /device page
+      description: Returns the requesting client's display name and requested scopes
+        for a pending device-authorization, looked up by user_code, so the hosted-login
+        /device page can render the approval screen. SSO-cookie gated.
+      tags:
+      - OIDC
+      parameters:
+      - in: query
+        name: user_code
+        required: true
+        schema:
+          type: string
+        description: The human-typed user_code (e.g. BCDF-GHJK).
+      security:
+      - ssoCookie: []
+      responses:
+        '200':
+          description: Device verification context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_name:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+        '400': *id001
+        '401': *id002
+        '404': *id003
+  /v1/oauth/device/decision:
+    post:
+      operationId: post_v1_oauth_device_decision
+      summary: Record the user's approve/deny for a device-authorization (RFC 8628)
+      description: The SSO-cookie-identified user approves or denies a pending device
+        request identified by user_code. On approval the user (who must belong to the
+        client's tenant) is bound and the device can complete its token poll.
+      tags:
+      - OIDC
+      security:
+      - ssoCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - user_code
+              - approve
+              properties:
+                user_code:
+                  type: string
+                approve:
+                  type: boolean
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - authorized
+                    - denied
+        '400': *id001
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '409': *id004
+  /v1/oauth/device_authorization:
+    post:
+      operationId: post_v1_oauth_device_authorization
+      summary: OAuth 2.0 Device Authorization endpoint (RFC 8628 §3.1)
+      description: Client-authenticated endpoint for input-constrained (CLI/TV/IoT)
+        clients. Returns a (device_code, user_code) pair plus the verification URIs;
+        the device then polls /v1/oauth/token-code with
+        grant_type=urn:ietf:params:oauth:grant-type:device_code.
+      tags:
+      - OIDC
+      security:
+      - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+              - client_id
+              properties:
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                scope:
+                  type: string
+      responses:
+        '200':
+          description: Device authorization response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceAuthorizationResponse'
         '400': *id001
         '401': *id002
   /v1/oauth/login-context:
@@ -3396,6 +3524,108 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/tenants/{tenantID}/groups/{groupID}/roles:
+    get:
+      operationId: get_v1_tenants_ByTenantID_groups_ByGroupID_roles
+      summary: List roles granted to a group
+      tags:
+      - RBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: groupID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Roles granted to the group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupRole'
+        '400': *id001
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}:
+    post:
+      operationId: post_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
+      summary: Grant a role to a group
+      description: >-
+        Grant a role to a group. Every member of the group inherits the role's
+        permissions (effective permissions = direct user grants UNION
+        group-derived grants). The role and group must belong to the tenant.
+      tags:
+      - RBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: groupID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: roleID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Granted
+        '400': *id001
+        '401': *id002
+        '403': *id007
+        '404': *id003
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
+      summary: Revoke a role from a group
+      tags:
+      - RBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: groupID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: roleID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Revoked
+        '400': *id001
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/invites:
     get:
       operationId: get_v1_tenants_ByTenantID_invites
@@ -5893,6 +6123,55 @@ components:
         created_at:
           type: string
           format: date-time
+    GroupRole:
+      type: object
+      description: A role granted to a group, with the role's name for display.
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        granted_at:
+          type: string
+          format: date-time
+    AuthzGrantStep:
+      type: object
+      description: >-
+        One link in an authorization decision's grant path: a role that confers
+        the requested permission and how that role reaches the user.
+      properties:
+        permission:
+          type: string
+        granted_by:
+          type: string
+          description: 'The conferring role, e.g. "role:admin".'
+        via:
+          type: string
+          description: '"direct" for a user grant, or "group:<name>" for a group-derived grant.'
+        group_id:
+          type: string
+          format: uuid
+          description: Set only when via is a group grant.
+        role_id:
+          type: string
+          format: uuid
+    AuthzExplanation:
+      type: object
+      description: >-
+        The structured "why?" for a single permission check: the decision plus
+        every distinct grant (direct and group-derived) that confers it. Returned
+        from GET /check when explain=true.
+      properties:
+        allowed:
+          type: boolean
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuthzGrantStep'
+        reason:
+          type: string
+          description: Set only on a denial.
     RoleCreate:
       type: object
       required:
@@ -6016,6 +6295,7 @@ components:
           enum:
           - authorization_code
           - refresh_token
+          - urn:ietf:params:oauth:grant-type:device_code
         code:
           type: string
         redirect_uri:
@@ -6025,10 +6305,38 @@ components:
           type: string
         refresh_token:
           type: string
+        device_code:
+          type: string
+          description: Present when grant_type is the RFC 8628 device_code grant.
         client_id:
           type: string
         client_secret:
           type: string
+    DeviceAuthorizationResponse:
+      type: object
+      description: RFC 8628 §3.2 device authorization response.
+      required:
+      - device_code
+      - user_code
+      - verification_uri
+      - expires_in
+      properties:
+        device_code:
+          type: string
+        user_code:
+          type: string
+          description: Human-friendly code (XXXX-XXXX) from an unambiguous alphabet.
+        verification_uri:
+          type: string
+          format: uri
+        verification_uri_complete:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+        interval:
+          type: integer
+          description: Minimum seconds the device must wait between token polls.
     OAuthTokenResponse:
       type: object
       properties:

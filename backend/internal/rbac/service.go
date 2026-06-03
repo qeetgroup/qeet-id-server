@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-identity/internal/audit"
+	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 )
 
 // Service wraps the Repository so each mutation owns its transaction and writes
@@ -100,6 +101,48 @@ func (s *Service) UnassignRole(ctx context.Context, userID, tenantID, roleID uui
 		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.unassigned", "user", userID,
+		map[string]any{"role_id": roleID})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// AssignRoleToGroup grants a role to a group; both must belong to tenantID. A
+// cross-tenant or missing role/group pair yields ErrNotFound rather than a
+// silent no-op. Audits like the user-role grant, but the subject is the group.
+func (s *Service) AssignRoleToGroup(ctx context.Context, groupID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID, actor audit.Actor) error {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	valid, err := s.repo.AssignRoleToGroup(ctx, tx, groupID, tenantID, roleID, grantedBy)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return errs.ErrNotFound.WithDetail("group or role not found in tenant")
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.group_assigned", "group", groupID,
+		map[string]any{"role_id": roleID})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RemoveRoleFromGroup revokes a role from a group within a tenant.
+func (s *Service) RemoveRoleFromGroup(ctx context.Context, groupID, tenantID, roleID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := s.repo.RemoveRoleFromGroup(ctx, tx, groupID, tenantID, roleID); err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.group_unassigned", "group", groupID,
 		map[string]any{"role_id": roleID})); err != nil {
 		return err
 	}
