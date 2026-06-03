@@ -1,0 +1,22 @@
+{
+  "errors": {
+    "generic": "Something went wrong. Please try again."
+  },
+  "scopes": {
+    "openid": "Verify your identity",
+    "profile": "See your basic profile (name)",
+    "email": "See your email address",
+    "offline_access": "Stay signed in (refresh access)"
+  },
+  "fallbacks": {
+    "application": "An application",
+    "signYouIn": "Sign you in"
+  },
+  "providers": {
+    "google": "Google",
+    "github": "GitHub",
+    "microsoft": "Microsoft",
+    "apple": "Apple",
+    "gitlab": "GitLab"
+  }
+}

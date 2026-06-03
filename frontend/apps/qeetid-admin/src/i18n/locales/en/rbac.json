@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "Access Tester",
+    "description": "Evaluate a permission for a specific user and see exactly why access is granted or denied — including which role granted it and whether it came directly or through a group.",
+    "runTitle": "Run a check",
+    "runDescription": "Permissions use the resource:action shape, e.g. users:read.",
+    "userIdLabel": "User ID",
+    "userIdHelp": "The UUID of the user to evaluate.",
+    "permissionLabel": "Permission",
+    "evaluate": "Evaluate",
+    "evaluating": "Evaluating…",
+    "resultTitle": "Result",
+    "resultDescription": "The decision and the grant-path trace the authorization engine walked.",
+    "resultPlaceholder": "Run a check to see the allow/deny decision and how it was reached.",
+    "allowed": "Access allowed",
+    "denied": "Access denied",
+    "grantPathsTitle": "Grant paths",
+    "grantPathsHint": "Each path is an independent reason the permission is held.",
+    "noGrantPath": "Allowed, but no explicit grant path was returned.",
+    "directAssignment": "Direct assignment",
+    "viaGroup": "Group · {{group}}",
+    "grantedBy": "granted by",
+    "roleShort": "role {{id}}…"
+  },
+  "groupRoles": {
+    "title": "Roles",
+    "description": "Members of this group inherit these roles’ permissions.",
+    "addPlaceholder": "Add a role…",
+    "loadingRoles": "Loading roles…",
+    "allGranted": "All roles already granted",
+    "selectAriaLabel": "Select a role to grant",
+    "addRole": "Add role",
+    "emptyTitle": "No roles granted to this group yet.",
+    "emptyDescription": "Use the selector above to grant a role — every member inherits its permissions.",
+    "roleHeader": "Role",
+    "grantedHeader": "Granted",
+    "actionsHeader": "Actions",
+    "revokeTitle": "Remove this role from the group?",
+    "revokeDescriptionNamed": "Members will lose the permissions granted by <strong>{{name}}</strong> unless they hold it through another group or a direct assignment.",
+    "revokeDescriptionFallback": "Members will lose this role’s permissions."
+  }
+}

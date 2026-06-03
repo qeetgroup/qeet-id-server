@@ -46,6 +46,14 @@ function AppLayout() {
 
   return (
     <SidebarProvider>
+      {/* Skip link: first focusable element, visually hidden until focused so
+          keyboard users can jump straight past the sidebar/header to content. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:inset-s-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:shadow-md focus:ring-2 focus:ring-ring focus:outline-none"
+      >
+        Skip to main content
+      </a>
       <AppSidebar />
       <SidebarInset>
         <ImpersonationBanner />
@@ -99,9 +107,13 @@ function AppLayout() {
             <HeaderUser />
           </div>
         </header>
-        <div className="flex min-w-0 flex-1 flex-col gap-4 p-4">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="flex min-w-0 flex-1 flex-col gap-4 p-4 focus:outline-none"
+        >
           <Outlet />
-        </div>
+        </main>
       </SidebarInset>
       <CommandPaletteLauncher open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

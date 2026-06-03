@@ -62,6 +62,15 @@ function safeParse(s: string): unknown {
   }
 }
 
+export async function apiGet<T = unknown>(path: string): Promise<T> {
+  const res = await fetch(apiURL(path), {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    credentials: "include",
+  });
+  return parse<T>(res);
+}
+
 export async function apiPost<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetch(apiURL(path), {
     method: "POST",

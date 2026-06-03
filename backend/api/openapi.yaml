@@ -2364,6 +2364,51 @@ paths:
         '401': *id002
         '403': *id007
         '422': *id005
+  /v1/oidc/clients/{id}:
+    delete:
+      operationId: delete_v1_oidc_clients_ById
+      summary: Delete an OIDC client (tenant scoped by caller's token)
+      tags:
+      - OIDC
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Client deleted
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/oidc/signing-keys:
+    get:
+      operationId: get_v1_oidc_signing_keys
+      summary: List issuer signing-key metadata (no key material)
+      tags:
+      - OIDC
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Signing keys (active + retired)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SigningKey'
+        '401': *id002
+        '403': *id007
   /v1/passkeys:
     get:
       operationId: get_v1_passkeys
@@ -4033,6 +4078,271 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/tenants/{tenantID}/oauth/devices:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oauth_devices
+      summary: List a tenant's device authorizations (RFC 8628)
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Device authorizations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OAuthDeviceAuthorization'
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/tenants/{tenantID}/oauth/devices/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oauth_devices_ById
+      summary: Revoke a device authorization
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Device authorization revoked
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/tenants/{tenantID}/oidc/clients:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_clients
+      summary: List a tenant's OIDC clients
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: OIDC clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OIDCClient'
+        '401': *id002
+        '403': *id007
+        '404': *id003
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_clients
+      summary: Register an OIDC client under the tenant
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCClientCreate'
+      responses:
+        '201':
+          description: Client created (secret shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client:
+                    $ref: '#/components/schemas/OIDCClient'
+                  client_secret:
+                    type: string
+                  warning:
+                    type: string
+        '400': *id001
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/oidc/clients/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_clients_ById
+      summary: Get an OIDC client
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: OIDC client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCClient'
+        '401': *id002
+        '403': *id007
+        '404': *id003
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_oidc_clients_ById
+      summary: Update an OIDC client (partial)
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCClientUpdate'
+      responses:
+        '200':
+          description: Updated OIDC client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCClient'
+        '400': *id001
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '422': *id005
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oidc_clients_ById
+      summary: Delete an OIDC client
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Client deleted
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret:
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_clients_ById_rotate_secret
+      summary: Rotate a confidential OIDC client's secret
+      tags:
+      - OIDC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: New client secret (shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_secret:
+                    type: string
+                  warning:
+                    type: string
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '422': *id005
   /v1/tenants/{tenantID}/oauth/grants:
     get:
       operationId: get_v1_tenants_ByTenantID_oauth_grants
@@ -6268,6 +6578,85 @@ components:
           type: array
           items:
             type: string
+    OIDCClientUpdate:
+      type: object
+      description: Partial (COALESCE-style) update; omitted fields are left unchanged.
+      properties:
+        name:
+          type: string
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        post_logout_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        grant_types:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    OAuthDeviceAuthorization:
+      type: object
+      description: Admin view of an RFC 8628 device-authorization row. Never includes the device_code or its hash.
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+        user_code:
+          type: string
+        status:
+          type: string
+          enum:
+          - pending
+          - authorized
+          - denied
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_email:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_polled_at:
+          type: string
+          format: date-time
+          nullable: true
+    SigningKey:
+      type: object
+      description: Non-secret metadata for an issuer signing key (no key material).
+      properties:
+        kid:
+          type: string
+          description: RFC 7638 JWK thumbprint of the public key.
+        alg:
+          type: string
+          example: ES256
+        use:
+          type: string
+          example: sig
+        status:
+          type: string
+          enum:
+          - active
+          - retired
     ServicePrincipalCreate:
       type: object
       required:

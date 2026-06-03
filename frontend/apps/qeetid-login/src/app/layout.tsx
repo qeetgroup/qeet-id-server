@@ -1,5 +1,7 @@
 import { ThemeProvider } from "@qeetrix/ui";
 import type { Metadata } from "next";
+
+import { I18nProvider } from "@/i18n/provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,7 +25,9 @@ export default function RootLayout({
       </head>
       <body className="bg-background text-foreground min-h-full font-sans">
         <ThemeProvider defaultTheme="system" storageKey={STORAGE_KEY}>
-          <main className="flex min-h-dvh items-center justify-center p-4">{children}</main>
+          <I18nProvider>
+            <main className="flex min-h-dvh items-center justify-center p-4">{children}</main>
+          </I18nProvider>
         </ThemeProvider>
       </body>
     </html>

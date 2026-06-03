@@ -1,0 +1,26 @@
+{
+  "page": {
+    "title": "Consent grants",
+    "description": "OAuth refresh-token grants a user has consented to per application. Revoking a grant invalidates the whole refresh-token rotation chain for that (app, user) pair."
+  },
+  "list": {
+    "title": "Active grants",
+    "count_one": "{{count}} grant across all applications.",
+    "count_other": "{{count}} grants across all applications.",
+    "emptyTitle": "No active consent grants.",
+    "emptyDescription": "Grants appear here once users authorize an OAuth / OIDC application."
+  },
+  "table": {
+    "application": "Application",
+    "user": "User",
+    "scopes": "Scopes",
+    "issued": "Issued",
+    "expires": "Expires",
+    "actions": "Actions"
+  },
+  "revoke": {
+    "title": "Revoke this grant?",
+    "descriptionNamed": "This immediately invalidates the refresh-token chain for <strong>{{email}}</strong> on this application. They’ll be prompted to re-consent on next sign-in.",
+    "descriptionFallback": "This invalidates the refresh-token chain for this grant."
+  }
+}

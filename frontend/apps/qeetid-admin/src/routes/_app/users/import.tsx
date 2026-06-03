@@ -218,19 +218,25 @@ function ImportUsersPage() {
       {/* File picker */}
       {!rows && (
         <Card>
-          <CardContent className="p-0">
+          <CardContent
+            className="p-0"
+            // Drag-and-drop is a progressive enhancement on top of the real
+            // <input type="file"> below; the wrapper holds the drop handlers so
+            // the <label> stays a pure label for the file control.
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragOver(true)
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault()
+              setDragOver(false)
+              const file = e.dataTransfer.files[0]
+              if (file) handleFile(file)
+            }}
+          >
             <label
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDragOver(true)
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragOver(false)
-                const file = e.dataTransfer.files[0]
-                if (file) handleFile(file)
-              }}
+              htmlFor="user-import-file"
               className={cn(
                 "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-12 text-center transition-colors",
                 dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/30",
@@ -242,6 +248,7 @@ function ImportUsersPage() {
                 or click anywhere in this box to browse
               </p>
               <input
+                id="user-import-file"
                 type="file"
                 accept=".csv,.ndjson,.jsonl,text/csv,application/x-ndjson"
                 className="sr-only"

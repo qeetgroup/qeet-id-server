@@ -225,6 +225,37 @@ func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
 	return claims, nil
 }
 
+// KeyMeta is non-secret signing-key metadata for the admin signing-keys view.
+// It deliberately carries no key material (the public coordinates live in the
+// JWKS); it only reports the key's id, algorithm, use, and rotation status.
+type KeyMeta struct {
+	Kid    string `json:"kid"`
+	Alg    string `json:"alg"`
+	Use    string `json:"use"`
+	Status string `json:"status"` // "active" | "retired"
+}
+
+// KeyInfo returns metadata for every signing key the issuer knows about: the
+// active key (status "active") plus any retired verify-only keys still inside
+// their rotation grace window (status "retired"). Unlike JWKS it exposes no key
+// material, so it's safe to surface in an admin UI.
+func (i *Issuer) KeyInfo() []KeyMeta {
+	out := make([]KeyMeta, 0, len(i.verifiers))
+	for _, k := range i.verifiers {
+		status := "retired"
+		if i.active != nil && k.kid == i.active.kid {
+			status = "active"
+		}
+		out = append(out, KeyMeta{
+			Kid:    k.kid,
+			Alg:    k.alg,
+			Use:    "sig",
+			Status: status,
+		})
+	}
+	return out
+}
+
 // JWK is a public JSON Web Key as published at /.well-known/jwks.json.
 type JWK struct {
 	Kty string `json:"kty"`

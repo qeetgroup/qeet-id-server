@@ -86,13 +86,13 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
         </CardHeader>
         <CardContent>
           <Field className="max-w-xs">
-            <FieldLabel>Link lifetime</FieldLabel>
+            <FieldLabel id="magic-link-ttl-label">Link lifetime</FieldLabel>
             <Select
               value={ttlValue}
               onValueChange={(v) => setDraft((d) => ({ ...d, magic_link_ttl_minutes: Number(v) }))}
               disabled={!draft.magic_link_enabled}
             >
-              <SelectTrigger>
+              <SelectTrigger aria-labelledby="magic-link-ttl-label">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

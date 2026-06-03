@@ -1,12 +1,26 @@
 import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Avatar,
   AvatarFallback,
+  Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
   DataState,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -18,10 +32,19 @@ import {
 } from "@qeetrix/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowLeftIcon, FolderIcon, UsersIcon } from "lucide-react";
+import { ArrowLeftIcon, FolderIcon, Loader2Icon, ShieldCheckIcon, UsersIcon } from "lucide-react";
+import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import {
+  type GroupRole,
+  useGrantGroupRole,
+  useGroupRoles,
+  useRevokeGroupRole,
+  useRoles,
+} from "@/lib/rbac-groups";
 
 export const Route = createFileRoute("/_app/groups/$groupId")({
   component: GroupDetailPage,
@@ -216,9 +239,158 @@ function GroupDetailPage() {
                 </DataState>
               </CardContent>
             </Card>
+
+            <div className="lg:col-span-3">
+              <GroupRolesCard groupId={group.id} />
+            </div>
           </div>
         )}
       </DataState>
     </div>
+  );
+}
+
+function GroupRolesCard({ groupId }: { groupId: string }) {
+  const { t } = useTranslation("rbac");
+  const rolesQ = useGroupRoles(groupId);
+  const allRolesQ = useRoles();
+  const grantM = useGrantGroupRole(groupId);
+  const revokeM = useRevokeGroupRole(groupId);
+  const [selectedRoleId, setSelectedRoleId] = useState<string>("");
+  const [confirmingRevoke, setConfirmingRevoke] = useState<GroupRole | null>(null);
+
+  const granted = rolesQ.data?.items ?? [];
+  const grantedIds = new Set(granted.map((r) => r.role_id));
+  const grantable = (allRolesQ.data?.items ?? []).filter((r) => !grantedIds.has(r.id));
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle className="text-base">{t("groupRoles.title")}</CardTitle>
+          <CardDescription>{t("groupRoles.description")}</CardDescription>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={selectedRoleId} onValueChange={(v) => v && setSelectedRoleId(v)}>
+            <SelectTrigger className="w-[220px]" aria-label={t("groupRoles.selectAriaLabel")}>
+              <SelectValue placeholder={t("groupRoles.addPlaceholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              {grantable.length === 0 ? (
+                <SelectItem value="__none" disabled>
+                  {allRolesQ.isLoading
+                    ? t("groupRoles.loadingRoles")
+                    : t("groupRoles.allGranted")}
+                </SelectItem>
+              ) : (
+                grantable.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            disabled={!selectedRoleId || grantM.isPending}
+            onClick={() =>
+              selectedRoleId &&
+              grantM.mutate(selectedRoleId, { onSuccess: () => setSelectedRoleId("") })
+            }
+          >
+            {grantM.isPending && <Loader2Icon className="animate-spin" />}
+            {t("groupRoles.addRole")}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <DataState
+          isLoading={rolesQ.isLoading}
+          isError={rolesQ.isError}
+          error={rolesQ.error}
+          isEmpty={granted.length === 0}
+          emptyIcon={ShieldCheckIcon}
+          emptyTitle={t("groupRoles.emptyTitle")}
+          emptyDescription={t("groupRoles.emptyDescription")}
+          skeletonRows={2}
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("groupRoles.roleHeader")}</TableHead>
+                <TableHead>{t("groupRoles.grantedHeader")}</TableHead>
+                <TableHead className="text-right">{t("groupRoles.actionsHeader")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {granted.map((r) => (
+                <TableRow key={r.role_id}>
+                  <TableCell>
+                    <Badge variant="secondary">{r.name}</Badge>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    <TimeSince value={r.granted_at} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setConfirmingRevoke(r)}
+                      disabled={revokeM.isPending}
+                    >
+                      {t("common:actions.remove")}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </DataState>
+      </CardContent>
+
+      <AlertDialog
+        open={!!confirmingRevoke}
+        onOpenChange={(o) => {
+          if (!o && !revokeM.isPending) setConfirmingRevoke(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("groupRoles.revokeTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmingRevoke ? (
+                <Trans
+                  t={t}
+                  i18nKey="groupRoles.revokeDescriptionNamed"
+                  values={{ name: confirmingRevoke.name }}
+                  components={{ strong: <span className="font-medium text-foreground" /> }}
+                />
+              ) : (
+                t("groupRoles.revokeDescriptionFallback")
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revokeM.isPending}>
+              {t("common:actions.cancel")}
+            </AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={revokeM.isPending}
+              onClick={() =>
+                confirmingRevoke &&
+                revokeM.mutate(confirmingRevoke.role_id, {
+                  onSuccess: () => setConfirmingRevoke(null),
+                })
+              }
+            >
+              {revokeM.isPending && <Loader2Icon className="animate-spin" />}
+              {revokeM.isPending ? t("common:actions.removing") : t("common:actions.remove")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
   );
 }

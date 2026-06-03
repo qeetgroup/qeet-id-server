@@ -1,6 +1,11 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
 
+// Side-effect import: initializes the shared i18next instance at module load,
+// before any component renders. Static `en` resources keep init synchronous
+// and SSR-safe, so the first server render already has translations.
+import "./i18n";
+
 import { routeTree } from "./routeTree.gen";
 import { getContext } from "./integrations/tanstack-query/root-provider";
 
