@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@qeetrix/brand": "^0.0.1",
-    "@qeetrix/ui": "^0.0.2",
+    "@qeetrix/ui": "^0.1.0",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"

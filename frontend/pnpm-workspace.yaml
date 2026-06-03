@@ -8,9 +8,9 @@ ignoredBuiltDependencies:
 
 catalog:
   # React
-  react: ^19.2.6
-  react-dom: ^19.2.6
-  "@types/react": ^19.2.15
+  react: ^19.2.7
+  react-dom: ^19.2.7
+  "@types/react": ^19.2.16
   "@types/react-dom": ^19.2.3
 
   # TypeScript
@@ -36,4 +36,4 @@ catalog:
   "recharts": ^3.8.1
 
   # Next
-  next: 16.2.6
+  next: 16.2.7

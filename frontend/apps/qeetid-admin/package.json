@@ -19,15 +19,15 @@
     "@tailwindcss/vite": "catalog:",
     "@tanstack/react-devtools": "^0.10.5",
     "@tanstack/react-form": "^1.33.0",
-    "@tanstack/react-query": "^5.100.14",
-    "@tanstack/react-query-devtools": "^5.100.14",
-    "@tanstack/react-router": "^1.170.10",
+    "@tanstack/react-query": "^5.101.0",
+    "@tanstack/react-query-devtools": "^5.101.0",
+    "@tanstack/react-router": "^1.170.11",
     "@tanstack/react-router-devtools": "^1.167.0",
     "@tanstack/react-router-ssr-query": "^1.167.1",
-    "@tanstack/react-start": "^1.168.18",
+    "@tanstack/react-start": "^1.168.19",
     "@tanstack/react-store": "^0.11.0",
     "@tanstack/react-table": "^8.21.3",
-    "@tanstack/router-plugin": "^1.168.13",
+    "@tanstack/router-plugin": "^1.168.14",
     "@thesvg/react": "catalog:",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
@@ -55,7 +55,7 @@
     "babel-plugin-react-compiler": "catalog:",
     "jsdom": "^28.1.0",
     "typescript": "catalog:",
-    "vite": "^8.0.14",
-    "vitest": "^4.1.7"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
   }
 }
