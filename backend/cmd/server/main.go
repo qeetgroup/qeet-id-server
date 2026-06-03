@@ -78,13 +78,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Safety guard: CSRF_DISABLED is a dev convenience for Postman/curl
-	// testing — it must never be honoured outside SERVICE_ENV=dev. Failing
-	// loudly here is cheaper than discovering a production deploy has CSRF
-	// off because someone copied a .env file.
-	if cfg.CSRFDisabled && cfg.ServiceEnv != "dev" {
-		slog.Error("CSRF_DISABLED is only permitted when SERVICE_ENV=dev — refusing to start",
-			"service_env", cfg.ServiceEnv)
+	// Production-safety gate: refuse to start with dev-only escape hatches or
+	// insecure defaults (CSRF off, dev-trust headers, placeholder JWT_SECRET,
+	// missing signing key, wildcard origins, localhost base URL) when not in
+	// dev. Cheaper than discovering it after a bad deploy.
+	if err := cfg.Validate(); err != nil {
+		slog.Error("refusing to start: "+err.Error(), "service_env", cfg.ServiceEnv)
 		os.Exit(1)
 	}
 
@@ -293,7 +292,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
 		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
-		Auth:          &auth.Handler{Service: authService, Validate: v},
+		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: cfg.ServiceEnv != "dev"},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbac.NewService(rbacRepo), Validate: v},
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService},

@@ -108,8 +108,11 @@ func NewRouter(d Deps) http.Handler {
 			AllowedOrigins: d.AllowedOrigins,
 			CookieSecure:   d.ServiceEnv != "dev",
 			// SAML ACS is a cross-site form-POST from the IdP, authenticated
-			// by XML-signature validation rather than a CSRF cookie.
-			ExemptPaths: []string{"/saml/acs/"},
+			// by XML-signature validation rather than a CSRF cookie. The OAuth
+			// revocation/introspection endpoints are machine-to-machine and
+			// authenticated by client credentials (RFC 7009/7662), not a
+			// browser session, so they're exempt for the same reason.
+			ExemptPaths: []string{"/saml/acs/", "/oauth/revoke", "/oauth/introspect"},
 		}))
 	}
 	r.Use(cors.Handler(cors.Options{

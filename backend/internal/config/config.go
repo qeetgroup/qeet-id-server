@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -59,6 +60,60 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// Validate enforces production-safety invariants. Inside SERVICE_ENV=dev it is
+// a no-op (dev needs the escape hatches and self-signed defaults); outside dev
+// it refuses to start when a dev-only convenience or an insecure default is
+// still in place. Failing loudly here is far cheaper than discovering a
+// production deploy shipped with CSRF off or a placeholder secret.
+func (c *Config) Validate() error {
+	if c.ServiceEnv == "dev" {
+		return nil
+	}
+	var problems []string
+	if c.CSRFDisabled {
+		problems = append(problems, "CSRF_DISABLED must not be set outside dev")
+	}
+	if c.AuthDevTrustHeaders {
+		problems = append(problems, "AUTH_DEV_TRUST_HEADERS must not be set outside dev")
+	}
+	if isWeakSecret(c.JWTSecret) {
+		problems = append(problems, "JWT_SECRET is missing, shorter than 32 chars, or a known placeholder")
+	}
+	if strings.TrimSpace(c.JWTSigningKey) == "" {
+		problems = append(problems, "JWT_SIGNING_KEY is required (PEM EC P-256 private key for ES256 token signing)")
+	}
+	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
+		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
+	}
+	if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) {
+		problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("insecure configuration for SERVICE_ENV=%q:\n  - %s", c.ServiceEnv, strings.Join(problems, "\n  - "))
+	}
+	return nil
+}
+
+// isWeakSecret flags empty, too-short, or obviously-placeholder secrets.
+func isWeakSecret(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < 32 {
+		return true
+	}
+	low := strings.ToLower(s)
+	for _, bad := range []string{"change-me", "changeme", "please-change", "placeholder", "example", "your-secret"} {
+		if strings.Contains(low, bad) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalHost(h string) bool {
+	h = strings.ToLower(h)
+	return h == "localhost" || h == "127.0.0.1" || h == "::1" || strings.HasSuffix(h, ".local")
 }
 
 func (c *Config) AllowedOrigins() []string {

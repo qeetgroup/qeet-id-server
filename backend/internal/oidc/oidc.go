@@ -470,6 +470,9 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/.well-known/openid-configuration", h.discovery)
 	r.Get("/.well-known/jwks.json", h.jwks)
+	// Client-authenticated, machine-to-machine; CSRF-exempt in the router.
+	r.Post("/oauth/revoke", h.revoke)         // RFC 7009
+	r.Post("/oauth/introspect", h.introspect) // RFC 7662
 }
 
 func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
@@ -596,6 +599,50 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+// clientCreds parses OAuth client credentials from the form body or HTTP Basic
+// auth (the two RFC 6749 §2.3.1 mechanisms). Shared by revoke + introspect.
+func (h *Handler) clientCreds(r *http.Request) (id, secret string, ok bool) {
+	if err := r.ParseForm(); err != nil {
+		return "", "", false
+	}
+	id = r.Form.Get("client_id")
+	secret = r.Form.Get("client_secret")
+	if u, p, has := r.BasicAuth(); has {
+		id, secret = u, p
+	}
+	return id, secret, true
+}
+
+// revoke is the RFC 7009 token-revocation endpoint. It always answers 200 with
+// an empty body on success (including for unknown tokens).
+func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
+	clientID, clientSecret, ok := h.clientCreds(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		return
+	}
+	if err := h.Service.RevokeToken(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint")); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// introspect is the RFC 7662 token-introspection endpoint.
+func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
+	clientID, clientSecret, ok := h.clientCreds(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		return
+	}
+	resp, err := h.Service.Introspect(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -619,6 +666,8 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint":                        base + "/v1/oauth/token-code",
 		"userinfo_endpoint":                     base + "/v1/oauth/userinfo",
 		"jwks_uri":                              base + "/.well-known/jwks.json",
+		"revocation_endpoint":                   base + "/oauth/revoke",
+		"introspection_endpoint":                base + "/oauth/introspect",
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
@@ -634,6 +683,108 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 // header (an RFC 7638 JWK thumbprint).
 func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.JWKS()})
+}
+
+// =====================================================================
+// OAuth 2.0 token revocation (RFC 7009) & introspection (RFC 7662)
+// =====================================================================
+
+// RevokeToken implements RFC 7009. After client authentication, the presented
+// refresh token is revoked if it belongs to the calling client. Access tokens
+// are stateless ES256 JWTs and can't be revoked individually, so they're a
+// no-op. Per the RFC, an unknown or already-revoked token is still a success —
+// the only error paths are bad client auth or a DB failure.
+func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token, hint string) error {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return err
+	}
+	if token == "" || hint == "access_token" {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE auth.oidc_refresh_tokens
+		SET revoked_at = NOW()
+		WHERE token_hash = $1 AND client_id = $2 AND revoked_at IS NULL
+	`, tokens.HashRefresh(token), clientID)
+	return err
+}
+
+// Introspect implements RFC 7662. After client authentication it reports
+// whether the token is active and, if so, its metadata. It recognises both our
+// ES256 access tokens (verified statelessly) and stored OIDC refresh tokens.
+// token_type_hint, when given, picks which check to run first/only.
+func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token, hint string) (map[string]any, error) {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return nil, err
+	}
+	inactive := map[string]any{"active": false}
+	if token == "" {
+		return inactive, nil
+	}
+
+	// Access token (stateless JWT) — unless the hint says it's a refresh token.
+	if hint != "refresh_token" {
+		if claims, err := s.issuer.VerifyAccess(token); err == nil {
+			out := map[string]any{
+				"active":     true,
+				"token_type": "Bearer",
+				"sub":        claims.Subject,
+				"scope":      claims.Scope,
+				"iss":        s.issuer.JWTIssuer(),
+				"aud":        s.issuer.JWTAudience(),
+			}
+			if claims.ExpiresAt != nil {
+				out["exp"] = claims.ExpiresAt.Unix()
+			}
+			if claims.IssuedAt != nil {
+				out["iat"] = claims.IssuedAt.Unix()
+			}
+			if claims.TenantID != uuid.Nil {
+				out["tenant_id"] = claims.TenantID
+			}
+			if claims.SessionID != uuid.Nil {
+				out["sid"] = claims.SessionID
+			}
+			return out, nil
+		}
+	}
+
+	// Refresh token (opaque, stored hashed) — unless the hint says access_token.
+	if hint != "access_token" {
+		var (
+			rowClientID         string
+			userID, tenantID    uuid.UUID
+			scopes              []string
+			issuedAt, expiresAt time.Time
+			usedAt, revokedAt   *time.Time
+		)
+		err := s.pool.QueryRow(ctx, `
+			SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at
+			FROM auth.oidc_refresh_tokens WHERE token_hash = $1
+		`, tokens.HashRefresh(token)).Scan(&rowClientID, &userID, &tenantID, &scopes, &issuedAt, &expiresAt, &usedAt, &revokedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return inactive, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Active = not revoked, not yet rotated (used), and unexpired.
+		if revokedAt != nil || usedAt != nil || !time.Now().Before(expiresAt) {
+			return inactive, nil
+		}
+		return map[string]any{
+			"active":     true,
+			"token_type": "refresh_token",
+			"client_id":  rowClientID,
+			"sub":        userID,
+			"tenant_id":  tenantID,
+			"scope":      strings.Join(scopes, " "),
+			"iat":        issuedAt.Unix(),
+			"exp":        expiresAt.Unix(),
+		}, nil
+	}
+
+	return inactive, nil
 }
 
 // =====================================================================

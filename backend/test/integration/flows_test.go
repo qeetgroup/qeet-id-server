@@ -88,6 +88,88 @@ func TestAuthSignupLoginRefreshReuse(t *testing.T) {
 	}
 }
 
+// Hosted-login SSO session: credentials create a session, it resolves to the
+// user, and revoking (hosted logout) invalidates it.
+func TestHostedLoginSession(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	svc, _ := newAuth()
+	email := uniqueSlug("sso") + "@example.com"
+
+	if _, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	} else if u.ID == uuid.Nil {
+		t.Fatal("signup returned nil user id")
+	}
+
+	// Wrong password is rejected by the shared credential check.
+	if _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
+		t.Error("CheckPassword must reject a wrong password")
+	}
+	u, err := svc.CheckPassword(ctx, email, "password123")
+	if err != nil {
+		t.Fatalf("CheckPassword: %v", err)
+	}
+
+	raw, err := svc.CreateLoginSession(ctx, u.ID, "", "test-agent")
+	if err != nil {
+		t.Fatalf("CreateLoginSession: %v", err)
+	}
+	got, err := svc.ResolveLoginSession(ctx, raw)
+	if err != nil || got != u.ID {
+		t.Fatalf("ResolveLoginSession = %v, %v; want %v", got, err, u.ID)
+	}
+	// A bogus cookie value never resolves.
+	if _, err := svc.ResolveLoginSession(ctx, "not-a-session"); err == nil {
+		t.Error("a bogus session value must not resolve")
+	}
+	// Hosted logout invalidates it.
+	if err := svc.RevokeLoginSession(ctx, raw); err != nil {
+		t.Fatalf("RevokeLoginSession: %v", err)
+	}
+	if _, err := svc.ResolveLoginSession(ctx, raw); err == nil {
+		t.Error("a revoked session must not resolve")
+	}
+}
+
+// Repeated wrong-password logins lock the account; once locked, even the
+// correct password is refused (429). A successful login resets the counter.
+func TestLoginLockout(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	svc, _ := newAuth()
+	email := uniqueSlug("lock") + "@example.com"
+
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	}
+
+	// A few failures then a success must NOT lock (counter resets on success).
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "wrong"}); err == nil {
+			t.Fatal("wrong password should fail")
+		}
+	}
+	if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("correct password before lockout should succeed: %v", err)
+	}
+
+	// Now exhaust the threshold with consecutive failures.
+	for i := 0; i < 5; i++ {
+		if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "wrong"}); err == nil {
+			t.Fatal("wrong password should fail")
+		}
+	}
+	// Locked: even the correct password is refused with 429.
+	_, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	if err == nil {
+		t.Fatal("account should be locked after repeated failures")
+	}
+	if e := errs.As(err); e == nil || e.Status != 429 {
+		t.Errorf("locked login should be 429, got %v", err)
+	}
+}
+
 // OIDC authorization_code issues a refresh token; the refresh_token grant rotates
 // it, and replaying a consumed refresh token is treated as theft (revokes the chain).
 func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
@@ -153,6 +235,78 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 	// ...so the freshly-rotated token is dead too.
 	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken); err == nil {
 		t.Fatal("rotated token must fail after reuse revokes the chain")
+	}
+}
+
+// OIDC token introspection (RFC 7662) reports access & refresh tokens active,
+// and revocation (RFC 7009) flips a refresh token to inactive.
+func TestOIDCRevokeAndIntrospect(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := oidc.NewService(testPool, mustIssuer())
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Name: "RP", RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	code, err := svc.Authorize(ctx, userID, tenantID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	if err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+
+	// Access token introspects active.
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.AccessToken, ""); err != nil || r["active"] != true {
+		t.Fatalf("access token should be active: %+v err=%v", r, err)
+	}
+	// Refresh token introspects active.
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil || r["active"] != true {
+		t.Fatalf("refresh token should be active: %+v err=%v", r, err)
+	}
+	// Bad client auth is rejected.
+	if _, err := svc.Introspect(ctx, client.ClientID, "wrong-secret", issued.AccessToken, ""); err == nil {
+		t.Error("introspect with a bad client secret must fail")
+	}
+	// A garbage token is simply inactive (not an error).
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, "not-a-real-token", ""); err != nil || r["active"] != false {
+		t.Errorf("unknown token should be inactive: %+v err=%v", r, err)
+	}
+
+	// Revoke the refresh token → now inactive, and the refresh grant fails.
+	if err := svc.RevokeToken(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil || r["active"] != false {
+		t.Errorf("revoked refresh token should be inactive: %+v err=%v", r, err)
+	}
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken); err == nil {
+		t.Error("a revoked refresh token must not be redeemable")
+	}
+	// Revoking an unknown token is still a success (RFC 7009).
+	if err := svc.RevokeToken(ctx, client.ClientID, secret, "unknown-token", ""); err != nil {
+		t.Errorf("revoking an unknown token should succeed: %v", err)
 	}
 }
 

@@ -15,12 +15,18 @@ import (
 type Handler struct {
 	Service  *Service
 	Validate *validator.Validate
+	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only).
+	// Set from SERVICE_ENV != "dev".
+	CookieSecure bool
 }
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/refresh", h.refresh)
+	// Hosted-login SSO session (HttpOnly cookie) for the OAuth authorize flow.
+	r.Post("/auth/session", h.createSession)
+	r.Delete("/auth/session", h.destroySession)
 }
 
 // MountAuthed mounts endpoints that require the RequireAuth middleware.
@@ -120,6 +126,47 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+type sessionInput struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=1"`
+}
+
+// createSession is the hosted-login credential endpoint. On success it sets the
+// HttpOnly SSO cookie (qe_ls) and returns the user id — no tokens in the body.
+// It is what the hosted login app posts to before the OAuth consent step.
+func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
+	var in sessionInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		return
+	}
+	u, err := h.Service.CheckPassword(r.Context(), in.Email, in.Password)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	raw, err := h.Service.CreateLoginSession(r.Context(), u.ID, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": u.ID})
+}
+
+// destroySession is hosted logout: revoke the SSO session and clear the cookie.
+func (h *Handler) destroySession(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(LoginSessionCookie); err == nil {
+		_ = h.Service.RevokeLoginSession(r.Context(), c.Value)
+	}
+	ClearLoginSessionCookie(w, h.CookieSecure)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type refreshInput struct {
