@@ -1,0 +1,88 @@
+# Qeet ID Helm values. Production-leaning defaults; fill in the blanks.
+
+image:
+  repository: ghcr.io/qeetgroup/qeet-id
+  tag: "" # defaults to .Chart.appVersion
+  pullPolicy: IfNotPresent
+
+# Zero-downtime: rolling update with no unavailable pods.
+replicaCount: 3
+strategy:
+  maxUnavailable: 0
+  maxSurge: 1
+
+service:
+  port: 80
+  targetPort: 4001
+
+ingress:
+  enabled: false
+  className: ""
+  host: api.qeetid.com
+  tlsSecretName: qeet-id-tls
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Pre-install/pre-upgrade DB migration job (golang-migrate). Runs to completion
+# BEFORE new pods roll, so the schema is forward-compatible with both versions.
+migrate:
+  enabled: true
+  image:
+    repository: ghcr.io/qeetgroup/qeet-id-migrate
+    tag: "" # defaults to .Chart.appVersion
+
+# Non-secret config → ConfigMap. SERVICE_ENV=prod activates the boot-time
+# safety gate, so the secrets below must be real (see RUNBOOK).
+config:
+  SERVICE_ENV: prod
+  HTTP_PORT: "4001"
+  LOG_LEVEL: info
+  ALLOWED_ORIGINS: "" # e.g. https://app.acme.com,https://admin.acme.com
+  APP_BASE_URL: "" # e.g. https://app.acme.com
+  LOGIN_BASE_URL: "" # e.g. https://login.acme.com
+  WEBAUTHN_RP_ID: "" # e.g. acme.com
+  WEBAUTHN_RP_ORIGINS: ""
+  CSRF_COOKIE_DOMAIN: "" # e.g. .acme.com (cross-subdomain CSRF)
+  SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_FROM: "Qeet ID <noreply@acme.com>"
+  TWILIO_FROM: ""
+
+# Secrets → Secret. In real prod, prefer an existingSecret managed by
+# External Secrets Operator / Sealed Secrets / SOPS — do NOT commit values here.
+secrets:
+  create: true
+  existingSecret: "" # if set, use this Secret instead of creating one
+  data:
+    DB_URL: ""
+    JWT_SECRET: ""
+    JWT_SIGNING_KEY: "" # PEM EC P-256 private key (ES256)
+    SECRETS_KEY: "" # base64 32-byte AES key
+    SMTP_USERNAME: ""
+    SMTP_PASSWORD: ""
+    TWILIO_ACCOUNT_SID: ""
+    TWILIO_AUTH_TOKEN: ""
+    REDIS_URL: "" # enables shared rate limiting
+
+serviceAccount:
+  create: true
+  name: ""
+
+nameOverride: ""
+fullnameOverride: ""

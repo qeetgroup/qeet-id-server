@@ -1,0 +1,9 @@
+# syntax=docker/dockerfile:1
+# Migration runner: the golang-migrate CLI with our migrations baked in.
+# Build from the REPO ROOT so the migrations path resolves:
+#   docker build -f deploy/Dockerfile.migrate -t ghcr.io/qeetgroup/qeet-id-migrate:<tag> .
+#
+# Run (ENTRYPOINT is `migrate`):
+#   docker run --rm qeet-id-migrate -path /migrations -database "$DB_URL" up
+FROM migrate/migrate:4
+COPY backend/migrations /migrations

@@ -61,7 +61,7 @@ function safeReturn(raw: string | null): string {
   return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
 }
 
-function startLogin(req: NextRequest, cfg: QeetidConfig): NextResponse {
+async function startLogin(req: NextRequest, cfg: QeetidConfig): Promise<NextResponse> {
   const verifier = b64url(randomBytes(32));
   const challenge = b64url(createHash("sha256").update(verifier).digest());
   const state = b64url(randomBytes(16));
@@ -78,7 +78,7 @@ function startLogin(req: NextRequest, cfg: QeetidConfig): NextResponse {
 
   const pkce: PkceState = { state, verifier, returnTo };
   const res = NextResponse.redirect(authorize);
-  res.cookies.set(PKCE_COOKIE, seal(pkce, cfg.cookieSecret), {
+  res.cookies.set(PKCE_COOKIE, await seal(pkce, cfg.cookieSecret), {
     httpOnly: true,
     secure: isSecure(cfg),
     sameSite: "lax",
@@ -98,7 +98,7 @@ async function handleCallback(req: NextRequest, cfg: QeetidConfig): Promise<Next
   const code = params.get("code");
   const state = params.get("state");
   const pkceRaw = req.cookies.get(PKCE_COOKIE)?.value;
-  const pkce = pkceRaw ? open<PkceState>(pkceRaw, cfg.cookieSecret) : null;
+  const pkce = pkceRaw ? await open<PkceState>(pkceRaw, cfg.cookieSecret) : null;
   if (!code || !state || !pkce || pkce.state !== state) return fail("invalid_state");
 
   const tokenRes = await fetch(`${cfg.apiUrl}/v1/oauth/token-code`, {
@@ -134,7 +134,7 @@ async function handleCallback(req: NextRequest, cfg: QeetidConfig): Promise<Next
   }
 
   const res = NextResponse.redirect(new URL(pkce.returnTo, cfg.appUrl));
-  res.cookies.set(SESSION_COOKIE, seal(session, cfg.cookieSecret), {
+  res.cookies.set(SESSION_COOKIE, await seal(session, cfg.cookieSecret), {
     httpOnly: true,
     secure: isSecure(cfg),
     sameSite: "lax",

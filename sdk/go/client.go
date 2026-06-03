@@ -52,7 +52,8 @@ func (c *httpClient) do(ctx context.Context, method, path string, query url.Valu
 		if err != nil {
 			return fmt.Errorf("qeetid: build request: %w", err)
 		}
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		// Qeet ID API keys use the `ApiKey` auth scheme (not Bearer).
+		req.Header.Set("Authorization", "ApiKey "+c.apiKey)
 		req.Header.Set("Accept", "application/json")
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")

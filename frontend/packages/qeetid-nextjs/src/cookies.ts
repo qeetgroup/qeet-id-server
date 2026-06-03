@@ -1,34 +1,48 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+// The session and PKCE cookies are encrypted (AES-256-GCM) and authenticated.
+// Implemented with Web Crypto (globalThis.crypto.subtle) so the same code runs
+// in both the Node runtime (route handlers, Server Components) and the Edge
+// runtime (middleware, which refreshes the session). seal/open are async.
 
-// The session and PKCE cookies are encrypted (AES-256-GCM) and authenticated, so
-// the tokens they carry are opaque and tamper-evident. Runs in the Node runtime
-// (route handlers + Server Components) — not in edge middleware, which only
-// checks cookie presence.
-
-function keyFromSecret(secret: string): Buffer {
-  return createHash("sha256").update(secret).digest(); // 32 bytes for AES-256
+async function importKey(secret: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+  return crypto.subtle.importKey("raw", digest, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 
-/** seal encrypts a JSON value into `iv.tag.ciphertext` (all base64url). */
-export function seal(data: unknown, secret: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", keyFromSecret(secret), iv);
-  const plaintext = Buffer.from(JSON.stringify(data), "utf8");
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return [iv, tag, ciphertext].map((b) => b.toString("base64url")).join(".");
+/** seal encrypts a JSON value into `iv.ciphertext` (base64url; GCM tag embedded). */
+export async function seal(data: unknown, secret: string): Promise<string> {
+  const key = await importKey(secret);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(data));
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
+  return `${b64url(iv)}.${b64url(ciphertext)}`;
 }
 
 /** open decrypts and parses a sealed value, or returns null if invalid/tampered. */
-export function open<T>(token: string, secret: string): T | null {
+export async function open<T>(token: string, secret: string): Promise<T | null> {
   try {
-    const [ivB, tagB, ctB] = token.split(".");
-    if (!ivB || !tagB || !ctB) return null;
-    const decipher = createDecipheriv("aes-256-gcm", keyFromSecret(secret), Buffer.from(ivB, "base64url"));
-    decipher.setAuthTag(Buffer.from(tagB, "base64url"));
-    const plaintext = Buffer.concat([decipher.update(Buffer.from(ctB, "base64url")), decipher.final()]);
-    return JSON.parse(plaintext.toString("utf8")) as T;
+    const [ivB, ctB] = token.split(".");
+    if (!ivB || !ctB) return null;
+    const key = await importKey(secret);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64url(ivB) },
+      key,
+      fromB64url(ctB),
+    );
+    return JSON.parse(new TextDecoder().decode(plaintext)) as T;
   } catch {
     return null;
   }
+}
+
+function b64url(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromB64url(s: string): ArrayBuffer {
+  const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
 }
