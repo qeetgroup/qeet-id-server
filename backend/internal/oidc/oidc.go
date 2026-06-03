@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-identity/internal/audit"
+	"github.com/qeetgroup/qeet-identity/internal/auth"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
@@ -112,33 +114,35 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	return &c, raw, nil
 }
 
-// Authorize is the GET /oauth/authorize handler. Because we don't ship a
-// consent screen, this implementation requires the caller to be already
-// authenticated AND to have a granted consent row.
-func (s *Service) Authorize(ctx context.Context, userID, tenantID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, error) {
+// Authorize validates an authorization request for an already-authenticated
+// user and mints a one-time authorization code. The client's tenant is derived
+// from the client itself (the browser-facing flow has no user JWT to carry it).
+// Returns the raw code and the resolved tenant id.
+func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
+	var tenantID uuid.UUID
 	var dbScopes []string
 	var dbRedirectURIs []string
 	err := s.pool.QueryRow(ctx, `
-		SELECT scopes, redirect_uris FROM auth.oidc_clients
-		WHERE client_id = $1 AND tenant_id = $2
-	`, clientID, tenantID).Scan(&dbScopes, &dbRedirectURIs)
+		SELECT tenant_id, scopes, redirect_uris FROM auth.oidc_clients
+		WHERE client_id = $1
+	`, clientID).Scan(&tenantID, &dbScopes, &dbRedirectURIs)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrBadRequest.WithDetail("unknown client")
+		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("unknown client")
 	}
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	if !contains(dbRedirectURIs, redirectURI) {
-		return "", errs.ErrBadRequest.WithDetail("redirect_uri not registered")
+		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("redirect_uri not registered")
 	}
 	for _, sc := range scopes {
 		if !contains(dbScopes, sc) {
-			return "", errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
+			return "", uuid.Nil, errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
 		}
 	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO auth.oidc_authorization_codes (
@@ -147,9 +151,69 @@ func (s *Service) Authorize(ctx context.Context, userID, tenantID uuid.UUID, cli
 		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NOW() + INTERVAL '10 minutes')
 	`, hash, clientID, userID, tenantID, redirectURI, scopes, nonce, challenge, challengeMethod)
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
-	return raw, nil
+	return raw, tenantID, nil
+}
+
+// ClientName resolves a client's display name and tenant from its client_id —
+// used to render the hosted login/consent screens. Returns ErrNotFound for an
+// unknown client.
+func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
+	err = s.pool.QueryRow(ctx,
+		`SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = $1`, clientID).
+		Scan(&name, &tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", uuid.Nil, errs.ErrNotFound
+	}
+	return name, tenantID, err
+}
+
+// ValidatePostLogoutRedirect reports whether uri is one of the client's
+// registered post-logout redirect URIs (RP-Initiated Logout).
+func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri string) (bool, error) {
+	var uris []string
+	err := s.pool.QueryRow(ctx,
+		`SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = $1`, clientID).Scan(&uris)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return contains(uris, uri), nil
+}
+
+// HasConsent reports whether the user has already granted the client every
+// requested scope (so the consent screen can be skipped).
+func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (bool, error) {
+	var granted []string
+	err := s.pool.QueryRow(ctx,
+		`SELECT scopes FROM auth.oidc_consents WHERE user_id = $1 AND client_id = $2`,
+		userID, clientID).Scan(&granted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, sc := range scopes {
+		if !contains(granted, sc) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// GrantConsent records the user's approval of a client for the given scopes,
+// replacing any prior grant for that (user, client) pair.
+func (s *Service) GrantConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.oidc_consents (user_id, client_id, scopes, granted_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = $3, granted_at = NOW()
+	`, userID, clientID, scopes)
+	return err
 }
 
 type TokenResponse struct {
@@ -454,22 +518,85 @@ func derefStr(s *string) string {
 	return *s
 }
 
-type Handler struct {
-	Service *Service
+// SessionManager resolves and revokes the hosted-login SSO cookie. Satisfied by
+// *auth.Service; an interface keeps the dependency one-way.
+type SessionManager interface {
+	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
+	RevokeLoginSession(ctx context.Context, raw string) error
 }
 
+// ProviderLister lists a tenant's enabled social providers, so the hosted login
+// app can render the right social buttons. Satisfied by *social.Service.
+type ProviderLister interface {
+	EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error)
+}
+
+type Handler struct {
+	Service *Service
+	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
+	// flow. LoginBaseURL is the origin of the hosted login app (qeetid-login)
+	// the browser is redirected to for login/consent. Providers lists a tenant's
+	// social providers for the login-context endpoint (optional).
+	Sessions     SessionManager
+	Providers    ProviderLister
+	LoginBaseURL string
+	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
+	// clearing it on logout; set from SERVICE_ENV != "dev".
+	CookieSecure bool
+}
+
+// Mount registers the authenticated admin/RP endpoints (require a user JWT or
+// API key): client registration, userinfo (bearer access token), and grant
+// administration.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/oidc/clients", h.registerClient)
-	r.Get("/oauth/authorize", h.authorize)
-	r.Post("/oauth/token-code", h.tokenCode) // distinct from /oauth/token (client_credentials)
 	r.Get("/oauth/userinfo", h.userinfo)
 	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
 	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
 }
 
+// MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate
+// via the SSO cookie or client credentials (not a user JWT), so they live in
+// the public group. token-code is client-credential M2M and is CSRF-exempt in
+// the router; authorize (GET) and decision (cookie POST) are not.
+func (h *Handler) MountBrowser(r chi.Router) {
+	r.Get("/oauth/authorize", h.authorize)
+	r.Post("/oauth/authorize/decision", h.decision)
+	r.Post("/oauth/token-code", h.tokenCode)
+	r.Get("/oauth/login-context", h.loginContext)
+	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
+	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
+}
+
+// loginContext gives the hosted login app what it needs to render itself for a
+// given client_id: the client's display name, its tenant, and the tenant's
+// enabled social providers.
+func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
+	clientID := r.URL.Query().Get("client_id")
+	name, tenantID, err := h.Service.ClientName(r.Context(), clientID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	providers := []string{}
+	if h.Providers != nil {
+		if p, perr := h.Providers.EnabledProviderNames(r.Context(), tenantID); perr == nil {
+			providers = p
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"client_name": name,
+		"tenant_id":   tenantID,
+		"providers":   providers,
+	})
+}
+
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/.well-known/openid-configuration", h.discovery)
 	r.Get("/.well-known/jwks.json", h.jwks)
+	// Client-authenticated, machine-to-machine; CSRF-exempt in the router.
+	r.Post("/oauth/revoke", h.revoke)         // RFC 7009
+	r.Post("/oauth/introspect", h.introspect) // RFC 7662
 }
 
 func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
@@ -535,34 +662,154 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
+// authorize is the browser-facing GET /oauth/authorize. The user is identified
+// by the hosted-login SSO cookie (not a JWT). If not signed in, the browser is
+// sent to the hosted login; if signed in but the client lacks consent, to the
+// hosted consent screen; otherwise a code is minted and the browser bounced
+// back to the RP's redirect_uri.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil || p.TenantID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized)
-		return
-	}
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	redirect := q.Get("redirect_uri")
 	scopes := strings.Fields(q.Get("scope"))
-	nonce := q.Get("nonce")
-	challenge := q.Get("code_challenge")
-	method := q.Get("code_challenge_method")
-	code, err := h.Service.Authorize(r.Context(), *p.UserID, *p.TenantID, clientID, redirect, scopes, nonce, challenge, method)
+
+	userID, ok := h.sessionUser(r)
+	if !ok {
+		ret := url.QueryEscape(currentURL(r))
+		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+ret, http.StatusFound)
+		return
+	}
+
+	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	state := q.Get("state")
+	if !has {
+		// Hand off to the hosted consent screen, echoing the authorize params
+		// so it can post them back to the decision endpoint.
+		http.Redirect(w, r, h.LoginBaseURL+"/consent?"+r.URL.RawQuery, http.StatusFound)
+		return
+	}
+
+	code, _, err := h.Service.Authorize(r.Context(), userID, clientID, redirect,
+		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state")), http.StatusFound)
+}
+
+type decisionInput struct {
+	Approve             bool   `json:"approve"`
+	ClientID            string `json:"client_id"`
+	RedirectURI         string `json:"redirect_uri"`
+	Scope               string `json:"scope"`
+	State               string `json:"state"`
+	Nonce               string `json:"nonce"`
+	CodeChallenge       string `json:"code_challenge"`
+	CodeChallengeMethod string `json:"code_challenge_method"`
+}
+
+// decision records the consent decision from the hosted consent screen. The
+// user is identified by the SSO cookie. It returns (as JSON) the URL the
+// consent SPA should navigate to: a code on approval, or error=access_denied on
+// deny.
+func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.sessionUser(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in decisionInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !in.Approve {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"redirect": appendQuery(in.RedirectURI, "error", "access_denied", "state", in.State),
+		})
+		return
+	}
+	scopes := strings.Fields(in.Scope)
+	if err := h.Service.GrantConsent(r.Context(), userID, in.ClientID, scopes); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	code, _, err := h.Service.Authorize(r.Context(), userID, in.ClientID, in.RedirectURI,
+		scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"redirect": appendQuery(in.RedirectURI, "code", code, "state", in.State),
+	})
+}
+
+// endSession is the OIDC RP-Initiated Logout endpoint. It clears the hosted SSO
+// session + cookie, then — if the client supplied a registered
+// post_logout_redirect_uri — redirects there (carrying state); otherwise it
+// shows the hosted logged-out page.
+func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
+		_ = h.Sessions.RevokeLoginSession(r.Context(), c.Value)
+	}
+	auth.ClearLoginSessionCookie(w, h.CookieSecure)
+
+	q := r.URL.Query()
+	redirect := q.Get("post_logout_redirect_uri")
+	clientID := q.Get("client_id")
+	if redirect != "" && clientID != "" {
+		if ok, err := h.Service.ValidatePostLogoutRedirect(r.Context(), clientID, redirect); err == nil && ok {
+			http.Redirect(w, r, appendQuery(redirect, "state", q.Get("state")), http.StatusFound)
+			return
+		}
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+}
+
+// sessionUser resolves the hosted-login SSO cookie to a user id.
+func (h *Handler) sessionUser(r *http.Request) (uuid.UUID, bool) {
+	c, err := r.Cookie(auth.LoginSessionCookie)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	uid, err := h.Sessions.ResolveLoginSession(r.Context(), c.Value)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return uid, true
+}
+
+// currentURL reconstructs the absolute URL of the current request (for the
+// login redirect's return_to).
+func currentURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + r.URL.RequestURI()
+}
+
+// appendQuery appends key/value pairs (skipping empty values) to a URL that may
+// already carry a query string.
+func appendQuery(base string, kv ...string) string {
 	sep := "?"
-	if strings.Contains(redirect, "?") {
+	if strings.Contains(base, "?") {
 		sep = "&"
 	}
-	target := redirect + sep + "code=" + code
-	if state != "" {
-		target += "&state=" + state
+	out := base
+	for i := 0; i+1 < len(kv); i += 2 {
+		if kv[i+1] == "" {
+			continue
+		}
+		out += sep + kv[i] + "=" + url.QueryEscape(kv[i+1])
+		sep = "&"
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	return out
 }
 
 func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
@@ -596,6 +843,50 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
+// clientCreds parses OAuth client credentials from the form body or HTTP Basic
+// auth (the two RFC 6749 §2.3.1 mechanisms). Shared by revoke + introspect.
+func (h *Handler) clientCreds(r *http.Request) (id, secret string, ok bool) {
+	if err := r.ParseForm(); err != nil {
+		return "", "", false
+	}
+	id = r.Form.Get("client_id")
+	secret = r.Form.Get("client_secret")
+	if u, p, has := r.BasicAuth(); has {
+		id, secret = u, p
+	}
+	return id, secret, true
+}
+
+// revoke is the RFC 7009 token-revocation endpoint. It always answers 200 with
+// an empty body on success (including for unknown tokens).
+func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
+	clientID, clientSecret, ok := h.clientCreds(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		return
+	}
+	if err := h.Service.RevokeToken(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint")); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// introspect is the RFC 7662 token-introspection endpoint.
+func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
+	clientID, clientSecret, ok := h.clientCreds(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		return
+	}
+	resp, err := h.Service.Introspect(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -619,19 +910,126 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint":                        base + "/v1/oauth/token-code",
 		"userinfo_endpoint":                     base + "/v1/oauth/userinfo",
 		"jwks_uri":                              base + "/.well-known/jwks.json",
+		"revocation_endpoint":                   base + "/oauth/revoke",
+		"introspection_endpoint":                base + "/oauth/introspect",
+		"end_session_endpoint":                  base + "/v1/oauth/logout",
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"HS256"},
+		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"scopes_supported":                      []string{"openid", "profile", "email"},
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 	})
 }
 
-// jwks returns an empty key set because the dev signer uses HS256 — when
-// you swap to RS256 you'll list the public JWK here.
+// jwks publishes the public signing keys (active + any retired key still in its
+// rotation grace window) so any relying party can verify Qeet-issued ID/access
+// tokens. Keys are ES256 over EC P-256; each `kid` matches the token's `kid`
+// header (an RFC 7638 JWK thumbprint).
 func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": []any{}})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.JWKS()})
+}
+
+// =====================================================================
+// OAuth 2.0 token revocation (RFC 7009) & introspection (RFC 7662)
+// =====================================================================
+
+// RevokeToken implements RFC 7009. After client authentication, the presented
+// refresh token is revoked if it belongs to the calling client. Access tokens
+// are stateless ES256 JWTs and can't be revoked individually, so they're a
+// no-op. Per the RFC, an unknown or already-revoked token is still a success —
+// the only error paths are bad client auth or a DB failure.
+func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token, hint string) error {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return err
+	}
+	if token == "" || hint == "access_token" {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE auth.oidc_refresh_tokens
+		SET revoked_at = NOW()
+		WHERE token_hash = $1 AND client_id = $2 AND revoked_at IS NULL
+	`, tokens.HashRefresh(token), clientID)
+	return err
+}
+
+// Introspect implements RFC 7662. After client authentication it reports
+// whether the token is active and, if so, its metadata. It recognises both our
+// ES256 access tokens (verified statelessly) and stored OIDC refresh tokens.
+// token_type_hint, when given, picks which check to run first/only.
+func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token, hint string) (map[string]any, error) {
+	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+		return nil, err
+	}
+	inactive := map[string]any{"active": false}
+	if token == "" {
+		return inactive, nil
+	}
+
+	// Access token (stateless JWT) — unless the hint says it's a refresh token.
+	if hint != "refresh_token" {
+		if claims, err := s.issuer.VerifyAccess(token); err == nil {
+			out := map[string]any{
+				"active":     true,
+				"token_type": "Bearer",
+				"sub":        claims.Subject,
+				"scope":      claims.Scope,
+				"iss":        s.issuer.JWTIssuer(),
+				"aud":        s.issuer.JWTAudience(),
+			}
+			if claims.ExpiresAt != nil {
+				out["exp"] = claims.ExpiresAt.Unix()
+			}
+			if claims.IssuedAt != nil {
+				out["iat"] = claims.IssuedAt.Unix()
+			}
+			if claims.TenantID != uuid.Nil {
+				out["tenant_id"] = claims.TenantID
+			}
+			if claims.SessionID != uuid.Nil {
+				out["sid"] = claims.SessionID
+			}
+			return out, nil
+		}
+	}
+
+	// Refresh token (opaque, stored hashed) — unless the hint says access_token.
+	if hint != "access_token" {
+		var (
+			rowClientID         string
+			userID, tenantID    uuid.UUID
+			scopes              []string
+			issuedAt, expiresAt time.Time
+			usedAt, revokedAt   *time.Time
+		)
+		err := s.pool.QueryRow(ctx, `
+			SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at
+			FROM auth.oidc_refresh_tokens WHERE token_hash = $1
+		`, tokens.HashRefresh(token)).Scan(&rowClientID, &userID, &tenantID, &scopes, &issuedAt, &expiresAt, &usedAt, &revokedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return inactive, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Active = not revoked, not yet rotated (used), and unexpired.
+		if revokedAt != nil || usedAt != nil || !time.Now().Before(expiresAt) {
+			return inactive, nil
+		}
+		return map[string]any{
+			"active":     true,
+			"token_type": "refresh_token",
+			"client_id":  rowClientID,
+			"sub":        userID,
+			"tenant_id":  tenantID,
+			"scope":      strings.Join(scopes, " "),
+			"iat":        issuedAt.Unix(),
+			"exp":        expiresAt.Unix(),
+		}, nil
+	}
+
+	return inactive, nil
 }
 
 // =====================================================================

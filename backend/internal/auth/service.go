@@ -1,5 +1,6 @@
 // Package auth handles login, refresh, logout, and session storage.
-// Tokens are HS256 in dev; production should swap to RS256 with JWKS.
+// Access & ID tokens are signed with ES256 (asymmetric) and verifiable via the
+// public JWKS; see internal/platform/tokens.
 package auth
 
 import (
@@ -179,9 +180,29 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 }
 
 func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) {
-	u, err := s.users.GetByEmailGlobal(ctx, in.Email)
+	u, err := s.CheckPassword(ctx, in.Email, in.Password)
+	if err != nil {
+		return nil, err
+	}
+	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+}
+
+// CheckPassword runs the full credential check — brute-force lockout, user
+// lookup, password verify, transparent Argon2id rehash-on-login, and
+// clear-on-success — returning the authenticated user. Shared by API login
+// (which then issues tokens) and the hosted-login SSO session (which sets a
+// cookie). It deliberately does not mint tokens or sessions itself.
+func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*user.User, error) {
+	email := strings.ToLower(strings.TrimSpace(rawEmail))
+	if _, locked := s.loginLockedUntil(ctx, email); locked {
+		return nil, errs.ErrTooManyRequests.WithDetail("too many failed attempts — account temporarily locked")
+	}
+	u, err := s.users.GetByEmailGlobal(ctx, rawEmail)
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
+			// Throttle unknown emails identically so probing can't distinguish
+			// "no such account" from "wrong password" by behaviour.
+			s.recordFailedLogin(ctx, email)
 			return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
 		}
 		return nil, err
@@ -193,10 +214,23 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 	if err != nil {
 		return nil, err
 	}
-	if hash == "" || !password.Verify(hash, in.Password) {
+	if hash == "" || !password.Verify(hash, plain) {
+		s.recordFailedLogin(ctx, email)
 		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
 	}
-	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+	s.clearLoginAttempts(ctx, email)
+	// Transparently upgrade legacy bcrypt / weak-param hashes to current
+	// Argon2id on a successful login. Best-effort: never fail the login on it.
+	if password.NeedsRehash(hash) {
+		if nh, herr := password.Hash(plain); herr == nil {
+			if _, uerr := s.pool.Exec(ctx,
+				`UPDATE auth.password_credentials SET password_hash = $1 WHERE user_id = $2`,
+				nh, u.ID); uerr != nil {
+				slog.Warn("password rehash-on-login failed", "user_id", u.ID, "err", uerr)
+			}
+		}
+	}
+	return u, nil
 }
 
 // IssuePair creates a session, mints an access+refresh pair, and records

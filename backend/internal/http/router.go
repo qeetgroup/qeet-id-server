@@ -26,6 +26,7 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/passkey"
 	"github.com/qeetgroup/qeet-identity/internal/platform/health"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-identity/internal/platform/metrics"
 	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
 	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
 	"github.com/qeetgroup/qeet-identity/internal/policy"
@@ -78,12 +79,13 @@ type Deps struct {
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
-	AuthVerifier   *httpx.AuthVerifier
-	AllowedOrigins []string
-	ServiceName    string
-	ServiceEnv     string
-	StartedAt      time.Time
-	CSRFDisabled   bool
+	AuthVerifier     *httpx.AuthVerifier
+	AllowedOrigins   []string
+	ServiceName      string
+	ServiceEnv       string
+	StartedAt        time.Time
+	CSRFDisabled     bool
+	CSRFCookieDomain string
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -95,6 +97,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
 	r.Use(httpx.AccessLog)
+	r.Use(metrics.Middleware)
 	// CSRF: enforced on browser cookie-bearing requests; bearer-token
 	// (Authorization: Bearer …) traffic bypasses. Lives above the route
 	// groups so every mutation route inherits the check, including the
@@ -107,9 +110,13 @@ func NewRouter(d Deps) http.Handler {
 		r.Use(httpx.CSRF(httpx.CSRFConfig{
 			AllowedOrigins: d.AllowedOrigins,
 			CookieSecure:   d.ServiceEnv != "dev",
+			CookieDomain:   d.CSRFCookieDomain,
 			// SAML ACS is a cross-site form-POST from the IdP, authenticated
-			// by XML-signature validation rather than a CSRF cookie.
-			ExemptPaths: []string{"/saml/acs/"},
+			// by XML-signature validation rather than a CSRF cookie. The OAuth
+			// revocation/introspection endpoints are machine-to-machine and
+			// authenticated by client credentials (RFC 7009/7662), not a
+			// browser session, so they're exempt for the same reason.
+			ExemptPaths: []string{"/saml/acs/", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code"},
 		}))
 	}
 	r.Use(cors.Handler(cors.Options{
@@ -123,6 +130,8 @@ func NewRouter(d Deps) http.Handler {
 
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
+	// Prometheus scrape endpoint — restrict to the scrape network in prod.
+	r.Handle("/metrics", metrics.Handler())
 
 	// OIDC well-known + JWKS live at the root, per spec.
 	d.OIDC.MountPublic(r)
@@ -158,6 +167,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Principal.MountPublic(r) // /oauth/token (client_credentials)
 			d.Social.MountPublic(r)    // social OAuth start/callback/exchange
 			d.Passkey.MountPublic(r)   // passwordless passkey login
+			d.OIDC.MountBrowser(r)     // /oauth/authorize (SSO cookie) + decision + token-code
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.

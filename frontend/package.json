@@ -8,6 +8,7 @@
     "dev:admin": "turbo run dev --filter=@qeetid/admin",
     "dev:web": "turbo run dev --filter=@qeetid/web",
     "dev:docs": "turbo run dev --filter=@qeetid/docs",
+    "dev:login": "turbo run dev --filter=@qeetid/login",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "format": "turbo run format",

@@ -2,13 +2,14 @@ package secret
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 )
 
 func testService(t *testing.T) *Service {
 	t.Helper()
-	s, err := NewService(nil, bytes.Repeat([]byte("k"), 32))
+	s, err := NewService(context.Background(), nil, StaticKeyProvider{Key: bytes.Repeat([]byte("k"), 32)})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
@@ -46,7 +47,7 @@ func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 
 func TestDecryptRejectsWrongKey(t *testing.T) {
 	s1 := testService(t)
-	s2, _ := NewService(nil, bytes.Repeat([]byte("z"), 32))
+	s2, _ := NewService(context.Background(), nil, StaticKeyProvider{Key: bytes.Repeat([]byte("z"), 32)})
 	ct, nonce, _ := s1.encrypt("secret")
 	if _, err := s2.decrypt(ct, nonce); err == nil {
 		t.Error("decrypting with the wrong key must fail")
@@ -54,7 +55,7 @@ func TestDecryptRejectsWrongKey(t *testing.T) {
 }
 
 func TestNewServiceRejectsBadKeyLength(t *testing.T) {
-	if _, err := NewService(nil, []byte("too-short")); err == nil {
+	if _, err := NewService(context.Background(), nil, StaticKeyProvider{Key: []byte("too-short")}); err == nil {
 		t.Error("AES requires 16/24/32-byte keys")
 	}
 }

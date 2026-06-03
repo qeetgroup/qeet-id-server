@@ -1,26 +1,43 @@
-// Package tokens issues and verifies the access & refresh JWTs.
-// Access tokens are short-lived and carry tenant/user IDs. Refresh tokens
-// are opaque random strings stored hashed in auth.refresh_tokens.
+// Package tokens issues and verifies the access & ID JWTs and the opaque
+// refresh tokens. Access/ID tokens are signed with an asymmetric key so that
+// any relying party can verify them against the public JWKS at
+// /.well-known/jwks.json without holding a shared secret — this is what lets
+// Qeet ID act as a real OIDC provider.
 //
-// Every JWT minted here carries a `kid` header naming the active signing
-// key. Verifiers look the kid up in {primary, retired} and reject tokens
-// with a missing or unknown kid. Retired keys exist to keep tokens
-// signed during a rotation grace window verifiable until they expire —
-// register them with AddRetiredKey.
+// The default (and currently only) algorithm is ES256 (ECDSA P-256). The
+// issuer is written to be crypto-agile: a key carries its own algorithm, so
+// adding RS256/EdDSA or a post-quantum scheme (ML-DSA) later is "register a
+// new key type", not a rewrite (see LAUNCH_READINESS.md §9).
+//
+// Every JWT carries a `kid` header set to the RFC 7638 JWK thumbprint of the
+// signing key. Verifiers resolve the kid against the active key plus any
+// retired keys; a token with a missing or unknown kid is rejected. Retired
+// keys are verify-only public keys kept during a rotation grace window so
+// tokens minted under the previous key stay valid until they expire — register
+// them with AddRetiredKeysPEM.
 package tokens
 
 import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+
+// p256CoordBytes is the fixed byte length of a P-256 coordinate; JWK x/y must
+// be left-padded to this length (RFC 7518 §6.2.1.2).
+const p256CoordBytes = 32
 
 type Claims struct {
 	UserID    uuid.UUID `json:"user_id"`
@@ -30,63 +47,117 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// signingKey couples a key with its JWS algorithm. priv is nil for verify-only
+// (retired) keys; pub is always present and is what we publish in the JWKS.
+type signingKey struct {
+	kid    string
+	alg    string
+	method jwt.SigningMethod
+	priv   crypto.Signer    // signing — active key only
+	pub    crypto.PublicKey // verification + JWKS
+}
+
 type Issuer struct {
-	primaryKey []byte
-	kid        string
-	retired    map[string][]byte
+	active     *signingKey            // the key new tokens are signed with
+	verifiers  map[string]*signingKey // kid -> key (active + retired)
 	issuer     string
 	audience   string
 	accessTTL  time.Duration
 	refreshTTL time.Duration
 }
 
-func NewIssuer(secret, issuer, audience string, accessTTL, refreshTTL time.Duration) *Issuer {
-	keyBytes := []byte(secret)
+// NewIssuer builds an ES256 issuer from a PEM-encoded EC P-256 private key
+// (PKCS#8 "PRIVATE KEY" or SEC1 "EC PRIVATE KEY"). Generate one with
+// GenerateES256KeyPEM (dev) or `openssl ecparam -name prime256v1 -genkey`.
+func NewIssuer(privateKeyPEM, issuer, audience string, accessTTL, refreshTTL time.Duration) (*Issuer, error) {
+	priv, err := parseECPrivateKey(privateKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parse signing key: %w", err)
+	}
+	return newIssuerFromKey(priv, issuer, audience, accessTTL, refreshTTL)
+}
+
+func newIssuerFromKey(priv *ecdsa.PrivateKey, issuer, audience string, accessTTL, refreshTTL time.Duration) (*Issuer, error) {
+	if priv.Curve != elliptic.P256() {
+		return nil, errors.New("signing key must use the P-256 curve (ES256)")
+	}
+	kid, err := thumbprint(&priv.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+	active := &signingKey{
+		kid:    kid,
+		alg:    "ES256",
+		method: jwt.SigningMethodES256,
+		priv:   priv,
+		pub:    &priv.PublicKey,
+	}
 	return &Issuer{
-		primaryKey: keyBytes,
-		kid:        deriveKID(keyBytes),
-		retired:    map[string][]byte{},
+		active:     active,
+		verifiers:  map[string]*signingKey{kid: active},
 		issuer:     issuer,
 		audience:   audience,
 		accessTTL:  accessTTL,
 		refreshTTL: refreshTTL,
-	}
-}
-
-// deriveKID produces a stable, non-secret-revealing identifier for a key
-// by hashing it. Sixteen hex characters is plenty of bits to avoid
-// collisions across a realistic rotation history.
-func deriveKID(key []byte) string {
-	sum := sha256.Sum256(key)
-	return hex.EncodeToString(sum[:8])
+	}, nil
 }
 
 func (i *Issuer) AccessTTL() time.Duration  { return i.accessTTL }
 func (i *Issuer) RefreshTTL() time.Duration { return i.refreshTTL }
 func (i *Issuer) JWTIssuer() string         { return i.issuer }
 func (i *Issuer) JWTAudience() string       { return i.audience }
-func (i *Issuer) KID() string               { return i.kid }
 
-// AddRetiredKey registers a previously-active key so tokens signed under
-// it can still be verified during the rotation grace window. Callers
-// should drop retired keys after the access-token TTL has elapsed since
-// rotation.
-func (i *Issuer) AddRetiredKey(kid string, key []byte) {
-	if kid == "" || len(key) == 0 {
-		return
+// KID is the active signing key's id (its RFC 7638 JWK thumbprint).
+func (i *Issuer) KID() string { return i.active.kid }
+
+// Alg is the active signing algorithm (e.g. "ES256"); exposed for the OIDC
+// discovery document's id_token_signing_alg_values_supported.
+func (i *Issuer) Alg() string { return i.active.alg }
+
+// AddRetiredKeysPEM registers verify-only public keys so tokens signed under a
+// previously-active key still verify during the rotation grace window. The
+// argument may contain multiple concatenated PEM blocks ("PUBLIC KEY" SPKI or
+// "CERTIFICATE"). The kid is derived from each key, so the operator only needs
+// to supply the public key. Returns the number of keys registered. Unparseable
+// blocks and duplicates are skipped.
+func (i *Issuer) AddRetiredKeysPEM(raw string) int {
+	rest := []byte(raw)
+	n := 0
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		pub, err := publicKeyFromBlock(block)
+		if err != nil {
+			continue
+		}
+		ec, ok := pub.(*ecdsa.PublicKey)
+		if !ok || ec.Curve != elliptic.P256() {
+			continue
+		}
+		kid, err := thumbprint(ec)
+		if err != nil {
+			continue
+		}
+		if _, exists := i.verifiers[kid]; exists {
+			continue
+		}
+		i.verifiers[kid] = &signingKey{kid: kid, alg: "ES256", method: jwt.SigningMethodES256, pub: ec}
+		n++
 	}
-	i.retired[kid] = key
+	return n
 }
 
-// Sign returns a JWS-compact-serialised JWT bearing the given claims.
-// The `kid` header is always set to the active key id so verifiers can
-// route to the right key during rotation. Callers needing custom claims
-// (OIDC ID tokens, service-principal access tokens) should use this
-// rather than calling jwt.NewWithClaims directly.
+// Sign returns a compact JWS bearing the given claims, signed with the active
+// key and carrying its kid header. Callers needing custom claims (OIDC ID
+// tokens, service-principal access tokens) use this rather than calling
+// jwt.NewWithClaims directly so the kid is always set.
 func (i *Issuer) Sign(claims jwt.Claims) (string, error) {
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tok.Header["kid"] = i.kid
-	return tok.SignedString(i.primaryKey)
+	tok := jwt.NewWithClaims(i.active.method, claims)
+	tok.Header["kid"] = i.active.kid
+	return tok.SignedString(i.active.priv)
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
@@ -114,8 +185,8 @@ func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 	return s, exp, nil
 }
 
-// keyFunc resolves the verification key from the kid header. It is the
-// single point that enforces "no token may verify without a known kid".
+// keyFunc resolves the verification key from the kid header. It is the single
+// point that enforces "no token may verify without a known kid".
 func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 	raw, ok := t.Header["kid"]
 	if !ok {
@@ -125,18 +196,21 @@ func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 	if !ok || kid == "" {
 		return nil, errors.New("missing kid header")
 	}
-	if kid == i.kid {
-		return i.primaryKey, nil
+	k, ok := i.verifiers[kid]
+	if !ok {
+		return nil, fmt.Errorf("unknown kid: %s", kid)
 	}
-	if key, ok := i.retired[kid]; ok {
-		return key, nil
-	}
-	return nil, fmt.Errorf("unknown kid: %s", kid)
+	return k.pub, nil
 }
+
+// validMethods is the algorithm allow-list the parser enforces, closing off
+// "alg confusion" attacks (e.g. a forged HS256 token, or alg=none). Grows when
+// a new signing algorithm is added.
+var validMethods = []string{"ES256"}
 
 func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
 	parser := jwt.NewParser(
-		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithValidMethods(validMethods),
 		jwt.WithIssuer(i.issuer),
 		jwt.WithAudience(i.audience),
 	)
@@ -149,6 +223,40 @@ func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
 		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+// JWK is a public JSON Web Key as published at /.well-known/jwks.json.
+type JWK struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+	Use string `json:"use"`
+	Alg string `json:"alg"`
+	Kid string `json:"kid"`
+}
+
+// JWKS returns every public key a relying party may need to verify a Qeet ID
+// token: the active signing key plus any retired keys still inside their grace
+// window.
+func (i *Issuer) JWKS() []JWK {
+	out := make([]JWK, 0, len(i.verifiers))
+	for _, k := range i.verifiers {
+		ec, ok := k.pub.(*ecdsa.PublicKey)
+		if !ok {
+			continue
+		}
+		out = append(out, JWK{
+			Kty: "EC",
+			Crv: "P-256",
+			X:   coord(ec.X),
+			Y:   coord(ec.Y),
+			Use: "sig",
+			Alg: k.alg,
+			Kid: k.kid,
+		})
+	}
+	return out
 }
 
 // NewRefreshToken returns (rawToken, sha256Hash). Only the hash is stored.
@@ -164,4 +272,102 @@ func NewRefreshToken() (string, string, error) {
 func HashRefresh(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// =====================================================================
+// Key generation & parsing helpers
+// =====================================================================
+
+// GenerateES256KeyPEM mints a fresh ES256 (P-256) private key as a PKCS#8 PEM.
+// Used for dev convenience (ephemeral key when JWT_SIGNING_KEY is unset) and as
+// the building block for the key-rotation runbook.
+func GenerateES256KeyPEM() (string, error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return "", err
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
+}
+
+// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for the given EC private-key
+// PEM. During rotation, feed the retiring key's output here into
+// JWT_RETIRED_KEYS so in-flight tokens keep verifying.
+func PublicKeyPEM(privateKeyPEM string) (string, error) {
+	priv, err := parseECPrivateKey(privateKeyPEM)
+	if err != nil {
+		return "", err
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		return "", err
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
+}
+
+func parseECPrivateKey(pemStr string) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, errors.New("no PEM block found")
+	}
+	switch block.Type {
+	case "EC PRIVATE KEY":
+		return x509.ParseECPrivateKey(block.Bytes)
+	case "PRIVATE KEY":
+		k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		ec, ok := k.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("PKCS#8 key is not ECDSA")
+		}
+		return ec, nil
+	default:
+		return nil, fmt.Errorf("unsupported PEM type %q (want EC/PKCS#8 private key)", block.Type)
+	}
+}
+
+func publicKeyFromBlock(block *pem.Block) (any, error) {
+	switch block.Type {
+	case "PUBLIC KEY":
+		return x509.ParsePKIXPublicKey(block.Bytes)
+	case "CERTIFICATE":
+		c, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		return c.PublicKey, nil
+	default:
+		return nil, fmt.Errorf("unsupported public key PEM type %q", block.Type)
+	}
+}
+
+// thumbprint computes the RFC 7638 JWK thumbprint of an EC public key and
+// returns it base64url-encoded — a stable, non-secret-revealing kid that any
+// JWKS consumer can recompute.
+func thumbprint(pub *ecdsa.PublicKey) (string, error) {
+	if pub.Curve != elliptic.P256() {
+		return "", errors.New("thumbprint: only P-256 supported")
+	}
+	// RFC 7638 §3.2: members in lexicographic order, no whitespace. The values
+	// are base64url and need no JSON escaping, so a literal is safe and exact.
+	canonical := `{"crv":"P-256","kty":"EC","x":"` + coord(pub.X) + `","y":"` + coord(pub.Y) + `"}`
+	sum := sha256.Sum256([]byte(canonical))
+	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
+}
+
+// coord encodes a P-256 coordinate as a fixed-length, left-padded base64url
+// string per RFC 7518 §6.2.1.2.
+func coord(c *big.Int) string {
+	b := c.Bytes()
+	if len(b) < p256CoordBytes {
+		padded := make([]byte, p256CoordBytes)
+		copy(padded[p256CoordBytes-len(b):], b)
+		b = padded
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }

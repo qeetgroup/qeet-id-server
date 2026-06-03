@@ -1,0 +1,40 @@
+{
+  "name": "@qeetid/nextjs",
+  "version": "0.1.0",
+  "description": "Next.js (App Router) integration for Qeet ID — middleware, auth()/currentUser(), and the hosted-login OAuth handlers.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"**/*.{ts,json,md}\" --ignore-path ../../.prettierignore",
+    "check": "eslint . --ext .ts && prettier --check \"**/*.{ts,json,md}\" --ignore-path ../../.prettierignore"
+  },
+  "dependencies": {
+    "@qeetid/sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "next": ">=14",
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "typescript": "catalog:"
+  }
+}

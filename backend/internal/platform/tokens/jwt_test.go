@@ -1,8 +1,13 @@
 package tokens
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"strings"
 	"testing"
 	"time"
@@ -11,9 +16,28 @@ import (
 	"github.com/google/uuid"
 )
 
-func newIssuer(t *testing.T) *Issuer {
+// testIssuer builds an ES256 issuer over a fresh key and also returns the
+// private key so tests can forge tokens (missing/unknown kid, alg confusion).
+func testIssuer(t *testing.T) (*Issuer, *ecdsa.PrivateKey) {
 	t.Helper()
-	return NewIssuer("test-secret-with-enough-bytes", "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	i, err := newIssuerFromKey(priv, "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("issuer: %v", err)
+	}
+	return i, priv
+}
+
+func publicPEM(t *testing.T, priv *ecdsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal pub: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
 func decodeHeader(t *testing.T, token string) map[string]any {
@@ -34,12 +58,15 @@ func decodeHeader(t *testing.T, token string) map[string]any {
 }
 
 func TestIssueAccess_AlwaysCarriesKID(t *testing.T) {
-	i := newIssuer(t)
+	i, _ := testIssuer(t)
 	tok, _, err := i.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
 	if err != nil {
 		t.Fatalf("IssueAccess: %v", err)
 	}
 	h := decodeHeader(t, tok)
+	if h["alg"] != "ES256" {
+		t.Errorf("alg = %v, want ES256", h["alg"])
+	}
 	if h["kid"] == nil || h["kid"] == "" {
 		t.Fatalf("kid header missing: %v", h)
 	}
@@ -49,7 +76,7 @@ func TestIssueAccess_AlwaysCarriesKID(t *testing.T) {
 }
 
 func TestSign_SetsKIDForArbitraryClaims(t *testing.T) {
-	i := newIssuer(t)
+	i, _ := testIssuer(t)
 	claims := jwt.MapClaims{
 		"iss": i.JWTIssuer(),
 		"aud": i.JWTAudience(),
@@ -61,14 +88,13 @@ func TestSign_SetsKIDForArbitraryClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
-	h := decodeHeader(t, tok)
-	if h["kid"] != i.KID() {
-		t.Errorf("kid = %v, want %s", h["kid"], i.KID())
+	if decodeHeader(t, tok)["kid"] != i.KID() {
+		t.Errorf("kid mismatch, want %s", i.KID())
 	}
 }
 
 func TestVerifyAccess_RoundTrip(t *testing.T) {
-	i := newIssuer(t)
+	i, _ := testIssuer(t)
 	uid, tid, sid := uuid.New(), uuid.New(), uuid.New()
 	tok, _, err := i.IssueAccess(uid, tid, sid, "scope.a scope.b")
 	if err != nil {
@@ -87,116 +113,178 @@ func TestVerifyAccess_RoundTrip(t *testing.T) {
 }
 
 func TestVerifyAccess_RejectsTokenWithoutKID(t *testing.T) {
-	i := newIssuer(t)
-	// Hand-build a token with no kid header.
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"iss": i.JWTIssuer(),
-		"aud": i.JWTAudience(),
-		"sub": "x",
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
+	i, priv := testIssuer(t)
+	tok := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"iss": i.JWTIssuer(), "aud": i.JWTAudience(), "sub": "x",
+		"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 	})
 	delete(tok.Header, "kid")
-	signed, err := tok.SignedString(i.primaryKey)
+	signed, err := tok.SignedString(priv)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
 	if _, err := i.VerifyAccess(signed); err == nil {
-		t.Error("VerifyAccess must reject tokens with no kid header")
+		t.Error("must reject token with no kid header")
 	} else if !strings.Contains(err.Error(), "kid") {
 		t.Errorf("error should mention kid: %v", err)
 	}
 }
 
 func TestVerifyAccess_RejectsUnknownKID(t *testing.T) {
-	i := newIssuer(t)
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"iss": i.JWTIssuer(),
-		"aud": i.JWTAudience(),
-		"sub": "x",
-		"exp": time.Now().Add(time.Hour).Unix(),
-		"iat": time.Now().Unix(),
+	i, priv := testIssuer(t)
+	tok := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"iss": i.JWTIssuer(), "aud": i.JWTAudience(), "sub": "x",
+		"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
 	})
 	tok.Header["kid"] = "definitely-not-a-real-kid"
-	signed, err := tok.SignedString(i.primaryKey)
+	signed, err := tok.SignedString(priv)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
 	if _, err := i.VerifyAccess(signed); err == nil {
-		t.Error("VerifyAccess must reject tokens with unknown kid")
+		t.Error("must reject token with unknown kid")
+	}
+}
+
+// TestVerifyAccess_RejectsHS256Token guards against the classic "alg confusion"
+// attack: a token forged with HS256 (treating the public key as an HMAC secret)
+// must be rejected because the parser only accepts ES256.
+func TestVerifyAccess_RejectsHS256Token(t *testing.T) {
+	i, _ := testIssuer(t)
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": i.JWTIssuer(), "aud": i.JWTAudience(), "sub": "x",
+		"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+	})
+	tok.Header["kid"] = i.KID()
+	signed, err := tok.SignedString([]byte("attacker-chosen-secret"))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, err := i.VerifyAccess(signed); err == nil {
+		t.Error("must reject an HS256-signed token (alg confusion)")
 	}
 }
 
 func TestVerifyAccess_AcceptsRetiredKeyDuringGraceWindow(t *testing.T) {
-	// Simulate rotation: rotate the primary key on the issuer, then
-	// register the old key as retired. Tokens issued before rotation must
-	// still verify.
-	oldIssuer := newIssuer(t)
+	oldIssuer, oldPriv := testIssuer(t)
 	oldToken, _, err := oldIssuer.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
 	if err != nil {
 		t.Fatalf("IssueAccess: %v", err)
 	}
-	oldKID := oldIssuer.KID()
-	oldKey := append([]byte{}, oldIssuer.primaryKey...)
 
-	// New issuer (post-rotation) with the old key registered as retired.
-	newIssuer2 := NewIssuer("a-completely-different-rotation-key", oldIssuer.issuer, oldIssuer.audience, oldIssuer.accessTTL, oldIssuer.refreshTTL)
-	newIssuer2.AddRetiredKey(oldKID, oldKey)
-
-	if _, err := newIssuer2.VerifyAccess(oldToken); err != nil {
+	// Post-rotation issuer with a new active key; register the old PUBLIC key.
+	newIssuer, _ := testIssuer(t)
+	if n := newIssuer.AddRetiredKeysPEM(publicPEM(t, oldPriv)); n != 1 {
+		t.Fatalf("AddRetiredKeysPEM registered %d keys, want 1", n)
+	}
+	if _, err := newIssuer.VerifyAccess(oldToken); err != nil {
 		t.Errorf("retired key should still verify old tokens: %v", err)
 	}
-
-	// A token signed under the new primary still verifies.
-	newToken, _, err := newIssuer2.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
-	if err != nil {
-		t.Fatalf("IssueAccess new: %v", err)
-	}
-	if _, err := newIssuer2.VerifyAccess(newToken); err != nil {
+	// And the new primary still verifies its own tokens.
+	newToken, _, _ := newIssuer.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+	if _, err := newIssuer.VerifyAccess(newToken); err != nil {
 		t.Errorf("new primary should verify its own tokens: %v", err)
 	}
 }
 
 func TestVerifyAccess_RejectsTokenAfterRetiredKeyDropped(t *testing.T) {
-	// Without the retired key registered, old tokens must NOT verify.
-	oldIssuer := newIssuer(t)
+	oldIssuer, _ := testIssuer(t)
 	oldToken, _, _ := oldIssuer.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
-	newIssuer2 := NewIssuer("post-rotation-key", oldIssuer.issuer, oldIssuer.audience, oldIssuer.accessTTL, oldIssuer.refreshTTL)
-	// Note: no AddRetiredKey.
-	if _, err := newIssuer2.VerifyAccess(oldToken); err == nil {
-		t.Error("old token should not verify after retired key is dropped")
+	newIssuer, _ := testIssuer(t) // no retired key registered
+	if _, err := newIssuer.VerifyAccess(oldToken); err == nil {
+		t.Error("old token must not verify once the retired key is dropped")
 	}
 }
 
-func TestKID_StableAcrossInstancesForSameSecret(t *testing.T) {
-	a := NewIssuer("same-secret", "i", "a", time.Hour, time.Hour)
-	b := NewIssuer("same-secret", "i", "a", time.Hour, time.Hour)
+func TestKID_StableAcrossInstancesForSameKey(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	a, _ := newIssuerFromKey(priv, "i", "a", time.Hour, time.Hour)
+	b, _ := newIssuerFromKey(priv, "i", "a", time.Hour, time.Hour)
 	if a.KID() != b.KID() {
-		t.Errorf("kid must be derived from secret deterministically: %s vs %s", a.KID(), b.KID())
+		t.Errorf("kid must be a deterministic thumbprint: %s vs %s", a.KID(), b.KID())
 	}
 }
 
-func TestKID_ChangesWhenSecretChanges(t *testing.T) {
-	a := NewIssuer("secret-one", "i", "a", time.Hour, time.Hour)
-	b := NewIssuer("secret-two", "i", "a", time.Hour, time.Hour)
+func TestKID_ChangesWhenKeyChanges(t *testing.T) {
+	a, _ := testIssuer(t)
+	b, _ := testIssuer(t)
 	if a.KID() == b.KID() {
-		t.Error("kid must differ for different secrets")
+		t.Error("different keys must produce different kids")
 	}
 }
 
 func TestVerifyAccess_RejectsTamperedKIDHeader(t *testing.T) {
-	// Take a valid token, swap kid to "primary" (or any other string)
-	// without re-signing. Verifier must reject because the kid won't
-	// resolve to the right key OR the signature won't match the resolved key.
-	i := newIssuer(t)
+	i, _ := testIssuer(t)
 	tok, _, _ := i.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
 	parts := strings.Split(tok, ".")
-	hdr := map[string]any{"alg": "HS256", "typ": "JWT", "kid": "tampered"}
-	newHdr, _ := json.Marshal(hdr)
-	parts[0] = base64.RawURLEncoding.EncodeToString(newHdr)
-	tampered := strings.Join(parts, ".")
-	if _, err := i.VerifyAccess(tampered); err == nil {
+	hdr, _ := json.Marshal(map[string]any{"alg": "ES256", "typ": "JWT", "kid": "tampered"})
+	parts[0] = base64.RawURLEncoding.EncodeToString(hdr)
+	if _, err := i.VerifyAccess(strings.Join(parts, ".")); err == nil {
 		t.Error("tampered kid header must be rejected")
+	}
+}
+
+func TestJWKS_PublishesPublicKeys(t *testing.T) {
+	i, _ := testIssuer(t)
+	ks := i.JWKS()
+	if len(ks) != 1 {
+		t.Fatalf("JWKS len = %d, want 1", len(ks))
+	}
+	k := ks[0]
+	if k.Kty != "EC" || k.Crv != "P-256" || k.Use != "sig" || k.Alg != "ES256" {
+		t.Errorf("unexpected JWK shape: %+v", k)
+	}
+	if k.Kid != i.KID() {
+		t.Errorf("JWK kid %q must match active KID %q", k.Kid, i.KID())
+	}
+	if k.X == "" || k.Y == "" {
+		t.Error("JWK coordinates must be populated")
+	}
+
+	// A retired key shows up too, so RPs can verify in-grace tokens.
+	_, oldPriv := testIssuer(t)
+	i.AddRetiredKeysPEM(publicPEM(t, oldPriv))
+	if len(i.JWKS()) != 2 {
+		t.Errorf("JWKS should include the retired key, got %d", len(i.JWKS()))
+	}
+}
+
+func TestNewIssuer_PEMRoundTrip(t *testing.T) {
+	keyPEM, err := GenerateES256KeyPEM()
+	if err != nil {
+		t.Fatalf("GenerateES256KeyPEM: %v", err)
+	}
+	i, err := NewIssuer(keyPEM, "iss", "aud", time.Hour, time.Hour)
+	if err != nil {
+		t.Fatalf("NewIssuer: %v", err)
+	}
+	tok, _, err := i.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+	if err != nil {
+		t.Fatalf("IssueAccess: %v", err)
+	}
+	if _, err := i.VerifyAccess(tok); err != nil {
+		t.Errorf("round-trip verify failed: %v", err)
+	}
+	// PublicKeyPEM should parse and produce an SPKI block.
+	pub, err := PublicKeyPEM(keyPEM)
+	if err != nil || !strings.Contains(pub, "PUBLIC KEY") {
+		t.Errorf("PublicKeyPEM = %q, err = %v", pub, err)
+	}
+}
+
+func TestNewIssuer_RejectsBadPEM(t *testing.T) {
+	if _, err := NewIssuer("not a pem", "i", "a", time.Hour, time.Hour); err == nil {
+		t.Error("NewIssuer must reject non-PEM input")
+	}
+}
+
+func TestAddRetiredKeysPEM_IgnoresGarbage(t *testing.T) {
+	i, _ := testIssuer(t)
+	if n := i.AddRetiredKeysPEM(""); n != 0 {
+		t.Errorf("empty input registered %d keys", n)
+	}
+	if n := i.AddRetiredKeysPEM("-----BEGIN PUBLIC KEY-----\nnot-base64\n-----END PUBLIC KEY-----"); n != 0 {
+		t.Errorf("garbage PEM registered %d keys", n)
 	}
 }
 
@@ -210,14 +298,5 @@ func TestNewRefreshToken_HashStable(t *testing.T) {
 	}
 	if HashRefresh(raw) != hash {
 		t.Error("HashRefresh must be stable across calls")
-	}
-}
-
-func TestAddRetiredKey_IgnoresEmptyValues(t *testing.T) {
-	i := newIssuer(t)
-	i.AddRetiredKey("", []byte("x"))
-	i.AddRetiredKey("kid", nil)
-	if len(i.retired) != 0 {
-		t.Errorf("empty values should not be stored: %v", i.retired)
 	}
 }

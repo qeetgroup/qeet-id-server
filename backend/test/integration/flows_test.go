@@ -3,15 +3,21 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/go-playground/validator/v10"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
@@ -29,9 +35,23 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/webhook"
 )
 
+// mustIssuer builds an ES256 token issuer over a freshly-generated key for the
+// integration flows (each call mints its own key, which is fine in-process).
+func mustIssuer() *tokens.Issuer {
+	keyPEM, err := tokens.GenerateES256KeyPEM()
+	if err != nil {
+		panic("generate signing key: " + err.Error())
+	}
+	i, err := tokens.NewIssuer(keyPEM, "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	if err != nil {
+		panic("new issuer: " + err.Error())
+	}
+	return i
+}
+
 func newAuth() (*auth.Service, *user.Repository) {
 	users := user.NewRepository(testPool)
-	issuer := tokens.NewIssuer("integration-test-signing-secret-key", "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	issuer := mustIssuer()
 	return auth.NewService(testPool, users, issuer), users
 }
 
@@ -74,6 +94,88 @@ func TestAuthSignupLoginRefreshReuse(t *testing.T) {
 	}
 }
 
+// Hosted-login SSO session: credentials create a session, it resolves to the
+// user, and revoking (hosted logout) invalidates it.
+func TestHostedLoginSession(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	svc, _ := newAuth()
+	email := uniqueSlug("sso") + "@example.com"
+
+	if _, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	} else if u.ID == uuid.Nil {
+		t.Fatal("signup returned nil user id")
+	}
+
+	// Wrong password is rejected by the shared credential check.
+	if _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
+		t.Error("CheckPassword must reject a wrong password")
+	}
+	u, err := svc.CheckPassword(ctx, email, "password123")
+	if err != nil {
+		t.Fatalf("CheckPassword: %v", err)
+	}
+
+	raw, err := svc.CreateLoginSession(ctx, u.ID, "", "test-agent")
+	if err != nil {
+		t.Fatalf("CreateLoginSession: %v", err)
+	}
+	got, err := svc.ResolveLoginSession(ctx, raw)
+	if err != nil || got != u.ID {
+		t.Fatalf("ResolveLoginSession = %v, %v; want %v", got, err, u.ID)
+	}
+	// A bogus cookie value never resolves.
+	if _, err := svc.ResolveLoginSession(ctx, "not-a-session"); err == nil {
+		t.Error("a bogus session value must not resolve")
+	}
+	// Hosted logout invalidates it.
+	if err := svc.RevokeLoginSession(ctx, raw); err != nil {
+		t.Fatalf("RevokeLoginSession: %v", err)
+	}
+	if _, err := svc.ResolveLoginSession(ctx, raw); err == nil {
+		t.Error("a revoked session must not resolve")
+	}
+}
+
+// Repeated wrong-password logins lock the account; once locked, even the
+// correct password is refused (429). A successful login resets the counter.
+func TestLoginLockout(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	svc, _ := newAuth()
+	email := uniqueSlug("lock") + "@example.com"
+
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	}
+
+	// A few failures then a success must NOT lock (counter resets on success).
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "wrong"}); err == nil {
+			t.Fatal("wrong password should fail")
+		}
+	}
+	if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("correct password before lockout should succeed: %v", err)
+	}
+
+	// Now exhaust the threshold with consecutive failures.
+	for i := 0; i < 5; i++ {
+		if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "wrong"}); err == nil {
+			t.Fatal("wrong password should fail")
+		}
+	}
+	// Locked: even the correct password is refused with 429.
+	_, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	if err == nil {
+		t.Fatal("account should be locked after repeated failures")
+	}
+	if e := errs.As(err); e == nil || e.Status != 429 {
+		t.Errorf("locked login should be 429, got %v", err)
+	}
+}
+
 // OIDC authorization_code issues a refresh token; the refresh_token grant rotates
 // it, and replaying a consumed refresh token is treated as theft (revokes the chain).
 func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
@@ -88,7 +190,7 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	issuer := tokens.NewIssuer("integration-test-signing-secret-key", "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	issuer := mustIssuer()
 	svc := oidc.NewService(testPool, issuer)
 
 	redirectURI := "https://app.example/cb"
@@ -108,7 +210,7 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	code, err := svc.Authorize(ctx, userID, tenantID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -139,6 +241,363 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 	// ...so the freshly-rotated token is dead too.
 	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken); err == nil {
 		t.Fatal("rotated token must fail after reuse revokes the chain")
+	}
+}
+
+// OIDC token introspection (RFC 7662) reports access & refresh tokens active,
+// and revocation (RFC 7009) flips a refresh token to inactive.
+func TestOIDCRevokeAndIntrospect(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := oidc.NewService(testPool, mustIssuer())
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Name: "RP", RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	if err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+
+	// Access token introspects active.
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.AccessToken, ""); err != nil || r["active"] != true {
+		t.Fatalf("access token should be active: %+v err=%v", r, err)
+	}
+	// Refresh token introspects active.
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil || r["active"] != true {
+		t.Fatalf("refresh token should be active: %+v err=%v", r, err)
+	}
+	// Bad client auth is rejected.
+	if _, err := svc.Introspect(ctx, client.ClientID, "wrong-secret", issued.AccessToken, ""); err == nil {
+		t.Error("introspect with a bad client secret must fail")
+	}
+	// A garbage token is simply inactive (not an error).
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, "not-a-real-token", ""); err != nil || r["active"] != false {
+		t.Errorf("unknown token should be inactive: %+v err=%v", r, err)
+	}
+
+	// Revoke the refresh token → now inactive, and the refresh grant fails.
+	if err := svc.RevokeToken(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil || r["active"] != false {
+		t.Errorf("revoked refresh token should be inactive: %+v err=%v", r, err)
+	}
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken); err == nil {
+		t.Error("a revoked refresh token must not be redeemable")
+	}
+	// Revoking an unknown token is still a success (RFC 7009).
+	if err := svc.RevokeToken(ctx, client.ClientID, secret, "unknown-token", ""); err != nil {
+		t.Errorf("revoking an unknown token should succeed: %v", err)
+	}
+}
+
+// OIDC consent: a client has no consent initially, GrantConsent records the
+// approved scopes (subset checks honoured), and Authorize derives the tenant
+// from the client and mints a code.
+func TestOIDCConsentAndAuthorize(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := oidc.NewService(testPool, mustIssuer())
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, _, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Name: "RP", RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// No consent yet.
+	if has, err := svc.HasConsent(ctx, userID, client.ClientID, []string{"openid"}); err != nil || has {
+		t.Fatalf("expected no consent initially: has=%v err=%v", has, err)
+	}
+	// Grant openid+profile.
+	if err := svc.GrantConsent(ctx, userID, client.ClientID, []string{"openid", "profile"}); err != nil {
+		t.Fatalf("grant consent: %v", err)
+	}
+	if has, err := svc.HasConsent(ctx, userID, client.ClientID, []string{"openid"}); err != nil || !has {
+		t.Errorf("openid should be consented: has=%v err=%v", has, err)
+	}
+	// A scope outside the grant is not covered.
+	if has, err := svc.HasConsent(ctx, userID, client.ClientID, []string{"openid", "email"}); err != nil || has {
+		t.Errorf("email should not be consented: has=%v err=%v", has, err)
+	}
+
+	// Authorize derives the tenant from the client and mints a code.
+	code, gotTenant, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if code == "" || gotTenant != tenantID {
+		t.Errorf("authorize: code=%q tenant=%v want tenant=%v", code, gotTenant, tenantID)
+	}
+}
+
+// TestHostedAuthorizeConsentFlow drives the whole hosted OIDC flow over real
+// HTTP with a cookie jar: authorize (no session → login redirect), establish the
+// SSO cookie via /v1/auth/session, authorize again (→ consent redirect), approve
+// the consent decision (→ code), exchange the code for tokens, and confirm a
+// second authorize skips consent and bounces straight back to the RP.
+func TestHostedAuthorizeConsentFlow(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	// A user with a password (tenant-less is fine — authorize derives the tenant
+	// from the client, not the user).
+	authSvc, _ := newAuth()
+	email := uniqueSlug("hosted") + "@example.com"
+	if _, _, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	}
+
+	// An OIDC client in a tenant.
+	oidcSvc := oidc.NewService(testPool, mustIssuer())
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := oidcSvc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Name: "RP", RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Router: the hosted auth-session endpoint + the browser-facing OIDC endpoints.
+	authH := &auth.Handler{Service: authSvc, Validate: validator.New(validator.WithRequiredStructEnabled())}
+	oidcH := &oidc.Handler{Service: oidcSvc, Sessions: authSvc, LoginBaseURL: "http://login.test"}
+	r := chi.NewRouter()
+	r.Route("/v1", func(r chi.Router) {
+		authH.Mount(r)
+		oidcH.MountBrowser(r)
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{
+		Jar: jar,
+		// Capture 302s instead of following them (the redirects target the
+		// external login app / RP, not our test server).
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	authorizeURL := func() string {
+		q := url.Values{
+			"client_id":    {client.ClientID},
+			"redirect_uri": {redirectURI},
+			"scope":        {"openid"},
+			"state":        {"xyz"},
+		}
+		return srv.URL + "/v1/oauth/authorize?" + q.Encode()
+	}
+	mustGet := func(u string) *http.Response {
+		resp, err := hc.Get(u)
+		if err != nil {
+			t.Fatalf("GET %s: %v", u, err)
+		}
+		return resp
+	}
+	mustPostJSON := func(path string, payload any) *http.Response {
+		b, _ := json.Marshal(payload)
+		resp, err := hc.Post(srv.URL+path, "application/json", bytes.NewReader(b))
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		return resp
+	}
+
+	// 1) No SSO cookie → redirect to the hosted login.
+	resp := mustGet(authorizeURL())
+	if resp.StatusCode != http.StatusFound || !strings.Contains(resp.Header.Get("Location"), "login.test/login") {
+		t.Fatalf("want redirect to hosted login, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp.Body.Close()
+
+	// 2) Establish the SSO session (Set-Cookie qe_ls lands in the jar).
+	resp = mustPostJSON("/v1/auth/session", map[string]string{"email": email, "password": "password123"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/v1/auth/session status %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// 3) Authorize with a session but no consent → redirect to the consent screen.
+	resp = mustGet(authorizeURL())
+	if resp.StatusCode != http.StatusFound || !strings.Contains(resp.Header.Get("Location"), "login.test/consent") {
+		t.Fatalf("want redirect to consent, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp.Body.Close()
+
+	// 4) Approve the consent → JSON with the RP redirect carrying the code.
+	resp = mustPostJSON("/v1/oauth/authorize/decision", map[string]any{
+		"approve": true, "client_id": client.ClientID, "redirect_uri": redirectURI,
+		"scope": "openid", "state": "xyz",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("decision status %d", resp.StatusCode)
+	}
+	var decResp struct {
+		Redirect string `json:"redirect"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&decResp)
+	resp.Body.Close()
+	dest, _ := url.Parse(decResp.Redirect)
+	code := dest.Query().Get("code")
+	if code == "" || dest.Query().Get("state") != "xyz" {
+		t.Fatalf("decision redirect missing code/state: %q", decResp.Redirect)
+	}
+
+	// 5) The code exchanges for tokens — proves the hosted flow produced a valid one.
+	issued, err := oidcSvc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	if err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+	if issued.AccessToken == "" {
+		t.Fatal("hosted-flow code yielded no access token")
+	}
+
+	// 6) Consent is remembered: a second authorize skips the screen and bounces
+	// straight back to the RP with a fresh code.
+	resp = mustGet(authorizeURL())
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(resp.Header.Get("Location"), redirectURI) {
+		t.Fatalf("consented authorize should redirect to RP, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp.Body.Close()
+}
+
+// TestEndSessionLogout verifies RP-Initiated Logout: it clears the SSO session
+// and redirects to a registered post_logout_redirect_uri (carrying state); a
+// subsequent authorize then bounces back to the hosted login.
+func TestEndSessionLogout(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	authSvc, _ := newAuth()
+	email := uniqueSlug("logout") + "@example.com"
+	if _, _, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	}
+
+	oidcSvc := oidc.NewService(testPool, mustIssuer())
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	redirectURI := "https://app.example/cb"
+	postLogout := "https://app.example/after-logout"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, _, err := oidcSvc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Name: "RP",
+		RedirectURIs:   []string{redirectURI},
+		PostLogoutURIs: []string{postLogout},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	authH := &auth.Handler{Service: authSvc, Validate: validator.New(validator.WithRequiredStructEnabled())}
+	oidcH := &oidc.Handler{Service: oidcSvc, Sessions: authSvc, LoginBaseURL: "http://login.test"}
+	r := chi.NewRouter()
+	r.Route("/v1", func(r chi.Router) {
+		authH.Mount(r)
+		oidcH.MountBrowser(r)
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	jar, _ := cookiejar.New(nil)
+	hc := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	// Establish the SSO session.
+	body, _ := json.Marshal(map[string]string{"email": email, "password": "password123"})
+	resp, err := hc.Post(srv.URL+"/v1/auth/session", "application/json", bytes.NewReader(body))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("session: %v (status %v)", err, resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Logout with a registered post_logout_redirect_uri → redirected there.
+	q := url.Values{"client_id": {client.ClientID}, "post_logout_redirect_uri": {postLogout}, "state": {"s1"}}
+	resp, err = hc.Get(srv.URL + "/v1/oauth/logout?" + q.Encode())
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	loc := resp.Header.Get("Location")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc, postLogout) || !strings.Contains(loc, "state=s1") {
+		t.Fatalf("logout redirect = %d %q, want %s?state=s1", resp.StatusCode, loc, postLogout)
+	}
+
+	// Session cleared: authorize now bounces back to the hosted login.
+	aq := url.Values{"client_id": {client.ClientID}, "redirect_uri": {redirectURI}, "scope": {"openid"}}
+	resp, err = hc.Get(srv.URL + "/v1/oauth/authorize?" + aq.Encode())
+	if err != nil {
+		t.Fatalf("authorize after logout: %v", err)
+	}
+	loc = resp.Header.Get("Location")
+	resp.Body.Close()
+	if !strings.Contains(loc, "login.test/login") {
+		t.Fatalf("after logout, authorize should redirect to login, got %q", loc)
+	}
+
+	// An unregistered post_logout_redirect_uri is refused → hosted logged-out page.
+	q2 := url.Values{"client_id": {client.ClientID}, "post_logout_redirect_uri": {"https://evil.example/x"}}
+	resp, err = hc.Get(srv.URL + "/v1/oauth/logout?" + q2.Encode())
+	if err != nil {
+		t.Fatalf("logout(evil): %v", err)
+	}
+	loc = resp.Header.Get("Location")
+	resp.Body.Close()
+	if !strings.Contains(loc, "login.test/logged-out") {
+		t.Fatalf("unregistered post-logout uri should go to logged-out page, got %q", loc)
 	}
 }
 
@@ -189,7 +648,8 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 	svc := social.NewService(testPool, authSvc, "http://app.local")
 
 	redirectURI := "http://api.local/v1/social/" + provider + "/callback"
-	authURL, err := svc.BeginLogin(ctx, provider, tenantID.String(), redirectURI)
+	const wantReturnTo = "https://app.example/oauth/authorize?client_id=rp"
+	authURL, err := svc.BeginLogin(ctx, provider, tenantID.String(), redirectURI, wantReturnTo)
 	if err != nil {
 		t.Fatalf("begin login: %v", err)
 	}
@@ -205,12 +665,20 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 		t.Fatal("expected PKCE S256 challenge")
 	}
 
-	oneTime, err := svc.CompleteCallback(ctx, provider, state, "upstream-auth-code")
+	res, err := svc.CompleteCallback(ctx, provider, state, "upstream-auth-code")
 	if err != nil {
 		t.Fatalf("callback: %v", err)
 	}
-	if oneTime == "" {
+	if res.Code == "" {
 		t.Fatal("callback should return a one-time code")
+	}
+	// The hosted return_to is threaded through the OAuth round-trip so the
+	// callback can bounce back to /oauth/authorize after setting the SSO cookie.
+	if res.ReturnTo != wantReturnTo {
+		t.Errorf("ReturnTo = %q, want %q", res.ReturnTo, wantReturnTo)
+	}
+	if res.UserID == uuid.Nil {
+		t.Error("callback should resolve a user id")
 	}
 
 	var n int
@@ -221,7 +689,7 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 		t.Fatalf("external identity rows = %d (err %v), want 1", n, err)
 	}
 
-	pair, err := svc.ExchangeLogin(ctx, oneTime, "1.2.3.4", "test-agent")
+	pair, err := svc.ExchangeLogin(ctx, res.Code, "1.2.3.4", "test-agent")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -230,7 +698,7 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 	}
 
 	// One-time: a second exchange of the same code must fail.
-	if _, err := svc.ExchangeLogin(ctx, oneTime, "1.2.3.4", "test-agent"); err == nil {
+	if _, err := svc.ExchangeLogin(ctx, res.Code, "1.2.3.4", "test-agent"); err == nil {
 		t.Fatal("reusing a social login code should fail")
 	}
 }

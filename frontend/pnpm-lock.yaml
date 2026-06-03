@@ -329,6 +329,49 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
+  apps/qeetid-login:
+    dependencies:
+      '@qeetrix/brand':
+        specifier: ^0.0.1
+        version: 0.0.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@qeetrix/ui':
+        specifier: ^0.0.2
+        version: 0.0.2(@types/node@22.19.19)(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(typescript@6.0.3)
+      next:
+        specifier: 'catalog:'
+        version: 16.2.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.6(react@19.2.6)
+    devDependencies:
+      '@qeetid/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/qeetid-tsconfig
+      '@tailwindcss/postcss':
+        specifier: 'catalog:'
+        version: 4.3.0
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.15
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.15)
+      babel-plugin-react-compiler:
+        specifier: 'catalog:'
+        version: 1.0.0
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.0
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
   apps/qeetid-web:
     dependencies:
       '@qeetrix/brand':
@@ -371,6 +414,49 @@ importers:
       tailwindcss:
         specifier: 'catalog:'
         version: 4.3.0
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/qeetid-nextjs:
+    dependencies:
+      '@qeetid/sdk':
+        specifier: workspace:*
+        version: link:../qeetid-sdk
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      next:
+        specifier: 'catalog:'
+        version: 16.2.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/qeetid-react:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.15
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/qeetid-sdk:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -5574,11 +5660,6 @@ packages:
 
   semver@6.3.1:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
-    hasBin: true
-
-  semver@7.8.0:
-    resolution: {integrity: sha512-AcM7dV/5ul4EekoQ29Agm5vri8JNqRyj39o0qpX6vDF2GZrtutZl5RwgD1XnZjiTAfncsJhMI48QQH3sN87YNA==}
-    engines: {node: '>=10'}
     hasBin: true
 
   semver@7.8.1:
@@ -11960,9 +12041,6 @@ snapshots:
 
   semver@6.3.1: {}
 
-  semver@7.8.0:
-    optional: true
-
   semver@7.8.1: {}
 
   send@1.2.1:
@@ -12069,7 +12147,7 @@ snapshots:
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
-      semver: 7.8.0
+      semver: 7.8.1
     optionalDependencies:
       '@img/sharp-darwin-arm64': 0.34.5
       '@img/sharp-darwin-x64': 0.34.5
