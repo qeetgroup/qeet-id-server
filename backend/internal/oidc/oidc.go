@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-identity/internal/audit"
+	"github.com/qeetgroup/qeet-identity/internal/auth"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
@@ -112,33 +114,35 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	return &c, raw, nil
 }
 
-// Authorize is the GET /oauth/authorize handler. Because we don't ship a
-// consent screen, this implementation requires the caller to be already
-// authenticated AND to have a granted consent row.
-func (s *Service) Authorize(ctx context.Context, userID, tenantID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, error) {
+// Authorize validates an authorization request for an already-authenticated
+// user and mints a one-time authorization code. The client's tenant is derived
+// from the client itself (the browser-facing flow has no user JWT to carry it).
+// Returns the raw code and the resolved tenant id.
+func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
+	var tenantID uuid.UUID
 	var dbScopes []string
 	var dbRedirectURIs []string
 	err := s.pool.QueryRow(ctx, `
-		SELECT scopes, redirect_uris FROM auth.oidc_clients
-		WHERE client_id = $1 AND tenant_id = $2
-	`, clientID, tenantID).Scan(&dbScopes, &dbRedirectURIs)
+		SELECT tenant_id, scopes, redirect_uris FROM auth.oidc_clients
+		WHERE client_id = $1
+	`, clientID).Scan(&tenantID, &dbScopes, &dbRedirectURIs)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrBadRequest.WithDetail("unknown client")
+		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("unknown client")
 	}
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	if !contains(dbRedirectURIs, redirectURI) {
-		return "", errs.ErrBadRequest.WithDetail("redirect_uri not registered")
+		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("redirect_uri not registered")
 	}
 	for _, sc := range scopes {
 		if !contains(dbScopes, sc) {
-			return "", errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
+			return "", uuid.Nil, errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
 		}
 	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO auth.oidc_authorization_codes (
@@ -147,9 +151,41 @@ func (s *Service) Authorize(ctx context.Context, userID, tenantID uuid.UUID, cli
 		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NOW() + INTERVAL '10 minutes')
 	`, hash, clientID, userID, tenantID, redirectURI, scopes, nonce, challenge, challengeMethod)
 	if err != nil {
-		return "", err
+		return "", uuid.Nil, err
 	}
-	return raw, nil
+	return raw, tenantID, nil
+}
+
+// HasConsent reports whether the user has already granted the client every
+// requested scope (so the consent screen can be skipped).
+func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (bool, error) {
+	var granted []string
+	err := s.pool.QueryRow(ctx,
+		`SELECT scopes FROM auth.oidc_consents WHERE user_id = $1 AND client_id = $2`,
+		userID, clientID).Scan(&granted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, sc := range scopes {
+		if !contains(granted, sc) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// GrantConsent records the user's approval of a client for the given scopes,
+// replacing any prior grant for that (user, client) pair.
+func (s *Service) GrantConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.oidc_consents (user_id, client_id, scopes, granted_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = $3, granted_at = NOW()
+	`, userID, clientID, scopes)
+	return err
 }
 
 type TokenResponse struct {
@@ -454,17 +490,39 @@ func derefStr(s *string) string {
 	return *s
 }
 
-type Handler struct {
-	Service *Service
+// SessionResolver resolves a hosted-login SSO cookie value to a user id.
+// Satisfied by *auth.Service; an interface keeps the dependency one-way.
+type SessionResolver interface {
+	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 }
 
+type Handler struct {
+	Service *Service
+	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
+	// flow. LoginBaseURL is the origin of the hosted login app (qeetid-login)
+	// the browser is redirected to for login/consent.
+	Sessions     SessionResolver
+	LoginBaseURL string
+}
+
+// Mount registers the authenticated admin/RP endpoints (require a user JWT or
+// API key): client registration, userinfo (bearer access token), and grant
+// administration.
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/oidc/clients", h.registerClient)
-	r.Get("/oauth/authorize", h.authorize)
-	r.Post("/oauth/token-code", h.tokenCode) // distinct from /oauth/token (client_credentials)
 	r.Get("/oauth/userinfo", h.userinfo)
 	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
 	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
+}
+
+// MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate
+// via the SSO cookie or client credentials (not a user JWT), so they live in
+// the public group. token-code is client-credential M2M and is CSRF-exempt in
+// the router; authorize (GET) and decision (cookie POST) are not.
+func (h *Handler) MountBrowser(r chi.Router) {
+	r.Get("/oauth/authorize", h.authorize)
+	r.Post("/oauth/authorize/decision", h.decision)
+	r.Post("/oauth/token-code", h.tokenCode)
 }
 
 func (h *Handler) MountPublic(r chi.Router) {
@@ -538,34 +596,132 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, resp)
 }
 
+// authorize is the browser-facing GET /oauth/authorize. The user is identified
+// by the hosted-login SSO cookie (not a JWT). If not signed in, the browser is
+// sent to the hosted login; if signed in but the client lacks consent, to the
+// hosted consent screen; otherwise a code is minted and the browser bounced
+// back to the RP's redirect_uri.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil || p.TenantID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized)
-		return
-	}
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	redirect := q.Get("redirect_uri")
 	scopes := strings.Fields(q.Get("scope"))
-	nonce := q.Get("nonce")
-	challenge := q.Get("code_challenge")
-	method := q.Get("code_challenge_method")
-	code, err := h.Service.Authorize(r.Context(), *p.UserID, *p.TenantID, clientID, redirect, scopes, nonce, challenge, method)
+
+	userID, ok := h.sessionUser(r)
+	if !ok {
+		ret := url.QueryEscape(currentURL(r))
+		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+ret, http.StatusFound)
+		return
+	}
+
+	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	state := q.Get("state")
+	if !has {
+		// Hand off to the hosted consent screen, echoing the authorize params
+		// so it can post them back to the decision endpoint.
+		http.Redirect(w, r, h.LoginBaseURL+"/consent?"+r.URL.RawQuery, http.StatusFound)
+		return
+	}
+
+	code, _, err := h.Service.Authorize(r.Context(), userID, clientID, redirect,
+		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state")), http.StatusFound)
+}
+
+type decisionInput struct {
+	Approve             bool   `json:"approve"`
+	ClientID            string `json:"client_id"`
+	RedirectURI         string `json:"redirect_uri"`
+	Scope               string `json:"scope"`
+	State               string `json:"state"`
+	Nonce               string `json:"nonce"`
+	CodeChallenge       string `json:"code_challenge"`
+	CodeChallengeMethod string `json:"code_challenge_method"`
+}
+
+// decision records the consent decision from the hosted consent screen. The
+// user is identified by the SSO cookie. It returns (as JSON) the URL the
+// consent SPA should navigate to: a code on approval, or error=access_denied on
+// deny.
+func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.sessionUser(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in decisionInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !in.Approve {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"redirect": appendQuery(in.RedirectURI, "error", "access_denied", "state", in.State),
+		})
+		return
+	}
+	scopes := strings.Fields(in.Scope)
+	if err := h.Service.GrantConsent(r.Context(), userID, in.ClientID, scopes); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	code, _, err := h.Service.Authorize(r.Context(), userID, in.ClientID, in.RedirectURI,
+		scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"redirect": appendQuery(in.RedirectURI, "code", code, "state", in.State),
+	})
+}
+
+// sessionUser resolves the hosted-login SSO cookie to a user id.
+func (h *Handler) sessionUser(r *http.Request) (uuid.UUID, bool) {
+	c, err := r.Cookie(auth.LoginSessionCookie)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	uid, err := h.Sessions.ResolveLoginSession(r.Context(), c.Value)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return uid, true
+}
+
+// currentURL reconstructs the absolute URL of the current request (for the
+// login redirect's return_to).
+func currentURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + r.URL.RequestURI()
+}
+
+// appendQuery appends key/value pairs (skipping empty values) to a URL that may
+// already carry a query string.
+func appendQuery(base string, kv ...string) string {
 	sep := "?"
-	if strings.Contains(redirect, "?") {
+	if strings.Contains(base, "?") {
 		sep = "&"
 	}
-	target := redirect + sep + "code=" + code
-	if state != "" {
-		target += "&state=" + state
+	out := base
+	for i := 0; i+1 < len(kv); i += 2 {
+		if kv[i+1] == "" {
+			continue
+		}
+		out += sep + kv[i] + "=" + url.QueryEscape(kv[i+1])
+		sep = "&"
 	}
-	http.Redirect(w, r, target, http.StatusFound)
+	return out
 }
 
 func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {

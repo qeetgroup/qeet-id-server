@@ -204,7 +204,7 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	code, err := svc.Authorize(ctx, userID, tenantID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestOIDCRevokeAndIntrospect(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	code, err := svc.Authorize(ctx, userID, tenantID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -307,6 +307,63 @@ func TestOIDCRevokeAndIntrospect(t *testing.T) {
 	// Revoking an unknown token is still a success (RFC 7009).
 	if err := svc.RevokeToken(ctx, client.ClientID, secret, "unknown-token", ""); err != nil {
 		t.Errorf("revoking an unknown token should succeed: %v", err)
+	}
+}
+
+// OIDC consent: a client has no consent initially, GrantConsent records the
+// approved scopes (subset checks honoured), and Authorize derives the tenant
+// from the client and mints a code.
+func TestOIDCConsentAndAuthorize(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	svc := oidc.NewService(testPool, mustIssuer())
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, _, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Name: "RP", RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// No consent yet.
+	if has, err := svc.HasConsent(ctx, userID, client.ClientID, []string{"openid"}); err != nil || has {
+		t.Fatalf("expected no consent initially: has=%v err=%v", has, err)
+	}
+	// Grant openid+profile.
+	if err := svc.GrantConsent(ctx, userID, client.ClientID, []string{"openid", "profile"}); err != nil {
+		t.Fatalf("grant consent: %v", err)
+	}
+	if has, err := svc.HasConsent(ctx, userID, client.ClientID, []string{"openid"}); err != nil || !has {
+		t.Errorf("openid should be consented: has=%v err=%v", has, err)
+	}
+	// A scope outside the grant is not covered.
+	if has, err := svc.HasConsent(ctx, userID, client.ClientID, []string{"openid", "email"}); err != nil || has {
+		t.Errorf("email should not be consented: has=%v err=%v", has, err)
+	}
+
+	// Authorize derives the tenant from the client and mints a code.
+	code, gotTenant, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	if code == "" || gotTenant != tenantID {
+		t.Errorf("authorize: code=%q tenant=%v want tenant=%v", code, gotTenant, tenantID)
 	}
 }
 

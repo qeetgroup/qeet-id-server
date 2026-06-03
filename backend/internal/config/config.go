@@ -46,6 +46,10 @@ type Config struct {
 	// (password reset, magic links, invites).
 	AppBaseURL string `envconfig:"APP_BASE_URL" default:"http://localhost:3000"`
 
+	// LoginBaseURL is the origin of the hosted login app (qeetid-login) that
+	// the OAuth authorize flow redirects to for sign-in and consent.
+	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3004"`
+
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.

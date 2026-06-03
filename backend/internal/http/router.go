@@ -112,7 +112,7 @@ func NewRouter(d Deps) http.Handler {
 			// revocation/introspection endpoints are machine-to-machine and
 			// authenticated by client credentials (RFC 7009/7662), not a
 			// browser session, so they're exempt for the same reason.
-			ExemptPaths: []string{"/saml/acs/", "/oauth/revoke", "/oauth/introspect"},
+			ExemptPaths: []string{"/saml/acs/", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code"},
 		}))
 	}
 	r.Use(cors.Handler(cors.Options{
@@ -161,6 +161,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Principal.MountPublic(r) // /oauth/token (client_credentials)
 			d.Social.MountPublic(r)    // social OAuth start/callback/exchange
 			d.Passkey.MountPublic(r)   // passwordless passkey login
+			d.OIDC.MountBrowser(r)     // /oauth/authorize (SSO cookie) + decision + token-code
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.

@@ -1,0 +1,31 @@
+{
+  "name": "@qeetid/login",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3004",
+    "build": "next build",
+    "start": "next start -p 3004",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
+    "check": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs && prettier --check \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@qeetrix/brand": "^0.0.1",
+    "@qeetrix/ui": "^0.0.2",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@qeetid/tsconfig": "workspace:*",
+    "@tailwindcss/postcss": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "babel-plugin-react-compiler": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
+  }
+}

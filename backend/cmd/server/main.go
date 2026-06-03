@@ -311,7 +311,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Billing:       &billing.Handler{Service: billingService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, LoginBaseURL: cfg.LoginBaseURL},
 		Passkey:       &passkey.Handler{Service: passkeyService},
 		Social:        &social.Handler{Service: socialService},
 		Group:         &group.Handler{Service: groupService},
