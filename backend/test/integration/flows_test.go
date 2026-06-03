@@ -29,9 +29,23 @@ import (
 	"github.com/qeetgroup/qeet-identity/internal/webhook"
 )
 
+// mustIssuer builds an ES256 token issuer over a freshly-generated key for the
+// integration flows (each call mints its own key, which is fine in-process).
+func mustIssuer() *tokens.Issuer {
+	keyPEM, err := tokens.GenerateES256KeyPEM()
+	if err != nil {
+		panic("generate signing key: " + err.Error())
+	}
+	i, err := tokens.NewIssuer(keyPEM, "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	if err != nil {
+		panic("new issuer: " + err.Error())
+	}
+	return i
+}
+
 func newAuth() (*auth.Service, *user.Repository) {
 	users := user.NewRepository(testPool)
-	issuer := tokens.NewIssuer("integration-test-signing-secret-key", "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	issuer := mustIssuer()
 	return auth.NewService(testPool, users, issuer), users
 }
 
@@ -88,7 +102,7 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	issuer := tokens.NewIssuer("integration-test-signing-secret-key", "qeet", "qeet", 15*time.Minute, 720*time.Hour)
+	issuer := mustIssuer()
 	svc := oidc.NewService(testPool, issuer)
 
 	redirectURI := "https://app.example/cb"

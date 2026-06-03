@@ -24,6 +24,16 @@ type Config struct {
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"15m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
 
+	// JWTSigningKey is the PEM-encoded EC P-256 private key (PKCS#8 or SEC1)
+	// used to sign access & ID tokens with ES256. Empty is allowed only in
+	// dev, where an ephemeral key is generated at startup (tokens won't
+	// survive a restart). Required outside dev (enforced in config gates).
+	JWTSigningKey string `envconfig:"JWT_SIGNING_KEY" default:""`
+	// JWTRetiredKeys holds one or more concatenated PEM public keys (SPKI or
+	// certificate) of previously-active signing keys. They stay verifiable
+	// during the rotation grace window; new tokens are never signed with them.
+	JWTRetiredKeys string `envconfig:"JWT_RETIRED_KEYS" default:""`
+
 	HTTPReadTimeout  time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
 	HTTPWriteTimeout time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
 

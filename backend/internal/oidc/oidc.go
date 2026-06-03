@@ -621,17 +621,19 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"jwks_uri":                              base + "/.well-known/jwks.json",
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"HS256"},
+		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"scopes_supported":                      []string{"openid", "profile", "email"},
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 	})
 }
 
-// jwks returns an empty key set because the dev signer uses HS256 — when
-// you swap to RS256 you'll list the public JWK here.
+// jwks publishes the public signing keys (active + any retired key still in its
+// rotation grace window) so any relying party can verify Qeet-issued ID/access
+// tokens. Keys are ES256 over EC P-256; each `kid` matches the token's `kid`
+// header (an RFC 7638 JWK thumbprint).
 func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": []any{}})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.JWKS()})
 }
 
 // =====================================================================

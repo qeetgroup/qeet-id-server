@@ -69,7 +69,14 @@ func main() {
 		must(tx.Commit(ctx), "commit "+what)
 	}
 
-	issuer := tokens.NewIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	signingKeyPEM := cfg.JWTSigningKey
+	if signingKeyPEM == "" {
+		k, genErr := tokens.GenerateES256KeyPEM()
+		must(genErr, "generate ephemeral signing key")
+		signingKeyPEM = k
+	}
+	issuer, err := tokens.NewIssuer(signingKeyPEM, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	must(err, "init issuer")
 	userRepo := user.NewRepository(pool)
 	tenantRepo := tenant.NewRepository(pool)
 	rbacRepo := rbac.NewRepository(pool)

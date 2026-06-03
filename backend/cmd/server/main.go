@@ -203,7 +203,28 @@ type namedWorker struct {
 // HTTP dependency set plus the background workers to supervise. Keeping all
 // wiring here lets main() focus on process lifecycle.
 func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) (httpapi.Deps, []namedWorker) {
-	issuer := tokens.NewIssuer(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	signingKeyPEM := cfg.JWTSigningKey
+	if signingKeyPEM == "" {
+		if cfg.ServiceEnv != "dev" {
+			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
+			os.Exit(1)
+		}
+		k, err := tokens.GenerateES256KeyPEM()
+		if err != nil {
+			slog.Error("generate ephemeral signing key", "err", err)
+			os.Exit(1)
+		}
+		signingKeyPEM = k
+		slog.Warn("JWT_SIGNING_KEY unset — generated an ephemeral ES256 key; issued tokens will not survive a restart (dev only)")
+	}
+	issuer, err := tokens.NewIssuer(signingKeyPEM, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	if err != nil {
+		slog.Error("init token issuer", "err", err)
+		os.Exit(1)
+	}
+	if n := issuer.AddRetiredKeysPEM(cfg.JWTRetiredKeys); n > 0 {
+		slog.Info("registered retired signing keys for rotation grace", "count", n)
+	}
 	verifier := &httpx.AuthVerifier{
 		Tokens:          issuer,
 		DevTrustHeaders: cfg.AuthDevTrustHeaders,

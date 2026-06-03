@@ -1,5 +1,6 @@
 // Package auth handles login, refresh, logout, and session storage.
-// Tokens are HS256 in dev; production should swap to RS256 with JWKS.
+// Access & ID tokens are signed with ES256 (asymmetric) and verifiable via the
+// public JWKS; see internal/platform/tokens.
 package auth
 
 import (
@@ -195,6 +196,17 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 	}
 	if hash == "" || !password.Verify(hash, in.Password) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
+	}
+	// Transparently upgrade legacy bcrypt / weak-param hashes to current
+	// Argon2id on a successful login. Best-effort: never fail the login on it.
+	if password.NeedsRehash(hash) {
+		if nh, herr := password.Hash(in.Password); herr == nil {
+			if _, uerr := s.pool.Exec(ctx,
+				`UPDATE auth.password_credentials SET password_hash = $1 WHERE user_id = $2`,
+				nh, u.ID); uerr != nil {
+				slog.Warn("password rehash-on-login failed", "user_id", u.ID, "err", uerr)
+			}
+		}
 	}
 	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
 }
