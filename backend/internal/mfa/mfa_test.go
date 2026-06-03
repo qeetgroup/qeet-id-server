@@ -1,9 +1,13 @@
 package mfa
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/password"
 )
 
@@ -53,6 +57,45 @@ func TestMaskDestination_EmailHidesLocalLength(t *testing.T) {
 func TestRecoveryCodeCount(t *testing.T) {
 	if recoveryCodeCount != 10 {
 		t.Errorf("recoveryCodeCount = %d, want 10", recoveryCodeCount)
+	}
+}
+
+// TestDefaultStepUpWindow documents the step-up freshness window.
+func TestDefaultStepUpWindow(t *testing.T) {
+	if defaultStepUpWindow != 5*time.Minute {
+		t.Errorf("defaultStepUpWindow = %v, want 5m", defaultStepUpWindow)
+	}
+}
+
+// TestStepUpRequiredError pins the envelope the gate uses so clients can branch
+// on it: a distinct code and a 403 status.
+func TestStepUpRequiredError(t *testing.T) {
+	if errs.ErrStepUpRequired.Code != "step_up_required" {
+		t.Errorf("code = %q, want step_up_required", errs.ErrStepUpRequired.Code)
+	}
+	if errs.ErrStepUpRequired.Status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", errs.ErrStepUpRequired.Status)
+	}
+}
+
+// TestRequireRecentMFAUnauthenticated proves the gate rejects a request with no
+// principal before it ever touches the database (so a nil-pool Service is safe
+// here): an anonymous caller can't satisfy step-up.
+func TestRequireRecentMFAUnauthenticated(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+	// No DB access on this path — RecentlyVerified is never reached.
+	h := RequireRecentMFA(&Service{}, defaultStepUpWindow)(next)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/v1/mfa/totp", nil)
+	h.ServeHTTP(rr, req)
+
+	if called {
+		t.Fatal("next handler must not run without an authenticated principal")
+	}
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rr.Code)
 	}
 }
 

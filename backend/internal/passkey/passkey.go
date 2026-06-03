@@ -382,6 +382,70 @@ func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, u
 	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
 }
 
+// --- WebAuthn as a second factor ---
+//
+// BeginMFA / FinishMFA reuse a user's *already-registered* passkey credentials
+// as a second factor. Unlike BeginLogin/FinishLogin these are scoped to an
+// already-authenticated principal (the caller passes the JWT-resolved userID),
+// so they assert the known user's credentials and issue NO token pair — the
+// session already exists; this only proves recent possession of the key.
+
+// BeginMFA starts a second-factor assertion ceremony for an authenticated user.
+// It errors if the user has no registered credentials, and binds the ceremony
+// session to the user via a distinct "mfa" kind so a login session can't be
+// replayed here (and vice versa).
+func (s *Service) BeginMFA(ctx context.Context, userID uuid.UUID) (uuid.UUID, *protocol.CredentialAssertion, error) {
+	u, _, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if len(u.creds) == 0 {
+		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail("no passkeys for user")
+	}
+	options, sessionData, err := s.wa.BeginLogin(u)
+	if err != nil {
+		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+	}
+	id, err := s.storeSession(ctx, &userID, "mfa", sessionData)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	return id, options, nil
+}
+
+// FinishMFA verifies a second-factor assertion against the authenticated user's
+// own credentials. The ceremony session must be of kind "mfa" and bound to the
+// same userID; both checks reject cross-user/cross-flow replay. On success it
+// updates the credential's sign counter and returns nil — no token is issued.
+func (s *Service) FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage) error {
+	kind, sessUser, sessionData, err := s.takeSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if kind != "mfa" || sessUser == nil || *sessUser != userID {
+		return errs.ErrBadRequest.WithDetail("session mismatch")
+	}
+	u, _, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBody(bytes.NewReader(credential))
+	if err != nil {
+		return errs.ErrBadRequest.WithDetail("invalid assertion")
+	}
+	cred, err := s.wa.ValidateLogin(u, *sessionData, parsed)
+	if err != nil {
+		return errs.ErrUnauthorized.WithDetail("mfa verification failed")
+	}
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE auth.passkey_credentials SET sign_count = $1, last_used_at = NOW()
+		WHERE credential_id = $2
+	`, int64(cred.Authenticator.SignCount), cred.ID); err != nil {
+		return err
+	}
+	return nil
+}
+
 // --- HTTP ---
 
 type Handler struct {

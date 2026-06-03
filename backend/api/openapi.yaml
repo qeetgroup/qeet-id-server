@@ -1761,6 +1761,29 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/mfa/step-up/status:
+    get:
+      operationId: get_v1_mfa_step_up_status
+      summary: Get step-up MFA status
+      tags:
+      - MFA
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      description: Reports whether the principal completed a second-factor verification within the step-up window, and when.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '422': *id005
+        '429': *id006
   /v1/mfa/totp:
     delete:
       operationId: delete_v1_mfa_totp
@@ -1872,6 +1895,64 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/mfa/webauthn/challenge:
+    post:
+      operationId: post_v1_mfa_webauthn_challenge
+      summary: Begin WebAuthn second-factor assertion
+      tags:
+      - MFA
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      description: Starts a WebAuthn assertion ceremony over the authenticated user's existing passkey credentials, used as a second factor (no token is issued).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '422': *id005
+        '429': *id006
+        '501':
+          description: WebAuthn second factor not enabled
+  /v1/mfa/webauthn/verify:
+    post:
+      operationId: post_v1_mfa_webauthn_verify
+      summary: Verify WebAuthn second-factor assertion
+      tags:
+      - MFA
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Verifies a WebAuthn assertion against the user's registered credentials and records a step-up verification on success.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '422': *id005
+        '429': *id006
+        '501':
+          description: WebAuthn second factor not enabled
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize

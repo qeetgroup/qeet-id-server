@@ -391,7 +391,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
-		MFA:           &mfa.Handler{Service: mfaService},
+		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
 		GDPR:          &gdpr.Handler{Service: gdprService},

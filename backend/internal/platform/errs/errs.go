@@ -35,11 +35,13 @@ var (
 	ErrBadRequest      = New("bad_request", 400, "invalid request")
 	ErrUnauthorized    = New("unauthorized", 401, "authentication required")
 	ErrForbidden       = New("forbidden", 403, "permission denied")
+	ErrStepUpRequired  = New("step_up_required", 403, "recent multi-factor verification required")
 	ErrNotFound        = New("not_found", 404, "resource not found")
 	ErrConflict        = New("conflict", 409, "resource conflict")
 	ErrUnprocessable   = New("unprocessable", 422, "request could not be processed")
 	ErrTooManyRequests = New("too_many_requests", 429, "too many requests")
 	ErrInternal        = New("internal", 500, "internal server error")
+	ErrNotImplemented  = New("not_implemented", 501, "feature not available")
 )
 
 func As(err error) *Error {

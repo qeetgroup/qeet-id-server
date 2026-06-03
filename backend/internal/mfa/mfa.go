@@ -8,6 +8,7 @@ package mfa
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -400,23 +402,126 @@ func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, co
 	return true, nil
 }
 
+// ============================================================
+// Step-up MFA
+// ============================================================
+
+// defaultStepUpWindow is how long a successful verification keeps a sensitive
+// action unlocked. Five minutes balances friction against replay risk.
+const defaultStepUpWindow = 5 * time.Minute
+
+// RecordVerification UPSERTs the user's latest successful second-factor
+// verification. method is one of "totp", "recovery_code", "otp", "webauthn".
+// Callers that already hold a tx (so the verification commits atomically with
+// the factor mutation) pass it in.
+func (s *Service) RecordVerification(ctx context.Context, tx pgx.Tx, userID uuid.UUID, method string) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO auth.mfa_verifications (user_id, method, verified_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET method = EXCLUDED.method, verified_at = NOW()
+	`, userID, method)
+	return err
+}
+
+// recordVerification records a verification outside any caller transaction, for
+// the WebAuthn route which has no surrounding tx.
+func (s *Service) recordVerification(ctx context.Context, userID uuid.UUID, method string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.mfa_verifications (user_id, method, verified_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET method = EXCLUDED.method, verified_at = NOW()
+	`, userID, method)
+	return err
+}
+
+// RecentlyVerified reports whether the user completed a second-factor
+// verification within window, and when. A missing row is a clean (false, nil).
+func (s *Service) RecentlyVerified(ctx context.Context, userID uuid.UUID, window time.Duration) (bool, *time.Time, error) {
+	var verifiedAt time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT verified_at FROM auth.mfa_verifications WHERE user_id = $1
+	`, userID).Scan(&verifiedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil, nil
+	}
+	if err != nil {
+		return false, nil, err
+	}
+	fresh := time.Since(verifiedAt) <= window
+	return fresh, &verifiedAt, nil
+}
+
+// RequireRecentMFA gates a handler behind a recent step-up verification. The
+// principal must have completed any second factor within window; otherwise the
+// request is refused with a 403 "step_up_required" so the client can prompt for
+// re-verification before retrying.
+func RequireRecentMFA(svc *Service, window time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := httpx.PrincipalFromCtx(r.Context())
+			if p == nil || p.UserID == nil {
+				httpx.WriteError(w, r, errs.ErrUnauthorized)
+				return
+			}
+			ok, _, err := svc.RecentlyVerified(r.Context(), *p.UserID, window)
+			if err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+			if !ok {
+				httpx.WriteError(w, r, errs.ErrStepUpRequired.WithDetail("recent multi-factor verification required"))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// WebAuthnVerifier asserts an already-authenticated user's existing passkey
+// credentials as a second factor. It is satisfied by *passkey.Service; the
+// interface lives here so package mfa can mount the routes without importing
+// package passkey (which would create an import cycle — passkey already imports
+// the lower-level platform packages mfa shares).
+type WebAuthnVerifier interface {
+	BeginMFA(ctx context.Context, userID uuid.UUID) (uuid.UUID, *protocol.CredentialAssertion, error)
+	FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cred json.RawMessage) error
+}
+
 type Handler struct {
 	Service *Service
+	// WebAuthn, when set, exposes the user's registered passkeys as a second
+	// factor (POST /mfa/webauthn/{challenge,verify}). Nil = feature disabled.
+	WebAuthn WebAuthnVerifier
 }
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/mfa/totp/enroll/start", h.startEnroll)
 	r.Post("/mfa/totp/enroll/confirm", h.confirmEnroll)
 	r.Post("/mfa/totp/verify", h.verify)
-	r.Delete("/mfa/totp", h.disable)
 	r.Get("/mfa/recovery-codes", h.recoveryStatus)
-	r.Post("/mfa/recovery-codes/regenerate", h.regenerateRecovery)
 	r.Get("/mfa/otp/factors", h.listOTPFactors)
 	r.Post("/mfa/otp/factors", h.enrollOTPStart)
 	r.Post("/mfa/otp/factors/{id}/confirm", h.enrollOTPConfirm)
 	r.Post("/mfa/otp/factors/{id}/challenge", h.challengeOTP)
 	r.Delete("/mfa/otp/factors/{id}", h.deleteOTPFactor)
 	r.Post("/mfa/otp/verify", h.verifyOTP)
+
+	// WebAuthn as a second factor: assert the user's existing passkeys.
+	r.Post("/mfa/webauthn/challenge", h.webauthnChallenge)
+	r.Post("/mfa/webauthn/verify", h.webauthnVerify)
+
+	// Step-up status — lets a client decide whether to prompt before a
+	// sensitive action.
+	r.Get("/mfa/step-up/status", h.stepUpStatus)
+
+	// Sensitive MFA actions require a recent step-up verification (any factor):
+	// disabling MFA wholesale and regenerating recovery codes both invalidate a
+	// user's standing factors, so gate them behind a fresh proof of possession.
+	r.Group(func(r chi.Router) {
+		r.Use(RequireRecentMFA(h.Service, defaultStepUpWindow))
+		r.Delete("/mfa/totp", h.disable)
+		r.Post("/mfa/recovery-codes/regenerate", h.regenerateRecovery)
+	})
 }
 
 // auditActor builds the actor portion of an audit row from the request
@@ -562,6 +667,16 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(ctx)
 	result, err := h.Service.Verify(ctx, tx, *p.UserID, in.Code)
 	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Record the verification for step-up: any successful factor (TOTP or a
+	// recovery code) refreshes the user's recent-verification window.
+	method := "totp"
+	if result.UsedRecoveryCode {
+		method = "recovery_code"
+	}
+	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, method); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -876,9 +991,116 @@ func (h *Handler) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("invalid code"))
 		return
 	}
+	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, "otp"); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"verified": true})
+}
+
+// --- WebAuthn second-factor handlers ---
+
+func (h *Handler) webauthnChallenge(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	if h.WebAuthn == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("webauthn factor not enabled"))
+		return
+	}
+	sessionID, options, err := h.WebAuthn.BeginMFA(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"session_id": sessionID,
+		"publicKey":  options.Response,
+	})
+}
+
+type webauthnVerifyInput struct {
+	SessionID  uuid.UUID       `json:"session_id"`
+	Credential json.RawMessage `json:"credential"`
+}
+
+func (h *Handler) webauthnVerify(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	if h.WebAuthn == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("webauthn factor not enabled"))
+		return
+	}
+	var in webauthnVerifyInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+	if err := h.WebAuthn.FinishMFA(ctx, *p.UserID, in.SessionID, in.Credential); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// FinishMFA has no surrounding tx (the assertion verify already committed its
+	// sign-count update), so record the step-up + audit in their own tx.
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, "webauthn"); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	target := *p.UserID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     p.TenantID,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "mfa.webauthn_verified",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"verified": true})
+}
+
+// --- Step-up status ---
+
+func (h *Handler) stepUpStatus(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	ok, verifiedAt, err := h.Service.RecentlyVerified(r.Context(), *p.UserID, defaultStepUpWindow)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"recently_verified": ok,
+		"verified_at":       verifiedAt,
+		"window_seconds":    int(defaultStepUpWindow.Seconds()),
+	})
 }
