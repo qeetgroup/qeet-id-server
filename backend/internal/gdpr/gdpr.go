@@ -114,6 +114,10 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
+// Sweep runs a single purge pass over ripe requests — the same work Run does on
+// each tick. Exposed for ops-triggered purges and tests.
+func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
+
 func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id FROM "user".purge_requests
@@ -184,7 +188,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 
 func formatInterval(d time.Duration) string {
 	seconds := int64(d.Seconds())
-	return time.Duration(seconds*int64(time.Second)).String()
+	return time.Duration(seconds * int64(time.Second)).String()
 }
 
 type Handler struct {
