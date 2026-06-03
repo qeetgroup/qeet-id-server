@@ -19,7 +19,9 @@ export function BulkBar({ count, progress, disabled, onClear, children }: BulkBa
     <div className="flex flex-wrap items-center gap-2 border-y bg-muted/40 px-4 py-2 text-sm">
       <span className="font-medium">{count} selected</span>
       {progress && (
-        <span className="text-xs text-muted-foreground">
+        // Announce fan-out progress to assistive tech — there's no toast until
+        // the bulk action settles, so this polite live region voices each step.
+        <span role="status" aria-live="polite" className="text-xs text-muted-foreground">
           ({progress.done} / {progress.total} processed…)
         </span>
       )}

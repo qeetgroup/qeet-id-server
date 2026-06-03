@@ -2,6 +2,7 @@
 
 import { Button, Card, CardContent, Input } from "@qeetrix/ui";
 import { useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 import { API_BASE_URL, ApiError, apiPost } from "@/lib/api";
 
@@ -28,19 +29,12 @@ function safeReturnTo(returnTo: string): string | null {
   return null;
 }
 
-const PROVIDER_LABELS: Record<string, string> = {
-  google: "Google",
-  github: "GitHub",
-  microsoft: "Microsoft",
-  apple: "Apple",
-  gitlab: "GitLab",
-};
-
 function titleCase(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFormProps) {
+  const { t } = useTranslation("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +54,7 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
       await apiPost("/v1/auth/session", { email, password });
       continueToApp();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.");
+      setError(err instanceof ApiError ? err.message : t("common:errors.generic"));
       setLoading(false);
     }
   }
@@ -82,7 +76,7 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
           })
         | undefined;
       if (!PK || !navigator.credentials) {
-        throw new Error("Passkeys aren't supported in this browser.");
+        throw new Error(t("errors.passkeyUnsupported"));
       }
       const begin = await apiPost<{ session_id: string; publicKey: unknown }>(
         "/v1/passkeys/login/begin",
@@ -94,12 +88,14 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
       const assertion = (await navigator.credentials.get({ publicKey: options })) as PublicKeyCredential & {
         toJSON?: () => unknown;
       };
-      if (!assertion) throw new Error("No passkey was selected.");
+      if (!assertion) throw new Error(t("errors.noPasskeySelected"));
       const credential = assertion.toJSON ? assertion.toJSON() : assertion;
       await apiPost("/v1/passkeys/login/finish", { session_id: begin.session_id, credential });
       continueToApp();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : (err as Error).message || "Passkey sign-in failed.");
+      setError(
+        err instanceof ApiError ? err.message : (err as Error).message || t("errors.passkeyFailed"),
+      );
       setPasskeyBusy(false);
     }
   }
@@ -112,15 +108,15 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
       <CardContent className="space-y-6 pt-6">
         <div className="space-y-1 text-center">
           <h1 className="text-xl font-semibold tracking-tight">
-            {clientName ? `Sign in to continue to ${clientName}` : "Sign in to continue"}
+            {clientName ? t("titleTo", { client: clientName }) : t("title")}
           </h1>
-          <p className="text-muted-foreground text-sm">Use your Qeet ID account.</p>
+          <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label htmlFor="email" className="text-sm font-medium">
-              Email
+              {t("fields.email")}
             </label>
             <Input
               id="email"
@@ -134,7 +130,7 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
           </div>
           <div className="space-y-1.5">
             <label htmlFor="password" className="text-sm font-medium">
-              Password
+              {t("fields.password")}
             </label>
             <Input
               id="password"
@@ -153,19 +149,19 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
           )}
 
           <Button type="submit" className="w-full" disabled={busy}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? t("submit.busy") : t("submit.idle")}
           </Button>
         </form>
 
         <Button type="button" variant="outline" className="w-full" disabled={busy} onClick={passkeyLogin}>
-          {passkeyBusy ? "Waiting for passkey…" : "Sign in with a passkey"}
+          {passkeyBusy ? t("passkey.busy") : t("passkey.idle")}
         </Button>
 
         {showSocial && (
           <div className="space-y-3">
             <div className="flex items-center gap-3">
               <span className="bg-border h-px flex-1" />
-              <span className="text-muted-foreground text-xs">or continue with</span>
+              <span className="text-muted-foreground text-xs">{t("social.divider")}</span>
               <span className="bg-border h-px flex-1" />
             </div>
             <div className="grid gap-2">
@@ -178,7 +174,7 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
                   disabled={busy}
                   onClick={() => socialStart(p)}
                 >
-                  {PROVIDER_LABELS[p] ?? titleCase(p)}
+                  {t(`common:providers.${p}`, { defaultValue: titleCase(p) })}
                 </Button>
               ))}
             </div>

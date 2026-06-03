@@ -553,6 +553,28 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/oauth/userinfo", h.userinfo)
 	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
 	r.Delete("/tenants/{tenantID}/oauth/grants/{id}", h.revokeGrant)
+
+	// Tenant-scoped OIDC client management (admin UI). Reads/writes are confined
+	// to the path tenant; create + mutate + rotate are audited.
+	r.Post("/tenants/{tenantID}/oidc/clients", h.createTenantClient)
+	r.Get("/tenants/{tenantID}/oidc/clients", h.listClients)
+	r.Get("/tenants/{tenantID}/oidc/clients/{id}", h.getClient)
+	r.Patch("/tenants/{tenantID}/oidc/clients/{id}", h.patchClient)
+	r.Delete("/tenants/{tenantID}/oidc/clients/{id}", h.deleteClient)
+	r.Post("/tenants/{tenantID}/oidc/clients/{id}/rotate-secret", h.rotateClientSecret)
+
+	// The admin UI's list page wires Delete to the non-tenant-scoped
+	// /v1/oidc/clients/{id}; the create sheet posts to /v1/oidc/clients (handled
+	// by registerClient above). Tenant-scope this delete via the caller's JWT
+	// tenant so it can never reach across tenants.
+	r.Delete("/oidc/clients/{id}", h.deleteClientByScope)
+
+	// Admin device-authorization visibility (RFC 8628 rows), tenant-scoped.
+	r.Get("/tenants/{tenantID}/oauth/devices", h.listDevices)
+	r.Delete("/tenants/{tenantID}/oauth/devices/{id}", h.revokeDevice)
+
+	// Read-only signing-key metadata (global/issuer-level; rotation is ops-driven).
+	r.Get("/oidc/signing-keys", h.signingKeys)
 }
 
 // MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate

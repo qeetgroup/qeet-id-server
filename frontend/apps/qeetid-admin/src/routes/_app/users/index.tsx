@@ -56,6 +56,7 @@ import {
   UserIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { BulkBar, ListToolbar, MasterCheckbox, RowCheckbox, SortHeader } from "@/components/data-table";
@@ -80,13 +81,6 @@ type User = {
 
 type UsersResponse = { items: User[]; next_cursor?: string };
 
-const STATUS_OPTIONS = [
-  { label: "Active", value: "active" },
-  { label: "Invited", value: "invited" },
-  { label: "Suspended", value: "suspended" },
-  { label: "Deleted", value: "deleted" },
-];
-
 const userCsvColumns: CsvColumn<User>[] = [
   { header: "id", value: (u) => u.id },
   { header: "email", value: (u) => u.email },
@@ -98,9 +92,16 @@ const userCsvColumns: CsvColumn<User>[] = [
 ];
 
 function UsersPage() {
+  const { t } = useTranslation("users");
   const tenantId = useTenantId();
   const currentUserId = tokenStore.getUserId();
   const qc = useQueryClient();
+  const statusOptions = [
+    { label: t("status.active"), value: "active" },
+    { label: t("status.invited"), value: "invited" },
+    { label: t("status.suspended"), value: "suspended" },
+    { label: t("status.deleted"), value: "deleted" },
+  ];
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const [settingPassword, setSettingPassword] = useState<User | null>(null);
@@ -187,23 +188,23 @@ function UsersPage() {
       setConfirmingDelete(null);
       qc.invalidateQueries({ queryKey: ["users"] });
     },
-    meta: { successMessage: "User deleted" },
+    meta: { successMessage: t("toast.deleted") },
   });
 
   function runBulkDelete() {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} user${ids.length === 1 ? "" : "s"}? This can't be undone.`)) {
+    if (!confirm(t("bulk.confirm", { count: ids.length }))) {
       return;
     }
     bulkDeleteM.mutate(ids, {
       onSuccess: (res) => {
         if (res.failed === 0) {
-          toast.success(`Deleted ${res.ok} user${res.ok === 1 ? "" : "s"}`);
+          toast.success(t("bulk.deletedOk", { count: res.ok }));
         } else if (res.ok === 0) {
-          toast.error(`All ${res.failed} delete${res.failed === 1 ? "" : "s"} failed`);
+          toast.error(t("bulk.deletedFail", { count: res.failed }));
         } else {
-          toast.warning(`Deleted ${res.ok}, failed ${res.failed}`);
+          toast.warning(t("bulk.deletedPartial", { ok: res.ok, failed: res.failed }));
         }
       },
     });
@@ -214,7 +215,7 @@ function UsersPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Everyone who has access to this workspace. Invite or create members directly here."
+        description={t("list.description")}
         actions={
           <>
             <Button
@@ -224,13 +225,13 @@ function UsersPage() {
               disabled={usersQ.isFetching}
             >
               <RefreshCwIcon className={usersQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("common:actions.refresh")}
             </Button>
             <Link to="/users/import" className={buttonVariants({ variant: "outline", size: "sm" })}>
-              <UploadCloudIcon /> Import
+              <UploadCloudIcon /> {t("list.import")}
             </Link>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> New user
+              <PlusIcon /> {t("list.newUser")}
             </Button>
           </>
         }
@@ -238,29 +239,29 @@ function UsersPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Members</CardTitle>
+          <CardTitle className="text-base">{t("list.membersTitle")}</CardTitle>
           <CardDescription>
-            {rows.length} of {items.length} user{items.length === 1 ? "" : "s"} on this page
+            {t("list.membersSubtitle", { shown: rows.length, total: items.length, count: items.length })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <ListToolbar
             search={lv.search}
             onSearchChange={lv.setSearch}
-            searchPlaceholder="Search email, name, phone…"
+            searchPlaceholder={t("list.searchPlaceholder")}
             filters={[
               {
                 id: "status",
-                label: "Status",
+                label: t("table.status"),
                 value: lv.filters.status ?? "",
-                options: STATUS_OPTIONS,
+                options: statusOptions,
                 onChange: (v) => lv.setFilter("status", v),
               },
             ]}
             columns={[
-              { id: "name", label: "Name" },
-              { id: "verified", label: "Email verified" },
-              { id: "created", label: "Created" },
+              { id: "name", label: t("table.name") },
+              { id: "verified", label: t("table.emailVerified") },
+              { id: "created", label: t("table.created") },
             ]}
             isColumnVisible={lv.isVisible}
             onToggleColumn={lv.toggleColumn}
@@ -288,7 +289,7 @@ function UsersPage() {
                 disabled={bulkDeleteM.isPending}
               >
                 {bulkDeleteM.isPending ? <Loader2Icon className="animate-spin" /> : <Trash2Icon />}
-                Delete {selectedIds.size} user{selectedIds.size === 1 ? "" : "s"}
+                {t("list.bulkDelete", { count: selectedIds.size })}
               </Button>
             </BulkBar>
           )}
@@ -299,9 +300,9 @@ function UsersPage() {
             error={usersQ.error}
             isEmpty={rows.length === 0}
             emptyIcon={UserIcon}
-            emptyTitle={lv.hasActiveFilters ? "No users match your filters." : "No users yet."}
+            emptyTitle={lv.hasActiveFilters ? t("list.emptyTitleFiltered") : t("list.emptyTitle")}
             emptyDescription={
-              lv.hasActiveFilters ? "Adjust or clear the filters above." : "Click New user to add the first one."
+              lv.hasActiveFilters ? t("list.emptyDescriptionFiltered") : t("list.emptyDescription")
             }
           >
             <>
@@ -313,27 +314,27 @@ function UsersPage() {
                         selectableIds={selectableIds}
                         selectedIds={selectedIds}
                         onChange={setSelectedIds}
-                        label="Select all users"
+                        label={t("list.selectAll")}
                       />
                     </TableHead>
                     <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Email
+                      {t("table.email")}
                     </SortHeader>
                     {lv.isVisible("name") && (
                       <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
-                        Name
+                        {t("table.name")}
                       </SortHeader>
                     )}
                     <SortHeader columnKey="status" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Status
+                      {t("table.status")}
                     </SortHeader>
-                    {lv.isVisible("verified") && <TableHead>Email verified</TableHead>}
+                    {lv.isVisible("verified") && <TableHead>{t("table.emailVerified")}</TableHead>}
                     {lv.isVisible("created") && (
                       <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
-                        Created
+                        {t("table.created")}
                       </SortHeader>
                     )}
-                    <TableHead className="text-right">Actions</TableHead>
+                    <TableHead className="text-right">{t("table.actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -347,7 +348,7 @@ function UsersPage() {
                             id={u.id}
                             checked={isSelected}
                             disabled={isSelf}
-                            label={`Select ${u.email}`}
+                            label={t("list.selectOne", { email: u.email })}
                             onChange={(id, checked) =>
                               setSelectedIds((prev) => {
                                 const next = new Set(prev);
@@ -368,7 +369,7 @@ function UsersPage() {
                           </Link>
                           {isSelf && (
                             <Badge variant="muted" className="ml-2">
-                              You
+                              {t("list.you")}
                             </Badge>
                           )}
                         </TableCell>
@@ -399,7 +400,7 @@ function UsersPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              aria-label="Edit user"
+                              aria-label={t("table.editUser")}
                               onClick={() => setEditing(u)}
                             >
                               <PencilIcon />
@@ -407,7 +408,7 @@ function UsersPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              aria-label="Set password"
+                              aria-label={t("table.setPassword")}
                               onClick={() => setSettingPassword(u)}
                             >
                               <KeyRoundIcon />
@@ -415,9 +416,9 @@ function UsersPage() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              aria-label="Delete user"
+                              aria-label={t("table.deleteUser")}
                               disabled={isSelf}
-                              title={isSelf ? "You can't delete your own account here" : "Delete user"}
+                              title={isSelf ? t("table.deleteSelf") : t("table.deleteUser")}
                               onClick={() => setConfirmingDelete(u.id)}
                             >
                               <Trash2Icon className="text-destructive" />
@@ -485,32 +486,34 @@ function UsersPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this user?</AlertDialogTitle>
+            <AlertDialogTitle>{t("delete.title")}</AlertDialogTitle>
             <AlertDialogDescription>
               {(() => {
                 const target = items.find((u) => u.id === confirmingDelete);
                 return target ? (
-                  <>
-                    This soft-deletes{" "}
-                    <span className="font-medium text-foreground">{target.email}</span>. Their
-                    sessions and API keys keep working until they expire — revoke those separately
-                    if you need an immediate cut-off.
-                  </>
+                  <Trans
+                    t={t}
+                    i18nKey="delete.descriptionNamed"
+                    values={{ email: target.email }}
+                    components={{ strong: <span className="font-medium text-foreground" /> }}
+                  />
                 ) : (
-                  "This soft-deletes the user."
+                  t("delete.descriptionFallback")
                 );
               })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteM.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteM.isPending}>
+              {t("common:actions.cancel")}
+            </AlertDialogCancel>
             <Button
               variant="destructive"
               disabled={deleteM.isPending}
               onClick={() => confirmingDelete && deleteM.mutate(confirmingDelete)}
             >
               {deleteM.isPending && <Loader2Icon className="animate-spin" />}
-              {deleteM.isPending ? "Deleting…" : "Delete"}
+              {deleteM.isPending ? t("common:actions.deleting") : t("common:actions.delete")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -527,6 +530,7 @@ type CreateUserSheetProps = {
 };
 
 function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUserSheetProps) {
+  const { t } = useTranslation("users");
   const createM = useMutation({
     mutationFn: (body: {
       tenant_id: string;
@@ -539,7 +543,7 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
       onCreated();
       onOpenChange(false);
     },
-    meta: { successMessage: "User created" },
+    meta: { successMessage: t("toast.created") },
   });
 
   return (
@@ -561,27 +565,23 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
           }}
         >
           <SheetHeader>
-            <SheetTitle>New user</SheetTitle>
-            <SheetDescription>
-              Creates a user under the current tenant with a password credential.
-            </SheetDescription>
+            <SheetTitle>{t("create.title")}</SheetTitle>
+            <SheetDescription>{t("create.description")}</SheetDescription>
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
+                <FieldLabel htmlFor="email">{t("create.email")}</FieldLabel>
                 <Input id="email" name="email" type="email" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="display_name">Display name</FieldLabel>
+                <FieldLabel htmlFor="display_name">{t("create.displayName")}</FieldLabel>
                 <Input id="display_name" name="display_name" type="text" />
-                <FieldDescription>
-                  Optional. Shown in the user list and audit logs.
-                </FieldDescription>
+                <FieldDescription>{t("create.displayNameHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="phone">Phone</FieldLabel>
+                <FieldLabel htmlFor="phone">{t("create.phone")}</FieldLabel>
                 <Input
                   id="phone"
                   name="phone"
@@ -589,16 +589,12 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
                   placeholder="+15555550100"
                   pattern="\+[1-9]\d{1,14}"
                 />
-                <FieldDescription>
-                  E.164 format. Used for SMS OTP if MFA is enabled.
-                </FieldDescription>
+                <FieldDescription>{t("create.phoneHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="password">Initial password</FieldLabel>
+                <FieldLabel htmlFor="password">{t("create.password")}</FieldLabel>
                 <Input id="password" name="password" type="password" minLength={8} required />
-                <FieldDescription>
-                  At least 8 characters. The user can change it later.
-                </FieldDescription>
+                <FieldDescription>{t("create.passwordHelp")}</FieldDescription>
               </Field>
               {createM.error && (
                 <Field>
@@ -609,10 +605,12 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
           </div>
 
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("common:actions.cancel")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending || !tenantId}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create user"}
+              {createM.isPending ? t("create.submitting") : t("create.submit")}
             </Button>
           </SheetFooter>
         </form>
@@ -635,6 +633,7 @@ type UpdateBody = {
 };
 
 function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetProps) {
+  const { t } = useTranslation("users");
   // Reset selected status when the editing target changes.
   const [trackedId, setTrackedId] = useState<string | null>(null);
   const [status, setStatus] = useState<"active" | "suspended">(
@@ -648,7 +647,7 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
   const updateM = useMutation({
     mutationFn: (body: UpdateBody) => api<User>(`/v1/users/${user!.id}`, { method: "PATCH", body }),
     onSuccess: onSaved,
-    meta: { successMessage: "User updated" },
+    meta: { successMessage: t("toast.updated") },
   });
 
   return (
@@ -671,20 +670,18 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
             }}
           >
             <SheetHeader>
-              <SheetTitle>Edit user</SheetTitle>
-              <SheetDescription>
-                Email is immutable. To change a password use the Set password action.
-              </SheetDescription>
+              <SheetTitle>{t("edit.title")}</SheetTitle>
+              <SheetDescription>{t("edit.description")}</SheetDescription>
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto p-4">
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="edit-email">Email</FieldLabel>
+                  <FieldLabel htmlFor="edit-email">{t("edit.email")}</FieldLabel>
                   <Input id="edit-email" value={user.email} readOnly disabled />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="edit-display-name">Display name</FieldLabel>
+                  <FieldLabel htmlFor="edit-display-name">{t("edit.displayName")}</FieldLabel>
                   <Input
                     id="edit-display-name"
                     name="display_name"
@@ -693,7 +690,7 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="edit-phone">Phone</FieldLabel>
+                  <FieldLabel htmlFor="edit-phone">{t("edit.phone")}</FieldLabel>
                   <Input
                     id="edit-phone"
                     name="phone"
@@ -702,27 +699,25 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
                     placeholder="+15555550100"
                     pattern="\+[1-9]\d{1,14}"
                   />
-                  <FieldDescription>E.164 format. Leave blank to clear.</FieldDescription>
+                  <FieldDescription>{t("edit.phoneHelp")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel>Status</FieldLabel>
+                  <FieldLabel id="user-status-label">{t("edit.status")}</FieldLabel>
                   <Select
                     value={status}
                     onValueChange={(v) => v && setStatus(v as "active" | "suspended")}
                     disabled={isSelf}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger aria-labelledby="user-status-label">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="suspended">Suspended</SelectItem>
+                      <SelectItem value="active">{t("edit.statusActive")}</SelectItem>
+                      <SelectItem value="suspended">{t("edit.statusSuspended")}</SelectItem>
                     </SelectContent>
                   </Select>
                   <FieldDescription>
-                    {isSelf
-                      ? "You can't suspend your own account from this screen."
-                      : "Suspending prevents sign-in but keeps the account."}
+                    {isSelf ? t("edit.statusSelfHelp") : t("edit.statusHelp")}
                   </FieldDescription>
                 </Field>
                 {updateM.error && (
@@ -734,10 +729,12 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
             </div>
 
             <SheetFooter className="flex-row justify-end gap-2 border-t">
-              <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+              <SheetClose render={<Button type="button" variant="outline" />}>
+                {t("common:actions.cancel")}
+              </SheetClose>
               <Button type="submit" disabled={updateM.isPending}>
                 {updateM.isPending && <Loader2Icon className="animate-spin" />}
-                {updateM.isPending ? "Saving…" : "Save changes"}
+                {updateM.isPending ? t("common:actions.saving") : t("common:actions.saveChanges")}
               </Button>
             </SheetFooter>
           </form>
@@ -754,11 +751,12 @@ type SetPasswordSheetProps = {
 };
 
 function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps) {
+  const { t } = useTranslation("users");
   const setM = useMutation({
     mutationFn: (body: { password: string }) =>
       api<void>(`/v1/users/${user!.id}/password`, { method: "POST", body }),
     onSuccess: onSaved,
-    meta: { successMessage: "Password updated" },
+    meta: { successMessage: t("toast.passwordUpdated") },
   });
 
   return (
@@ -775,7 +773,7 @@ function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps
               if (password !== confirm) {
                 setM.reset();
                 const el = e.currentTarget.elements.namedItem("confirm") as HTMLInputElement;
-                el.setCustomValidity("Passwords don't match");
+                el.setCustomValidity(t("setPassword.mismatch"));
                 el.reportValidity();
                 return;
               }
@@ -783,20 +781,24 @@ function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps
             }}
           >
             <SheetHeader>
-              <SheetTitle>Set new password</SheetTitle>
+              <SheetTitle>{t("setPassword.title")}</SheetTitle>
               <SheetDescription>
-                Sets a new password for{" "}
-                <span className="font-medium text-foreground">{user.email}</span>. The user&apos;s
-                existing sessions stay valid until they expire — revoke them from{" "}
-                <span className="font-mono text-xs">Security › Sessions</span> if you need an
-                immediate sign-out.
+                <Trans
+                  t={t}
+                  i18nKey="setPassword.description"
+                  values={{ email: user.email }}
+                  components={{
+                    strong: <span className="font-medium text-foreground" />,
+                    path: <span className="font-mono text-xs" />,
+                  }}
+                />
               </SheetDescription>
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto p-4">
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="new-password">New password</FieldLabel>
+                  <FieldLabel htmlFor="new-password">{t("setPassword.newPassword")}</FieldLabel>
                   <Input
                     id="new-password"
                     name="password"
@@ -806,10 +808,12 @@ function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps
                     required
                     autoComplete="new-password"
                   />
-                  <FieldDescription>Minimum 8 characters.</FieldDescription>
+                  <FieldDescription>{t("setPassword.newPasswordHelp")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="confirm-password">Confirm new password</FieldLabel>
+                  <FieldLabel htmlFor="confirm-password">
+                    {t("setPassword.confirmPassword")}
+                  </FieldLabel>
                   <Input
                     id="confirm-password"
                     name="confirm"
@@ -828,17 +832,21 @@ function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps
                 )}
                 {setM.isSuccess && (
                   <Field>
-                    <FieldDescription className="text-success">Password updated.</FieldDescription>
+                    <FieldDescription className="text-success">
+                      {t("setPassword.success")}
+                    </FieldDescription>
                   </Field>
                 )}
               </FieldGroup>
             </div>
 
             <SheetFooter className="flex-row justify-end gap-2 border-t">
-              <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+              <SheetClose render={<Button type="button" variant="outline" />}>
+                {t("common:actions.cancel")}
+              </SheetClose>
               <Button type="submit" disabled={setM.isPending}>
                 {setM.isPending && <Loader2Icon className="animate-spin" />}
-                {setM.isPending ? "Saving…" : "Update password"}
+                {setM.isPending ? t("common:actions.saving") : t("setPassword.submit")}
               </Button>
             </SheetFooter>
           </form>

@@ -14,9 +14,12 @@
   "dependencies": {
     "@qeetrix/brand": "^0.0.1",
     "@qeetrix/ui": "^0.0.2",
+    "i18next": "^26.3.1",
+    "i18next-browser-languagedetector": "^8.2.1",
     "next": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "react-i18next": "^17.0.8"
   },
   "devDependencies": {
     "@qeetid/tsconfig": "workspace:*",

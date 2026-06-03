@@ -1,0 +1,25 @@
+{
+  "title": "Sign in to continue",
+  "titleTo": "Sign in to continue to {{client}}",
+  "subtitle": "Use your Qeet ID account.",
+  "fields": {
+    "email": "Email",
+    "password": "Password"
+  },
+  "submit": {
+    "idle": "Sign in",
+    "busy": "Signing in…"
+  },
+  "passkey": {
+    "idle": "Sign in with a passkey",
+    "busy": "Waiting for passkey…"
+  },
+  "social": {
+    "divider": "or continue with"
+  },
+  "errors": {
+    "passkeyUnsupported": "Passkeys aren't supported in this browser.",
+    "noPasskeySelected": "No passkey was selected.",
+    "passkeyFailed": "Passkey sign-in failed."
+  }
+}

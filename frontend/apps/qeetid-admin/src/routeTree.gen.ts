@@ -38,6 +38,7 @@ import { Route as AppSettingsBrandingRouteImport } from './routes/_app/settings/
 import { Route as AppSettingsBillingRouteImport } from './routes/_app/settings/billing'
 import { Route as AppSecuritySessionsRouteImport } from './routes/_app/security/sessions'
 import { Route as AppSecurityRateLimitsRouteImport } from './routes/_app/security/rate-limits'
+import { Route as AppSecurityDeviceAuthorizationsRouteImport } from './routes/_app/security/device-authorizations'
 import { Route as AppSecurityAuditLogsRouteImport } from './routes/_app/security/audit-logs'
 import { Route as AppOrganizationsTenantsRouteImport } from './routes/_app/organizations/tenants'
 import { Route as AppOrganizationsMembersRouteImport } from './routes/_app/organizations/members'
@@ -50,6 +51,7 @@ import { Route as AppAccessRolesRouteImport } from './routes/_app/access/roles'
 import { Route as AppAccessResourcesRouteImport } from './routes/_app/access/resources'
 import { Route as AppAccessPoliciesRouteImport } from './routes/_app/access/policies'
 import { Route as AppAccessPermissionsRouteImport } from './routes/_app/access/permissions'
+import { Route as AppAccessCheckRouteImport } from './routes/_app/access/check'
 import { Route as AppSettingsWorkspaceGeneralRouteImport } from './routes/_app/settings/workspace/general'
 import { Route as AppSettingsWorkspaceEmailTemplatesRouteImport } from './routes/_app/settings/workspace/email-templates'
 import { Route as AppSettingsWorkspaceDomainsRouteImport } from './routes/_app/settings/workspace/domains'
@@ -70,13 +72,16 @@ import { Route as AppAuthLoginMethodsPasswordRouteImport } from './routes/_app/a
 import { Route as AppAuthLoginMethodsPasskeysRouteImport } from './routes/_app/auth/login-methods/passkeys'
 import { Route as AppAuthLoginMethodsMagicLinksRouteImport } from './routes/_app/auth/login-methods/magic-links'
 import { Route as AppAuthConnectionsScimRouteImport } from './routes/_app/auth/connections/scim'
+import { Route as AppAuthConnectionsSamlIdpRouteImport } from './routes/_app/auth/connections/saml-idp'
 import { Route as AppAuthConnectionsSamlRouteImport } from './routes/_app/auth/connections/saml'
 import { Route as AppAuthConnectionsOidcRouteImport } from './routes/_app/auth/connections/oidc'
 import { Route as AppAuthConnectionsLdapRouteImport } from './routes/_app/auth/connections/ldap'
 import { Route as AppAuthApiTokensRouteImport } from './routes/_app/auth/api/tokens'
+import { Route as AppAuthApiSigningKeysRouteImport } from './routes/_app/auth/api/signing-keys'
 import { Route as AppAuthApiSecretsRouteImport } from './routes/_app/auth/api/secrets'
 import { Route as AppAuthApiMachineIdentitiesRouteImport } from './routes/_app/auth/api/machine-identities'
 import { Route as AppAuthApiKeysRouteImport } from './routes/_app/auth/api/keys'
+import { Route as AppAuthApiConsentGrantsRouteImport } from './routes/_app/auth/api/consent-grants'
 import { Route as AppAccessRolesRoleIdRouteImport } from './routes/_app/access/roles.$roleId'
 import { Route as AppAuthConnectionsOidcClientIdRouteImport } from './routes/_app/auth/connections/oidc.$clientId'
 
@@ -223,6 +228,12 @@ const AppSecurityRateLimitsRoute = AppSecurityRateLimitsRouteImport.update({
   path: '/security/rate-limits',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSecurityDeviceAuthorizationsRoute =
+  AppSecurityDeviceAuthorizationsRouteImport.update({
+    id: '/security/device-authorizations',
+    path: '/security/device-authorizations',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppSecurityAuditLogsRoute = AppSecurityAuditLogsRouteImport.update({
   id: '/security/audit-logs',
   path: '/security/audit-logs',
@@ -282,6 +293,11 @@ const AppAccessPoliciesRoute = AppAccessPoliciesRouteImport.update({
 const AppAccessPermissionsRoute = AppAccessPermissionsRouteImport.update({
   id: '/access/permissions',
   path: '/access/permissions',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccessCheckRoute = AppAccessCheckRouteImport.update({
+  id: '/access/check',
+  path: '/access/check',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsWorkspaceGeneralRoute =
@@ -398,6 +414,12 @@ const AppAuthConnectionsScimRoute = AppAuthConnectionsScimRouteImport.update({
   path: '/auth/connections/scim',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAuthConnectionsSamlIdpRoute =
+  AppAuthConnectionsSamlIdpRouteImport.update({
+    id: '/auth/connections/saml-idp',
+    path: '/auth/connections/saml-idp',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppAuthConnectionsSamlRoute = AppAuthConnectionsSamlRouteImport.update({
   id: '/auth/connections/saml',
   path: '/auth/connections/saml',
@@ -418,6 +440,11 @@ const AppAuthApiTokensRoute = AppAuthApiTokensRouteImport.update({
   path: '/auth/api/tokens',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAuthApiSigningKeysRoute = AppAuthApiSigningKeysRouteImport.update({
+  id: '/auth/api/signing-keys',
+  path: '/auth/api/signing-keys',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAuthApiSecretsRoute = AppAuthApiSecretsRouteImport.update({
   id: '/auth/api/secrets',
   path: '/auth/api/secrets',
@@ -432,6 +459,11 @@ const AppAuthApiMachineIdentitiesRoute =
 const AppAuthApiKeysRoute = AppAuthApiKeysRouteImport.update({
   id: '/auth/api/keys',
   path: '/auth/api/keys',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAuthApiConsentGrantsRoute = AppAuthApiConsentGrantsRouteImport.update({
+  id: '/auth/api/consent-grants',
+  path: '/auth/api/consent-grants',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAccessRolesRoleIdRoute = AppAccessRolesRoleIdRouteImport.update({
@@ -463,6 +495,7 @@ export interface FileRoutesByFullPath {
   '/account/profile': typeof AccountProfileRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/sessions': typeof AccountSessionsRoute
+  '/access/check': typeof AppAccessCheckRoute
   '/access/permissions': typeof AppAccessPermissionsRoute
   '/access/policies': typeof AppAccessPoliciesRoute
   '/access/resources': typeof AppAccessResourcesRoute
@@ -475,6 +508,7 @@ export interface FileRoutesByFullPath {
   '/organizations/members': typeof AppOrganizationsMembersRoute
   '/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/security/audit-logs': typeof AppSecurityAuditLogsRoute
+  '/security/device-authorizations': typeof AppSecurityDeviceAuthorizationsRoute
   '/security/rate-limits': typeof AppSecurityRateLimitsRoute
   '/security/sessions': typeof AppSecuritySessionsRoute
   '/settings/billing': typeof AppSettingsBillingRoute
@@ -487,13 +521,16 @@ export interface FileRoutesByFullPath {
   '/sso/callback': typeof AuthSsoCallbackRoute
   '/users/': typeof AppUsersIndexRoute
   '/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
+  '/auth/api/consent-grants': typeof AppAuthApiConsentGrantsRoute
   '/auth/api/keys': typeof AppAuthApiKeysRoute
   '/auth/api/machine-identities': typeof AppAuthApiMachineIdentitiesRoute
   '/auth/api/secrets': typeof AppAuthApiSecretsRoute
+  '/auth/api/signing-keys': typeof AppAuthApiSigningKeysRoute
   '/auth/api/tokens': typeof AppAuthApiTokensRoute
   '/auth/connections/ldap': typeof AppAuthConnectionsLdapRoute
   '/auth/connections/oidc': typeof AppAuthConnectionsOidcRouteWithChildren
   '/auth/connections/saml': typeof AppAuthConnectionsSamlRoute
+  '/auth/connections/saml-idp': typeof AppAuthConnectionsSamlIdpRoute
   '/auth/connections/scim': typeof AppAuthConnectionsScimRoute
   '/auth/login-methods/magic-links': typeof AppAuthLoginMethodsMagicLinksRoute
   '/auth/login-methods/passkeys': typeof AppAuthLoginMethodsPasskeysRoute
@@ -533,6 +570,7 @@ export interface FileRoutesByTo {
   '/account/profile': typeof AccountProfileRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/sessions': typeof AccountSessionsRoute
+  '/access/check': typeof AppAccessCheckRoute
   '/access/permissions': typeof AppAccessPermissionsRoute
   '/access/policies': typeof AppAccessPoliciesRoute
   '/access/resources': typeof AppAccessResourcesRoute
@@ -545,6 +583,7 @@ export interface FileRoutesByTo {
   '/organizations/members': typeof AppOrganizationsMembersRoute
   '/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/security/audit-logs': typeof AppSecurityAuditLogsRoute
+  '/security/device-authorizations': typeof AppSecurityDeviceAuthorizationsRoute
   '/security/rate-limits': typeof AppSecurityRateLimitsRoute
   '/security/sessions': typeof AppSecuritySessionsRoute
   '/settings/billing': typeof AppSettingsBillingRoute
@@ -557,13 +596,16 @@ export interface FileRoutesByTo {
   '/sso/callback': typeof AuthSsoCallbackRoute
   '/users': typeof AppUsersIndexRoute
   '/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
+  '/auth/api/consent-grants': typeof AppAuthApiConsentGrantsRoute
   '/auth/api/keys': typeof AppAuthApiKeysRoute
   '/auth/api/machine-identities': typeof AppAuthApiMachineIdentitiesRoute
   '/auth/api/secrets': typeof AppAuthApiSecretsRoute
+  '/auth/api/signing-keys': typeof AppAuthApiSigningKeysRoute
   '/auth/api/tokens': typeof AppAuthApiTokensRoute
   '/auth/connections/ldap': typeof AppAuthConnectionsLdapRoute
   '/auth/connections/oidc': typeof AppAuthConnectionsOidcRouteWithChildren
   '/auth/connections/saml': typeof AppAuthConnectionsSamlRoute
+  '/auth/connections/saml-idp': typeof AppAuthConnectionsSamlIdpRoute
   '/auth/connections/scim': typeof AppAuthConnectionsScimRoute
   '/auth/login-methods/magic-links': typeof AppAuthLoginMethodsMagicLinksRoute
   '/auth/login-methods/passkeys': typeof AppAuthLoginMethodsPasskeysRoute
@@ -606,6 +648,7 @@ export interface FileRoutesById {
   '/account/profile': typeof AccountProfileRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/sessions': typeof AccountSessionsRoute
+  '/_app/access/check': typeof AppAccessCheckRoute
   '/_app/access/permissions': typeof AppAccessPermissionsRoute
   '/_app/access/policies': typeof AppAccessPoliciesRoute
   '/_app/access/resources': typeof AppAccessResourcesRoute
@@ -618,6 +661,7 @@ export interface FileRoutesById {
   '/_app/organizations/members': typeof AppOrganizationsMembersRoute
   '/_app/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/_app/security/audit-logs': typeof AppSecurityAuditLogsRoute
+  '/_app/security/device-authorizations': typeof AppSecurityDeviceAuthorizationsRoute
   '/_app/security/rate-limits': typeof AppSecurityRateLimitsRoute
   '/_app/security/sessions': typeof AppSecuritySessionsRoute
   '/_app/settings/billing': typeof AppSettingsBillingRoute
@@ -630,13 +674,16 @@ export interface FileRoutesById {
   '/_auth/sso/callback': typeof AuthSsoCallbackRoute
   '/_app/users/': typeof AppUsersIndexRoute
   '/_app/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
+  '/_app/auth/api/consent-grants': typeof AppAuthApiConsentGrantsRoute
   '/_app/auth/api/keys': typeof AppAuthApiKeysRoute
   '/_app/auth/api/machine-identities': typeof AppAuthApiMachineIdentitiesRoute
   '/_app/auth/api/secrets': typeof AppAuthApiSecretsRoute
+  '/_app/auth/api/signing-keys': typeof AppAuthApiSigningKeysRoute
   '/_app/auth/api/tokens': typeof AppAuthApiTokensRoute
   '/_app/auth/connections/ldap': typeof AppAuthConnectionsLdapRoute
   '/_app/auth/connections/oidc': typeof AppAuthConnectionsOidcRouteWithChildren
   '/_app/auth/connections/saml': typeof AppAuthConnectionsSamlRoute
+  '/_app/auth/connections/saml-idp': typeof AppAuthConnectionsSamlIdpRoute
   '/_app/auth/connections/scim': typeof AppAuthConnectionsScimRoute
   '/_app/auth/login-methods/magic-links': typeof AppAuthLoginMethodsMagicLinksRoute
   '/_app/auth/login-methods/passkeys': typeof AppAuthLoginMethodsPasskeysRoute
@@ -678,6 +725,7 @@ export interface FileRouteTypes {
     | '/account/profile'
     | '/account/security'
     | '/account/sessions'
+    | '/access/check'
     | '/access/permissions'
     | '/access/policies'
     | '/access/resources'
@@ -690,6 +738,7 @@ export interface FileRouteTypes {
     | '/organizations/members'
     | '/organizations/tenants'
     | '/security/audit-logs'
+    | '/security/device-authorizations'
     | '/security/rate-limits'
     | '/security/sessions'
     | '/settings/billing'
@@ -702,13 +751,16 @@ export interface FileRouteTypes {
     | '/sso/callback'
     | '/users/'
     | '/access/roles/$roleId'
+    | '/auth/api/consent-grants'
     | '/auth/api/keys'
     | '/auth/api/machine-identities'
     | '/auth/api/secrets'
+    | '/auth/api/signing-keys'
     | '/auth/api/tokens'
     | '/auth/connections/ldap'
     | '/auth/connections/oidc'
     | '/auth/connections/saml'
+    | '/auth/connections/saml-idp'
     | '/auth/connections/scim'
     | '/auth/login-methods/magic-links'
     | '/auth/login-methods/passkeys'
@@ -748,6 +800,7 @@ export interface FileRouteTypes {
     | '/account/profile'
     | '/account/security'
     | '/account/sessions'
+    | '/access/check'
     | '/access/permissions'
     | '/access/policies'
     | '/access/resources'
@@ -760,6 +813,7 @@ export interface FileRouteTypes {
     | '/organizations/members'
     | '/organizations/tenants'
     | '/security/audit-logs'
+    | '/security/device-authorizations'
     | '/security/rate-limits'
     | '/security/sessions'
     | '/settings/billing'
@@ -772,13 +826,16 @@ export interface FileRouteTypes {
     | '/sso/callback'
     | '/users'
     | '/access/roles/$roleId'
+    | '/auth/api/consent-grants'
     | '/auth/api/keys'
     | '/auth/api/machine-identities'
     | '/auth/api/secrets'
+    | '/auth/api/signing-keys'
     | '/auth/api/tokens'
     | '/auth/connections/ldap'
     | '/auth/connections/oidc'
     | '/auth/connections/saml'
+    | '/auth/connections/saml-idp'
     | '/auth/connections/scim'
     | '/auth/login-methods/magic-links'
     | '/auth/login-methods/passkeys'
@@ -820,6 +877,7 @@ export interface FileRouteTypes {
     | '/account/profile'
     | '/account/security'
     | '/account/sessions'
+    | '/_app/access/check'
     | '/_app/access/permissions'
     | '/_app/access/policies'
     | '/_app/access/resources'
@@ -832,6 +890,7 @@ export interface FileRouteTypes {
     | '/_app/organizations/members'
     | '/_app/organizations/tenants'
     | '/_app/security/audit-logs'
+    | '/_app/security/device-authorizations'
     | '/_app/security/rate-limits'
     | '/_app/security/sessions'
     | '/_app/settings/billing'
@@ -844,13 +903,16 @@ export interface FileRouteTypes {
     | '/_auth/sso/callback'
     | '/_app/users/'
     | '/_app/access/roles/$roleId'
+    | '/_app/auth/api/consent-grants'
     | '/_app/auth/api/keys'
     | '/_app/auth/api/machine-identities'
     | '/_app/auth/api/secrets'
+    | '/_app/auth/api/signing-keys'
     | '/_app/auth/api/tokens'
     | '/_app/auth/connections/ldap'
     | '/_app/auth/connections/oidc'
     | '/_app/auth/connections/saml'
+    | '/_app/auth/connections/saml-idp'
     | '/_app/auth/connections/scim'
     | '/_app/auth/login-methods/magic-links'
     | '/_app/auth/login-methods/passkeys'
@@ -1086,6 +1148,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSecurityRateLimitsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/security/device-authorizations': {
+      id: '/_app/security/device-authorizations'
+      path: '/security/device-authorizations'
+      fullPath: '/security/device-authorizations'
+      preLoaderRoute: typeof AppSecurityDeviceAuthorizationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/security/audit-logs': {
       id: '/_app/security/audit-logs'
       path: '/security/audit-logs'
@@ -1168,6 +1237,13 @@ declare module '@tanstack/react-router' {
       path: '/access/permissions'
       fullPath: '/access/permissions'
       preLoaderRoute: typeof AppAccessPermissionsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/access/check': {
+      id: '/_app/access/check'
+      path: '/access/check'
+      fullPath: '/access/check'
+      preLoaderRoute: typeof AppAccessCheckRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings/workspace/general': {
@@ -1310,6 +1386,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAuthConnectionsScimRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/auth/connections/saml-idp': {
+      id: '/_app/auth/connections/saml-idp'
+      path: '/auth/connections/saml-idp'
+      fullPath: '/auth/connections/saml-idp'
+      preLoaderRoute: typeof AppAuthConnectionsSamlIdpRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/auth/connections/saml': {
       id: '/_app/auth/connections/saml'
       path: '/auth/connections/saml'
@@ -1338,6 +1421,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAuthApiTokensRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/auth/api/signing-keys': {
+      id: '/_app/auth/api/signing-keys'
+      path: '/auth/api/signing-keys'
+      fullPath: '/auth/api/signing-keys'
+      preLoaderRoute: typeof AppAuthApiSigningKeysRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/auth/api/secrets': {
       id: '/_app/auth/api/secrets'
       path: '/auth/api/secrets'
@@ -1357,6 +1447,13 @@ declare module '@tanstack/react-router' {
       path: '/auth/api/keys'
       fullPath: '/auth/api/keys'
       preLoaderRoute: typeof AppAuthApiKeysRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/auth/api/consent-grants': {
+      id: '/_app/auth/api/consent-grants'
+      path: '/auth/api/consent-grants'
+      fullPath: '/auth/api/consent-grants'
+      preLoaderRoute: typeof AppAuthApiConsentGrantsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/access/roles/$roleId': {
@@ -1432,6 +1529,7 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppGroupsRoute: typeof AppGroupsRouteWithChildren
   AppInvitationsRoute: typeof AppInvitationsRoute
+  AppAccessCheckRoute: typeof AppAccessCheckRoute
   AppAccessPermissionsRoute: typeof AppAccessPermissionsRoute
   AppAccessPoliciesRoute: typeof AppAccessPoliciesRoute
   AppAccessResourcesRoute: typeof AppAccessResourcesRoute
@@ -1443,6 +1541,7 @@ interface AppRouteChildren {
   AppOrganizationsMembersRoute: typeof AppOrganizationsMembersRoute
   AppOrganizationsTenantsRoute: typeof AppOrganizationsTenantsRoute
   AppSecurityAuditLogsRoute: typeof AppSecurityAuditLogsRoute
+  AppSecurityDeviceAuthorizationsRoute: typeof AppSecurityDeviceAuthorizationsRoute
   AppSecurityRateLimitsRoute: typeof AppSecurityRateLimitsRoute
   AppSecuritySessionsRoute: typeof AppSecuritySessionsRoute
   AppSettingsBillingRoute: typeof AppSettingsBillingRoute
@@ -1453,13 +1552,16 @@ interface AppRouteChildren {
   AppUsersInvitationsRoute: typeof AppUsersInvitationsRoute
   AppUsersSessionsRoute: typeof AppUsersSessionsRoute
   AppUsersIndexRoute: typeof AppUsersIndexRoute
+  AppAuthApiConsentGrantsRoute: typeof AppAuthApiConsentGrantsRoute
   AppAuthApiKeysRoute: typeof AppAuthApiKeysRoute
   AppAuthApiMachineIdentitiesRoute: typeof AppAuthApiMachineIdentitiesRoute
   AppAuthApiSecretsRoute: typeof AppAuthApiSecretsRoute
+  AppAuthApiSigningKeysRoute: typeof AppAuthApiSigningKeysRoute
   AppAuthApiTokensRoute: typeof AppAuthApiTokensRoute
   AppAuthConnectionsLdapRoute: typeof AppAuthConnectionsLdapRoute
   AppAuthConnectionsOidcRoute: typeof AppAuthConnectionsOidcRouteWithChildren
   AppAuthConnectionsSamlRoute: typeof AppAuthConnectionsSamlRoute
+  AppAuthConnectionsSamlIdpRoute: typeof AppAuthConnectionsSamlIdpRoute
   AppAuthConnectionsScimRoute: typeof AppAuthConnectionsScimRoute
   AppAuthLoginMethodsMagicLinksRoute: typeof AppAuthLoginMethodsMagicLinksRoute
   AppAuthLoginMethodsPasskeysRoute: typeof AppAuthLoginMethodsPasskeysRoute
@@ -1488,6 +1590,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppGroupsRoute: AppGroupsRouteWithChildren,
   AppInvitationsRoute: AppInvitationsRoute,
+  AppAccessCheckRoute: AppAccessCheckRoute,
   AppAccessPermissionsRoute: AppAccessPermissionsRoute,
   AppAccessPoliciesRoute: AppAccessPoliciesRoute,
   AppAccessResourcesRoute: AppAccessResourcesRoute,
@@ -1499,6 +1602,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppOrganizationsMembersRoute: AppOrganizationsMembersRoute,
   AppOrganizationsTenantsRoute: AppOrganizationsTenantsRoute,
   AppSecurityAuditLogsRoute: AppSecurityAuditLogsRoute,
+  AppSecurityDeviceAuthorizationsRoute: AppSecurityDeviceAuthorizationsRoute,
   AppSecurityRateLimitsRoute: AppSecurityRateLimitsRoute,
   AppSecuritySessionsRoute: AppSecuritySessionsRoute,
   AppSettingsBillingRoute: AppSettingsBillingRoute,
@@ -1509,13 +1613,16 @@ const AppRouteChildren: AppRouteChildren = {
   AppUsersInvitationsRoute: AppUsersInvitationsRoute,
   AppUsersSessionsRoute: AppUsersSessionsRoute,
   AppUsersIndexRoute: AppUsersIndexRoute,
+  AppAuthApiConsentGrantsRoute: AppAuthApiConsentGrantsRoute,
   AppAuthApiKeysRoute: AppAuthApiKeysRoute,
   AppAuthApiMachineIdentitiesRoute: AppAuthApiMachineIdentitiesRoute,
   AppAuthApiSecretsRoute: AppAuthApiSecretsRoute,
+  AppAuthApiSigningKeysRoute: AppAuthApiSigningKeysRoute,
   AppAuthApiTokensRoute: AppAuthApiTokensRoute,
   AppAuthConnectionsLdapRoute: AppAuthConnectionsLdapRoute,
   AppAuthConnectionsOidcRoute: AppAuthConnectionsOidcRouteWithChildren,
   AppAuthConnectionsSamlRoute: AppAuthConnectionsSamlRoute,
+  AppAuthConnectionsSamlIdpRoute: AppAuthConnectionsSamlIdpRoute,
   AppAuthConnectionsScimRoute: AppAuthConnectionsScimRoute,
   AppAuthLoginMethodsMagicLinksRoute: AppAuthLoginMethodsMagicLinksRoute,
   AppAuthLoginMethodsPasskeysRoute: AppAuthLoginMethodsPasskeysRoute,

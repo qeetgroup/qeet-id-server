@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-identity/internal/audit"
 	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
 	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
 	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
@@ -417,6 +418,131 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 // dash as the canonical separator the value was stored with.
 func normalizeUserCode(in string) string {
 	return strings.ToUpper(strings.TrimSpace(in))
+}
+
+// =====================================================================
+// Admin device-authorization visibility (RFC 8628 rows)
+//
+// Lets a tenant admin see in-flight / recent device authorizations and revoke
+// one. The device_code (and its hash) are NEVER exposed — only the human
+// user_code and metadata. All queries are scoped to the tenant.
+// =====================================================================
+
+// DeviceAuthorization is the admin-facing view of a device-authorization row.
+// It deliberately omits device_code / device_code_hash.
+type DeviceAuthorization struct {
+	ID           uuid.UUID  `json:"id"`
+	ClientID     string     `json:"client_id"`
+	UserCode     string     `json:"user_code"`
+	Status       string     `json:"status"`
+	UserID       *uuid.UUID `json:"user_id"`
+	UserEmail    string     `json:"user_email"`
+	Scopes       []string   `json:"scopes"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    time.Time  `json:"expires_at"`
+	LastPolledAt *time.Time `json:"last_polled_at"`
+}
+
+// ListDevices returns the tenant's device-authorization rows, newest first.
+func (s *Service) ListDevices(ctx context.Context, tenantID uuid.UUID) ([]DeviceAuthorization, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id, d.client_id, d.user_code, d.status, d.user_id,
+		       COALESCE(u.email, ''), d.scopes, d.created_at, d.expires_at, d.last_polled_at
+		FROM auth.oidc_device_codes d
+		LEFT JOIN "user".users u ON u.id = d.user_id
+		WHERE d.tenant_id = $1
+		ORDER BY d.created_at DESC
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DeviceAuthorization{}
+	for rows.Next() {
+		var d DeviceAuthorization
+		if err := rows.Scan(&d.ID, &d.ClientID, &d.UserCode, &d.Status, &d.UserID,
+			&d.UserEmail, &d.Scopes, &d.CreatedAt, &d.ExpiresAt, &d.LastPolledAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// RevokeDevice marks a tenant's pending/authorized device authorization denied
+// so any in-flight or future token poll fails. (The status CHECK allows
+// 'pending'/'authorized'/'denied'; 'denied' is the terminal revoked state.)
+// Returns the client_id + user_code for the audit row. Tenant-scoped.
+func (s *Service) RevokeDevice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (clientID, userCode string, err error) {
+	err = tx.QueryRow(ctx, `
+		UPDATE auth.oidc_device_codes
+		SET status = 'denied'
+		WHERE id = $1 AND tenant_id = $2
+		RETURNING client_id, user_code
+	`, id, tenantID).Scan(&clientID, &userCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", errs.ErrNotFound
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return clientID, userCode, nil
+}
+
+func (h *Handler) listDevices(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListDevices(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	clientID, userCode, err := h.Service.RevokeDevice(ctx, tx, tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	actorID, actorType := auditActor(r)
+	tid := tenantID
+	resourceID := id
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
+		Action: "oauth.device_revoked", ResourceType: "oidc_device_code", ResourceID: &resourceID,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		Metadata: map[string]any{"client_id": clientID, "user_code": userCode},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // =====================================================================
