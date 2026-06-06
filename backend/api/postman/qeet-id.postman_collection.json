@@ -2,7 +2,7 @@
   "info": {
     "name": "Qeet Id - API",
     "_postman_id": "8f3b6e10-7a3f-4d9c-9a55-qeetid000001",
-    "description": "Complete request collection for the qeet-id backend (Go monolith).\n\n## Setup\n\n1. Start the backend: `cd backend && make run` (defaults to `http://localhost:4001`).\n2. Import this collection AND the companion environment (`qeet-id.postman_environment.json`).\n3. Select the **qeet-id (local)** environment in the Postman environment dropdown.\n4. **First time / fresh DB:** run **Auth \u2192 Signup**. It creates a new tenant + user + owner role in one shot and auto-populates `{{tenantId}}`, `{{userId}}`, `{{accessToken}}`, `{{refreshToken}}`. The signup user becomes the tenant admin.\n5. **Returning users:** run **Auth \u2192 Login** with the saved tenant_id + email + password.\n\n## Conventions\n\n- All authed requests inherit a `Bearer {{accessToken}}` header from the collection root.\n- IDs (`{{tenantId}}`, `{{userId}}`, `{{roleId}}`, \u2026) are written back to collection variables by the corresponding `Create` / `Signup` requests, so you can chain them.\n- Routes prefixed `/v1/...` are versioned API surface. Discovery / JWKS live at root (`/.well-known/...`) per the OIDC spec.\n\n## Status legend\n\nRoutes marked `[501]` in the request name are stubbed in the current implementation \u2014 they return 501 Not Implemented. See `documents/IMPLEMENTATION-STATUS.md`.\n",
+    "description": "Complete request collection for the qeet-id backend (Go monolith).\n\n## Setup\n\n1. Start the backend: `cd backend && make run` (defaults to `http://localhost:4000`).\n2. Import this collection AND the companion environment (`qeet-id.postman_environment.json`).\n3. Select the **qeet-id (local)** environment in the Postman environment dropdown.\n4. **First time / fresh DB:** run **Auth \u2192 Signup**. It creates a new tenant + user + owner role in one shot and auto-populates `{{tenantId}}`, `{{userId}}`, `{{accessToken}}`, `{{refreshToken}}`. The signup user becomes the tenant admin.\n5. **Returning users:** run **Auth \u2192 Login** with the saved tenant_id + email + password.\n\n## Conventions\n\n- All authed requests inherit a `Bearer {{accessToken}}` header from the collection root.\n- IDs (`{{tenantId}}`, `{{userId}}`, `{{roleId}}`, \u2026) are written back to collection variables by the corresponding `Create` / `Signup` requests, so you can chain them.\n- Routes prefixed `/v1/...` are versioned API surface. Discovery / JWKS live at root (`/.well-known/...`) per the OIDC spec.\n\n## Status legend\n\nRoutes marked `[501]` in the request name are stubbed in the current implementation \u2014 they return 501 Not Implemented. See `documents/IMPLEMENTATION-STATUS.md`.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -103,7 +103,7 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:4001",
+      "value": "http://localhost:4000",
       "type": "string"
     },
     {

@@ -6,6 +6,7 @@ import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { PageHero } from "@/components/marketing/page-hero";
 import { Section } from "@/components/marketing/section";
 import { BreadcrumbJsonLd } from "@/components/marketing/structured-data";
+import { SIGN_UP_URL } from "@/lib/links";
 
 /**
  * Comparison cell value. We avoid claims we can't substantiate by
@@ -270,7 +271,7 @@ export function ComparisonPage({ data }: { data: ComparisonData }) {
                   <p className="max-w-xl text-muted-foreground text-balance">{data.cta.subhead}</p>
                 )}
                 <div className="flex flex-col gap-3 sm:flex-row">
-                  <ButtonLink size="lg" href="/sign-up" className="h-11 px-5">
+                  <ButtonLink size="lg" href={SIGN_UP_URL} className="h-11 px-5">
                     Start free <ArrowRightIcon className="size-4" />
                   </ButtonLink>
                   <ButtonLink size="lg" variant="outline" href="/contact" className="h-11 px-5">

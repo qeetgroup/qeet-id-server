@@ -45,6 +45,11 @@ graphify-out/
 .env.prod
 .env.staging
 .env.production
+# …but the frontend apps' .env.production hold only PUBLIC NEXT_PUBLIC_/VITE_
+# build-time config (no secrets) — version-control them.
+!frontend/apps/qeetid-web/.env.production
+!frontend/apps/qeetid-admin/.env.production
+!frontend/apps/qeetid-login/.env.production
 *.pem
 *.key
 *.crt

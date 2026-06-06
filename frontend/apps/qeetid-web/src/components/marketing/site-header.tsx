@@ -9,6 +9,7 @@ import { useState } from "react";
 import { ButtonLink } from "./button-link";
 import { QeetMark } from "./qeet-mark";
 import { ThemeToggle } from "./theme-toggle";
+import { SIGN_IN_URL, SIGN_UP_URL } from "@/lib/links";
 
 const nav = [
   { href: "/features", label: "Features" },
@@ -93,10 +94,10 @@ export function SiteHeader() {
 
         <div className="ml-auto hidden items-center gap-1 md:flex">
           <ThemeToggle />
-          <ButtonLink variant="ghost" size="sm" href="/sign-in">
+          <ButtonLink variant="ghost" size="sm" href={SIGN_IN_URL}>
             Sign in
           </ButtonLink>
-          <ButtonLink size="sm" href="/sign-up">
+          <ButtonLink size="sm" href={SIGN_UP_URL}>
             Start free
           </ButtonLink>
         </div>
@@ -148,12 +149,12 @@ export function SiteHeader() {
                 </div>
                 <ButtonLink
                   variant="outline"
-                  href="/sign-in"
+                  href={SIGN_IN_URL}
                   onClick={() => setOpen(false)}
                 >
                   Sign in
                 </ButtonLink>
-                <ButtonLink href="/sign-up" onClick={() => setOpen(false)}>
+                <ButtonLink href={SIGN_UP_URL} onClick={() => setOpen(false)}>
                   Start free
                 </ButtonLink>
               </div>
