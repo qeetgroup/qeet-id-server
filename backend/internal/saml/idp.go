@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -38,10 +39,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/auth"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/auth"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
 const (
@@ -565,7 +566,7 @@ func (h *Handler) idpSessionUser(r *http.Request) (uuid.UUID, bool) {
 // import: the signing cert + SSO endpoints.
 func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
-		http.Error(w, "saml idp not configured", http.StatusNotImplemented)
+		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("saml idp not configured"))
 		return
 	}
 	entity := idpEntityID(r)
@@ -594,11 +595,11 @@ func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 // browser is bounced to the hosted login and returns here afterward.
 func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
-		http.Error(w, "saml idp not configured", http.StatusNotImplemented)
+		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("saml idp not configured"))
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid request"))
 		return
 	}
 	relayState := r.FormValue("RelayState")
@@ -612,7 +613,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if samlReq := r.FormValue("SAMLRequest"); samlReq != "" {
 		ar, err := decodeAuthnRequest(samlReq, r.Method)
 		if err != nil {
-			http.Error(w, "invalid SAMLRequest", http.StatusBadRequest)
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid SAMLRequest"))
 			return
 		}
 		inResponseTo = ar.ID
@@ -621,21 +622,26 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	} else if spKey := strings.TrimSpace(r.FormValue("sp")); spKey != "" {
 		sp, lookupErr = h.IdP.lookupSP(r.Context(), spKey)
 	} else {
-		http.Error(w, "missing SAMLRequest or sp parameter", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("missing SAMLRequest or sp parameter"))
 		return
 	}
 	if lookupErr != nil || sp == nil {
-		http.Error(w, "unknown service provider", http.StatusNotFound)
+		// lookupErr is errs.ErrNotFound (no rows) or a real DB error → 404/500.
+		err := lookupErr
+		if err == nil {
+			err = errs.ErrNotFound.WithDetail("unknown service provider")
+		}
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if sp.Status == "disabled" {
-		http.Error(w, "service provider disabled", http.StatusForbidden)
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("service provider disabled"))
 		return
 	}
 	// A supplied ACS URL must match the registered one (prevents redirecting a
 	// signed assertion to an attacker-chosen endpoint).
 	if acsOverride != "" && acsOverride != sp.ACSURL {
-		http.Error(w, "AssertionConsumerServiceURL does not match registration", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("AssertionConsumerServiceURL does not match registration"))
 		return
 	}
 
@@ -648,22 +654,24 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 
 	email, name, tenantID, err := h.IdP.loadUser(r.Context(), userID)
 	if err != nil {
-		http.Error(w, "user lookup failed", http.StatusInternalServerError)
+		slog.Error("saml idp sso: user lookup", "err", err, "user", userID)
+		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
 	if tenantID != sp.TenantID {
-		http.Error(w, "user is not a member of this service provider's tenant", http.StatusForbidden)
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("user is not a member of this service provider's tenant"))
 		return
 	}
 
 	respXML, err := h.IdP.buildSignedResponse(idpEntityID(r), sp, sp.ACSURL, email, name, inResponseTo)
 	if err != nil {
-		http.Error(w, "failed to build assertion", http.StatusInternalServerError)
+		slog.Error("saml idp sso: build assertion", "err", err, "sp", sp.ID)
+		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
 	if err := h.IdP.recordIssued(r.Context(), r, sp, userID); err != nil {
-		// Audit/bookkeeping failure shouldn't block the user's SSO.
-		_ = err
+		// Audit/bookkeeping failure shouldn't block the user's SSO — log only.
+		slog.Warn("saml idp sso: record issued assertion", "err", err, "sp", sp.ID)
 	}
 	writePostForm(w, sp.ACSURL, base64.StdEncoding.EncodeToString(respXML), relayState)
 }

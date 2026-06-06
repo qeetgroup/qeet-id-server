@@ -18,7 +18,7 @@ The platform is pre-1.0; until v1.0 ships we support only the `main` branch.
 
 Report privately via one of:
 
-1. **GitHub Security Advisory** (preferred) — [Open a private advisory](https://github.com/qeetgroup/qeet-identity/security/advisories/new). GitHub will notify the maintainers and keep the conversation private.
+1. **GitHub Security Advisory** (preferred) — [Open a private advisory](https://github.com/qeetgroup/qeet-id/security/advisories/new). GitHub will notify the maintainers and keep the conversation private.
 2. **Email** — `security@qeetid.com` with subject `[SECURITY] <short summary>`. PGP key available on request.
 
 Please include:
@@ -42,7 +42,7 @@ We will keep you informed throughout triage and remediation, and credit you (if 
 ## Scope
 
 **In scope:**
-- This repository (`qeet-identity`) — backend, frontend, and infrastructure code
+- This repository (`qeet-id`) — backend, frontend, and infrastructure code
 - Anything that ships from `main` to production
 - Authentication, authorization, session management, token issuance / validation, MFA, passkeys, SAML/OIDC handlers, SCIM, audit logging
 
@@ -76,7 +76,7 @@ If you are deploying Qeet ID yourself, please also:
 - Rotate the JWT signing key set every 90 days
 - Keep dependencies current — `go.mod` and `pnpm-lock.yaml` are version-pinned for reproducibility, not because they should stay stale
 - Enable WAF / DDoS protection at the edge (Cloudflare, AWS Shield)
-- Review the [GAP-ANALYSIS](./documents/GAP-ANALYSIS.md) before going to production — several v1.0 hardening items are still outstanding
+- Follow the [operations runbook](./deploy/RUNBOOK.md) for deploy, key rotation, backup/PITR, and incident response before going to production
 
 ---
 

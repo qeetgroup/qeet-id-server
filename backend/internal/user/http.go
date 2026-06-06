@@ -9,11 +9,11 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
-	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
-	"github.com/qeetgroup/qeet-identity/internal/platform/password"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/platform/outbox"
+	"github.com/qeetgroup/qeet-id/internal/platform/password"
 )
 
 type Handler struct {

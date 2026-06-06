@@ -13,11 +13,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
-	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
-	"github.com/qeetgroup/qeet-identity/internal/platform/password"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/hibp"
+	"github.com/qeetgroup/qeet-id/internal/platform/notifier"
+	"github.com/qeetgroup/qeet-id/internal/platform/password"
 )
 
 type Invite struct {

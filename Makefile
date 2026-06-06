@@ -1,11 +1,11 @@
-.PHONY: help env install dev dev-backend dev-frontend dev-admin dev-web dev-docs \
+.PHONY: help env install dev dev-backend dev-frontend dev-admin dev-web dev-login \
         build build-backend build-frontend \
         test test-backend test-frontend test-api test-api-ci \
         lint typecheck format \
         migrate-up migrate-down migrate-force \
         seed seed-reset \
         db-up db-down db-reset db-wipe db-psql \
-        kill kill-backend kill-frontend kill-admin kill-web kill-docs \
+        kill kill-backend kill-frontend kill-admin kill-web kill-login \
         clean
 
 # ── Defaults ────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ dev:                        ## Run backend + all 3 frontend apps in parallel
 dev-backend:                ## Run backend API only (:4001, from backend/.env)
 	cd backend && $(MAKE) run
 
-dev-frontend:               ## Run all 3 frontend apps (admin/web/docs)
+dev-frontend:               ## Run all 3 frontend apps (admin/web/login)
 	cd frontend && $(PNPM) dev
 
 dev-admin:                  ## Run admin dashboard only (:3002)
@@ -37,8 +37,8 @@ dev-admin:                  ## Run admin dashboard only (:3002)
 dev-web:                    ## Run marketing site only (:3001)
 	cd frontend && $(PNPM) dev:web
 
-dev-docs:                   ## Run docs site only (:3003)
-	cd frontend && $(PNPM) dev:docs
+dev-login:                  ## Run hosted login only (:3004)
+	cd frontend && $(PNPM) dev:login
 
 # ── Build ───────────────────────────────────────────────────────────────────
 build: build-backend build-frontend  ## Build backend + all frontend apps
@@ -85,7 +85,7 @@ kill: kill-backend kill-frontend  ## Stop everything (backend + all 3 frontend a
 kill-backend:               ## Stop backend (:4001)
 	$(call kill_port,4001,backend)
 
-kill-frontend: kill-admin kill-web kill-docs  ## Stop all 3 frontend dev servers
+kill-frontend: kill-admin kill-web kill-login  ## Stop all 3 frontend dev servers
 
 kill-admin:                 ## Stop admin dashboard (:3002)
 	$(call kill_port,3002,admin)
@@ -93,8 +93,8 @@ kill-admin:                 ## Stop admin dashboard (:3002)
 kill-web:                   ## Stop marketing site (:3001)
 	$(call kill_port,3001,web)
 
-kill-docs:                  ## Stop docs site (:3003)
-	$(call kill_port,3003,docs)
+kill-login:                 ## Stop hosted login (:3004)
+	$(call kill_port,3004,login)
 
 # ── Quality ─────────────────────────────────────────────────────────────────
 lint:                       ## Lint everything

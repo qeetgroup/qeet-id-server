@@ -1,4 +1,4 @@
-// Thin HTTP client around the qeet-identity Go backend.
+// Thin HTTP client around the qeet-id Go backend.
 // - Base URL comes from VITE_API_URL (defaults to http://localhost:4001).
 // - The access token from a successful signup/login is persisted under
 //   localStorage["qeetid.access_token"] and attached as Bearer on every call.

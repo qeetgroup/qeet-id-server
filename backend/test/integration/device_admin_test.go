@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-identity/internal/oidc"
+	"github.com/qeetgroup/qeet-id/internal/oidc"
 )
 
 // TestDeviceAdminListAndRevoke proves the admin device-visibility surface: a

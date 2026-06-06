@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,11 +29,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
-	"github.com/qeetgroup/qeet-identity/internal/user"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/user"
 )
 
 const (
@@ -460,7 +461,9 @@ func tenantFromCtx(ctx context.Context) (uuid.UUID, bool) {
 func writeSCIM(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", scimContentType)
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Warn("scim: encode response", "err", err, "status", status)
+	}
 }
 
 func writeSCIMErr(w http.ResponseWriter, status int, detail string) {

@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -31,11 +32,11 @@ import (
 	saml2 "github.com/russellhaering/gosaml2"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/auth"
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/auth"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
 const (
@@ -579,15 +580,20 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- public SSO ceremony ---
+//
+// These endpoints are browser/IdP-facing. Success paths return SAML XML or a
+// 302 redirect (kept as-is). Error paths emit the standard JSON error envelope
+// via httpx.WriteError — consistent with the rest of the API and carrying a
+// request_id for support — rather than bare http.Error plain text.
 
 func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
 	if _, err := h.Service.getByID(r.Context(), id); err != nil {
-		http.Error(w, "connection not found", http.StatusNotFound)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -605,26 +611,28 @@ func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
 	conn, err := h.Service.getByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, "connection not found", http.StatusNotFound)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if conn.Status == "disabled" {
-		http.Error(w, "connection disabled", http.StatusForbidden)
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("connection disabled"))
 		return
 	}
 	sp, err := h.Service.buildSP(r, conn)
 	if err != nil {
-		http.Error(w, "connection misconfigured", http.StatusInternalServerError)
+		slog.Error("saml login: build SP", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternal.WithDetail("connection misconfigured"))
 		return
 	}
 	authURL, err := sp.BuildAuthURL(r.URL.Query().Get("relay"))
 	if err != nil {
-		http.Error(w, "failed to build SAML request", http.StatusInternalServerError)
+		slog.Error("saml login: build auth url", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
 	http.Redirect(w, r, authURL, http.StatusFound)
@@ -633,39 +641,43 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
 	conn, err := h.Service.getByID(r.Context(), id)
 	if err != nil {
-		http.Error(w, "connection not found", http.StatusNotFound)
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if conn.Status == "disabled" {
-		http.Error(w, "connection disabled", http.StatusForbidden)
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("connection disabled"))
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
 		return
 	}
 	encoded := r.PostFormValue("SAMLResponse")
 	if encoded == "" {
-		http.Error(w, "missing SAMLResponse", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("missing SAMLResponse"))
 		return
 	}
 	sp, err := h.Service.buildSP(r, conn)
 	if err != nil {
-		http.Error(w, "connection misconfigured", http.StatusInternalServerError)
+		slog.Error("saml acs: build SP", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternal.WithDetail("connection misconfigured"))
 		return
 	}
 	info, err := sp.RetrieveAssertionInfo(encoded)
 	if err != nil {
-		http.Error(w, "assertion validation failed", http.StatusUnauthorized)
+		slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("assertion validation failed"))
 		return
 	}
 	if info.WarningInfo != nil && (info.WarningInfo.InvalidTime || info.WarningInfo.NotInAudience) {
-		http.Error(w, "assertion conditions not met", http.StatusUnauthorized)
+		slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
+			"invalid_time", info.WarningInfo.InvalidTime, "not_in_audience", info.WarningInfo.NotInAudience)
+		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("assertion conditions not met"))
 		return
 	}
 
@@ -677,7 +689,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
-		http.Error(w, "assertion did not yield an email", http.StatusBadRequest)
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("assertion did not yield an email"))
 		return
 	}
 	name := ""
@@ -688,20 +700,23 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, info.NameID, email, name)
 	if err != nil {
-		http.Error(w, "provisioning failed", http.StatusInternalServerError)
+		slog.Error("saml acs: provisioning failed", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
 
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		slog.Error("saml acs: generate login code", "err", err)
+		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
 	if _, err := h.Service.Pool().Exec(ctx, `
 		INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at)
 		VALUES ($1, $2, $3, $4)
 	`, codeHash, userID, conn.TenantID, time.Now().UTC().Add(loginCodeTTL)); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		slog.Error("saml acs: persist login code", "err", err)
+		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
 	_, _ = h.Service.Pool().Exec(ctx, `UPDATE tenant.saml_connections SET last_login_at = NOW() WHERE id = $1`, conn.ID)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	stdhttp "net/http"
 	"os"
@@ -19,48 +20,50 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/qeetgroup/qeet-identity/internal/analytics"
-	"github.com/qeetgroup/qeet-identity/internal/apikey"
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/auth"
-	"github.com/qeetgroup/qeet-identity/internal/authpolicy"
-	"github.com/qeetgroup/qeet-identity/internal/billing"
-	"github.com/qeetgroup/qeet-identity/internal/branding"
-	"github.com/qeetgroup/qeet-identity/internal/config"
-	"github.com/qeetgroup/qeet-identity/internal/emailtemplate"
-	"github.com/qeetgroup/qeet-identity/internal/gdpr"
-	"github.com/qeetgroup/qeet-identity/internal/group"
-	httpapi "github.com/qeetgroup/qeet-identity/internal/http"
-	"github.com/qeetgroup/qeet-identity/internal/invite"
-	"github.com/qeetgroup/qeet-identity/internal/ipallow"
-	"github.com/qeetgroup/qeet-identity/internal/ldap"
-	"github.com/qeetgroup/qeet-identity/internal/mfa"
-	"github.com/qeetgroup/qeet-identity/internal/oidc"
-	"github.com/qeetgroup/qeet-identity/internal/passkey"
-	"github.com/qeetgroup/qeet-identity/internal/platform/db"
-	"github.com/qeetgroup/qeet-identity/internal/platform/health"
-	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
-	"github.com/qeetgroup/qeet-identity/internal/platform/logger"
-	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
-	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
-	"github.com/qeetgroup/qeet-identity/internal/platform/ratelimit"
-	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
-	"github.com/qeetgroup/qeet-identity/internal/platform/tracing"
-	"github.com/qeetgroup/qeet-identity/internal/platform/worker"
-	"github.com/qeetgroup/qeet-identity/internal/policy"
-	"github.com/qeetgroup/qeet-identity/internal/principal"
-	"github.com/qeetgroup/qeet-identity/internal/rbac"
-	"github.com/qeetgroup/qeet-identity/internal/recovery"
-	"github.com/qeetgroup/qeet-identity/internal/retention"
-	"github.com/qeetgroup/qeet-identity/internal/saml"
-	"github.com/qeetgroup/qeet-identity/internal/scim"
-	"github.com/qeetgroup/qeet-identity/internal/secret"
-	"github.com/qeetgroup/qeet-identity/internal/social"
-	"github.com/qeetgroup/qeet-identity/internal/tenant"
-	"github.com/qeetgroup/qeet-identity/internal/user"
-	"github.com/qeetgroup/qeet-identity/internal/verification"
-	"github.com/qeetgroup/qeet-identity/internal/webhook"
+	"github.com/qeetgroup/qeet-id/internal/analytics"
+	"github.com/qeetgroup/qeet-id/internal/apikey"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/auth"
+	"github.com/qeetgroup/qeet-id/internal/authpolicy"
+	"github.com/qeetgroup/qeet-id/internal/billing"
+	"github.com/qeetgroup/qeet-id/internal/branding"
+	"github.com/qeetgroup/qeet-id/internal/config"
+	"github.com/qeetgroup/qeet-id/internal/emailtemplate"
+	"github.com/qeetgroup/qeet-id/internal/gdpr"
+	"github.com/qeetgroup/qeet-id/internal/group"
+	httpapi "github.com/qeetgroup/qeet-id/internal/http"
+	"github.com/qeetgroup/qeet-id/internal/invite"
+	"github.com/qeetgroup/qeet-id/internal/ipallow"
+	"github.com/qeetgroup/qeet-id/internal/ldap"
+	"github.com/qeetgroup/qeet-id/internal/mfa"
+	"github.com/qeetgroup/qeet-id/internal/oidc"
+	"github.com/qeetgroup/qeet-id/internal/passkey"
+	"github.com/qeetgroup/qeet-id/internal/platform/buildinfo"
+	"github.com/qeetgroup/qeet-id/internal/platform/db"
+	"github.com/qeetgroup/qeet-id/internal/platform/health"
+	"github.com/qeetgroup/qeet-id/internal/platform/hibp"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/platform/logger"
+	"github.com/qeetgroup/qeet-id/internal/platform/metrics"
+	"github.com/qeetgroup/qeet-id/internal/platform/notifier"
+	"github.com/qeetgroup/qeet-id/internal/platform/outbox"
+	"github.com/qeetgroup/qeet-id/internal/platform/ratelimit"
+	"github.com/qeetgroup/qeet-id/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-id/internal/platform/tracing"
+	"github.com/qeetgroup/qeet-id/internal/platform/worker"
+	"github.com/qeetgroup/qeet-id/internal/policy"
+	"github.com/qeetgroup/qeet-id/internal/principal"
+	"github.com/qeetgroup/qeet-id/internal/rbac"
+	"github.com/qeetgroup/qeet-id/internal/recovery"
+	"github.com/qeetgroup/qeet-id/internal/retention"
+	"github.com/qeetgroup/qeet-id/internal/saml"
+	"github.com/qeetgroup/qeet-id/internal/scim"
+	"github.com/qeetgroup/qeet-id/internal/secret"
+	"github.com/qeetgroup/qeet-id/internal/social"
+	"github.com/qeetgroup/qeet-id/internal/tenant"
+	"github.com/qeetgroup/qeet-id/internal/user"
+	"github.com/qeetgroup/qeet-id/internal/verification"
+	"github.com/qeetgroup/qeet-id/internal/webhook"
 )
 
 func parseLogLevel(s string) slog.Level {
@@ -100,6 +103,10 @@ func main() {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
 	slog.SetDefault(slog.New(logger.NewRedactingHandler(handler)))
+
+	bi := buildinfo.Get()
+	slog.Info("starting", "service", cfg.ServiceName, "version", bi.Version, "commit", bi.Commit, "built", bi.Date, "go", bi.GoVersion)
+	metrics.SetBuildInfo(bi.Version, bi.Commit, bi.GoVersion)
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -321,26 +328,15 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
-	// Secrets-vault data key: a dedicated key from SECRETS_KEY (independent of
-	// JWT_SECRET), or an ephemeral key in dev when unset. Wrapped in a
-	// KeyProvider so an AWS KMS provider can drop in later (see secret pkg).
-	var secretsKey []byte
-	if cfg.SecretsKey != "" {
-		secretsKey, err = base64.StdEncoding.DecodeString(cfg.SecretsKey)
-		if err != nil {
-			slog.Error("SECRETS_KEY must be base64", "err", err)
-			os.Exit(1)
-		}
-	} else {
-		// Reached only in dev — Validate() requires SECRETS_KEY otherwise.
-		secretsKey = make([]byte, 32)
-		if _, err := rand.Read(secretsKey); err != nil {
-			slog.Error("generate ephemeral secrets key", "err", err)
-			os.Exit(1)
-		}
-		slog.Warn("SECRETS_KEY unset — generated an ephemeral vault key; stored secrets will not survive a restart (dev only)")
+	// Secrets-vault data key: sourced per SECRETS_PROVIDER (static SECRETS_KEY,
+	// AWS KMS, or an ephemeral dev key). Validate() guarantees the required
+	// inputs are present outside dev.
+	keyProvider, err := secretsKeyProvider(rootCtx, cfg)
+	if err != nil {
+		slog.Error("init secrets key provider", "err", err)
+		os.Exit(1)
 	}
-	secretService, err := secret.NewService(rootCtx, pool, secret.StaticKeyProvider{Key: secretsKey})
+	secretService, err := secret.NewService(rootCtx, pool, keyProvider)
 	if err != nil {
 		slog.Error("init secrets vault", "err", err)
 		os.Exit(1)
@@ -444,4 +440,36 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		{name: "retention", run: retentionService.Run},
 	}
 	return deps, workers
+}
+
+// secretsKeyProvider builds the vault data-key provider selected by
+// SECRETS_PROVIDER. "static" decodes SECRETS_KEY (or generates an ephemeral key
+// in dev when unset); "aws-kms" unwraps the DEK from AWS KMS at boot.
+func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
+	switch cfg.SecretsProvider {
+	case "aws-kms":
+		blob, err := base64.StdEncoding.DecodeString(cfg.SecretsWrappedDEK)
+		if err != nil {
+			return nil, fmt.Errorf("SECRETS_WRAPPED_DEK must be base64: %w", err)
+		}
+		slog.Info("secrets vault key via AWS KMS", "key_id", cfg.KMSKeyID)
+		return secret.NewAWSKMSProvider(ctx, cfg.KMSKeyID, blob)
+	case "", "static":
+		if cfg.SecretsKey != "" {
+			key, err := base64.StdEncoding.DecodeString(cfg.SecretsKey)
+			if err != nil {
+				return nil, fmt.Errorf("SECRETS_KEY must be base64: %w", err)
+			}
+			return secret.StaticKeyProvider{Key: key}, nil
+		}
+		// Reached only in dev — Validate() requires SECRETS_KEY otherwise.
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, fmt.Errorf("generate ephemeral secrets key: %w", err)
+		}
+		slog.Warn("SECRETS_KEY unset — generated an ephemeral vault key; stored secrets will not survive a restart (dev only)")
+		return secret.StaticKeyProvider{Key: key}, nil
+	default:
+		return nil, fmt.Errorf("unknown SECRETS_PROVIDER %q (want \"static\" or \"aws-kms\")", cfg.SecretsProvider)
+	}
 }

@@ -9,7 +9,7 @@ import tseslint from "typescript-eslint";
 
 const nextFiles = [
   "apps/qeetid-web/**/*.{js,jsx,ts,tsx,mjs,cjs}",
-  "apps/qeetid-docs/**/*.{js,jsx,ts,tsx,mjs,cjs}",
+  "apps/qeetid-login/**/*.{js,jsx,ts,tsx,mjs,cjs}",
 ];
 
 // WCAG 2.2 AA guardrail — jsx-a11y/recommended is enforced (as errors) ONLY on

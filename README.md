@@ -4,16 +4,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-This monorepo contains the full Qeet ID identity platform: a Go modular-monolith backend, three frontend apps (admin dashboard, marketing site, docs), and a shared UI component library.
+This monorepo contains the full Qeet ID identity platform: a Go modular-monolith backend and three frontend apps (admin dashboard, marketing site, hosted login). UI primitives come from the shared `@qeetrix/*` design system. (End-user docs now live in the standalone multi-product `qeet-docs` site, no longer in this repo.)
 
 > **Status:** pre-1.0, but substantially built out — **~88% of the v1 product surface is implemented and working.**
 >
 > | Surface | Completion |
 > | --- | --- |
-> | Backend API — 28 domain modules, 40 migrations, **no stubbed endpoints** | ~90% |
+> | Backend API — 28 domain modules, 48 migrations, **no stubbed endpoints** | ~90% |
 > | Admin console — **56 / 63 feature screens wired to live APIs** | ~89% |
 > | Marketing site (`qeetid-web`) | ✅ complete |
-> | Docs site (`qeetid-docs`) | ✅ complete |
+> | Hosted login (`qeetid-login`) | ✅ complete |
 >
 > Remaining work is mostly net-new feature areas (automation, threat-detection, secrets vault), informational compliance pages, and production hardening (real email/SMS delivery, stronger crypto). Full breakdown in [Feature status](#feature-status).
 
@@ -22,25 +22,26 @@ This monorepo contains the full Qeet ID identity platform: a Go modular-monolith
 ## Repository layout
 
 ```
-qeet-identity/
+qeet-id/
 ├── backend/                Go API server (chi + pgx + PostgreSQL)
 │   ├── api/
 │   │   ├── openapi.yaml    OpenAPI 3.x specification
 │   │   └── postman/        Postman collection + Newman runner
 │   ├── cmd/server/         Service entrypoint
 │   ├── internal/           28 domain modules (auth, oidc, rbac, mfa, saml, scim, ldap, billing, secret, …)
-│   ├── migrations/         39 SQL migrations (golang-migrate)
+│   ├── migrations/         48 SQL migrations (golang-migrate)
+│   ├── Dockerfile(.migrate) Distroless app image + migration runner
 │   └── Makefile            Backend build / test / migrate targets
 ├── frontend/               pnpm + Turborepo workspace
 │   ├── apps/
 │   │   ├── qeetid-admin/   Admin dashboard (Vite + TanStack Router)
 │   │   ├── qeetid-web/     Marketing site (Next.js)
-│   │   └── qeetid-docs/    Docs site (Next.js + fumadocs)
+│   │   └── qeetid-login/   Hosted login (Next.js)
 │   └── packages/
-│       ├── qeetid-ui/         Shared shadcn-style components
 │       ├── qeetid-tsconfig/   Shared TypeScript configs
-│       └── qeetid-eslint/     Shared ESLint config
-├── docker-compose.yml      Whole-stack (Postgres + backend, opt-in frontend)
+│       ├── qeetid-eslint/     Shared ESLint config
+│       └── qeetid-{sdk,nextjs,react}/  TypeScript SDKs
+├── deploy/                 Compose (prod), Helm chart, observability, RUNBOOK
 └── Makefile                Root targets that delegate into backend/ + frontend/
 ```
 
@@ -50,7 +51,7 @@ qeet-identity/
 
 ### Prerequisites
 
-- **Go** ≥ 1.22
+- **Go** ≥ 1.25
 - **Node.js** ≥ 20 with `pnpm` ≥ 9.15.4
 - **Docker** & **Docker Compose** (for PostgreSQL)
 - **golang-migrate** CLI ([install](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate))
@@ -87,16 +88,20 @@ Or run pieces individually:
 | `make dev-backend`  | Go API                                | <http://localhost:4000>                        |
 | `make dev-admin`    | Admin dashboard (Vite + TanStack)     | <http://localhost:3002>                        |
 | `make dev-web`      | Marketing site (Next.js)              | <http://localhost:3001>                        |
-| `make dev-docs`     | Docs site (Next.js + fumadocs)        | <http://localhost:3003>                        |
+| `make dev-login`    | Hosted login (Next.js)                | <http://localhost:3004>                        |
 
 Sanity check the API: `curl http://localhost:4000/healthz`.
 
-### Docker-only path (no Go toolchain)
+### Containerised paths
 
 ```bash
-docker compose up -d      # Postgres :5001 + backend :4001
-docker compose --profile frontend up    # also runs all 3 frontend containers
+make db-up                # backend/docker-compose.yml — Postgres only (dev)
 ```
+
+For a production-shaped stack (backend + Postgres + Redis + TLS proxy + migration
+one-shot) use the Compose file under [deploy/compose/](./deploy/compose/); the Helm
+chart in [deploy/helm/qeet-id/](./deploy/helm/qeet-id/) is the Kubernetes target. See
+[deploy/RUNBOOK.md](./deploy/RUNBOOK.md).
 
 See the full target list with `make help` or in [Makefile](./Makefile).
 
@@ -181,7 +186,14 @@ CI-style API run with JUnit + HTML reports: `make test-api-ci` (artifacts land u
 
 - [x] Admin dashboard (Vite + TanStack Router)
 - [x] Marketing site (Next.js)
-- [x] Docs site (Next.js + fumadocs, AI search)
+- [x] Hosted login (Next.js)
+
+> End-user docs moved to the standalone multi-product `qeet-docs` site (docs.qeet.in).
+
+Also shipped since this list was first written: **SAML IdP mode** (alongside SP),
+**SCIM Groups**, **MFA WebAuthn/step-up**, **OAuth Device grant**, and **crypto
+hardening** — Argon2id hashing + ES256/JWKS signing with key rotation. Real SMTP/Twilio
+delivery is wired (log-only fallback when unconfigured).
 
 ### 🔜 Planned / not yet implemented
 
@@ -189,9 +201,7 @@ CI-style API run with JUnit + HTML reports: `make test-api-ci` (artifacts land u
 - [ ] **Infrastructure** management — regions, nodes, scaling
 - [ ] **Threat-protection dashboards** — bot detection, anomaly detection, adaptive rate limits
 - [ ] **Compliance evidence pages** — SOC 2, ISO 27001 (reporting / export)
-- [ ] Production **email / SMS delivery** — `Sender` is log-only today; pluggable for SendGrid / Twilio / Resend
-- [ ] **SAML IdP mode** (SP is done) and **SCIM Groups**
-- [ ] **Crypto hardening** — Argon2id password hashing, RS256/ES256 JWT signing + key rotation
+- [ ] **Token exchange / CIBA**, **ReBAC**
 
 ---
 
@@ -205,18 +215,17 @@ Product requirements are published upstream at [qeetgroup/qeetify · qeetify-req
 
 **Backend**
 
-- Go 1.22, `chi/v5` router, `pgx/v5` PostgreSQL driver
-- `golang-jwt/jwt/v5`, `golang.org/x/crypto` (bcrypt — migrating to Argon2id)
+- Go 1.25, `chi/v5` router, `pgx/v5` PostgreSQL driver
+- `golang-jwt/jwt/v5` (ES256 + JWKS, key rotation), `golang.org/x/crypto` (Argon2id, bcrypt-verify fallback)
 - In-house TOTP (RFC 6238), HMAC, token codes
 - Transactional outbox for event publishing, with DLQ + webhook dispatcher
 
 **Frontend**
 
 - React 19 across all apps
-- Admin: Vite 8 + TanStack Router 1.170 + TanStack Query + TanStack Form + TanStack Table
-- Web + Docs: Next.js 16
-- Docs: fumadocs + Flexsearch + AI search (OpenRouter)
-- Tailwind 4, shadcn-style components built on Base UI
+- Admin: Vite + TanStack Router + TanStack Query + TanStack Form + TanStack Table
+- Web + Login: Next.js 16
+- Tailwind 4 + the shared `@qeetrix/*` design system (Base UI / shadcn-style)
 - Workspace: pnpm 9.15 + Turborepo 2.9
 
 **Infrastructure**
@@ -230,21 +239,18 @@ Product requirements are published upstream at [qeetgroup/qeetify · qeetify-req
 
 - **Implementation status** — [Feature status](#feature-status)
 - **Backend module guide** — [backend/README.md](./backend/README.md)
-- **End-user docs** — `make dev-docs` → <http://localhost:3003>
+- **Architecture & conventions** — [backend/ARCHITECTURE.md](./backend/ARCHITECTURE.md)
+- **Deploy & operations** — [deploy/RUNBOOK.md](./deploy/RUNBOOK.md)
+- **End-user docs** — standalone `qeet-docs` site (docs.qeet.in)
 - **API spec (in progress)** — [backend/api/openapi.yaml](./backend/api/openapi.yaml)
-- **Postman collection** — [backend/api/qeet-identity.postman_collection.json](./backend/api/qeet-identity.postman_collection.json)
+- **Postman collection** — [backend/api/postman/qeet-id.postman_collection.json](./backend/api/postman/qeet-id.postman_collection.json)
 
 ---
 
 ## For AI assistants
 
-This repo has a Claude-flavoured operational layer:
-
 - [CLAUDE.md](./CLAUDE.md) — top-level brief for any AI assistant working in this codebase.
-- [.claude/rules/](./.claude/rules/) — topic-scoped rules (backend, frontend, database, security, api, testing, git-workflow, docs).
-- [.claude/skills/](./.claude/skills/) — workflow skills (`add-endpoint`, `release-readiness`, `gap-fill`).
-- [.claude/commands/](./.claude/commands/) — slash commands (`/routes`, `/migration-new`, `/module-new`, `/feature-status`, `/api-test`, `/audit-check`).
-- [.claude/agents/](./.claude/agents/) — review agent (`qeetid-reviewer`) wired into the PR flow.
+- [backend/ARCHITECTURE.md](./backend/ARCHITECTURE.md) — backend conventions new code must follow.
 
 Read [CLAUDE.md](./CLAUDE.md) before making changes if you're a model. Humans see [CONTRIBUTING.md](./CONTRIBUTING.md).
 

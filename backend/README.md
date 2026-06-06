@@ -1,4 +1,4 @@
-# qeet-identity backend
+# qeet-id backend
 
 Go modular monolith for the Qeet ID identity platform. Single Go service,
 single Postgres database with one schema per bounded context. Each context

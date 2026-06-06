@@ -17,9 +17,9 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-identity/internal/auth"
-	"github.com/qeetgroup/qeet-identity/internal/oidc"
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/auth"
+	"github.com/qeetgroup/qeet-id/internal/oidc"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
 )
 
 // =====================================================================

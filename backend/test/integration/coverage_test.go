@@ -16,17 +16,17 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-identity/internal/mfa"
-	"github.com/qeetgroup/qeet-identity/internal/oidc"
-	"github.com/qeetgroup/qeet-identity/internal/passkey"
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
-	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
-	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
-	"github.com/qeetgroup/qeet-identity/internal/platform/totp"
-	"github.com/qeetgroup/qeet-identity/internal/recovery"
-	"github.com/qeetgroup/qeet-identity/internal/verification"
+	"github.com/qeetgroup/qeet-id/internal/mfa"
+	"github.com/qeetgroup/qeet-id/internal/oidc"
+	"github.com/qeetgroup/qeet-id/internal/passkey"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/platform/notifier"
+	"github.com/qeetgroup/qeet-id/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-id/internal/platform/totp"
+	"github.com/qeetgroup/qeet-id/internal/recovery"
+	"github.com/qeetgroup/qeet-id/internal/verification"
 )
 
 // recordSender captures the last notifier message so flows that mail a code
