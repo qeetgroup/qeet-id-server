@@ -22,7 +22,7 @@ This monorepo contains the full Qeet ID identity platform: a Go modular-monolith
 ## Repository layout
 
 ```
-qeet-identity/
+qeet-id/
 ├── backend/                Go API server (chi + pgx + PostgreSQL)
 │   ├── api/
 │   │   ├── openapi.yaml    OpenAPI 3.x specification
@@ -232,7 +232,7 @@ Product requirements are published upstream at [qeetgroup/qeetify · qeetify-req
 - **Backend module guide** — [backend/README.md](./backend/README.md)
 - **End-user docs** — `make dev-docs` → <http://localhost:3003>
 - **API spec (in progress)** — [backend/api/openapi.yaml](./backend/api/openapi.yaml)
-- **Postman collection** — [backend/api/qeet-identity.postman_collection.json](./backend/api/qeet-identity.postman_collection.json)
+- **Postman collection** — [backend/api/qeet-id.postman_collection.json](./backend/api/qeet-id.postman_collection.json)
 
 ---
 

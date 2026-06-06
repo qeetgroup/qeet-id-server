@@ -11,7 +11,7 @@ import (
 )
 
 func newHandler() *Handler {
-	return New("qeet-identity", "test", time.Now().Add(-5*time.Second))
+	return New("qeet-id", "test", time.Now().Add(-5*time.Second))
 }
 
 func decode(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
@@ -41,7 +41,7 @@ func TestLiveness_AlwaysOK(t *testing.T) {
 	if body["status"] != "ok" {
 		t.Errorf("status = %v, want ok", body["status"])
 	}
-	if body["service"] != "qeet-identity" {
+	if body["service"] != "qeet-id" {
 		t.Errorf("service = %v", body["service"])
 	}
 }

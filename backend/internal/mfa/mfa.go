@@ -21,18 +21,18 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
-	"github.com/qeetgroup/qeet-identity/internal/platform/notifier"
-	"github.com/qeetgroup/qeet-identity/internal/platform/password"
-	"github.com/qeetgroup/qeet-identity/internal/platform/totp"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/platform/notifier"
+	"github.com/qeetgroup/qeet-id/internal/platform/password"
+	"github.com/qeetgroup/qeet-id/internal/platform/totp"
 )
 
 type Service struct {
 	pool   *pgxpool.Pool
-	issuer string // "qeet-identity" — shown in the authenticator app
+	issuer string // "qeet-id" — shown in the authenticator app
 	sender notifier.Sender
 }
 

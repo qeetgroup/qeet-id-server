@@ -1,4 +1,4 @@
-// Package errs defines the canonical error vocabulary for qeet-identity.
+// Package errs defines the canonical error vocabulary for qeet-id.
 // Each error carries a stable code that the HTTP layer maps to a status.
 package errs
 

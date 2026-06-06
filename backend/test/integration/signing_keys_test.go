@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-identity/internal/oidc"
+	"github.com/qeetgroup/qeet-id/internal/oidc"
 )
 
 // TestSigningKeysEndpoint proves GET /v1/oidc/signing-keys returns the issuer's

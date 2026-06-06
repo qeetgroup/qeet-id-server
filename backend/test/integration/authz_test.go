@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-identity/internal/gdpr"
-	"github.com/qeetgroup/qeet-identity/internal/rbac"
+	"github.com/qeetgroup/qeet-id/internal/gdpr"
+	"github.com/qeetgroup/qeet-id/internal/rbac"
 )
 
 func createUserInTenant(t *testing.T, ctx context.Context, tenantID uuid.UUID) uuid.UUID {

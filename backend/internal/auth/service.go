@@ -14,14 +14,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
-	"github.com/qeetgroup/qeet-identity/internal/platform/outbox"
-	"github.com/qeetgroup/qeet-identity/internal/platform/password"
-	"github.com/qeetgroup/qeet-identity/internal/platform/pgxerr"
-	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
-	"github.com/qeetgroup/qeet-identity/internal/user"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/hibp"
+	"github.com/qeetgroup/qeet-id/internal/platform/outbox"
+	"github.com/qeetgroup/qeet-id/internal/platform/password"
+	"github.com/qeetgroup/qeet-id/internal/platform/pgxerr"
+	"github.com/qeetgroup/qeet-id/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-id/internal/user"
 )
 
 type Service struct {

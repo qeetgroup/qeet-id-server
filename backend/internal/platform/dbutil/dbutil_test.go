@@ -3,7 +3,7 @@ package dbutil_test
 import (
 	"testing"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/dbutil"
+	"github.com/qeetgroup/qeet-id/internal/platform/dbutil"
 )
 
 func TestUpdateBuilder(t *testing.T) {

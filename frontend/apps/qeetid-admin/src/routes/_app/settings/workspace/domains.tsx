@@ -80,7 +80,7 @@ function DomainsPage() {
             <p className="text-muted-foreground">
               Saving here only persists the hostname. The 4-step DNS-verification + ACM-provisioning
               wizard is on the Phase 3 admin spec — see <code>documents/IMPLEMENTATION-STATUS.md</code>.
-              Today you must front qeet-identity with your own reverse proxy.
+              Today you must front qeet-id with your own reverse proxy.
             </p>
           </div>
         </CardContent>
