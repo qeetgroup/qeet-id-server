@@ -39,7 +39,7 @@ export function useLogin() {
       tokenStore.setRefresh(pair.refresh_token);
       if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
       tokenStore.setUserId(pair.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
   });
 }
@@ -64,7 +64,7 @@ export function useConsumeMagicLink() {
       tokenStore.setRefresh(pair.refresh_token);
       if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
       tokenStore.setUserId(pair.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
     // The /magic page surfaces the error inline; no global toast.
     meta: { silent: true },
@@ -91,7 +91,7 @@ export function useConsumeSamlCode() {
       tokenStore.setRefresh(pair.refresh_token);
       if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
       tokenStore.setUserId(pair.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
     meta: { silent: true },
   });
@@ -136,7 +136,7 @@ export function useSignup() {
       tokenStore.set(res.access_token);
       tokenStore.setRefresh(res.refresh_token);
       tokenStore.setUserId(res.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
   });
 }
@@ -150,7 +150,7 @@ export async function switchToTenant(tenantId: string): Promise<void> {
   tokenStore.set(res.access_token);
   tokenStore.setRefresh(res.refresh_token);
   tokenStore.setTenantId(res.tenant_id);
-  if (typeof window !== "undefined") window.location.assign("/dashboard");
+  if (typeof window !== "undefined") window.location.assign("/");
 }
 
 export function useLogout() {

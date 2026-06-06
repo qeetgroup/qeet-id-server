@@ -363,7 +363,7 @@ function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetP
         tokenStore.setRefresh(res.refresh_token);
       }
       tokenStore.setTenantId(res.tenant_id);
-      window.location.assign("/dashboard");
+      window.location.assign("/");
     },
     meta: { successMessage: "Workspace created" },
   });

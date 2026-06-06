@@ -13,7 +13,7 @@ function AuthLayout() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      navigate({ to: "/dashboard", replace: true });
+      navigate({ to: "/", replace: true });
     }
   }, [navigate]);
 

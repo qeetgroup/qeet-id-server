@@ -12,7 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as AuthRouteImport } from './routes/_auth'
 import { Route as AppRouteImport } from './routes/_app'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AccountSessionsRouteImport } from './routes/account/sessions'
 import { Route as AccountSecurityRouteImport } from './routes/account/security'
 import { Route as AccountProfileRouteImport } from './routes/account/profile'
@@ -23,7 +23,6 @@ import { Route as AuthMagicRouteImport } from './routes/_auth/magic'
 import { Route as AuthForgotPasswordRouteImport } from './routes/_auth/forgot-password'
 import { Route as AppInvitationsRouteImport } from './routes/_app/invitations'
 import { Route as AppGroupsRouteImport } from './routes/_app/groups'
-import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppAnalyticsRouteImport } from './routes/_app/analytics'
 import { Route as AppActivityRouteImport } from './routes/_app/activity'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
@@ -98,10 +97,10 @@ const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
+const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
 const AccountSessionsRoute = AccountSessionsRouteImport.update({
   id: '/sessions',
@@ -151,11 +150,6 @@ const AppInvitationsRoute = AppInvitationsRouteImport.update({
 const AppGroupsRoute = AppGroupsRouteImport.update({
   id: '/groups',
   path: '/groups',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppDashboardRoute = AppDashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAnalyticsRoute = AppAnalyticsRouteImport.update({
@@ -479,12 +473,11 @@ const AppAuthConnectionsOidcClientIdRoute =
   } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
   '/account': typeof AccountRouteWithChildren
   '/$': typeof AppSplatRoute
   '/activity': typeof AppActivityRoute
   '/analytics': typeof AppAnalyticsRoute
-  '/dashboard': typeof AppDashboardRoute
   '/groups': typeof AppGroupsRouteWithChildren
   '/invitations': typeof AppInvitationsRoute
   '/forgot-password': typeof AuthForgotPasswordRoute
@@ -554,12 +547,11 @@ export interface FileRoutesByFullPath {
   '/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
   '/account': typeof AccountRouteWithChildren
   '/$': typeof AppSplatRoute
   '/activity': typeof AppActivityRoute
   '/analytics': typeof AppAnalyticsRoute
-  '/dashboard': typeof AppDashboardRoute
   '/groups': typeof AppGroupsRouteWithChildren
   '/invitations': typeof AppInvitationsRoute
   '/forgot-password': typeof AuthForgotPasswordRoute
@@ -630,14 +622,12 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/_auth': typeof AuthRouteWithChildren
   '/account': typeof AccountRouteWithChildren
   '/_app/$': typeof AppSplatRoute
   '/_app/activity': typeof AppActivityRoute
   '/_app/analytics': typeof AppAnalyticsRoute
-  '/_app/dashboard': typeof AppDashboardRoute
   '/_app/groups': typeof AppGroupsRouteWithChildren
   '/_app/invitations': typeof AppInvitationsRoute
   '/_auth/forgot-password': typeof AuthForgotPasswordRoute
@@ -648,6 +638,7 @@ export interface FileRoutesById {
   '/account/profile': typeof AccountProfileRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/sessions': typeof AccountSessionsRoute
+  '/_app/': typeof AppIndexRoute
   '/_app/access/check': typeof AppAccessCheckRoute
   '/_app/access/permissions': typeof AppAccessPermissionsRoute
   '/_app/access/policies': typeof AppAccessPoliciesRoute
@@ -714,7 +705,6 @@ export interface FileRouteTypes {
     | '/$'
     | '/activity'
     | '/analytics'
-    | '/dashboard'
     | '/groups'
     | '/invitations'
     | '/forgot-password'
@@ -789,7 +779,6 @@ export interface FileRouteTypes {
     | '/$'
     | '/activity'
     | '/analytics'
-    | '/dashboard'
     | '/groups'
     | '/invitations'
     | '/forgot-password'
@@ -859,14 +848,12 @@ export interface FileRouteTypes {
     | '/auth/connections/oidc/$clientId'
   id:
     | '__root__'
-    | '/'
     | '/_app'
     | '/_auth'
     | '/account'
     | '/_app/$'
     | '/_app/activity'
     | '/_app/analytics'
-    | '/_app/dashboard'
     | '/_app/groups'
     | '/_app/invitations'
     | '/_auth/forgot-password'
@@ -877,6 +864,7 @@ export interface FileRouteTypes {
     | '/account/profile'
     | '/account/security'
     | '/account/sessions'
+    | '/_app/'
     | '/_app/access/check'
     | '/_app/access/permissions'
     | '/_app/access/policies'
@@ -937,7 +925,6 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRouteWithChildren
   AccountRoute: typeof AccountRouteWithChildren
@@ -966,12 +953,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
     }
     '/account/sessions': {
       id: '/account/sessions'
@@ -1041,13 +1028,6 @@ declare module '@tanstack/react-router' {
       path: '/groups'
       fullPath: '/groups'
       preLoaderRoute: typeof AppGroupsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/dashboard': {
-      id: '/_app/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/analytics': {
@@ -1526,9 +1506,9 @@ interface AppRouteChildren {
   AppSplatRoute: typeof AppSplatRoute
   AppActivityRoute: typeof AppActivityRoute
   AppAnalyticsRoute: typeof AppAnalyticsRoute
-  AppDashboardRoute: typeof AppDashboardRoute
   AppGroupsRoute: typeof AppGroupsRouteWithChildren
   AppInvitationsRoute: typeof AppInvitationsRoute
+  AppIndexRoute: typeof AppIndexRoute
   AppAccessCheckRoute: typeof AppAccessCheckRoute
   AppAccessPermissionsRoute: typeof AppAccessPermissionsRoute
   AppAccessPoliciesRoute: typeof AppAccessPoliciesRoute
@@ -1587,9 +1567,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppSplatRoute: AppSplatRoute,
   AppActivityRoute: AppActivityRoute,
   AppAnalyticsRoute: AppAnalyticsRoute,
-  AppDashboardRoute: AppDashboardRoute,
   AppGroupsRoute: AppGroupsRouteWithChildren,
   AppInvitationsRoute: AppInvitationsRoute,
+  AppIndexRoute: AppIndexRoute,
   AppAccessCheckRoute: AppAccessCheckRoute,
   AppAccessPermissionsRoute: AppAccessPermissionsRoute,
   AppAccessPoliciesRoute: AppAccessPoliciesRoute,
@@ -1683,7 +1663,6 @@ const AccountRouteWithChildren =
   AccountRoute._addFileChildren(AccountRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRouteWithChildren,
   AccountRoute: AccountRouteWithChildren,
