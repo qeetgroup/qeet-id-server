@@ -30,7 +30,7 @@ jobs:
         env:
           POSTGRES_USER: qeet
           POSTGRES_PASSWORD: qeet
-          POSTGRES_DB: qeet_identity
+          POSTGRES_DB: qeet_id
         ports:
           - 5001:5432
         options: >-
@@ -39,7 +39,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DB_URL: postgres://qeet:qeet@localhost:5001/qeet_identity?sslmode=disable
+      DB_URL: postgres://qeet:qeet@localhost:5001/qeet_id?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 
@@ -67,11 +67,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
       - name: go test
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
       - name: go build
-        run: go build -o bin/qeet-identity ./cmd/server
+        run: go build -o bin/qeet-id ./cmd/server
 
       - name: Migration smoke (up)
         run: make migrate-up
@@ -90,23 +95,91 @@ jobs:
           retention-days: 7
 
   # ────────────────────────────────────────────────────────────────────
-  # Container image build smoke test. Doesn't push — just proves the
-  # Dockerfile + module graph still produces a working image.
+  # Container images: always build (proves the Dockerfiles still work); on
+  # push to main/develop, also push app + migrate images to GHCR with branch
+  # and SHA tags. Release-tag builds (semver) + signing/SBOM live in release.yml.
   # ────────────────────────────────────────────────────────────────────
   backend-image:
-    name: Backend image
+    name: Backend images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build (no push)
+
+      - name: Build date
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadata (app)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/qeet-id
+          tags: |
+            type=ref,event=branch
+            type=sha,format=long
+
+      - name: Build & push (app)
         uses: docker/build-push-action@v6
         with:
           context: backend
-          push: false
-          tags: qeet-identity:ci
+          file: backend/Dockerfile
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.date.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Metadata (migrate)
+        id: meta-migrate
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/qeet-id-migrate
+          tags: |
+            type=ref,event=branch
+            type=sha,format=long
+
+      - name: Build & push (migrate)
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.migrate
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta-migrate.outputs.tags }}
+          labels: ${{ steps.meta-migrate.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ────────────────────────────────────────────────────────────────────
+  # Secret scanning — fail the build if a credential is committed.
+  # ────────────────────────────────────────────────────────────────────
+  gitleaks:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ────────────────────────────────────────────────────────────────────
   # Frontend: install once via pnpm, then lint / typecheck / build /

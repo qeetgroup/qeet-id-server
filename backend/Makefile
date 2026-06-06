@@ -9,6 +9,17 @@ endif
 
 GO ?= go
 
+# Version metadata stamped into the binary via -ldflags. Overridable in CI
+# (e.g. VERSION from a git tag). buildinfo.Get() falls back to embedded VCS info.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+BUILDINFO = github.com/qeetgroup/qeet-id/internal/platform/buildinfo
+LDFLAGS ?= -s -w \
+	-X $(BUILDINFO).Version=$(VERSION) \
+	-X $(BUILDINFO).Commit=$(COMMIT) \
+	-X $(BUILDINFO).Date=$(DATE)
+
 # POSTGRES_* come from .env; no password default here. DB_URL is derived from them.
 POSTGRES_USER ?= postgres
 POSTGRES_DB   ?= qeet_id
@@ -23,7 +34,7 @@ tidy:
 	$(GO) mod tidy
 
 build:
-	$(GO) build -o bin/qeet-id ./cmd/server
+	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id ./cmd/server
 
 run:
 	$(GO) run ./cmd/server

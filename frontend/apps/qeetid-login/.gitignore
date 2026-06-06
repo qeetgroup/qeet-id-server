@@ -22,6 +22,8 @@ npm-debug.log*
 
 # env files
 .env*
+# …but the production build config is public (NEXT_PUBLIC_* only) — commit it.
+!.env.production
 
 # vercel
 .vercel

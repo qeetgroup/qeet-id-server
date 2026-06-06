@@ -8,11 +8,11 @@ import (
 
 	"github.com/kelseyhightower/envconfig"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/tracing"
+	"github.com/qeetgroup/qeet-id/internal/platform/tracing"
 )
 
 type Config struct {
-	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-identity"`
+	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
 	ServiceEnv  string `envconfig:"SERVICE_ENV" default:"dev"`
 	HTTPPort    string `envconfig:"HTTP_PORT" default:"4000"`
 	LogLevel    string `envconfig:"LOG_LEVEL" default:"info"`
@@ -31,8 +31,8 @@ type Config struct {
 	DBMaxConns int32  `envconfig:"DB_MAX_CONNS" default:"10"`
 
 	JWTSecret       string        `envconfig:"JWT_SECRET" required:"true"`
-	JWTIssuer       string        `envconfig:"JWT_ISSUER" default:"qeet-identity"`
-	JWTAudience     string        `envconfig:"JWT_AUDIENCE" default:"qeet-identity"`
+	JWTIssuer       string        `envconfig:"JWT_ISSUER" default:"qeet-id"`
+	JWTAudience     string        `envconfig:"JWT_AUDIENCE" default:"qeet-id"`
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"15m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
 
@@ -56,9 +56,19 @@ type Config struct {
 
 	// SecretsKey is the base64-encoded AES key (16/24/32 bytes) for the
 	// per-tenant secrets vault — independent of JWT_SECRET. Required outside dev
-	// (gated); in dev an ephemeral key is generated if unset. Generate with
-	// `openssl rand -base64 32`.
+	// when SECRETS_PROVIDER=static; in dev an ephemeral key is generated if
+	// unset. Generate with `openssl rand -base64 32`.
 	SecretsKey string `envconfig:"SECRETS_KEY" default:""`
+
+	// SecretsProvider selects how the vault data-encryption key is sourced:
+	//   static  — from SECRETS_KEY (default)
+	//   aws-kms — unwrapped at boot from KMS_KEY_ID + SECRETS_WRAPPED_DEK
+	SecretsProvider string `envconfig:"SECRETS_PROVIDER" default:"static"`
+	// KMSKeyID is the AWS KMS key ARN/id used to unwrap the DEK (aws-kms only).
+	KMSKeyID string `envconfig:"KMS_KEY_ID" default:""`
+	// SecretsWrappedDEK is the base64 KMS CiphertextBlob of the wrapped data key
+	// (output of `aws kms generate-data-key`), unwrapped at boot (aws-kms only).
+	SecretsWrappedDEK string `envconfig:"SECRETS_WRAPPED_DEK" default:""`
 
 	HTTPReadTimeout  time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
 	HTTPWriteTimeout time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
@@ -146,8 +156,20 @@ func (c *Config) Validate() error {
 	if strings.TrimSpace(c.JWTSigningKey) == "" {
 		problems = append(problems, "JWT_SIGNING_KEY is required (PEM EC P-256 private key for ES256 token signing)")
 	}
-	if strings.TrimSpace(c.SecretsKey) == "" {
-		problems = append(problems, "SECRETS_KEY is required (base64 AES key for the secrets vault; `openssl rand -base64 32`)")
+	switch c.SecretsProvider {
+	case "", "static":
+		if strings.TrimSpace(c.SecretsKey) == "" {
+			problems = append(problems, "SECRETS_KEY is required with SECRETS_PROVIDER=static (base64 AES key; `openssl rand -base64 32`)")
+		}
+	case "aws-kms":
+		if strings.TrimSpace(c.KMSKeyID) == "" {
+			problems = append(problems, "KMS_KEY_ID is required with SECRETS_PROVIDER=aws-kms (the KMS key ARN/id)")
+		}
+		if strings.TrimSpace(c.SecretsWrappedDEK) == "" {
+			problems = append(problems, "SECRETS_WRAPPED_DEK is required with SECRETS_PROVIDER=aws-kms (base64 KMS CiphertextBlob of the wrapped data key)")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("SECRETS_PROVIDER %q is invalid (want \"static\" or \"aws-kms\")", c.SecretsProvider))
 	}
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")

@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "motion/
 import { useState } from "react";
 import { ButtonLink } from "./button-link";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
+import { SIGN_UP_URL } from "@/lib/links";
 
 /**
  * Premium bottom CTA that animates in once the visitor scrolls past the hero
@@ -58,7 +59,7 @@ export function StickyCtaBar() {
                 <span className="text-brand-text">free for 5,000 users</span>.
               </p>
               <div className="flex flex-1 items-center gap-2 sm:flex-none">
-                <ButtonLink size="sm" href="/sign-up" className="flex-1 sm:flex-none">
+                <ButtonLink size="sm" href={SIGN_UP_URL} className="flex-1 sm:flex-none">
                   Start free <ArrowRightIcon className="size-3.5" />
                 </ButtonLink>
                 <ButtonLink

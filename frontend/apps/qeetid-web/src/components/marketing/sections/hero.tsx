@@ -7,6 +7,7 @@ import {
   type QeetIconProps,
 } from "@qeetrix/brand";
 import { cn } from "@qeetrix/ui";
+import { SIGN_UP_URL } from "@/lib/links";
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
@@ -315,7 +316,7 @@ export function Hero() {
 
             <StaggerItem className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row sm:items-center">
               <MagneticButton strength={0.35} className="w-full sm:w-auto">
-                <ButtonLink size="lg" href="/sign-up" className="h-11 w-full px-5 text-sm sm:w-auto">
+                <ButtonLink size="lg" href={SIGN_UP_URL} className="h-11 w-full px-5 text-sm sm:w-auto">
                   Start free <ArrowRightIcon className="size-4" />
                 </ButtonLink>
               </MagneticButton>

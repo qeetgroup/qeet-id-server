@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { caseStudySlug } from "@/components/marketing/blocks/case-study-card";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { ButtonLink } from "@/components/marketing/button-link";
+import { SIGN_UP_URL } from "@/lib/links";
 import { FadeRise, Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { Section } from "@/components/marketing/section";
 import { CTA } from "@/components/marketing/sections/cta";
@@ -165,7 +166,7 @@ export default async function CustomerStoryPage({ params }: Props) {
         )}
 
         <div className="mt-10 flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-          <ButtonLink href="/sign-up">Start free</ButtonLink>
+          <ButtonLink href={SIGN_UP_URL}>Start free</ButtonLink>
           <ButtonLink variant="outline" href="/contact">
             Talk to sales
           </ButtonLink>

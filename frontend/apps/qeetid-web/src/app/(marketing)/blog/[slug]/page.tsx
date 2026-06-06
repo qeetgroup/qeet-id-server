@@ -6,6 +6,7 @@ import {
   BreadcrumbJsonLd,
 } from "@/components/marketing/structured-data";
 import { getPost, listPosts, parseBody, relatedPosts } from "@/lib/blog";
+import { SIGN_UP_URL } from "@/lib/links";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -171,7 +172,7 @@ export default async function BlogPostPage({ params }: Props) {
               </span>
             </div>
             <Link
-              href="/sign-up"
+              href={SIGN_UP_URL}
               className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[image:var(--brand-gradient)] px-5 py-2.5 text-sm font-medium text-brand-foreground transition-transform hover:scale-[1.02] focus-ring-brand"
             >
               Start free

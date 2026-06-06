@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/codes"
-	"github.com/qeetgroup/qeet-identity/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-id/internal/platform/codes"
+	"github.com/qeetgroup/qeet-id/internal/platform/tokens"
 )
 
 func testIssuer(t *testing.T) *tokens.Issuer {
@@ -78,8 +78,9 @@ func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &disc); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if disc["issuer"] != "http://id.test" {
-		t.Errorf("issuer = %v, want http://id.test", disc["issuer"])
+	// Non-localhost hosts default to https (real deploys terminate TLS at a proxy).
+	if disc["issuer"] != "https://id.test" {
+		t.Errorf("issuer = %v, want https://id.test", disc["issuer"])
 	}
 	algs, _ := disc["id_token_signing_alg_values_supported"].([]any)
 	if len(algs) != 1 || algs[0] != issuer.Alg() {
@@ -146,7 +147,7 @@ func TestAppendQuery(t *testing.T) {
 func TestCurrentURL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?client_id=rp&scope=openid", nil)
 	req.Host = "id.test"
-	if got := currentURL(req); got != "http://id.test/v1/oauth/authorize?client_id=rp&scope=openid" {
+	if got := currentURL(req); got != "https://id.test/v1/oauth/authorize?client_id=rp&scope=openid" {
 		t.Errorf("currentURL = %q", got)
 	}
 }

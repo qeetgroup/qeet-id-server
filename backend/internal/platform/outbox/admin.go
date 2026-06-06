@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
 // Reader exposes the dead-letter table for ops triage. The live queue

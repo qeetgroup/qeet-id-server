@@ -21,10 +21,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/audit"
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/hibp"
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/audit"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/hibp"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
 // BreachedPasswordDetail is the user-safe 422 message shown when a password is

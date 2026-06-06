@@ -38,10 +38,18 @@ Desktop.ini
 # graphify output (regenerated on demand)
 graphify-out/
 
-# Env / secrets — never commit
+# Env / secrets — never commit (but keep .env*.example templates)
 .env
 .env.local
 .env.*.local
+.env.prod
+.env.staging
+.env.production
+# …but the frontend apps' .env.production hold only PUBLIC NEXT_PUBLIC_/VITE_
+# build-time config (no secrets) — version-control them.
+!frontend/apps/qeetid-web/.env.production
+!frontend/apps/qeetid-admin/.env.production
+!frontend/apps/qeetid-login/.env.production
 *.pem
 *.key
 *.crt

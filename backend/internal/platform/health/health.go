@@ -16,7 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/httpx"
+	"github.com/qeetgroup/qeet-id/internal/platform/buildinfo"
+	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
 // Check is a single readiness probe. It must return promptly (it shares a
@@ -33,6 +34,7 @@ type Handler struct {
 	ServiceName string
 	ServiceEnv  string
 	StartedAt   time.Time
+	Build       buildinfo.Info
 
 	checks []namedCheck
 }
@@ -42,6 +44,7 @@ func New(serviceName, serviceEnv string, startedAt time.Time) *Handler {
 		ServiceName: serviceName,
 		ServiceEnv:  serviceEnv,
 		StartedAt:   startedAt,
+		Build:       buildinfo.Get(),
 	}
 }
 
@@ -57,6 +60,7 @@ func (h *Handler) Liveness(w http.ResponseWriter, r *http.Request) {
 		"service": h.ServiceName,
 		"env":     h.ServiceEnv,
 		"uptime":  time.Since(h.StartedAt).String(),
+		"build":   h.Build,
 	})
 }
 

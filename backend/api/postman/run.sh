@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Newman runner for the qeet-identity Postman collection.
+# Newman runner for the qeet-id Postman collection.
 #
 # Usage:
 #   ./run.sh                          # full run against http://localhost:4001
@@ -15,8 +15,8 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COLLECTION="$DIR/qeet-identity.postman_collection.json"
-ENVIRONMENT="$DIR/qeet-identity.postman_environment.json"
+COLLECTION="$DIR/qeet-id.postman_collection.json"
+ENVIRONMENT="$DIR/qeet-id.postman_environment.json"
 
 BASE_URL=""
 BAIL=""

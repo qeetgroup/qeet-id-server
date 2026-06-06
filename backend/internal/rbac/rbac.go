@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-identity/internal/platform/errs"
-	"github.com/qeetgroup/qeet-identity/internal/platform/pgxerr"
+	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/pgxerr"
 )
 
 type Permission struct {

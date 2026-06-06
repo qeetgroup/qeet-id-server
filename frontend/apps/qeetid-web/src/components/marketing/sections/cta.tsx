@@ -5,6 +5,7 @@ import { Aurora } from "@/components/marketing/effects/aurora";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { DotPattern } from "@/components/marketing/effects/dot-pattern";
 import { MagneticButton, Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
+import { SIGN_UP_URL } from "@/lib/links";
 
 const trust = ["No credit card", "5,000 MAU free", "SOC 2 · GDPR ready"];
 
@@ -51,7 +52,7 @@ export function CTA() {
                   <MagneticButton strength={0.35} className="w-full sm:w-auto">
                     <ButtonLink
                       size="lg"
-                      href="/sign-up"
+                      href={SIGN_UP_URL}
                       className="h-11 w-full px-5 sm:w-auto"
                     >
                       Create your account <ArrowRightIcon className="size-4" />
