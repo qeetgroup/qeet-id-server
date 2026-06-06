@@ -41,6 +41,7 @@ export function HeaderUser() {
 
   const name = meQ.data?.display_name || meQ.data?.email?.split("@")[0] || "—";
   const email = meQ.data?.email ?? "";
+  const avatarSrc = meQ.data?.avatar_url ?? undefined;
 
   return (
     <DropdownMenu>
@@ -48,7 +49,7 @@ export function HeaderUser() {
         render={
           <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account menu">
             <Avatar className="size-8">
-              <AvatarImage src={undefined} alt={name} />
+              <AvatarImage src={avatarSrc} alt={name} />
               <AvatarFallback className="text-xs">{initials(name)}</AvatarFallback>
             </Avatar>
           </Button>
@@ -59,7 +60,7 @@ export function HeaderUser() {
           <DropdownMenuLabel className="p-0 font-normal">
             <div className="flex items-center gap-3 px-2 py-2 text-sm">
               <Avatar className="size-10">
-                <AvatarImage src={undefined} alt={name} />
+                <AvatarImage src={avatarSrc} alt={name} />
                 <AvatarFallback>{initials(name)}</AvatarFallback>
               </Avatar>
               <div className="grid flex-1 leading-tight">

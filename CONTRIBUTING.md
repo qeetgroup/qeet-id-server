@@ -21,7 +21,7 @@ See the [Quickstart in the root README](./README.md#quickstart). In short:
 
 ```bash
 # Backend
-cd backend && docker compose up -d && make migrate-up && make run
+cd backend && make db-up && make migrate-up && make run
 
 # Frontend
 cd frontend && pnpm install && pnpm dev

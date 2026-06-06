@@ -2,16 +2,14 @@
         build build-backend build-frontend \
         test test-backend test-frontend test-api test-api-ci \
         lint typecheck format \
-        migrate-up migrate-down migrate-force \
-        seed seed-reset \
-        db-up db-down db-reset db-wipe db-psql \
         kill kill-backend kill-frontend kill-admin kill-web kill-login \
         clean
 
 # ── Defaults ────────────────────────────────────────────────────────────────
 GO         ?= go
 PNPM       ?= pnpm
-# DB creds live in backend/.env; db-*/migrate-* targets delegate to backend/Makefile.
+# DB / migrate / seed targets live ONLY in backend/Makefile (single source of truth).
+# Run them from backend/, or without cd: `make -C backend db-up` (etc.).
 
 help:                       ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "Usage: make <target>\n\nTargets:\n"} \
@@ -106,38 +104,6 @@ typecheck:                  ## Type-check the frontend
 
 format:                     ## Format the frontend
 	cd frontend && $(PNPM) format
-
-# ── Database & migrations ───────────────────────────────────────────────────
-# Postgres is the only containerised service; app tiers run on the host.
-db-up:                      ## Start Postgres (Docker, Postgres-only)
-	cd backend && docker compose up -d
-
-db-down:                    ## Stop Postgres
-	cd backend && docker compose down
-
-db-reset:                   ## Wipe all app data: drop schemas via container psql, remigrate from zero
-	cd backend && $(MAKE) db-reset
-
-db-wipe:                    ## Same idea, but uses `migrate down -all` instead of psql
-	cd backend && $(MAKE) db-wipe
-
-db-psql:                    ## Open an interactive psql shell inside the Postgres container
-	cd backend && $(MAKE) db-psql
-
-migrate-up:                 ## Apply all pending migrations
-	cd backend && $(MAKE) migrate-up
-
-migrate-down:               ## Roll back one migration
-	cd backend && $(MAKE) migrate-down
-
-migrate-force:              ## Force migration version (use V=<n>)
-	cd backend && $(MAKE) migrate-force V=$(V)
-
-seed:                       ## Load demo data into the DB (additive)
-	cd backend && $(MAKE) seed
-
-seed-reset:                 ## Wipe (dev only) + load a clean demo dataset
-	cd backend && $(MAKE) seed-reset
 
 # ── Housekeeping ────────────────────────────────────────────────────────────
 clean:                      ## Remove build artifacts and dependency caches

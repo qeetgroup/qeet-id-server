@@ -14,6 +14,7 @@ import { CommandPaletteLauncher } from "@/features/dashboard/components/command-
 import { DynamicBreadcrumb } from "@/features/dashboard/components/dynamic-breadcrumb";
 import { HeaderUser } from "@/features/dashboard/components/header-user";
 import { ImpersonationBanner } from "@/features/dashboard/components/impersonation-banner";
+import { LanguageSwitcher } from "@/features/dashboard/components/language-switcher";
 import { NotificationsInbox } from "@/features/dashboard/components/notifications-inbox";
 import { ShortcutsDialog } from "@/features/dashboard/components/shortcuts-dialog";
 import { ThemeToggle } from "@/features/dashboard/components/theme-toggle";
@@ -102,6 +103,7 @@ function AppLayout() {
             </Button>
             <WhatsNewDropdown />
             <NotificationsInbox />
+            <LanguageSwitcher />
             <ThemeToggle />
             <Separator orientation="vertical" className="mx-1 hidden h-6 sm:block" />
             <HeaderUser />

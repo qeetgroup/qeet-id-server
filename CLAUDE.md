@@ -8,7 +8,7 @@ Root [Makefile](Makefile) orchestrates the Go backend + the pnpm/Turbo frontend.
 
 ```bash
 make install              # go mod tidy + pnpm install
-make db-up && make migrate-up   # Postgres on :5001 (Docker) + apply migrations
+make -C backend db-up migrate-up   # Postgres :5001 (Docker) + migrations (DB targets are backend-only)
 make dev                  # backend (:4000) + all 3 frontend apps in parallel
 make dev-backend          # backend only (:4000)
 make dev-admin / dev-web / dev-login   # one frontend app (:3002 / :3001 / :3004)
@@ -19,7 +19,7 @@ make lint typecheck format
 make kill                 # free stuck dev-server ports
 ```
 
-Backend-only targets live in [backend/Makefile](backend/Makefile): `make run`, `make build`, `make test`, `make migrate-up/down/force V=<n>`, `make db-reset` (psql), `make db-wipe` (golang-migrate). Single Go test: `cd backend && go test ./internal/auth/... -run TestName`.
+All **DB / migrate / seed targets live ONLY in [backend/Makefile](backend/Makefile)** now (the root Makefile no longer wraps them): `make run`, `make build`, `make test`, `make db-up`/`db-down` (Postgres container), `make migrate-up/down/force V=<n>`, `make db-reset` (psql) / `make db-wipe` (golang-migrate), `make seed`/`seed-reset`. Run them from `backend/`, or without cd: `make -C backend <target>`. Single Go test: `cd backend && go test ./internal/auth/... -run TestName`.
 
 Frontend uses **pnpm@9.15.4** + Turborepo from [frontend/](frontend/) (`@qeetid/*` workspace).
 

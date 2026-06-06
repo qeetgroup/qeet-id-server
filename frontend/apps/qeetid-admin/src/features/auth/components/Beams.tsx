@@ -3,7 +3,7 @@ import type { FC, ReactNode } from "react";
 
 import * as THREE from "three";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
 
 type UniformValue = THREE.IUniform<unknown> | unknown;
@@ -75,8 +75,34 @@ function extendMaterial<T extends THREE.Material = THREE.Material>(
   return mat;
 }
 
+/**
+ * Releases the WebGL context deterministically on unmount and lets a lost
+ * context restore instead of dying. Browsers cap live contexts (~16); with dev
+ * HMR and the auth redirect remounting this canvas, contexts would otherwise
+ * pile up until the browser force-loses one ("THREE.WebGLRenderer: Context Lost").
+ */
+const ContextManager: FC = () => {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const onLost = (e: Event) => e.preventDefault(); // signal the browser to restore
+    canvas.addEventListener("webglcontextlost", onLost, false);
+    return () => {
+      canvas.removeEventListener("webglcontextlost", onLost);
+      try {
+        gl.forceContextLoss();
+        gl.dispose();
+      } catch {
+        // renderer already torn down by R3F — nothing to free
+      }
+    };
+  }, [gl]);
+  return null;
+};
+
 const CanvasWrapper: FC<{ children: ReactNode }> = ({ children }) => (
   <Canvas dpr={[1, 2]} frameloop="always" className="relative h-full w-full">
+    <ContextManager />
     {children}
   </Canvas>
 );

@@ -27,6 +27,7 @@ import { Route as AppAnalyticsRouteImport } from './routes/_app/analytics'
 import { Route as AppActivityRouteImport } from './routes/_app/activity'
 import { Route as AppSplatRouteImport } from './routes/_app/$'
 import { Route as AppUsersIndexRouteImport } from './routes/_app/users/index'
+import { Route as AppSecurityIndexRouteImport } from './routes/_app/security/index'
 import { Route as AuthSsoCallbackRouteImport } from './routes/_auth/sso.callback'
 import { Route as AppUsersSessionsRouteImport } from './routes/_app/users/sessions'
 import { Route as AppUsersInvitationsRouteImport } from './routes/_app/users/invitations'
@@ -170,6 +171,11 @@ const AppSplatRoute = AppSplatRouteImport.update({
 const AppUsersIndexRoute = AppUsersIndexRouteImport.update({
   id: '/users/',
   path: '/users/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSecurityIndexRoute = AppSecurityIndexRouteImport.update({
+  id: '/security/',
+  path: '/security/',
   getParentRoute: () => AppRoute,
 } as any)
 const AuthSsoCallbackRoute = AuthSsoCallbackRouteImport.update({
@@ -512,6 +518,7 @@ export interface FileRoutesByFullPath {
   '/users/invitations': typeof AppUsersInvitationsRoute
   '/users/sessions': typeof AppUsersSessionsRoute
   '/sso/callback': typeof AuthSsoCallbackRoute
+  '/security/': typeof AppSecurityIndexRoute
   '/users/': typeof AppUsersIndexRoute
   '/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
   '/auth/api/consent-grants': typeof AppAuthApiConsentGrantsRoute
@@ -586,6 +593,7 @@ export interface FileRoutesByTo {
   '/users/invitations': typeof AppUsersInvitationsRoute
   '/users/sessions': typeof AppUsersSessionsRoute
   '/sso/callback': typeof AuthSsoCallbackRoute
+  '/security': typeof AppSecurityIndexRoute
   '/users': typeof AppUsersIndexRoute
   '/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
   '/auth/api/consent-grants': typeof AppAuthApiConsentGrantsRoute
@@ -663,6 +671,7 @@ export interface FileRoutesById {
   '/_app/users/invitations': typeof AppUsersInvitationsRoute
   '/_app/users/sessions': typeof AppUsersSessionsRoute
   '/_auth/sso/callback': typeof AuthSsoCallbackRoute
+  '/_app/security/': typeof AppSecurityIndexRoute
   '/_app/users/': typeof AppUsersIndexRoute
   '/_app/access/roles/$roleId': typeof AppAccessRolesRoleIdRoute
   '/_app/auth/api/consent-grants': typeof AppAuthApiConsentGrantsRoute
@@ -739,6 +748,7 @@ export interface FileRouteTypes {
     | '/users/invitations'
     | '/users/sessions'
     | '/sso/callback'
+    | '/security/'
     | '/users/'
     | '/access/roles/$roleId'
     | '/auth/api/consent-grants'
@@ -813,6 +823,7 @@ export interface FileRouteTypes {
     | '/users/invitations'
     | '/users/sessions'
     | '/sso/callback'
+    | '/security'
     | '/users'
     | '/access/roles/$roleId'
     | '/auth/api/consent-grants'
@@ -889,6 +900,7 @@ export interface FileRouteTypes {
     | '/_app/users/invitations'
     | '/_app/users/sessions'
     | '/_auth/sso/callback'
+    | '/_app/security/'
     | '/_app/users/'
     | '/_app/access/roles/$roleId'
     | '/_app/auth/api/consent-grants'
@@ -1056,6 +1068,13 @@ declare module '@tanstack/react-router' {
       path: '/users'
       fullPath: '/users/'
       preLoaderRoute: typeof AppUsersIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/security/': {
+      id: '/_app/security/'
+      path: '/security'
+      fullPath: '/security/'
+      preLoaderRoute: typeof AppSecurityIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_auth/sso/callback': {
@@ -1531,6 +1550,7 @@ interface AppRouteChildren {
   AppUsersImportRoute: typeof AppUsersImportRoute
   AppUsersInvitationsRoute: typeof AppUsersInvitationsRoute
   AppUsersSessionsRoute: typeof AppUsersSessionsRoute
+  AppSecurityIndexRoute: typeof AppSecurityIndexRoute
   AppUsersIndexRoute: typeof AppUsersIndexRoute
   AppAuthApiConsentGrantsRoute: typeof AppAuthApiConsentGrantsRoute
   AppAuthApiKeysRoute: typeof AppAuthApiKeysRoute
@@ -1592,6 +1612,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppUsersImportRoute: AppUsersImportRoute,
   AppUsersInvitationsRoute: AppUsersInvitationsRoute,
   AppUsersSessionsRoute: AppUsersSessionsRoute,
+  AppSecurityIndexRoute: AppSecurityIndexRoute,
   AppUsersIndexRoute: AppUsersIndexRoute,
   AppAuthApiConsentGrantsRoute: AppAuthApiConsentGrantsRoute,
   AppAuthApiKeysRoute: AppAuthApiKeysRoute,

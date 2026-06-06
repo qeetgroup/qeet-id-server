@@ -16,7 +16,10 @@
 # Secrets are interpolated from the shell environment (so multiline PEMs survive);
 # non-secret config lives in .env.prod (env_file). Never commit real secrets.
 
-name: qeet-id
+# Project name encodes the environment so volumes/containers/network carry the
+# `qeet-id-prod_` prefix (volumes: qeet-id-prod_pgdata / _redisdata / …). The dev
+# stack uses qeet-id-dev with the same `pgdata` key — they never share a volume.
+name: qeet-id-prod
 
 x-images:
   # Override with pushed, digest-pinned tags in real deploys.

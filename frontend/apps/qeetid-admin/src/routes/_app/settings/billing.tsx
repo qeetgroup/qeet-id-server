@@ -129,7 +129,7 @@ function BillingPage() {
         )}
 
         {/* Plan picker */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {plans.map((plan) => {
             const isCurrent = sub?.plan_code === plan.code && !sub?.cancel_at_period_end;
             const priceMinor = plan.prices[activeCurrency];
