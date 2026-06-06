@@ -1,0 +1,152 @@
+name: Release
+
+# Fires when release-please (or a maintainer) pushes a SemVer tag. Builds,
+# pushes, signs (cosign keyless) and SBOM/provenance-attests the container
+# images, then optionally publishes the SDKs.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # Release images: semver-tagged, signed, with SBOM + provenance attestations.
+  # ────────────────────────────────────────────────────────────────────
+  images:
+    name: Images (push, sign, attest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign keyless signing via OIDC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Build date
+        id: date
+        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadata (app)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/qeet-id
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build & push (app)
+        id: build_app
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.date.outputs.date }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+
+      - name: Metadata (migrate)
+        id: meta_migrate
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/qeet-id-migrate
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - name: Build & push (migrate)
+        id: build_migrate
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.migrate
+          push: true
+          tags: ${{ steps.meta_migrate.outputs.tags }}
+          labels: ${{ steps.meta_migrate.outputs.labels }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+
+      - name: Sign images (keyless)
+        env:
+          OWNER: ${{ github.repository_owner }}
+          APP_DIGEST: ${{ steps.build_app.outputs.digest }}
+          MIGRATE_DIGEST: ${{ steps.build_migrate.outputs.digest }}
+        run: |
+          cosign sign --yes "ghcr.io/${OWNER}/qeet-id@${APP_DIGEST}"
+          cosign sign --yes "ghcr.io/${OWNER}/qeet-id-migrate@${MIGRATE_DIGEST}"
+
+  # ────────────────────────────────────────────────────────────────────
+  # SDK publishing — opt-in via repo variable PUBLISH_SDKS=true so releases
+  # never fail when registry tokens aren't configured. Requires:
+  #   npm  -> secret NPM_TOKEN
+  #   PyPI -> Trusted Publishing (OIDC) configured for the `qeetid` project
+  # The Go SDK lives at module github.com/qeetgroup/qeetid-go (a SEPARATE repo);
+  # publish it by mirroring sdk/go there and tagging vX.Y.Z — see deploy/RUNBOOK.md.
+  # ────────────────────────────────────────────────────────────────────
+  npm:
+    name: Publish npm SDKs
+    if: ${{ vars.PUBLISH_SDKS == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@qeetid/sdk" --filter "@qeetid/nextjs" --filter "@qeetid/react" build
+      - name: Publish (only changed versions)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm --filter "@qeetid/sdk" --filter "@qeetid/nextjs" --filter "@qeetid/react" publish --access public --no-git-checks
+
+  pypi:
+    name: Publish PyPI SDK
+    if: ${{ vars.PUBLISH_SDKS == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # PyPI Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        working-directory: sdk/python
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdk/python/dist

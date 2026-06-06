@@ -1,0 +1,24 @@
+qeet-id {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Image:   {{ include "qeet-id.image" . }}
+Migrate: {{ if .Values.migrate.enabled }}{{ include "qeet-id.migrateImage" . }} (ran as a pre-upgrade hook){{ else }}disabled{{ end }}
+
+1. Sensitive env comes from Secret "{{ include "qeet-id.secretName" . }}".
+{{- if .Values.externalSecrets.enabled }}
+   It is synced from AWS Secrets Manager by External Secrets Operator. Verify:
+     kubectl -n {{ .Release.Namespace }} get externalsecret,secret {{ include "qeet-id.secretName" . }}
+{{- else if .Values.secrets.existingSecret }}
+   Using existing Secret "{{ .Values.secrets.existingSecret }}".
+{{- else }}
+   Create it before upgrading (DB_URL, JWT_SECRET, JWT_SIGNING_KEY, SAML_IDP_KEY,
+   SAML_IDP_CERT, and SECRETS_WRAPPED_DEK or SECRETS_KEY):
+     kubectl -n {{ .Release.Namespace }} create secret generic {{ include "qeet-id.secretName" . }} \
+       --from-literal=DB_URL=... --from-file=JWT_SIGNING_KEY=signing.pem ...
+{{- end }}
+
+2. Check rollout:
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "qeet-id.fullname" . }}
+
+3. The app boots only if config.Validate() passes (SERVICE_ENV={{ .Values.config.SERVICE_ENV }}).
+   On CrashLoopBackOff, check logs for the specific failed invariant:
+     kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "qeet-id.fullname" . }}

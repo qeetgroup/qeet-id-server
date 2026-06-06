@@ -27,7 +27,18 @@ var (
 		Help:    "HTTP request latency, by method and route.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "route"})
+
+	buildInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "build_info",
+		Help: "Build metadata; constant 1 carrying version/commit/goversion labels.",
+	}, []string{"version", "commit", "goversion"})
 )
+
+// SetBuildInfo publishes the running binary's build metadata as a constant
+// gauge (value 1) so dashboards and alerts can pivot on the deployed version.
+func SetBuildInfo(version, commit, goversion string) {
+	buildInfo.WithLabelValues(version, commit, goversion).Set(1)
+}
 
 // Middleware records request count + latency. Mount it high in the chain; the
 // route label is read after the handler runs, so it reflects the matched chi

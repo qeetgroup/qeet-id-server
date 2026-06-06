@@ -1,0 +1,35 @@
+# OpenTelemetry Collector config for qeet-id traces. The app exports OTLP/HTTP
+# when OTEL_EXPORTER_OTLP_ENDPOINT points here (e.g. http://otel-collector:4318);
+# it is a no-op when that var is unset. Swap the exporter for your trace backend
+# (Tempo, Jaeger, Honeycomb, Datadog, ...).
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+exporters:
+  # Default: forward to a Tempo/OTLP backend. Replace endpoint as needed.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
