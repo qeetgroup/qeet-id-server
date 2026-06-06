@@ -813,14 +813,28 @@ func (h *Handler) sessionUser(r *http.Request) (uuid.UUID, bool) {
 	return uid, true
 }
 
+// externalScheme returns the request's public scheme, honoring X-Forwarded-Proto
+// set by a TLS-terminating reverse proxy (Caddy/ALB), then the request's own TLS
+// state, defaulting to https for non-localhost hosts. This keeps the OIDC issuer
+// and discovery URLs https when the app runs behind a proxy that terminates TLS
+// (the backend itself is reached over plain HTTP on the internal network).
+func externalScheme(r *http.Request) string {
+	if p := r.Header.Get("X-Forwarded-Proto"); p == "https" || p == "http" {
+		return p
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	if h := r.Host; strings.HasPrefix(h, "localhost") || strings.HasPrefix(h, "127.0.0.1") {
+		return "http"
+	}
+	return "https"
+}
+
 // currentURL reconstructs the absolute URL of the current request (for the
 // login redirect's return_to).
 func currentURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host + r.URL.RequestURI()
+	return externalScheme(r) + "://" + r.Host + r.URL.RequestURI()
 }
 
 // appendQuery appends key/value pairs (skipping empty values) to a URL that may
@@ -947,10 +961,7 @@ func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
-	base := "http://" + r.Host
-	if r.TLS != nil {
-		base = "https://" + r.Host
-	}
+	base := externalScheme(r) + "://" + r.Host
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"issuer":                                base,
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
