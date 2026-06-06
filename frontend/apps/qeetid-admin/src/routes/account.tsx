@@ -66,7 +66,7 @@ function AccountLayout() {
           </div>
         </div>
         <Link
-          to="/dashboard"
+          to="/"
           className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Back to admin →
