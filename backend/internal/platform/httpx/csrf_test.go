@@ -124,7 +124,7 @@ func TestCSRF_RefererFallback(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "tok"})
 	req.Header.Set(csrfHeaderName, "tok")
 	// No Origin header, but Referer is present and on the allow-list.
-	req.Header.Set("Referer", "https://app.qeetid.com/users")
+	req.Header.Set("Referer", "https://id.qeet.in/users")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -134,7 +134,7 @@ func TestCSRF_RefererFallback(t *testing.T) {
 
 func TestCSRF_NormaliseOriginsTrimsSlashAndCases(t *testing.T) {
 	got := normaliseOrigins([]string{
-		"https://APP.qeetid.com/",
+		"https://id.qeet.in/",
 		"  https://Web.Qeetid.com   ",
 		"*",
 		"",
