@@ -885,7 +885,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      summary: Password login; issue an access + refresh token pair
+      summary: Password login; issues a token pair, or an MFA challenge if a second factor is enrolled
       tags:
       - Auth
       security: []
@@ -897,14 +897,61 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: Token pair
+          description: |
+            Either a full token pair (no MFA) or, when the user has a second
+            factor enrolled, an MFA challenge `{mfa_required:true, mfa_token,
+            methods[]}` to complete at POST /v1/auth/mfa.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/TokenPair'
+                - type: object
+                  properties:
+                    mfa_required:
+                      type: boolean
+                    mfa_token:
+                      type: string
+                    methods:
+                      type: array
+                      items:
+                        type: string
+        '401': *id002
+        '422': *id005
+        '429': *id006
+  /v1/auth/mfa:
+    post:
+      operationId: post_v1_auth_mfa
+      summary: Complete a two-step login by verifying a second-factor code
+      description: Exchanges the mfa_token from /v1/auth/login plus a TOTP or recovery code for a token pair.
+      tags:
+      - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - mfa_token
+              - code
+              properties:
+                mfa_token:
+                  type: string
+                code:
+                  type: string
+                  description: A TOTP code or a one-time recovery code.
+      responses:
+        '200':
+          description: Second factor verified; token pair issued
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPair'
+        '400': *id001
         '401': *id002
         '422': *id005
-        '429': *id006
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout

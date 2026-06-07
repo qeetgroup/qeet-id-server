@@ -31,10 +31,38 @@ type Service struct {
 	// breach is the optional breached-password checker (nil = feature off,
 	// a no-op). Set via SetBreachChecker; consulted on Signup.
 	breach *hibp.Checker
+	// mfa gates login on a second factor (nil = MFA-at-login off). Set via
+	// SetMFA; kept as an interface so package auth doesn't import package mfa.
+	mfa MFAEnroller
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
 	return &Service{pool: pool, users: users, tokens: t}
+}
+
+// MFAEnroller is the slice of the MFA service the auth package needs to enforce
+// a second factor at login. Wired in cmd/server/main.go via SetMFA.
+type MFAEnroller interface {
+	// IsEnrolled reports whether the user has a usable login second factor.
+	IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error)
+	// VerifyForLogin verifies a TOTP/recovery code for the pending login;
+	// (false, nil) means the code was wrong, a non-nil error is infrastructure.
+	VerifyForLogin(ctx context.Context, userID uuid.UUID, code string) (bool, error)
+}
+
+// SetMFA wires the MFA-at-login checker. Called from cmd/server/main.go.
+func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
+
+// mfaChallengeTTL bounds how long a pending second-factor login stays valid.
+const mfaChallengeTTL = 10 * time.Minute
+
+// LoginResult is either a full token pair (no MFA needed) or a pending MFA
+// challenge that must be completed via CompleteMFALogin before tokens issue.
+type LoginResult struct {
+	Pair        *TokenPair
+	MFARequired bool
+	MFAToken    string
+	Methods     []string
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
@@ -198,12 +226,93 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 	return s.IssuePair(ctx, userID, tenantID, ip, ua, "tenant_switch")
 }
 
-func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) {
+// Login verifies the password and, when the user has a second factor enrolled,
+// returns an MFA challenge instead of tokens (complete it via CompleteMFALogin).
+// Otherwise it returns a full token pair.
+func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
 	u, err := s.CheckPassword(ctx, in.Email, in.Password)
 	if err != nil {
 		return nil, err
 	}
-	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+	if s.mfa != nil {
+		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+		if err != nil {
+			return nil, err
+		}
+		if enrolled {
+			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
+			if err != nil {
+				return nil, err
+			}
+			return &LoginResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
+		}
+	}
+	pair, err := s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{Pair: pair}, nil
+}
+
+// createMFAChallenge records a single-use, short-lived pending login that
+// CompleteMFALogin later exchanges for tokens. Returns the opaque token id.
+func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.UUID) (string, error) {
+	var tid any
+	if tenantID != uuid.Nil {
+		tid = tenantID
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at)
+		VALUES ($1, $2, $3) RETURNING id
+	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL)).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// CompleteMFALogin verifies the second-factor code for a pending login and, on
+// success, consumes the challenge and issues the token pair. A wrong code is
+// rejected without consuming the challenge so the user can retry within the TTL.
+func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua string) (*TokenPair, error) {
+	if s.mfa == nil {
+		return nil, errs.ErrNotImplemented
+	}
+	id, err := uuid.Parse(mfaToken)
+	if err != nil {
+		return nil, errs.ErrBadRequest.WithDetail("invalid mfa_token")
+	}
+	var userID uuid.UUID
+	var tenantID *uuid.UUID
+	var expiresAt time.Time
+	err = s.pool.QueryRow(ctx, `
+		SELECT user_id, tenant_id, expires_at FROM auth.mfa_login_challenges WHERE id = $1
+	`, id).Scan(&userID, &tenantID, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if time.Now().After(expiresAt) {
+		_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
+		return nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge expired")
+	}
+	ok, err := s.mfa.VerifyForLogin(ctx, userID, code)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errs.ErrUnauthorized.WithMessage("Invalid verification code.").WithDetail("invalid mfa code")
+	}
+	// Consume the challenge only on success.
+	_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
+	var tid uuid.UUID
+	if tenantID != nil {
+		tid = *tenantID
+	}
+	return s.IssuePair(ctx, userID, tid, ip, ua, "password_mfa")
 }
 
 // CheckPassword runs the full credential check — brute-force lockout, user

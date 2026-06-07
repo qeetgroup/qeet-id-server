@@ -408,6 +408,7 @@
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
+                  "if (body.mfa_required) { pm.collectionVariables.set('mfaToken', body.mfa_token); }",
                   "if (body.access_token)  pm.collectionVariables.set('accessToken',  body.access_token);",
                   "if (body.refresh_token) pm.collectionVariables.set('refreshToken', body.refresh_token);"
                 ]
@@ -438,6 +439,50 @@
                 "v1",
                 "auth",
                 "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Complete MFA login \u2014 POST /v1/auth/mfa",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.access_token)  pm.collectionVariables.set('accessToken',  body.access_token);",
+                  "if (body.refresh_token) pm.collectionVariables.set('refreshToken', body.refresh_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mfa_token\": \"{{mfaToken}}\",\n  \"code\": \"<totp-or-recovery-code>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/mfa",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "mfa"
               ]
             }
           }

@@ -220,6 +220,54 @@ func (s *Service) Verify(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code 
 	return &VerifyResult{UsedRecoveryCode: true, RecoveryCodeID: matchedID}, nil
 }
 
+// IsEnrolled reports whether the user has a second factor that can satisfy the
+// login MFA step today: a confirmed TOTP factor (recovery codes back it). The
+// auth package consults this (via the MFAEnroller interface) to decide whether
+// to challenge for a second factor at login.
+func (s *Service) IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	var confirmed *bool
+	err := s.pool.QueryRow(ctx, `SELECT confirmed_at IS NOT NULL FROM auth.mfa_totp WHERE user_id = $1`, userID).Scan(&confirmed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return confirmed != nil && *confirmed, nil
+}
+
+// VerifyForLogin verifies a TOTP or recovery code as the second step of login
+// and records the verification (so a step-up window is open immediately after
+// sign-in). Returns (false, nil) when the code is simply wrong/expired; a
+// non-nil error indicates an infrastructure failure.
+func (s *Service) VerifyForLogin(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	res, err := s.Verify(ctx, tx, userID, code)
+	if err != nil {
+		// A domain error (wrong/expired code, not-configured) means "not
+		// verified" — surface it as a clean negative, not a 500.
+		if errs.As(err) != nil {
+			return false, nil
+		}
+		return false, err
+	}
+	method := "totp"
+	if res.UsedRecoveryCode {
+		method = "recovery_code"
+	}
+	if err := s.RecordVerification(ctx, tx, userID, method); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ============================================================
 // Email / SMS OTP factors
 // ============================================================

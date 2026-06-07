@@ -307,6 +307,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)
+	authService.SetMFA(mfaService) // gate password login on a second factor when enrolled
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)

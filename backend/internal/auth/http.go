@@ -23,6 +23,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
+	r.Post("/auth/mfa", h.mfaLogin)
 	r.Post("/auth/refresh", h.refresh)
 	// Hosted-login SSO session (HttpOnly cookie) for the OAuth authorize flow.
 	r.Post("/auth/session", h.createSession)
@@ -116,12 +117,47 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	pair, err := h.Service.Login(r.Context(), LoginInput{
+	res, err := h.Service.Login(r.Context(), LoginInput{
 		Email:     in.Email,
 		Password:  in.Password,
 		IP:        httpx.ClientIP(r),
 		UserAgent: r.UserAgent(),
 	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if res.MFARequired {
+		// Password ok, but a second factor is required. No tokens yet — the
+		// client completes the challenge at POST /v1/auth/mfa.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"mfa_required": true,
+			"mfa_token":    res.MFAToken,
+			"methods":      res.Methods,
+		})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res.Pair)
+}
+
+type mfaLoginInput struct {
+	MFAToken string `json:"mfa_token" validate:"required"`
+	Code     string `json:"code" validate:"required"`
+}
+
+// mfaLogin completes a two-step login: it exchanges the mfa_token from /login
+// plus a TOTP or recovery code for a full token pair.
+func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
+	var in mfaLoginInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	pair, err := h.Service.CompleteMFALogin(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

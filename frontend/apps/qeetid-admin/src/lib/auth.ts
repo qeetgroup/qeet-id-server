@@ -25,7 +25,15 @@ type User = {
 };
 
 type LoginInput = { email: string; password: string };
-type LoginResponse = TokenPair & { tenant_id?: string };
+type SessionResponse = TokenPair & { tenant_id?: string };
+// When the account has a second factor enrolled, /v1/auth/login returns this
+// challenge instead of tokens; complete it at /v1/auth/mfa.
+export type MfaChallenge = { mfa_required: true; mfa_token: string; methods: string[] };
+type LoginResponse = SessionResponse | MfaChallenge;
+
+export function isMfaChallenge(r: LoginResponse): r is MfaChallenge {
+  return "mfa_required" in r && r.mfa_required === true;
+}
 
 export function useLogin() {
   const navigate = useNavigate();
@@ -38,16 +46,49 @@ export function useLogin() {
         anonymous: true,
       }),
 
-    onSuccess: (pair) => {
+    onSuccess: (res) => {
+      // A second factor is required — don't persist anything yet. The sign-in
+      // page reads this mutation's data and renders the code step, completed
+      // via useCompleteMfaLogin.
+      if (isMfaChallenge(res)) return;
+
       // Clear prior session so a tenant-less/different user doesn't inherit a stale workspace.
+      tokenStore.clear();
+      tokenStore.set(res.access_token);
+      tokenStore.setRefresh(res.refresh_token);
+
+      if (res.tenant_id) {
+        tokenStore.setTenantId(res.tenant_id);
+      }
+
+      tokenStore.setUserId(res.user_id);
+      navigate({ to: "/" });
+    },
+  });
+}
+
+/**
+ * Complete a two-step login: exchange the mfa_token from useLogin plus a TOTP
+ * or recovery code for a session. Persists tokens exactly like password login.
+ */
+export function useCompleteMfaLogin() {
+  const navigate = useNavigate();
+
+  return useMutation({
+    mutationFn: (in_: { mfa_token: string; code: string }) =>
+      api<SessionResponse>("/v1/auth/mfa", {
+        method: "POST",
+        body: in_,
+        anonymous: true,
+      }),
+
+    onSuccess: (pair) => {
       tokenStore.clear();
       tokenStore.set(pair.access_token);
       tokenStore.setRefresh(pair.refresh_token);
-
       if (pair.tenant_id) {
         tokenStore.setTenantId(pair.tenant_id);
       }
-
       tokenStore.setUserId(pair.user_id);
       navigate({ to: "/" });
     },
@@ -68,7 +109,7 @@ export function useAcceptInvite() {
       password: string;
       display_name?: string;
     }) =>
-      api<LoginResponse>("/v1/invites/accept", {
+      api<SessionResponse>("/v1/invites/accept", {
         method: "POST",
         body: in_,
         anonymous: true,
