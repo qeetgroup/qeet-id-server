@@ -86,12 +86,16 @@ func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, em
 
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
 	if len(newPassword) < 8 {
-		return errs.ErrUnprocessable.WithDetail("password too short")
+		return errs.ErrUnprocessable.WithMessage("Your new password must be at least 8 characters.")
+	}
+	// Offline strength baseline (common-password denylist, uniform/sequential).
+	if reason := password.WeakReason(newPassword, ""); reason != "" {
+		return errs.ErrUnprocessable.WithMessage(reason)
 	}
 	// Breached-password gate before any DB work. No-op when disabled (nil
 	// checker) and fail-open inside PwnedAllowOnError.
 	if s.breach.PwnedAllowOnError(ctx, newPassword) {
-		return errs.ErrUnprocessable.WithDetail("This password has appeared in known data breaches — choose a different one.")
+		return errs.ErrUnprocessable.WithMessage("This password has appeared in known data breaches. Choose a different one.")
 	}
 	hash := codes.Hash(rawToken)
 	tx, err := s.pool.Begin(ctx)

@@ -65,7 +65,7 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	pair, u, _, err := h.Service.Signup(r.Context(), SignupInput{
@@ -82,7 +82,8 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 		// backend errors (DB unavailable, etc.) still bubble up so
 		// legitimate operational issues aren't hidden.
 		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("could not create account"))
+			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
+				"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
 			return
 		}
 		httpx.WriteError(w, r, err)
@@ -112,7 +113,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	pair, err := h.Service.Login(r.Context(), LoginInput{
@@ -143,7 +144,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	u, err := h.Service.CheckPassword(r.Context(), in.Email, in.Password)
@@ -180,7 +181,7 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	pair, err := h.Service.Refresh(r.Context(), RefreshInput{
@@ -206,7 +207,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "You've been signed out."})
 }
 
 type switchTenantInput struct {
@@ -226,7 +227,7 @@ func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	tid, err := uuid.Parse(in.TenantID)
@@ -274,7 +275,7 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Session revoked."})
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {

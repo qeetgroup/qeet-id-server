@@ -141,7 +141,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	var hash string
@@ -222,7 +222,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	u, err := h.Repo.Update(r.Context(), id, in)
@@ -262,7 +262,7 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Validate.Struct(in); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail(err.Error()))
+		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
 	// Enforce the tenant's password-complexity policy when set.

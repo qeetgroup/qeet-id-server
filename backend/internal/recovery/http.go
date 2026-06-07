@@ -44,7 +44,10 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	// Enumeration-safe: identical response whether or not the email exists.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "If an account exists for that email, we've sent a password reset link.",
+	})
 }
 
 type resetInput struct {
@@ -63,7 +66,9 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "Your password has been reset. You can now sign in with your new password.",
+	})
 }
 
 type magicStartInput struct {
@@ -81,7 +86,10 @@ func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	// Enumeration-safe: identical response whether or not the email exists.
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "If an account exists for that email, we've sent a sign-in link.",
+	})
 }
 
 type magicConsumeInput struct {

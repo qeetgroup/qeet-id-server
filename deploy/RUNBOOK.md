@@ -6,7 +6,7 @@ Operational procedures for deploying and running Qeet ID. Pair with
 
 ## Topology
 
-- **Backend**: stateless Go service, listens on `HTTP_PORT` (default 4000), exposes
+- **Backend**: stateless Go service, listens on `HTTP_PORT` (default 4001), exposes
   `/healthz`, `/readyz`, `/metrics`. Scale horizontally; `REDIS_URL` makes rate
   limits correct across replicas.
 - **Datastores**: PostgreSQL (primary), Redis (rate limits / shared state).

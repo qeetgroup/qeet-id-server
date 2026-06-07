@@ -30,7 +30,7 @@ RUN CGO_ENABLED=0 go build \
     -o /out/qeet-id ./cmd/server
 
 # Distroless + nonroot: no shell, minimal attack surface. k8s probes hit
-# /healthz and /readyz. The app listens on HTTP_PORT (default 4000); set it in
+# /healthz and /readyz. The app listens on HTTP_PORT (default 4001); set it in
 # the manifest/compose if you front it on a different port.
 FROM ${RUNTIME_IMAGE}
 
@@ -47,6 +47,6 @@ LABEL org.opencontainers.image.title="qeet-id" \
       org.opencontainers.image.created="${BUILD_DATE}"
 
 COPY --from=build /out/qeet-id /qeet-id
-EXPOSE 4000
+EXPOSE 4001
 USER nonroot:nonroot
 ENTRYPOINT ["/qeet-id"]

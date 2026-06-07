@@ -14,7 +14,7 @@ import (
 type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
 	ServiceEnv  string `envconfig:"SERVICE_ENV" default:"dev"`
-	HTTPPort    string `envconfig:"HTTP_PORT" default:"4000"`
+	HTTPPort    string `envconfig:"HTTP_PORT" default:"4001"`
 	LogLevel    string `envconfig:"LOG_LEVEL" default:"info"`
 
 	// OTelEndpoint is the OTLP/HTTP collector endpoint for distributed tracing

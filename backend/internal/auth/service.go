@@ -88,11 +88,16 @@ type TokenPair struct {
 
 // Signup creates a tenant-less identity (user + password + session) and logs them in; no tenant or role is created.
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user.User, *TenantBrief, error) {
+	// Password strength gate. The offline baseline (common-password denylist,
+	// equals-email, uniform/sequential) always runs — no network, works in dev.
+	if reason := password.WeakReason(in.Password, in.Email); reason != "" {
+		return nil, nil, nil, errs.ErrUnprocessable.WithMessage(reason)
+	}
 	// Breached-password gate. Tenant-less, so there's no per-tenant policy to
 	// consult here — just the global HIBP signal. No-op when disabled (nil
 	// checker) and fail-open inside PwnedAllowOnError.
 	if s.breach.PwnedAllowOnError(ctx, in.Password) {
-		return nil, nil, nil, errs.ErrUnprocessable.WithDetail("This password has appeared in known data breaches — choose a different one.")
+		return nil, nil, nil, errs.ErrUnprocessable.WithMessage("This password has appeared in known data breaches. Choose a different one.")
 	}
 	hash, err := password.Hash(in.Password)
 	if err != nil {
@@ -209,7 +214,9 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) 
 func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*user.User, error) {
 	email := strings.ToLower(strings.TrimSpace(rawEmail))
 	if _, locked := s.loginLockedUntil(ctx, email); locked {
-		return nil, errs.ErrTooManyRequests.WithDetail("too many failed attempts — account temporarily locked")
+		return nil, errs.ErrTooManyRequests.
+			WithMessage("Too many failed attempts. Your account is temporarily locked — please try again later.").
+			WithDetail("account temporarily locked")
 	}
 	u, err := s.users.GetByEmailGlobal(ctx, rawEmail)
 	if err != nil {
@@ -217,7 +224,7 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 			// Throttle unknown emails identically so probing can't distinguish
 			// "no such account" from "wrong password" by behaviour.
 			s.recordFailedLogin(ctx, email)
-			return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
+			return nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
 		}
 		return nil, err
 	}
@@ -230,7 +237,7 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 	}
 	if hash == "" || !password.Verify(hash, plain) {
 		s.recordFailedLogin(ctx, email)
-		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
+		return nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
 	}
 	s.clearLoginAttempts(ctx, email)
 	// Transparently upgrade legacy bcrypt / weak-param hashes to current

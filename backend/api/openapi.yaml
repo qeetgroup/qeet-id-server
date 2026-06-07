@@ -871,8 +871,15 @@ paths:
                   type: string
                   format: email
       responses:
-        '202':
-          description: Accepted (always, to avoid account enumeration)
+        '200':
+          description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '422': *id005
         '429': *id006
   /v1/auth/login:
@@ -916,8 +923,15 @@ paths:
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
       responses:
-        '204':
-          description: Session revoked
+        '200':
+          description: Signed out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '401': *id002
   /v1/auth/magic-link/consume:
     post:
@@ -967,8 +981,15 @@ paths:
                   type: string
                   format: email
       responses:
-        '202':
-          description: Magic link sent (if the account exists)
+        '200':
+          description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '422': *id005
         '429': *id006
   /v1/auth/me:
@@ -1025,17 +1046,24 @@ paths:
               type: object
               required:
               - token
-              - password
+              - new_password
               properties:
                 token:
                   type: string
-                password:
+                new_password:
                   type: string
                   minLength: 8
                   maxLength: 256
       responses:
-        '204':
-          description: Password reset
+        '200':
+          description: Password reset; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '400': *id001
         '401': *id002
         '422': *id005
@@ -1112,8 +1140,15 @@ paths:
       - bearerAuth: []
       - apiKeyAuth: []
       responses:
-        '204':
+        '200':
           description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '400': *id001
         '401': *id002
         '404': *id003

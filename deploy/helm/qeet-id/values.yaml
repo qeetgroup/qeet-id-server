@@ -31,7 +31,7 @@ serviceAccount:
 
 podAnnotations:
   prometheus.io/scrape: "true"
-  prometheus.io/port: "4000"
+  prometheus.io/port: "4001"
   prometheus.io/path: "/metrics"
 podLabels: {}
 
@@ -52,7 +52,7 @@ securityContext:
 service:
   type: ClusterIP
   port: 80
-  targetPort: 4000
+  targetPort: 4001
 
 ingress:
   enabled: true
@@ -103,7 +103,7 @@ probes:
 config:
   SERVICE_ENV: "prod"
   SERVICE_NAME: "qeet-id"
-  HTTP_PORT: "4000"
+  HTTP_PORT: "4001"
   LOG_LEVEL: "info"
   APP_BASE_URL: "https://app.example.com"
   LOGIN_BASE_URL: "https://login.example.com"

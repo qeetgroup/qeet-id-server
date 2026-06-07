@@ -578,6 +578,48 @@
               ]
             }
           }
+        },
+        {
+          "name": "Switch tenant \u2014 POST /v1/auth/switch-tenant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.access_token)  pm.collectionVariables.set('accessToken',  body.access_token);",
+                  "if (body.refresh_token) pm.collectionVariables.set('refreshToken', body.refresh_token);",
+                  "if (body.tenant_id)     pm.collectionVariables.set('tenantId',     body.tenant_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/switch-tenant",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "switch-tenant"
+              ]
+            }
+          }
         }
       ]
     },

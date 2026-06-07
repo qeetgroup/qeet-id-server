@@ -10,6 +10,7 @@ import (
 	stdhttp "net/http"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -387,6 +388,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	}
 
 	v := validator.New(validator.WithRequiredStructEnabled())
+	// Use JSON field names in validation errors so the per-field messages the
+	// API returns match the request body the client sent (e.g. "display_name",
+	// not "DisplayName").
+	v.RegisterTagNameFunc(func(fld reflect.StructField) string {
+		name := strings.SplitN(fld.Tag.Get("json"), ",", 2)[0]
+		if name == "-" {
+			return ""
+		}
+		return name
+	})
 	deps := httpapi.Deps{
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
 		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant},
