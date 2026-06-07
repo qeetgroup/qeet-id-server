@@ -1,4 +1,7 @@
 import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
   Button,
   Card,
   CardContent,
@@ -14,37 +17,100 @@ import {
 } from "@qeetrix/ui";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Loader2Icon, UploadIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { api } from "@/lib/api";
 import { useMe } from "@/lib/auth";
 
 export const Route = createFileRoute("/account/profile")({ component: ProfilePage });
 
+const AVATAR_PX = 192; // displayed at ≤64px; 192 keeps it crisp on retina
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
+
+function initials(name: string) {
+  return (
+    name
+      .split(/[\s@.]+/)
+      .map((p) => p[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "?"
+  );
+}
+
+// Resize + center-crop to a square JPEG data-URL. Keeps the payload tiny
+// (~15–30 KB) so it fits the inline avatar_url column without object storage.
+async function fileToAvatarDataUrl(file: File, size = AVATAR_PX): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas not supported");
+    const scale = Math.max(size / bitmap.width, size / bitmap.height);
+    const dw = bitmap.width * scale;
+    const dh = bitmap.height * scale;
+    ctx.drawImage(bitmap, (size - dw) / 2, (size - dh) / 2, dw, dh);
+    return canvas.toDataURL("image/jpeg", 0.85);
+  } finally {
+    bitmap.close();
+  }
+}
+
 function ProfilePage() {
   const me = useMe();
-  const [draft, setDraft] = useState({ display_name: "", phone: "" });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState({ display_name: "" });
+  // undefined = unchanged · string = newly picked · "" = removed
+  const [avatar, setAvatar] = useState<string | undefined>(undefined);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // Hydrate the form once `me` resolves, then leave it alone so the
   // user's edits aren't blown away by background refetches.
   const hydratedRef = useState<{ done: boolean }>({ done: false })[0];
   useEffect(() => {
     if (!hydratedRef.done && me.data) {
-      setDraft({
-        display_name: me.data.display_name ?? "",
-        phone: "",
-      });
+      setDraft({ display_name: me.data.display_name ?? "" });
       hydratedRef.done = true;
     }
   }, [me.data, hydratedRef]);
 
   const saveM = useMutation({
-    mutationFn: (body: { display_name?: string }) =>
+    mutationFn: (body: { display_name?: string; avatar_url?: string }) =>
       api<unknown>(`/v1/users/${me.data?.id}`, { method: "PATCH", body }),
-    onSuccess: () => me.refetch(),
+    onSuccess: () => {
+      setAvatar(undefined); // fall back to the freshly-fetched server value
+      void me.refetch();
+    },
     meta: { successMessage: "Profile updated" },
   });
+
+  const name = me.data?.display_name || me.data?.email?.split("@")[0] || "—";
+  // What to show now: a pending pick wins; "" means removed → fallback.
+  const shownAvatar = avatar !== undefined ? avatar || undefined : me.data?.avatar_url ?? undefined;
+
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // let the same file be re-picked later
+    if (!file) return;
+    setUploadError(null);
+    if (!file.type.startsWith("image/")) {
+      setUploadError("Please choose an image file.");
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setUploadError("Image is too large (max 8 MB).");
+      return;
+    }
+    try {
+      setAvatar(await fileToAvatarDataUrl(file));
+    } catch {
+      setUploadError("Couldn't process that image — try a different file.");
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,12 +118,13 @@ function ProfilePage() {
         <CardHeader>
           <CardTitle className="text-base">Profile</CardTitle>
           <CardDescription>
-            The name and contact details we show across Qeet ID.
+            The name, photo and contact details we show across Qeet ID.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {me.isLoading ? (
             <div className="space-y-3">
+              <Skeleton className="h-16 w-16 rounded-full" />
               <Skeleton className="h-8 w-1/2" />
               <Skeleton className="h-8 w-1/2" />
             </div>
@@ -67,10 +134,58 @@ function ProfilePage() {
                 e.preventDefault();
                 saveM.mutate({
                   display_name: draft.display_name.trim() || undefined,
+                  ...(avatar !== undefined ? { avatar_url: avatar } : {}),
                 });
               }}
             >
               <FieldGroup>
+                {/* Avatar */}
+                <Field>
+                  <FieldLabel>Profile picture</FieldLabel>
+                  <div className="flex items-center gap-4">
+                    <Avatar className="size-16">
+                      <AvatarImage src={shownAvatar} alt={name} />
+                      <AvatarFallback className="text-lg">{initials(name)}</AvatarFallback>
+                    </Avatar>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fileRef.current?.click()}
+                        >
+                          <UploadIcon /> Upload photo
+                        </Button>
+                        {shownAvatar && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setUploadError(null);
+                              setAvatar("");
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+                      <FieldDescription>
+                        PNG or JPG; a square image works best. Applied when you save.
+                      </FieldDescription>
+                      {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
+                    </div>
+                  </div>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={onPickFile}
+                  />
+                </Field>
+
                 <Field>
                   <FieldLabel htmlFor="display_name">Display name</FieldLabel>
                   <Input

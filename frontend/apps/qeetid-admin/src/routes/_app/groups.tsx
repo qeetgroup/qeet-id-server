@@ -326,20 +326,29 @@ function CreateGroupSheet({ open, onOpenChange, tenantId, groups, onCreated }: C
 
 type MembersSheetProps = { groupId: string; groupName: string; onClose: () => void };
 
+type PickUser = { id: string; email: string; display_name?: string | null };
+
 function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
   const qc = useQueryClient();
-  const [newMemberId, setNewMemberId] = useState("");
+  const [query, setQuery] = useState("");
 
   const membersQ = useQuery({
     queryKey: ["group-members", groupId],
     queryFn: () => api<{ items: Member[] }>(`/v1/groups/${groupId}/members`),
   });
 
+  // Tenant users to pick from. A user must hold a role to appear here (the
+  // members list is rbac.user_roles-based — see the Create User flow).
+  const usersQ = useQuery({
+    queryKey: ["pick-users"],
+    queryFn: () => api<{ items: PickUser[] }>(`/v1/users?limit=200`),
+  });
+
   const addM = useMutation({
     mutationFn: (userId: string) =>
       api<void>(`/v1/groups/${groupId}/members/${userId}`, { method: "POST" }),
     onSuccess: () => {
-      setNewMemberId("");
+      setQuery("");
       qc.invalidateQueries({ queryKey: ["group-members", groupId] });
     },
     meta: { successMessage: "Member added" },
@@ -352,26 +361,60 @@ function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
     meta: { successMessage: "Member removed" },
   });
 
+  const memberIds = new Set((membersQ.data?.items ?? []).map((m) => m.user_id));
+  const q = query.trim().toLowerCase();
+  const candidates = (usersQ.data?.items ?? [])
+    .filter((u) => !memberIds.has(u.id))
+    .filter(
+      (u) =>
+        q !== "" &&
+        ((u.display_name ?? "").toLowerCase().includes(q) || u.email.toLowerCase().includes(q)),
+    )
+    .slice(0, 8);
+
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Members — {groupName}</SheetTitle>
-          <SheetDescription>Add and remove users in this group. Paste a user UUID to add.</SheetDescription>
+          <SheetDescription>Search your workspace users to add them to this group.</SheetDescription>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <div className="flex gap-2">
+          <div className="relative">
             <Input
-              placeholder="user UUID"
-              value={newMemberId}
-              onChange={(e) => setNewMemberId(e.target.value)}
+              placeholder="Search users by name or email…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
             />
-            <Button
-              onClick={() => addM.mutate(newMemberId.trim())}
-              disabled={!newMemberId.trim() || addM.isPending}
-            >
-              {addM.isPending ? <Loader2Icon className="animate-spin" /> : "Add"}
-            </Button>
+            {q !== "" && (
+              <div className="mt-1 overflow-hidden rounded-md border">
+                {usersQ.isLoading ? (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">Loading users…</p>
+                ) : candidates.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">No matching users.</p>
+                ) : (
+                  candidates.map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      disabled={addM.isPending}
+                      onClick={() => addM.mutate(u.id)}
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 disabled:opacity-50"
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">
+                          {u.display_name || u.email}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {u.email}
+                        </span>
+                      </span>
+                      <UserPlusIcon className="size-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
           {addM.error && <FieldError>{(addM.error as ApiError).message}</FieldError>}
 

@@ -55,7 +55,7 @@ import {
   UploadCloudIcon,
   UserIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -63,6 +63,7 @@ import { BulkBar, ListToolbar, MasterCheckbox, RowCheckbox, SortHeader } from "@
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api, tokenStore } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { useRoles } from "@/lib/rbac-groups";
 import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
@@ -76,6 +77,7 @@ type User = {
   phone?: string | null;
   status: "active" | "invited" | "suspended" | "deleted";
   email_verified_at?: string | null;
+  roles?: string[] | null;
   created_at: string;
 };
 
@@ -325,6 +327,7 @@ function UsersPage() {
                         {t("table.name")}
                       </SortHeader>
                     )}
+                    <TableHead>{t("table.role")}</TableHead>
                     <SortHeader columnKey="status" sort={lv.sort} onToggle={lv.toggleSort}>
                       {t("table.status")}
                     </SortHeader>
@@ -378,6 +381,19 @@ function UsersPage() {
                             {u.display_name ?? "—"}
                           </TableCell>
                         )}
+                        <TableCell>
+                          {u.roles && u.roles.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {u.roles.map((r) => (
+                                <Badge key={r} variant="secondary">
+                                  {r}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell>
                           <StatusPill status={u.status} />
                         </TableCell>
@@ -531,14 +547,39 @@ type CreateUserSheetProps = {
 
 function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUserSheetProps) {
   const { t } = useTranslation("users");
+  const rolesQ = useRoles();
+  const roles = rolesQ.data?.items ?? [];
+  const [roleId, setRoleId] = useState("");
+
+  // Default to a "member"-type role (else the least-privileged/last one) so a
+  // created user is a workspace member out of the box.
+  useEffect(() => {
+    if (!roleId && roles.length > 0) {
+      const member = roles.find((r) => /member/i.test(r.name));
+      setRoleId(member?.id ?? roles[roles.length - 1]!.id);
+    }
+  }, [roles, roleId]);
+
   const createM = useMutation({
-    mutationFn: (body: {
+    mutationFn: async (vars: {
       tenant_id: string;
       email: string;
       password: string;
       display_name?: string;
       phone?: string;
-    }) => api<User>("/v1/users", { method: "POST", body }),
+      role_id?: string;
+    }) => {
+      const { role_id, ...body } = vars;
+      const user = await api<User>("/v1/users", { method: "POST", body });
+      // The members list is rbac.user_roles-based, so a user is only "in" the
+      // workspace once they hold a role — grant the chosen one now.
+      if (role_id) {
+        await api<void>(`/v1/users/${user.id}/tenants/${body.tenant_id}/roles/${role_id}`, {
+          method: "POST",
+        });
+      }
+      return user;
+    },
     onSuccess: () => {
       onCreated();
       onOpenChange(false);
@@ -561,6 +602,7 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
               password: String(data.get("password") ?? ""),
               display_name: String(data.get("display_name") ?? "").trim() || undefined,
               phone: String(data.get("phone") ?? "").trim() || undefined,
+              role_id: roleId || undefined,
             });
           }}
         >
@@ -595,6 +637,27 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
                 <FieldLabel htmlFor="password">{t("create.password")}</FieldLabel>
                 <Input id="password" name="password" type="password" minLength={8} required />
                 <FieldDescription>{t("create.passwordHelp")}</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="role">Role</FieldLabel>
+                <Select value={roleId} onValueChange={(v) => v && setRoleId(v)}>
+                  <SelectTrigger id="role" aria-label="Role">
+                    <SelectValue
+                      placeholder={rolesQ.isLoading ? "Loading roles…" : "Select a role"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {roles.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  Grants workspace membership — without a role the user won&apos;t appear in the
+                  members list.
+                </FieldDescription>
               </Field>
               {createM.error && (
                 <Field>

@@ -144,6 +144,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Security & Compliance",
     items: [
+      { title: "Overview", url: "/security", icon: <ShieldCheckIcon /> },
       {
         title: "Threat Protection",
         url: "/security/threats",

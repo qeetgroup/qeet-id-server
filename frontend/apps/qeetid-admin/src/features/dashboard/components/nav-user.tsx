@@ -1,6 +1,7 @@
 import {
   Avatar,
   AvatarFallback,
+  AvatarImage,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -46,6 +47,7 @@ export function NavUser() {
 
   const name = meQ.data?.display_name || meQ.data?.email?.split("@")[0] || "—";
   const email = meQ.data?.email ?? "";
+  const avatarSrc = meQ.data?.avatar_url ?? undefined;
 
   return (
     <SidebarMenu>
@@ -55,6 +57,7 @@ export function NavUser() {
             render={<SidebarMenuButton size="lg" className="aria-expanded:bg-muted" />}
           >
             <Avatar>
+              <AvatarImage src={avatarSrc} alt={name} />
               <AvatarFallback>{initials(name)}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-start text-sm leading-tight">
@@ -82,6 +85,7 @@ export function NavUser() {
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-start text-sm">
                   <Avatar>
+                    <AvatarImage src={avatarSrc} alt={name} />
                     <AvatarFallback>{initials(name)}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-start text-sm leading-tight">

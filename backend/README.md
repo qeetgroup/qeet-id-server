@@ -8,7 +8,7 @@ rewriting business logic.
 ## Quick start
 
 ```bash
-docker compose up -d postgres      # Postgres on :5001
+make db-up                         # Postgres on :5001 (Docker)
 cp .env.example .env               # if you don't have a .env yet
 make migrate-up                    # apply DB migrations (needs golang-migrate CLI)
 make seed-reset                    # fill the DB with demo data (see below)
@@ -96,6 +96,7 @@ api/openapi.yaml        # per-context API spec
 | `make test-integration` | Integration tests against a throwaway Postgres (needs Docker) |
 | `make build` `lint` `tidy` | Build binary / lint / `go mod tidy` |
 | `make sqlc-generate` `sqlc-schema` | Regenerate the sqlc pilot / refresh its schema snapshot |
+| `make db-up` / `db-down` | Start / stop the Postgres container (Docker) |
 | `make db-psql` | Open a psql shell in the DB container |
 
 ## Testing

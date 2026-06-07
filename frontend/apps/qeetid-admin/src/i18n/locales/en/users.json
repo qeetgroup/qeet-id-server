@@ -20,6 +20,7 @@
   "table": {
     "email": "Email",
     "name": "Name",
+    "role": "Role",
     "status": "Status",
     "emailVerified": "Email verified",
     "created": "Created",

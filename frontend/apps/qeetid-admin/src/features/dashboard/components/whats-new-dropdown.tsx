@@ -63,9 +63,18 @@ function writeLastSeen(date: string) {
  */
 export function WhatsNewDropdown() {
   const [open, setOpen] = useState(false);
-  const [lastSeen, setLastSeen] = useState<string | null>(() => readLastSeen());
+  // Start null so the server and the first client render agree — localStorage is
+  // unavailable during SSR, so initialising `lastSeen` from it made the server
+  // (null -> every entry unseen) disagree with the client (real last-seen date)
+  // and tripped a hydration mismatch on the button's aria-label / unread dot.
+  // We read the real value after mount; the count then corrects itself.
+  const [lastSeen, setLastSeen] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    setLastSeen(readLastSeen());
+  }, []);
 
   const unseen = useMemo(() => unseenEntries(lastSeen), [lastSeen]);
   const newest = CHANGELOG[0]?.date;

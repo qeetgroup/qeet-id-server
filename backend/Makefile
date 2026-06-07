@@ -1,5 +1,5 @@
 .PHONY: tidy build run test test-integration seed seed-reset sqlc-generate sqlc-schema migrate-up migrate-down migrate-force migrate-down-all \
-        db-reset db-wipe db-psql lint docker-up docker-down
+        db-up db-down db-reset db-wipe db-psql lint
 
 # Auto-load .env so make targets see the same env the Go process expects.
 ifneq (,$(wildcard .env))
@@ -78,10 +78,12 @@ migrate-force:
 migrate-down-all:
 	migrate -path migrations -database "$(DB_URL)" down -all
 
-docker-up:
+# Postgres is the only containerised service for local dev; the app runs on the
+# host via `make run`. (The prod-shaped stack lives in ../deploy/compose.)
+db-up:
 	docker compose up -d
 
-docker-down:
+db-down:
 	docker compose down
 
 # Interactive psql shell inside the Postgres container.

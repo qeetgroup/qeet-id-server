@@ -66,12 +66,13 @@ make install              # go mod tidy + pnpm install
 
 ```bash
 cp backend/.env.example backend/.env   # adjust if needed
-make db-up                # Postgres on :5001 (Docker)
-make migrate-up           # apply all migrations
-make seed-reset           # (optional) fill the DB with demo data to click around
+# DB / migrate / seed targets live in backend/Makefile — run via `make -C backend …`
+make -C backend db-up          # Postgres on :5001 (Docker)
+make -C backend migrate-up     # apply all migrations
+make -C backend seed-reset     # (optional) fill the DB with demo data to click around
 ```
 
-`make seed-reset` creates two demo workspaces with users, roles, groups, API
+`make -C backend seed-reset` creates two demo workspaces with users, roles, groups, API
 keys, webhooks, SSO providers and audit history. Log in with `owner@acme.test`
 (password `Password123!`); see [backend/README.md](./backend/README.md#seed-demo-data) for all accounts.
 
@@ -95,7 +96,7 @@ Sanity check the API: `curl http://localhost:4000/healthz`.
 ### Containerised paths
 
 ```bash
-make db-up                # backend/docker-compose.yml — Postgres only (dev)
+make -C backend db-up     # backend/docker-compose.yml — Postgres only (dev)
 ```
 
 For a production-shaped stack (backend + Postgres + Redis + TLS proxy + migration

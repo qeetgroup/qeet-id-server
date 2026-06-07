@@ -182,7 +182,7 @@ export function HowItWorks() {
 
         <Stagger
           staggerDelay={0.1}
-          className="mt-10 grid auto-rows-fr gap-6 lg:grid-cols-3"
+          className="mt-10 grid auto-rows-fr grid-cols-1 gap-6 lg:grid-cols-3"
         >
           {steps.map((s) => (
             <StaggerItem key={s.n} className="h-full">

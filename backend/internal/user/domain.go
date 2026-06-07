@@ -14,6 +14,10 @@ type User struct {
 	Phone           *string        `json:"phone"`
 	PhoneVerifiedAt *time.Time     `json:"phone_verified_at"`
 	DisplayName     *string        `json:"display_name"`
+	AvatarURL       *string        `json:"avatar_url"`
+	// Roles holds the user's role names in the listed tenant. Populated only by
+	// ListByTenant (the members list); empty on single-user fetches.
+	Roles           []string       `json:"roles,omitempty"`
 	Status          string         `json:"status"`
 	Metadata        map[string]any `json:"metadata"`
 	CreatedAt       time.Time      `json:"created_at"`
@@ -41,6 +45,9 @@ type CreateInput struct {
 
 type UpdateInput struct {
 	DisplayName *string        `json:"display_name,omitempty" validate:"omitempty,max=200"`
+	// AvatarURL is a small image data-URL (capped/compressed client-side). Empty
+	// string clears it. The startswith guard keeps it to image data-URLs only.
+	AvatarURL   *string        `json:"avatar_url,omitempty" validate:"omitempty,max=300000,startswith=data:image/"`
 	Phone       *string        `json:"phone,omitempty" validate:"omitempty,e164"`
 	Status      *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
