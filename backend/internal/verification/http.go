@@ -32,15 +32,19 @@ func (h *Handler) startEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in startEmailInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	if err := h.Service.StartEmail(r.Context(), id, in.Email); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "We've sent a verification code to your email.",
+	})
 }
 
 type confirmInput struct {
@@ -62,7 +66,7 @@ func (h *Handler) confirmEmail(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Your email has been verified."})
 }
 
 type startPhoneInput struct {
@@ -76,15 +80,19 @@ func (h *Handler) startPhone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in startPhoneInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
-		httpx.WriteError(w, r, err)
-		return
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(r, &in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	if err := h.Service.StartPhone(r.Context(), id, in.Phone); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "We've sent a verification code by SMS.",
+	})
 }
 
 func (h *Handler) confirmPhone(w http.ResponseWriter, r *http.Request) {
@@ -102,5 +110,5 @@ func (h *Handler) confirmPhone(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Your phone number has been verified."})
 }

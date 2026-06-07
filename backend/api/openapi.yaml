@@ -5625,7 +5625,7 @@ paths:
   /v1/users/{id}/verify/email/confirm:
     post:
       operationId: post_v1_users_ById_verify_email_confirm
-      summary: Create confirm
+      summary: Confirm an email-verification code
       tags:
       - Verification
       parameters:
@@ -5638,22 +5638,27 @@ paths:
       - bearerAuth: []
       - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required:
+              - code
+              properties:
+                code:
+                  type: string
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Email verified; returns a confirmation message
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  message:
+                    type: string
+        '400': *id001
         '401': *id002
         '403': *id007
         '404': *id003
@@ -5662,7 +5667,8 @@ paths:
   /v1/users/{id}/verify/email/start:
     post:
       operationId: post_v1_users_ById_verify_email_start
-      summary: Create start
+      summary: Send an email-verification code
+      description: Sends a 6-digit code to the address on file. Pass `email` only to verify a different address.
       tags:
       - Verification
       parameters:
@@ -5680,17 +5686,21 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Optional; defaults to the user's email on file.
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Code sent; returns a confirmation message
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  message:
+                    type: string
         '401': *id002
         '403': *id007
         '404': *id003
@@ -5699,7 +5709,7 @@ paths:
   /v1/users/{id}/verify/phone/confirm:
     post:
       operationId: post_v1_users_ById_verify_phone_confirm
-      summary: Create confirm
+      summary: Confirm a phone-verification code
       tags:
       - Verification
       parameters:
@@ -5712,22 +5722,27 @@ paths:
       - bearerAuth: []
       - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required:
+              - code
+              properties:
+                code:
+                  type: string
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Phone verified; returns a confirmation message
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  message:
+                    type: string
+        '400': *id001
         '401': *id002
         '403': *id007
         '404': *id003
@@ -5736,7 +5751,8 @@ paths:
   /v1/users/{id}/verify/phone/start:
     post:
       operationId: post_v1_users_ById_verify_phone_start
-      summary: Create start
+      summary: Send a phone-verification code (SMS)
+      description: Sends a 6-digit code to the number on file. Pass `phone` only to verify a different number.
       tags:
       - Verification
       parameters:
@@ -5754,17 +5770,20 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              properties:
+                phone:
+                  type: string
+                  description: Optional; defaults to the user's phone on file.
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Code sent; returns a confirmation message
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  message:
+                    type: string
         '401': *id002
         '403': *id007
         '404': *id003

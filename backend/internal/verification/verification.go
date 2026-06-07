@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,19 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *
 }
 
 func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string) error {
+	// Default to the address on file so the caller doesn't have to pass their
+	// own email just to verify it (POST .../verify/email/start with no body).
+	if strings.TrimSpace(email) == "" {
+		if err := s.pool.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, userID).Scan(&email); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errs.ErrNotFound.WithDetail("user not found")
+			}
+			return err
+		}
+	}
+	if strings.TrimSpace(email) == "" {
+		return errs.ErrUnprocessable.WithMessage("This account has no email address to verify.")
+	}
 	code, err := codes.Numeric(6)
 	if err != nil {
 		return err
@@ -93,6 +107,20 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 }
 
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {
+	// Default to the number on file when the body omits it.
+	if strings.TrimSpace(phone) == "" {
+		var stored *string
+		if err := s.pool.QueryRow(ctx, `SELECT phone FROM "user".users WHERE id = $1`, userID).Scan(&stored); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errs.ErrNotFound.WithDetail("user not found")
+			}
+			return err
+		}
+		if stored == nil || strings.TrimSpace(*stored) == "" {
+			return errs.ErrUnprocessable.WithMessage("This account has no phone number to verify. Add one first.")
+		}
+		phone = *stored
+	}
 	code, err := codes.Numeric(6)
 	if err != nil {
 		return err
