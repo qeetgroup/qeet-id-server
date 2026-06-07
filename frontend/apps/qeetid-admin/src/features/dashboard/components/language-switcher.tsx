@@ -1,4 +1,5 @@
 import {
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
@@ -6,8 +7,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  SidebarMenuButton,
-  useSidebar,
 } from "@qeetrix/ui";
 import { LanguagesIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -15,14 +14,13 @@ import { useTranslation } from "react-i18next";
 import { LANGUAGE_LABELS, SUPPORTED_LANGUAGES, type SupportedLanguage } from "@/i18n";
 
 /**
- * Compact language picker for the sidebar footer. Lists every locale the app
- * ships catalogs for (`SUPPORTED_LANGUAGES`) and persists the choice via the
- * i18next language detector (`localStorage: qeetid.lang`). Renders cleanly
- * with a single language today; new locales appear automatically once their
- * JSON catalogs are registered in `src/i18n`.
+ * Language picker for the top header. A globe icon button opens a dropdown of
+ * every locale the app ships catalogs for (`SUPPORTED_LANGUAGES`); the choice
+ * persists via the i18next language detector (`localStorage: qeetid.lang`).
+ * New locales appear automatically once their JSON catalogs register in
+ * `src/i18n`.
  */
 export function LanguageSwitcher() {
-  const { isMobile } = useSidebar();
   const { i18n } = useTranslation();
 
   const current = (
@@ -34,20 +32,19 @@ export function LanguageSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<SidebarMenuButton size="sm" className="aria-expanded:bg-muted" />}
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Language: ${LANGUAGE_LABELS[current]}`}
+            title="Change language"
+          />
+        }
       >
-        <LanguagesIcon className="size-4" />
-        <span className="truncate">{LANGUAGE_LABELS[current]}</span>
+        <LanguagesIcon />
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        className="min-w-44 rounded-lg"
-        side={isMobile ? "bottom" : "right"}
-        align="end"
-        sideOffset={4}
-      >
-        <DropdownMenuLabel className="text-xs text-muted-foreground">
-          Language
-        </DropdownMenuLabel>
+      <DropdownMenuContent className="min-w-44 rounded-lg" align="end" sideOffset={4}>
+        <DropdownMenuLabel className="text-xs text-muted-foreground">Language</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
           value={current}

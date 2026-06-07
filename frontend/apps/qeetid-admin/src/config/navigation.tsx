@@ -45,7 +45,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Platform",
     items: [
-      { title: "Dashboard", url: "/dashboard", icon: <LayoutDashboardIcon />, isActive: true },
+      { title: "Dashboard", url: "/", icon: <LayoutDashboardIcon />, isActive: true },
       { title: "Activity", url: "/activity", icon: <ActivityIcon /> },
       { title: "Analytics", url: "/analytics", icon: <ChartColumnIcon /> },
     ],
@@ -144,6 +144,7 @@ export const navGroups: NavGroup[] = [
   {
     label: "Security & Compliance",
     items: [
+      { title: "Overview", url: "/security", icon: <ShieldCheckIcon /> },
       {
         title: "Threat Protection",
         url: "/security/threats",

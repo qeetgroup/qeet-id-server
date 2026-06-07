@@ -136,7 +136,7 @@ export default function DocsPage() {
       </section>
 
       <section id="quickstart" className="scroll-mt-20 border-b border-border/60 bg-muted/30">
-        <div className="mx-auto grid max-w-7xl gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[1fr_1.4fr] lg:px-8 lg:py-28">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-12 px-4 py-20 sm:px-6 lg:grid-cols-[1fr_1.4fr] lg:px-8 lg:py-28">
           <div className="flex flex-col gap-4">
             <p className="text-sm font-medium uppercase tracking-widest text-primary">Quickstart</p>
             <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">

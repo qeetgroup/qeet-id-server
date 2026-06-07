@@ -101,12 +101,12 @@ function SessionsPage() {
 
   const sessionsQ = useQuery({
     queryKey: ["account-sessions", userId],
-    queryFn: () => api<{ items: Session[] }>(`/v1/users/${userId}/sessions`),
+    queryFn: () => api<{ items: Session[] }>(`/v1/auth/sessions`),
     enabled: !!userId,
   });
 
   const revokeM = useMutation({
-    mutationFn: (id: string) => api<void>(`/v1/sessions/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => api<void>(`/v1/auth/sessions/${id}`, { method: "DELETE" }),
     // Optimistic revoke: stamp `revoked_at` on the local row so the
     // status pill flips immediately. Roll back if the server rejects.
     onMutate: async (id) => {
@@ -143,7 +143,7 @@ function SessionsPage() {
           const s = queue.shift();
           if (!s) return;
           try {
-            await api<void>(`/v1/sessions/${s.id}`, { method: "DELETE" });
+            await api<void>(`/v1/auth/sessions/${s.id}`, { method: "DELETE" });
             ok++;
           } catch {
             failed++;

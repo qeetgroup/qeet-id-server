@@ -37,7 +37,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
@@ -248,8 +248,7 @@ function InvitationsPage() {
       <CreateInviteSheet
         open={creating}
         onOpenChange={setCreating}
-        tenantId={tenantId}
-        roles={rolesQ.data?.items ?? []}
+        currentTenantId={tenantId}
         onCreated={() => qc.invalidateQueries({ queryKey: ["invites"] })}
       />
     </div>
@@ -259,19 +258,53 @@ function InvitationsPage() {
 type CreateInviteSheetProps = {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  tenantId: string | null;
-  roles: Role[];
+  currentTenantId: string | null;
   onCreated: () => void;
 };
 
 function CreateInviteSheet({
   open,
   onOpenChange,
-  tenantId,
-  roles,
+  currentTenantId,
   onCreated,
 }: CreateInviteSheetProps) {
+  // Which workspace the invitee joins. Defaults to the current one; admins who
+  // belong to several can target another. Roles are tenant-scoped, so the role
+  // list (and its default) follow this selection.
+  const [tenantId, setTenantId] = useState<string>(currentTenantId ?? "");
   const [roleId, setRoleId] = useState<string>("");
+
+  useEffect(() => {
+    if (open) setTenantId(currentTenantId ?? "");
+  }, [open, currentTenantId]);
+
+  // Workspaces the caller belongs to (scoped server-side).
+  const tenantsQ = useQuery({
+    queryKey: ["tenants", "invite-picker"],
+    queryFn: () => api<{ items: { id: string; name: string }[] }>("/v1/tenants"),
+    enabled: open,
+  });
+  const tenants = tenantsQ.data?.items ?? [];
+
+  const rolesQ = useQuery({
+    queryKey: ["roles", tenantId],
+    queryFn: () => api<{ items: Role[] }>(`/v1/tenants/${tenantId}/roles`),
+    enabled: open && !!tenantId,
+  });
+  const roles = rolesQ.data?.items ?? [];
+
+  // Default to a "member"-type role for the selected workspace so the accepted
+  // user becomes a visible member (the members list is role-based).
+  useEffect(() => {
+    const rs = rolesQ.data?.items ?? [];
+    if (rs.length === 0) {
+      setRoleId("");
+      return;
+    }
+    const member = rs.find((r) => /member/i.test(r.name));
+    setRoleId(member?.id ?? rs[rs.length - 1]!.id);
+  }, [rolesQ.data]);
+
   const createM = useMutation({
     mutationFn: (body: { tenant_id: string; email: string; role_id?: string }) =>
       api<Invite>("/v1/invites", { method: "POST", body }),
@@ -312,10 +345,30 @@ function CreateInviteSheet({
                 <Input id="email" name="email" type="email" required />
               </Field>
               <Field>
-                <FieldLabel>Role</FieldLabel>
-                <Select value={roleId} onValueChange={(v) => setRoleId(v ?? "")}>
+                <FieldLabel>Workspace</FieldLabel>
+                <Select value={tenantId} onValueChange={(v) => v && setTenantId(v)}>
                   <SelectTrigger>
-                    <SelectValue placeholder="No role (basic member)" />
+                    <SelectValue
+                      placeholder={tenantsQ.isLoading ? "Loading workspaces…" : "Select a workspace"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tenants.map((tn) => (
+                      <SelectItem key={tn.id} value={tn.id}>
+                        {tn.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>The workspace the invitee will join.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel>Role</FieldLabel>
+                <Select value={roleId} onValueChange={(v) => v && setRoleId(v)}>
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={rolesQ.isLoading ? "Loading roles…" : "Select a role"}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {roles.map((r) => (
@@ -326,7 +379,7 @@ function CreateInviteSheet({
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  Assigned automatically when the invite is accepted.
+                  Granted on acceptance — required for the user to become a member.
                 </FieldDescription>
               </Field>
               {createM.error && (
@@ -338,7 +391,7 @@ function CreateInviteSheet({
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
             <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
-            <Button type="submit" disabled={createM.isPending}>
+            <Button type="submit" disabled={createM.isPending || !tenantId}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? "Sending…" : "Send invite"}
             </Button>

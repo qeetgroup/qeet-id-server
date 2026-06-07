@@ -39,7 +39,28 @@ export function useLogin() {
       tokenStore.setRefresh(pair.refresh_token);
       if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
       tokenStore.setUserId(pair.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
+    },
+  });
+}
+
+/**
+ * Accept a workspace invite: exchange the emailed token + a chosen password for
+ * a session (the backend creates/sets up the user and grants the invited role),
+ * then land on the dashboard. Anonymous like login — there's no session yet.
+ */
+export function useAcceptInvite() {
+  const navigate = useNavigate();
+  return useMutation({
+    mutationFn: (in_: { token: string; password: string; display_name?: string }) =>
+      api<LoginResponse>("/v1/invites/accept", { method: "POST", body: in_, anonymous: true }),
+    onSuccess: (pair) => {
+      tokenStore.clear();
+      tokenStore.set(pair.access_token);
+      tokenStore.setRefresh(pair.refresh_token);
+      if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
+      tokenStore.setUserId(pair.user_id);
+      navigate({ to: "/" });
     },
   });
 }
@@ -64,7 +85,7 @@ export function useConsumeMagicLink() {
       tokenStore.setRefresh(pair.refresh_token);
       if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
       tokenStore.setUserId(pair.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
     // The /magic page surfaces the error inline; no global toast.
     meta: { silent: true },
@@ -91,7 +112,7 @@ export function useConsumeSamlCode() {
       tokenStore.setRefresh(pair.refresh_token);
       if (pair.tenant_id) tokenStore.setTenantId(pair.tenant_id);
       tokenStore.setUserId(pair.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
     meta: { silent: true },
   });
@@ -136,7 +157,7 @@ export function useSignup() {
       tokenStore.set(res.access_token);
       tokenStore.setRefresh(res.refresh_token);
       tokenStore.setUserId(res.user_id);
-      navigate({ to: "/dashboard" });
+      navigate({ to: "/" });
     },
   });
 }
@@ -150,7 +171,7 @@ export async function switchToTenant(tenantId: string): Promise<void> {
   tokenStore.set(res.access_token);
   tokenStore.setRefresh(res.refresh_token);
   tokenStore.setTenantId(res.tenant_id);
-  if (typeof window !== "undefined") window.location.assign("/dashboard");
+  if (typeof window !== "undefined") window.location.assign("/");
 }
 
 export function useLogout() {
@@ -255,6 +276,7 @@ type Me = {
   tenant_id: string;
   email: string;
   display_name?: string | null;
+  avatar_url?: string | null;
   status: string;
 };
 

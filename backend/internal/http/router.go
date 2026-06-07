@@ -107,33 +107,9 @@ func NewRouter(d Deps) http.Handler {
 	// cheap pass-through.
 	r.Use(tracing.Middleware)
 	r.Use(metrics.Middleware)
-	// CSRF: enforced on browser cookie-bearing requests; bearer-token
-	// (Authorization: Bearer …) traffic bypasses. Lives above the route
-	// groups so every mutation route inherits the check, including the
-	// public auth/recovery/invite endpoints which are the most CSRF-
-	// sensitive (they create sessions).
-	//
-	// CSRFDisabled is an explicit escape hatch for dev/Postman testing only
-	// — main.go refuses to start with CSRF_DISABLED outside SERVICE_ENV=dev.
-	if !d.CSRFDisabled {
-		r.Use(httpx.CSRF(httpx.CSRFConfig{
-			AllowedOrigins: d.AllowedOrigins,
-			CookieSecure:   d.ServiceEnv != "dev",
-			CookieDomain:   d.CSRFCookieDomain,
-			// SAML ACS is a cross-site form-POST from the IdP, authenticated
-			// by XML-signature validation rather than a CSRF cookie. The SAML
-			// IdP SSO endpoint receives a cross-origin SP-initiated POST binding
-			// (AuthnRequest), gated by the SSO cookie + registered SP, not CSRF.
-			// The OAuth revocation/introspection endpoints are machine-to-machine
-			// and authenticated by client credentials (RFC 7009/7662), not a
-			// browser session, so they're exempt for the same reason. The RFC 8628
-			// device-authorization endpoint is likewise a client-authenticated
-			// device call (not a browser), so it's exempt too; the device
-			// verification endpoints (/oauth/device, /oauth/device/decision) are
-			// SSO-cookie browser flows and stay CSRF-protected.
-			ExemptPaths: []string{"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect", "/v1/oauth/token-code", "/v1/oauth/device_authorization"},
-		}))
-	}
+	// CORS first (above CSRF) so that even a rejected request — e.g. a CSRF 403
+	// — still carries Access-Control-* headers; otherwise the browser masks the
+	// real error as a generic "blocked by CORS policy" failure.
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
@@ -142,6 +118,39 @@ func NewRouter(d Deps) http.Handler {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
+	// CSRF: enforced on browser cookie-bearing requests; bearer-token
+	// (Authorization: Bearer …) traffic bypasses entirely. Lives above the route
+	// groups so every cookie-session mutation inherits the check.
+	//
+	// CSRFDisabled is an explicit escape hatch for dev/Postman testing only
+	// — main.go refuses to start with CSRF_DISABLED outside SERVICE_ENV=dev.
+	if !d.CSRFDisabled {
+		r.Use(httpx.CSRF(httpx.CSRFConfig{
+			AllowedOrigins: d.AllowedOrigins,
+			CookieSecure:   d.ServiceEnv != "dev",
+			CookieDomain:   d.CSRFCookieDomain,
+			// Exempt paths, two buckets:
+			//  1. Machine/IdP-driven, authenticated by something other than a
+			//     browser session: SAML ACS (XML-DSig) + IdP SSO POST binding;
+			//     OAuth revoke/introspect (client creds, RFC 7009/7662); the
+			//     code + device-authorization token endpoints (RFC 8628).
+			//  2. Public PRE-AUTH endpoints that bootstrap a *Bearer* token (not a
+			//     cookie session): signup/login/refresh, password recovery, magic
+			//     link, passkey login, social, invite-accept. They carry no cookie
+			//     session to forge; the token response can't be read or stored
+			//     cross-origin by an attacker; and CORS origin-checks + rate limits
+			//     already gate them — so the double-submit only adds friction.
+			//     NB: /v1/auth/session (the cookie-session creator) is deliberately
+			//     NOT exempt — it stays CSRF-protected.
+			ExemptPaths: []string{
+				"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
+				"/v1/oauth/token-code", "/v1/oauth/device_authorization",
+				"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
+				"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
+				"/v1/passkeys/login/", "/v1/social/", "/v1/invites/accept",
+			},
+		}))
+	}
 
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)

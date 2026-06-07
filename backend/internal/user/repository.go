@@ -131,9 +131,28 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 	return u, nil
 }
 
+// Get fetches a single user. Unlike the list/lookup paths it also selects
+// avatar_url (the profile + header read it via this path); keeping it out of
+// the shared userCols means the paginated users list never carries avatars.
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
-	row := r.pool.QueryRow(ctx, `SELECT `+userCols+` FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, id)
-	return scanUser(row)
+	var u User
+	var meta []byte
+	var tid *uuid.UUID
+	err := r.pool.QueryRow(ctx,
+		`SELECT `+userCols+`, avatar_url FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, id).
+		Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt, &u.Phone, &u.PhoneVerifiedAt,
+			&u.DisplayName, &u.Status, &meta, &u.CreatedAt, &u.UpdatedAt, &u.AvatarURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	if tid != nil {
+		u.TenantID = *tid
+	}
+	u.Metadata = parseUserMetadata(meta, u.ID)
+	return &u, nil
 }
 
 func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
@@ -168,7 +187,13 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 	)
 	if cursor == "" {
 		rows, err = r.pool.Query(ctx, `
-			SELECT `+userCols+`
+			SELECT `+userCols+`,
+			  COALESCE((
+				SELECT array_agg(r.name ORDER BY r.name)
+				FROM rbac.user_roles ur2
+				JOIN rbac.roles r ON r.id = ur2.role_id
+				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
+			  ), '{}') AS roles
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND EXISTS (
@@ -185,7 +210,13 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
 		}
 		rows, err = r.pool.Query(ctx, `
-			SELECT `+userCols+`
+			SELECT `+userCols+`,
+			  COALESCE((
+				SELECT array_agg(r.name ORDER BY r.name)
+				FROM rbac.user_roles ur2
+				JOIN rbac.roles r ON r.id = ur2.role_id
+				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
+			  ), '{}') AS roles
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND EXISTS (
@@ -207,14 +238,16 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 		var u User
 		var meta []byte
 		var tid *uuid.UUID
+		var roles []string
 		if err := rows.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
 			&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
-			&u.CreatedAt, &u.UpdatedAt); err != nil {
+			&u.CreatedAt, &u.UpdatedAt, &roles); err != nil {
 			return nil, "", err
 		}
 		if tid != nil {
 			u.TenantID = *tid
 		}
+		u.Roles = roles
 		u.Metadata = parseUserMetadata(meta, u.ID)
 		out = append(out, u)
 	}
@@ -231,6 +264,9 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 	ub := dbutil.NewUpdate()
 	if in.DisplayName != nil {
 		ub.Set("display_name", *in.DisplayName)
+	}
+	if in.AvatarURL != nil {
+		ub.Set("avatar_url", *in.AvatarURL)
 	}
 	if in.Phone != nil {
 		ub.Set("phone", *in.Phone)
