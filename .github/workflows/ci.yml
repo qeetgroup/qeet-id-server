@@ -125,7 +125,7 @@ jobs:
 
       - name: Metadata (app)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/qeet-id
           tags: |
@@ -149,7 +149,7 @@ jobs:
 
       - name: Metadata (migrate)
         id: meta-migrate
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/qeet-id-migrate
           tags: |
