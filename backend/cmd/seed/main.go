@@ -113,11 +113,13 @@ func main() {
 	for _, p := range perms {
 		must(rbacSvc.GrantPermission(ctx, adminRole.ID, p.ID, actor), "grant admin perm")
 	}
-	for i, p := range perms { // member gets a small read-only-ish subset
-		if i >= 4 {
-			break
+	// member is read-only: the four basic browse permissions only — nothing
+	// sensitive (no audit/secrets/keys/connections/billing) and no writes.
+	memberReads := map[string]bool{"tenant.read": true, "user.read": true, "role.read": true, "group.read": true}
+	for _, p := range perms {
+		if memberReads[p.Key] {
+			must(rbacSvc.GrantPermission(ctx, memberRole.ID, p.ID, actor), "grant member perm")
 		}
-		must(rbacSvc.GrantPermission(ctx, memberRole.ID, p.ID, actor), "grant member perm")
 	}
 
 	// ---- Member users in Acme (each gets a role -> appears in the users list) ----
@@ -200,6 +202,11 @@ func main() {
 	must(err, "create tenant globex")
 	gMember, err := rbacSvc.CreateRole(ctx, globex.ID, "member", "Standard member", actor)
 	must(err, "create globex member role")
+	for _, p := range perms {
+		if memberReads[p.Key] {
+			must(rbacSvc.GrantPermission(ctx, gMember.ID, p.ID, actor), "grant globex member perm")
+		}
+	}
 	erin, err := userRepo.CreateWithCredential(ctx, user.CreateInput{TenantID: globex.ID, Email: "erin@globex.test", DisplayName: "Erin Globex"}, pwHash)
 	must(err, "create globex user")
 	must(rbacSvc.AssignRole(ctx, erin.ID, globex.ID, gMember.ID, &owner.ID, actor), "assign globex member")

@@ -885,7 +885,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      summary: Password login; issue an access + refresh token pair
+      summary: Password login; issues a token pair, or an MFA challenge if a second factor is enrolled
       tags:
       - Auth
       security: []
@@ -897,14 +897,61 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: Token pair
+          description: |
+            Either a full token pair (no MFA) or, when the user has a second
+            factor enrolled, an MFA challenge `{mfa_required:true, mfa_token,
+            methods[]}` to complete at POST /v1/auth/mfa.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - $ref: '#/components/schemas/TokenPair'
+                - type: object
+                  properties:
+                    mfa_required:
+                      type: boolean
+                    mfa_token:
+                      type: string
+                    methods:
+                      type: array
+                      items:
+                        type: string
+        '401': *id002
+        '422': *id005
+        '429': *id006
+  /v1/auth/mfa:
+    post:
+      operationId: post_v1_auth_mfa
+      summary: Complete a two-step login by verifying a second-factor code
+      description: Exchanges the mfa_token from /v1/auth/login plus a TOTP or recovery code for a token pair.
+      tags:
+      - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - mfa_token
+              - code
+              properties:
+                mfa_token:
+                  type: string
+                code:
+                  type: string
+                  description: A TOTP code or a one-time recovery code.
+      responses:
+        '200':
+          description: Second factor verified; token pair issued
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPair'
+        '400': *id001
         '401': *id002
         '422': *id005
-        '429': *id006
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
@@ -1091,7 +1138,58 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
-          description: SSO cookie set
+          description: |
+            Either the SSO cookie was set (`{user_id}`) or, when the user has a
+            second factor enrolled, an MFA challenge `{mfa_required:true,
+            mfa_token, methods[]}` to complete at POST /v1/auth/session/mfa
+            (no cookie is set until then).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - type: object
+                  properties:
+                    user_id:
+                      type: string
+                      format: uuid
+                - type: object
+                  properties:
+                    mfa_required:
+                      type: boolean
+                    mfa_token:
+                      type: string
+                    methods:
+                      type: array
+                      items:
+                        type: string
+        '401': *id002
+        '422': *id005
+  /v1/auth/session/mfa:
+    post:
+      operationId: post_v1_auth_session_mfa
+      summary: 'Hosted-login: complete a two-step login and set the SSO cookie'
+      description: Exchanges the mfa_token from POST /v1/auth/session plus a TOTP or recovery code for the SSO cookie (qe_ls).
+      tags:
+      - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - mfa_token
+              - code
+              properties:
+                mfa_token:
+                  type: string
+                code:
+                  type: string
+                  description: A TOTP code or a one-time recovery code.
+      responses:
+        '200':
+          description: Second factor verified; SSO cookie set
           content:
             application/json:
               schema:
@@ -1100,8 +1198,56 @@ paths:
                   user_id:
                     type: string
                     format: uuid
+        '400': *id001
         '401': *id002
         '422': *id005
+  /v1/auth/register:
+    post:
+      operationId: post_v1_auth_register
+      summary: 'Hosted-login: end-user self-registration into a tenant (B2C)'
+      description: |
+        Creates a new end-user in the client's tenant and sets the SSO cookie
+        (qe_ls) so they continue into the OAuth authorize flow. Gated by the
+        tenant's self_registration_enabled policy (403 when disabled).
+        Enumeration-safe: an existing email returns a neutral 422.
+      tags:
+      - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - tenant_id
+              - email
+              - password
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                display_name:
+                  type: string
+      responses:
+        '201':
+          description: User created and SSO cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+        '403': *id007
+        '422': *id005
+        '429': *id006
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions
@@ -3735,6 +3881,169 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/tenants/{tenantID}/security/bots:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_bots
+      summary: Bot-detection telemetry (recent verdicts + 24h stats)
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent bot verdicts and stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/security/bots/settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_bots_settings
+      summary: Get a tenant's bot-detection settings
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Bot-detection settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+    put:
+      operationId: put_v1_tenants_ByTenantID_security_bots_settings
+      summary: Update a tenant's bot-detection settings
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/security/anomalies:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies
+      summary: List detected security anomalies for a tenant (newest first)
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent anomalies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/security/anomalies/summary:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies_summary
+      summary: Security-anomaly KPI summary for a tenant
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Open/resolved/affected/high-severity counts
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
+    post:
+      operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
+      summary: Mark a security anomaly resolved
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Anomaly resolved
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/ip-rules:
     get:
       operationId: get_v1_tenants_ByTenantID_ip_rules
@@ -5566,6 +5875,36 @@ paths:
         '403': *id007
         '404': *id003
         '422': *id005
+  /v1/users/{id}/mfa:
+    delete:
+      operationId: delete_v1_users_ById_mfa
+      summary: 'Admin: reset a user''s MFA (TOTP, recovery codes, OTP factors)'
+      description: Account-recovery for a locked-out user. Requires the `user.write` permission; audited as `mfa.admin_reset`.
+      tags:
+      - Users
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: MFA reset; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400': *id001
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/users/{id}/purge:
     delete:
       operationId: delete_v1_users_ById_purge

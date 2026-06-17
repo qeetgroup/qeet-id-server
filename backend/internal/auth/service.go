@@ -31,10 +31,82 @@ type Service struct {
 	// breach is the optional breached-password checker (nil = feature off,
 	// a no-op). Set via SetBreachChecker; consulted on Signup.
 	breach *hibp.Checker
+	// mfa gates login on a second factor (nil = MFA-at-login off). Set via
+	// SetMFA; kept as an interface so package auth doesn't import package mfa.
+	mfa MFAEnroller
+	// regPolicy gates hosted self-registration and validates new passwords
+	// against the tenant policy (nil = self-registration off). Set via
+	// SetRegistrationPolicy; an interface so auth doesn't import authpolicy.
+	regPolicy RegistrationPolicy
+	// anomaly receives security signals (nil = recording off). Set via
+	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
+	anomaly AnomalyRecorder
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
 	return &Service{pool: pool, users: users, tokens: t}
+}
+
+// MFAEnroller is the slice of the MFA service the auth package needs to enforce
+// a second factor at login. Wired in cmd/server/main.go via SetMFA.
+type MFAEnroller interface {
+	// IsEnrolled reports whether the user has a usable login second factor.
+	IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error)
+	// VerifyForLogin verifies a TOTP/recovery code for the pending login;
+	// (false, nil) means the code was wrong, a non-nil error is infrastructure.
+	VerifyForLogin(ctx context.Context, userID uuid.UUID, code string) (bool, error)
+}
+
+// SetMFA wires the MFA-at-login checker. Called from cmd/server/main.go.
+func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
+
+// RegistrationPolicy is the slice of the auth-policy service the auth package
+// needs to run hosted self-registration: the per-tenant on/off gate and the
+// per-tenant password validation (length/complexity + breach). Satisfied by
+// *authpolicy.Service. Wired in cmd/server/main.go via SetRegistrationPolicy.
+type RegistrationPolicy interface {
+	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw string) error
+}
+
+// SetRegistrationPolicy wires the hosted self-registration gate + password
+// policy. Called from cmd/server/main.go.
+func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
+
+// AnomalyRecorder receives security signals from the auth flow (nil = recording
+// off). Currently notified when an account crosses the brute-force lockout
+// threshold. Kept as an interface so auth doesn't import the threat package;
+// satisfied by *threat.Service. Wired via SetAnomalyRecorder.
+type AnomalyRecorder interface {
+	OnAccountLocked(ctx context.Context, email string)
+}
+
+// SetAnomalyRecorder wires the security-anomaly recorder. Called from
+// cmd/server/main.go.
+func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
+
+// mfaChallengeTTL bounds how long a pending second-factor login stays valid.
+const mfaChallengeTTL = 10 * time.Minute
+
+// LoginResult is either a full token pair (no MFA needed) or a pending MFA
+// challenge that must be completed via CompleteMFALogin before tokens issue.
+type LoginResult struct {
+	Pair        *TokenPair
+	MFARequired bool
+	MFAToken    string
+	Methods     []string
+}
+
+// LoginSessionResult is the hosted-login (cookie) analogue of LoginResult:
+// either a ready SSO session (RawCookie set, to be written via
+// SetLoginSessionCookie) or a pending MFA challenge to complete via
+// CompleteMFALoginSession before the cookie is issued.
+type LoginSessionResult struct {
+	UserID      uuid.UUID
+	RawCookie   string
+	MFARequired bool
+	MFAToken    string
+	Methods     []string
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
@@ -198,12 +270,224 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 	return s.IssuePair(ctx, userID, tenantID, ip, ua, "tenant_switch")
 }
 
-func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenPair, error) {
+// Login verifies the password and, when the user has a second factor enrolled,
+// returns an MFA challenge instead of tokens (complete it via CompleteMFALogin).
+// Otherwise it returns a full token pair.
+func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
 	u, err := s.CheckPassword(ctx, in.Email, in.Password)
 	if err != nil {
 		return nil, err
 	}
-	return s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+	if s.mfa != nil {
+		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+		if err != nil {
+			return nil, err
+		}
+		if enrolled {
+			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
+			if err != nil {
+				return nil, err
+			}
+			return &LoginResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
+		}
+	}
+	pair, err := s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{Pair: pair}, nil
+}
+
+// BeginLoginSession is the hosted-login (cookie) equivalent of Login: it
+// verifies the password and, when the user has a second factor enrolled,
+// returns an MFA challenge instead of an SSO session (complete it via
+// CompleteMFALoginSession). Otherwise it mints the SSO session cookie value.
+// Without this check the cookie flow would bypass MFA that the token flow
+// enforces.
+func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua string) (*LoginSessionResult, error) {
+	u, err := s.CheckPassword(ctx, email, password)
+	if err != nil {
+		return nil, err
+	}
+	if s.mfa != nil {
+		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+		if err != nil {
+			return nil, err
+		}
+		if enrolled {
+			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
+			if err != nil {
+				return nil, err
+			}
+			return &LoginSessionResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
+		}
+	}
+	raw, err := s.CreateLoginSession(ctx, u.ID, ip, ua)
+	if err != nil {
+		return nil, err
+	}
+	return &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
+}
+
+// RegisterInTenant creates a new end-user in the given tenant from the hosted
+// signup flow and signs them in by minting the SSO session cookie value. It is
+// gated by the tenant's self_registration_enabled policy and validates the
+// password against that tenant's policy (length/complexity + breach). Returns
+// the created user and the raw cookie value to write via SetLoginSessionCookie.
+func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, string, error) {
+	if s.regPolicy == nil {
+		return nil, "", errs.ErrNotImplemented
+	}
+	enabled, err := s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !enabled {
+		return nil, "", errs.ErrForbidden.
+			WithMessage("Self-registration is not enabled for this application.").
+			WithDetail("self-registration disabled")
+	}
+	// Offline strength baseline (denylist, equals-email, sequential), then the
+	// tenant policy (length/complexity) and the breach gate inside ValidateForTenant.
+	if reason := password.WeakReason(plain, email); reason != "" {
+		return nil, "", errs.ErrUnprocessable.WithMessage(reason)
+	}
+	if err := s.regPolicy.ValidateForTenant(ctx, tenantID, plain); err != nil {
+		return nil, "", err
+	}
+	hash, err := password.Hash(plain)
+	if err != nil {
+		return nil, "", err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
+
+	var dnArg any
+	u := &user.User{Email: strings.TrimSpace(email), Status: "active", Metadata: map[string]any{}}
+	if displayName != "" {
+		dnArg = displayName
+		dn := displayName
+		u.DisplayName = &dn
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email, display_name)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at, updated_at
+	`, tenantID, u.Email, dnArg).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if pgxerr.IsUnique(err) {
+			return nil, "", errs.ErrConflict.WithDetail("email already exists")
+		}
+		return nil, "", err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.password_credentials (user_id, password_hash)
+		VALUES ($1, $2)
+	`, u.ID, hash); err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", err
+	}
+
+	raw, err := s.CreateLoginSession(ctx, u.ID, ip, ua)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, raw, nil
+}
+
+// createMFAChallenge records a single-use, short-lived pending login that
+// CompleteMFALogin later exchanges for tokens. Returns the opaque token id.
+func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.UUID) (string, error) {
+	var tid any
+	if tenantID != uuid.Nil {
+		tid = tenantID
+	}
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at)
+		VALUES ($1, $2, $3) RETURNING id
+	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL)).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id.String(), nil
+}
+
+// verifyAndConsumeMFAChallenge validates a pending MFA login challenge and its
+// second-factor code. On a correct code it consumes (deletes) the challenge and
+// returns the user and its tenant (uuid.Nil for a tenant-less challenge). A
+// wrong code is rejected WITHOUT consuming the challenge so the user can retry
+// within the TTL. Shared by the token flow (CompleteMFALogin) and the hosted
+// cookie flow (CompleteMFALoginSession).
+func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, code string) (uuid.UUID, uuid.UUID, error) {
+	if s.mfa == nil {
+		return uuid.Nil, uuid.Nil, errs.ErrNotImplemented
+	}
+	id, err := uuid.Parse(mfaToken)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid mfa_token")
+	}
+	var userID uuid.UUID
+	var tenantID *uuid.UUID
+	var expiresAt time.Time
+	err = s.pool.QueryRow(ctx, `
+		SELECT user_id, tenant_id, expires_at FROM auth.mfa_login_challenges WHERE id = $1
+	`, id).Scan(&userID, &tenantID, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge not found")
+	}
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if time.Now().After(expiresAt) {
+		_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge expired")
+	}
+	ok, err := s.mfa.VerifyForLogin(ctx, userID, code)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if !ok {
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized.WithMessage("Invalid verification code.").WithDetail("invalid mfa code")
+	}
+	// Consume the challenge only on success.
+	_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
+	var tid uuid.UUID
+	if tenantID != nil {
+		tid = *tenantID
+	}
+	return userID, tid, nil
+}
+
+// CompleteMFALogin verifies the second-factor code for a pending token-flow
+// login and, on success, issues the token pair.
+func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua string) (*TokenPair, error) {
+	userID, tid, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	if err != nil {
+		return nil, err
+	}
+	return s.IssuePair(ctx, userID, tid, ip, ua, "password_mfa")
+}
+
+// CompleteMFALoginSession verifies the second-factor code for a pending
+// hosted-login challenge and, on success, mints the SSO session cookie value
+// (the cookie-flow analogue of CompleteMFALogin). Returns the user id and the
+// raw cookie value to write via SetLoginSessionCookie.
+func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, string, error) {
+	userID, _, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	raw, err := s.CreateLoginSession(ctx, userID, ip, ua)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	return userID, raw, nil
 }
 
 // CheckPassword runs the full credential check — brute-force lockout, user

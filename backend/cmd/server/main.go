@@ -27,6 +27,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/auth"
 	"github.com/qeetgroup/qeet-id/internal/authpolicy"
 	"github.com/qeetgroup/qeet-id/internal/billing"
+	"github.com/qeetgroup/qeet-id/internal/bot"
 	"github.com/qeetgroup/qeet-id/internal/branding"
 	"github.com/qeetgroup/qeet-id/internal/config"
 	"github.com/qeetgroup/qeet-id/internal/emailtemplate"
@@ -62,6 +63,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/secret"
 	"github.com/qeetgroup/qeet-id/internal/social"
 	"github.com/qeetgroup/qeet-id/internal/tenant"
+	"github.com/qeetgroup/qeet-id/internal/threat"
 	"github.com/qeetgroup/qeet-id/internal/user"
 	"github.com/qeetgroup/qeet-id/internal/verification"
 	"github.com/qeetgroup/qeet-id/internal/webhook"
@@ -285,7 +287,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		TwilioFrom:       cfg.TwilioFrom,
 	})
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
-	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
+	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL, cfg.LoginBaseURL)
 	retentionService := retention.NewService(pool)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
@@ -307,6 +309,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)
+	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
+	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + validate new passwords per tenant
+	threatService := threat.NewService(pool)
+	authService.SetAnomalyRecorder(threatService) // record credential-stuffing anomalies on lockout
+	botService := bot.NewService(pool)
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
@@ -400,10 +407,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	})
 	deps := httpapi.Deps{
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
-		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant},
+		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
-		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: cfg.ServiceEnv != "dev"},
+		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: cfg.ServiceEnv != "dev", Bot: botService},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbac.NewService(rbacRepo), Validate: v},
+		RBACChecker:   rbacRepo,
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService},
 		Retention:     &retention.Handler{Service: retentionService},
@@ -421,15 +429,17 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Billing:       &billing.Handler{Service: billingService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: cfg.ServiceEnv != "dev"},
-		Social:        &social.Handler{Service: socialService, CookieSecure: cfg.ServiceEnv != "dev"},
+		Social:        &social.Handler{Service: socialService, CookieSecure: cfg.ServiceEnv != "dev", LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},
 		SCIM:          &scim.Handler{Service: scimService},
 		Secret:        &secret.Handler{Service: secretService},
 		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
+		Threat:        &threat.Handler{Service: threatService},
+		Bot:           &bot.Handler{Service: botService},
 		Health:        healthHandler,
 		InFlight:      inFlight,
 

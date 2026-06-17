@@ -218,7 +218,17 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
-	options, sessionData, err := s.wa.BeginRegistration(u)
+	// Require a discoverable (resident) credential so the passwordless,
+	// usernameless login flow (BeginDiscoverableLogin) can find it — passkeys
+	// registered without this aren't discoverable and break login on the hosted
+	// app. UV is "preferred" to keep hardware keys without a PIN usable.
+	options, sessionData, err := s.wa.BeginRegistration(u,
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			ResidentKey:      protocol.ResidentKeyRequirementRequired,
+			UserVerification: protocol.VerificationPreferred,
+		}),
+	)
 	if err != nil {
 		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
 	}

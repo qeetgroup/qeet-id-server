@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id/internal/audit"
 	"github.com/qeetgroup/qeet-id/internal/platform/errs"
@@ -16,6 +17,12 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/platform/password"
 )
 
+// mfaResetter clears a user's MFA factors (admin account-recovery). Kept as an
+// interface so the user package needn't import the mfa package.
+type mfaResetter interface {
+	ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
+}
+
 type Handler struct {
 	Repo     *Repository
 	Validate *validator.Validate
@@ -23,6 +30,8 @@ type Handler struct {
 	// password change. Optional; nil skips the check (e.g. tests). Kept as a
 	// function so the user package needn't depend on the authpolicy package.
 	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, password string) error
+	// MFA resets a user's second factors (admin recovery). Optional.
+	MFA mfaResetter
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -33,8 +42,63 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Patch("/users/{id}", h.update)
 	r.Delete("/users/{id}", h.delete)
 	r.Post("/users/{id}/password", h.setPassword)
+	r.Delete("/users/{id}/mfa", h.resetMFA)
 	r.Post("/users/{id}/restore", h.restore)
 	r.Delete("/users/{id}/purge", h.purge)
+}
+
+// resetMFA clears a user's MFA factors so a locked-out user can re-enroll.
+// Admin-only (gated on user.write by the RBAC enforcer); audited.
+func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.MFA == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := h.MFA.ResetForUser(ctx, tx, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var actorID *uuid.UUID
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID = p.UserID
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		Action:       "mfa.admin_reset",
+		ResourceType: "user",
+		ResourceID:   &id,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "The user's multi-factor authentication has been reset. They can re-enroll at next sign-in.",
+	})
 }
 
 func (h *Handler) listDeleted(w http.ResponseWriter, r *http.Request) {

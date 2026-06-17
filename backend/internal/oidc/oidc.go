@@ -531,6 +531,13 @@ type ProviderLister interface {
 	EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error)
 }
 
+// RegistrationChecker reports whether a tenant permits hosted self-registration,
+// so the login-context tells the hosted app whether to show a signup link.
+// Satisfied by *authpolicy.Service (optional).
+type RegistrationChecker interface {
+	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
 type Handler struct {
 	Service *Service
 	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
@@ -539,6 +546,7 @@ type Handler struct {
 	// social providers for the login-context endpoint (optional).
 	Sessions     SessionManager
 	Providers    ProviderLister
+	Registration RegistrationChecker
 	LoginBaseURL string
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
 	// clearing it on logout; set from SERVICE_ENV != "dev".
@@ -613,10 +621,17 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			providers = p
 		}
 	}
+	selfRegistration := false
+	if h.Registration != nil {
+		if enabled, rerr := h.Registration.SelfRegistrationEnabled(r.Context(), tenantID); rerr == nil {
+			selfRegistration = enabled
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"client_name": name,
-		"tenant_id":   tenantID,
-		"providers":   providers,
+		"client_name":               name,
+		"tenant_id":                 tenantID,
+		"providers":                 providers,
+		"self_registration_enabled": selfRegistration,
 	})
 }
 

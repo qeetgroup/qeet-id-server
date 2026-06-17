@@ -25,10 +25,13 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/audit"
 	"github.com/qeetgroup/qeet-id/internal/auth"
 	"github.com/qeetgroup/qeet-id/internal/group"
+	"github.com/qeetgroup/qeet-id/internal/mfa"
 	"github.com/qeetgroup/qeet-id/internal/oidc"
 	"github.com/qeetgroup/qeet-id/internal/passkey"
 	"github.com/qeetgroup/qeet-id/internal/platform/errs"
+	"github.com/qeetgroup/qeet-id/internal/platform/notifier"
 	"github.com/qeetgroup/qeet-id/internal/platform/tokens"
+	"github.com/qeetgroup/qeet-id/internal/platform/totp"
 	"github.com/qeetgroup/qeet-id/internal/social"
 	"github.com/qeetgroup/qeet-id/internal/tenant"
 	"github.com/qeetgroup/qeet-id/internal/user"
@@ -76,21 +79,160 @@ func TestAuthSignupLoginRefreshReuse(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 
-	rotated, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: lp.RefreshToken})
+	rotated, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: lp.Pair.RefreshToken})
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if rotated.RefreshToken == lp.RefreshToken {
+	if rotated.RefreshToken == lp.Pair.RefreshToken {
 		t.Fatal("refresh should rotate the token")
 	}
 
 	// Reusing the now-consumed token must fail (theft detection).
-	if _, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: lp.RefreshToken}); err == nil {
+	if _, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: lp.Pair.RefreshToken}); err == nil {
 		t.Fatal("reusing a consumed refresh token should fail")
 	}
 	// ...and that revokes the session, so the freshly-rotated token is dead too.
 	if _, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: rotated.RefreshToken}); err == nil {
 		t.Fatal("session should be revoked after reuse, rotated token must fail")
+	}
+}
+
+// Login gates on a second factor once TOTP is enrolled: a plain password login
+// returns an mfa_required challenge, and only a valid code (via CompleteMFALogin)
+// yields tokens. The challenge is single-use.
+func TestLoginMFAEnforcement(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	users := user.NewRepository(testPool)
+	svc := auth.NewService(testPool, users, mustIssuer())
+	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{})
+	svc.SetMFA(mfaSvc)
+
+	email := uniqueSlug("mfa") + "@example.com"
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	}
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `SELECT id FROM "user".users WHERE email = $1`, email).Scan(&userID); err != nil {
+		t.Fatalf("lookup user: %v", err)
+	}
+
+	// Before enrollment: login issues tokens directly.
+	res, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if res.MFARequired || res.Pair == nil {
+		t.Fatalf("pre-enroll login should issue tokens, got MFARequired=%v pair=%v", res.MFARequired, res.Pair)
+	}
+
+	// Enroll + confirm TOTP.
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	enr, err := mfaSvc.StartEnroll(ctx, tx, userID, email)
+	if err != nil {
+		t.Fatalf("totp start: %v", err)
+	}
+	code, err := totp.Code(enr.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("totp code: %v", err)
+	}
+	if _, err := mfaSvc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+		t.Fatalf("totp confirm: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Now login must challenge for a second factor — no tokens yet.
+	res, err = svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	if err != nil {
+		t.Fatalf("login after enroll: %v", err)
+	}
+	if !res.MFARequired || res.MFAToken == "" || res.Pair != nil {
+		t.Fatalf("post-enroll login should require MFA, got %+v", res)
+	}
+
+	// Wrong code is rejected; the challenge survives for a retry.
+	if _, err := svc.CompleteMFALogin(ctx, res.MFAToken, "000000", "", ""); err == nil {
+		t.Fatal("wrong mfa code should fail")
+	}
+
+	// Correct code completes the login.
+	good, err := totp.Code(enr.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("totp code: %v", err)
+	}
+	pair, err := svc.CompleteMFALogin(ctx, res.MFAToken, good, "", "")
+	if err != nil {
+		t.Fatalf("complete mfa: %v", err)
+	}
+	if pair.AccessToken == "" || pair.RefreshToken == "" {
+		t.Fatalf("expected a token pair, got %+v", pair)
+	}
+
+	// The challenge is single-use — replaying it fails.
+	if _, err := svc.CompleteMFALogin(ctx, res.MFAToken, good, "", ""); err == nil {
+		t.Fatal("consumed mfa challenge should not be reusable")
+	}
+}
+
+// Admin MFA reset clears a user's enrolled factors so a locked-out user can
+// re-enroll (the service method behind DELETE /v1/users/{id}/mfa).
+func TestAdminResetMFA(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	users := user.NewRepository(testPool)
+	svc := auth.NewService(testPool, users, mustIssuer())
+	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{})
+
+	email := uniqueSlug("reset") + "@example.com"
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+		t.Fatalf("signup: %v", err)
+	}
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `SELECT id FROM "user".users WHERE email = $1`, email).Scan(&userID); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+
+	// Enroll + confirm TOTP.
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	enr, err := mfaSvc.StartEnroll(ctx, tx, userID, email)
+	if err != nil {
+		t.Fatalf("totp start: %v", err)
+	}
+	code, err := totp.Code(enr.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("totp code: %v", err)
+	}
+	if _, err := mfaSvc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+		t.Fatalf("totp confirm: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if ok, err := mfaSvc.IsEnrolled(ctx, userID); err != nil || !ok {
+		t.Fatalf("expected enrolled before reset (ok=%v err=%v)", ok, err)
+	}
+
+	// Admin reset wipes the factors.
+	rtx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reset: %v", err)
+	}
+	if err := mfaSvc.ResetForUser(ctx, rtx, userID); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if err := rtx.Commit(ctx); err != nil {
+		t.Fatalf("commit reset: %v", err)
+	}
+	if ok, err := mfaSvc.IsEnrolled(ctx, userID); err != nil || ok {
+		t.Fatalf("expected NOT enrolled after reset (ok=%v err=%v)", ok, err)
 	}
 }
 

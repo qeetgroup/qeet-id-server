@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -12,20 +13,40 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
+// BotEvaluator scores an auth attempt's User-Agent for bot-likeness and records
+// the verdict (detect-only — it never blocks). nil = bot detection off. Kept as
+// an interface so auth doesn't import the bot package; satisfied by *bot.Service.
+type BotEvaluator interface {
+	Evaluate(ctx context.Context, email, ip, ua string)
+}
+
 type Handler struct {
 	Service  *Service
 	Validate *validator.Validate
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only).
 	// Set from SERVICE_ENV != "dev".
 	CookieSecure bool
+	// Bot, when set, scores login/session attempts for bot-likeness.
+	Bot BotEvaluator
+}
+
+// evalBot runs the bot scorer for an auth attempt when detection is wired. The
+// scorer holds the request's UA + client IP and records suspicious verdicts.
+func (h *Handler) evalBot(r *http.Request, email string) {
+	if h.Bot != nil {
+		h.Bot.Evaluate(r.Context(), email, httpx.ClientIP(r), r.UserAgent())
+	}
 }
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
+	r.Post("/auth/mfa", h.mfaLogin)
 	r.Post("/auth/refresh", h.refresh)
 	// Hosted-login SSO session (HttpOnly cookie) for the OAuth authorize flow.
 	r.Post("/auth/session", h.createSession)
+	r.Post("/auth/session/mfa", h.createSessionMFA)
+	r.Post("/auth/register", h.register)
 	r.Delete("/auth/session", h.destroySession)
 }
 
@@ -116,12 +137,48 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	pair, err := h.Service.Login(r.Context(), LoginInput{
+	h.evalBot(r, in.Email)
+	res, err := h.Service.Login(r.Context(), LoginInput{
 		Email:     in.Email,
 		Password:  in.Password,
 		IP:        httpx.ClientIP(r),
 		UserAgent: r.UserAgent(),
 	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if res.MFARequired {
+		// Password ok, but a second factor is required. No tokens yet — the
+		// client completes the challenge at POST /v1/auth/mfa.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"mfa_required": true,
+			"mfa_token":    res.MFAToken,
+			"methods":      res.Methods,
+		})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res.Pair)
+}
+
+type mfaLoginInput struct {
+	MFAToken string `json:"mfa_token" validate:"required"`
+	Code     string `json:"code" validate:"required"`
+}
+
+// mfaLogin completes a two-step login: it exchanges the mfa_token from /login
+// plus a TOTP or recovery code for a full token pair.
+func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
+	var in mfaLoginInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	pair, err := h.Service.CompleteMFALogin(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -136,7 +193,11 @@ type sessionInput struct {
 
 // createSession is the hosted-login credential endpoint. On success it sets the
 // HttpOnly SSO cookie (qe_ls) and returns the user id — no tokens in the body.
-// It is what the hosted login app posts to before the OAuth consent step.
+// It is what the hosted login app posts to before the OAuth consent step. When
+// the user has a second factor enrolled it returns an MFA challenge instead and
+// withholds the cookie until the challenge is completed at POST
+// /v1/auth/session/mfa — without this the cookie flow would bypass MFA that the
+// token flow enforces.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	var in sessionInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -147,18 +208,87 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	u, err := h.Service.CheckPassword(r.Context(), in.Email, in.Password)
+	h.evalBot(r, in.Email)
+	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.Service.CreateLoginSession(r.Context(), u.ID, httpx.ClientIP(r), r.UserAgent())
+	if res.MFARequired {
+		// Password ok, but a second factor is required. No cookie yet — the
+		// client completes the challenge at POST /v1/auth/session/mfa.
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"mfa_required": true,
+			"mfa_token":    res.MFAToken,
+			"methods":      res.Methods,
+		})
+		return
+	}
+	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID})
+}
+
+// createSessionMFA completes a two-step hosted login: it exchanges the mfa_token
+// from createSession plus a TOTP or recovery code for the SSO cookie. It is the
+// cookie-flow analogue of mfaLogin (which returns a token pair).
+func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
+	var in mfaLoginInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	userID, raw, err := h.Service.CompleteMFALoginSession(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	SetLoginSessionCookie(w, raw, h.CookieSecure)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": u.ID})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
+}
+
+type registerInput struct {
+	TenantID    uuid.UUID `json:"tenant_id" validate:"required"`
+	Email       string    `json:"email" validate:"required,email"`
+	Password    string    `json:"password" validate:"required,min=8,max=256"`
+	DisplayName string    `json:"display_name" validate:"omitempty,max=200"`
+}
+
+// register is the hosted end-user signup endpoint (B2C self-registration). It
+// creates the user in the client's tenant — gated by that tenant's
+// self_registration_enabled policy — and on success sets the SSO cookie so the
+// new user continues straight into the OAuth authorize flow. Like signup it is
+// enumeration-safe: a conflict on an existing email returns a neutral 422 under
+// a timing floor so the response can't distinguish "exists" from "new".
+func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+	const registerFloor = 250 * time.Millisecond
+	start := time.Now()
+	defer httpx.ConstantTimeFloor(r.Context(), start, registerFloor)
+
+	var in registerInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	u, raw, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
+			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
+				"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
+			return
+		}
+		httpx.WriteError(w, r, err)
+		return
+	}
+	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
 // destroySession is hosted logout: revoke the SSO session and clear the cookie.

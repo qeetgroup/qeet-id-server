@@ -14,6 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/auth"
 	"github.com/qeetgroup/qeet-id/internal/authpolicy"
 	"github.com/qeetgroup/qeet-id/internal/billing"
+	"github.com/qeetgroup/qeet-id/internal/bot"
 	"github.com/qeetgroup/qeet-id/internal/branding"
 	"github.com/qeetgroup/qeet-id/internal/emailtemplate"
 	"github.com/qeetgroup/qeet-id/internal/gdpr"
@@ -40,17 +41,22 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/secret"
 	"github.com/qeetgroup/qeet-id/internal/social"
 	"github.com/qeetgroup/qeet-id/internal/tenant"
+	"github.com/qeetgroup/qeet-id/internal/threat"
 	"github.com/qeetgroup/qeet-id/internal/user"
 	"github.com/qeetgroup/qeet-id/internal/verification"
 	"github.com/qeetgroup/qeet-id/internal/webhook"
 )
 
 type Deps struct {
-	Tenant        *tenant.Handler
-	User          *user.Handler
-	Auth          *auth.Handler
-	AuthPolicy    *authpolicy.Handler
-	RBAC          *rbac.Handler
+	Tenant     *tenant.Handler
+	User       *user.Handler
+	Auth       *auth.Handler
+	AuthPolicy *authpolicy.Handler
+	RBAC       *rbac.Handler
+	// RBACChecker enforces per-route permissions for end-user principals
+	// (the authz policy table lives in permissionMap()). Satisfied by the
+	// rbac repository.
+	RBACChecker   rbac.Checker
 	Verification  *verification.Handler
 	Recovery      *recovery.Handler
 	Retention     *retention.Handler
@@ -77,6 +83,8 @@ type Deps struct {
 	SAML          *saml.Handler
 	LDAP          *ldap.Handler
 	IPAllow       *ipallow.Handler
+	Threat        *threat.Handler
+	Bot           *bot.Handler
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
@@ -209,6 +217,10 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(tenantLimiter.MiddlewareBy("tenant", ratelimit.PerTenant))
 			r.Use(userLimiter.MiddlewareBy("user", ratelimit.PerUser))
 			r.Use(apiKeyLimiter.MiddlewareBy("apikey", ratelimit.PerAPIKey))
+			// RBAC permission enforcement for end-user principals. Gates the
+			// routes listed in permissionMap(); API-key/service actors and
+			// unmapped (self-service / public) routes pass through.
+			r.Use(rbac.Enforce(d.RBACChecker, permissionMap()))
 
 			d.Auth.MountAuthed(r)
 			d.Tenant.Mount(r)
@@ -239,6 +251,8 @@ func NewRouter(d Deps) http.Handler {
 			d.SAML.Mount(r)    // /tenants/{id}/saml admin: connection CRUD
 			d.LDAP.Mount(r)    // /tenants/{id}/ldap admin: connection CRUD + test bind
 			d.IPAllow.Mount(r) // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
+			d.Threat.Mount(r)  // /tenants/{id}/security/anomalies: detected security events
+			d.Bot.Mount(r)     // /tenants/{id}/security/bots: bot-detection telemetry + settings
 		})
 	})
 

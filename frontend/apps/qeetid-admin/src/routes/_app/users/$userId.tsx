@@ -1,5 +1,6 @@
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardDescription,
@@ -17,7 +18,7 @@ import {
   TimeSince,
   buttonVariants,
 } from "@qeetrix/ui";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react";
 
@@ -67,6 +68,18 @@ function UserDetailPage() {
         query: { actor_user_id: userId, limit: 10 },
       }),
     enabled: !!tenantId,
+  });
+
+  const qc = useQueryClient();
+  // Admin account-recovery: clear the user's MFA so they can re-enroll. Gated
+  // server-side on user.write; audited as mfa.admin_reset.
+  const resetMfa = useMutation({
+    mutationFn: () => api<{ message: string }>(`/v1/users/${userId}/mfa`, { method: "DELETE" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["user", userId] });
+      qc.invalidateQueries({ queryKey: ["user-activity", userId] });
+    },
+    meta: { successMessage: "Multi-factor authentication reset for this user" },
   });
 
   return (
@@ -222,6 +235,22 @@ function UserDetailPage() {
           >
             Manage roles
           </Link>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={resetMfa.isPending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Reset this user's MFA? Their authenticator (TOTP), recovery codes, and email/SMS OTP factors will be removed, and they'll re-enroll at next sign-in.",
+                )
+              ) {
+                resetMfa.mutate();
+              }
+            }}
+          >
+            {resetMfa.isPending ? "Resetting…" : "Reset MFA"}
+          </Button>
         </CardContent>
       </Card>
     </div>

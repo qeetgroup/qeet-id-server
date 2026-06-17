@@ -43,6 +43,9 @@ type Policy struct {
 	PasskeyEnabled           bool `json:"passkey_enabled"`
 	OTPEmailEnabled          bool `json:"otp_email_enabled"`
 	OTPSMSEnabled            bool `json:"otp_sms_enabled"`
+	// SelfRegistrationEnabled gates the hosted end-user signup flow (B2C). Off by
+	// default so tenants stay invite-only unless they opt in.
+	SelfRegistrationEnabled bool `json:"self_registration_enabled"`
 }
 
 // DefaultPolicy mirrors the column defaults — returned when a tenant has no
@@ -96,13 +99,15 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 const cols = `password_enabled, password_min_length, password_require_uppercase,
               password_require_number, password_require_symbol, magic_link_enabled,
-              magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled`
+              magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
+              self_registration_enabled`
 
 func scan(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.PasswordEnabled, &p.PasswordMinLength, &p.PasswordRequireUppercase,
 		&p.PasswordRequireNumber, &p.PasswordRequireSymbol, &p.MagicLinkEnabled,
-		&p.MagicLinkTTLMinutes, &p.PasskeyEnabled, &p.OTPEmailEnabled, &p.OTPSMSEnabled); err != nil {
+		&p.MagicLinkTTLMinutes, &p.PasskeyEnabled, &p.OTPEmailEnabled, &p.OTPSMSEnabled,
+		&p.SelfRegistrationEnabled); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -138,8 +143,9 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 		INSERT INTO tenant.auth_policy
 			(tenant_id, password_enabled, password_min_length, password_require_uppercase,
 			 password_require_number, password_require_symbol, magic_link_enabled,
-			 magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+			 magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
+			 self_registration_enabled, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
 		ON CONFLICT (tenant_id) DO UPDATE SET
 			password_enabled = EXCLUDED.password_enabled,
 			password_min_length = EXCLUDED.password_min_length,
@@ -151,11 +157,13 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 			passkey_enabled = EXCLUDED.passkey_enabled,
 			otp_email_enabled = EXCLUDED.otp_email_enabled,
 			otp_sms_enabled = EXCLUDED.otp_sms_enabled,
+			self_registration_enabled = EXCLUDED.self_registration_enabled,
 			updated_at = NOW()
 		RETURNING `+cols,
 		tenantID, p.PasswordEnabled, p.PasswordMinLength, p.PasswordRequireUppercase,
 		p.PasswordRequireNumber, p.PasswordRequireSymbol, p.MagicLinkEnabled,
-		p.MagicLinkTTLMinutes, p.PasskeyEnabled, p.OTPEmailEnabled, p.OTPSMSEnabled))
+		p.MagicLinkTTLMinutes, p.PasskeyEnabled, p.OTPEmailEnabled, p.OTPSMSEnabled,
+		p.SelfRegistrationEnabled))
 }
 
 // ValidateForTenant loads the tenant policy and validates a password against
@@ -175,6 +183,16 @@ func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw 
 		return errs.ErrUnprocessable.WithDetail(BreachedPasswordDetail)
 	}
 	return nil
+}
+
+// SelfRegistrationEnabled reports whether the tenant permits hosted end-user
+// self-registration. Gates POST /v1/auth/register and the hosted /signup page.
+func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return p.SelfRegistrationEnabled, nil
 }
 
 type Handler struct {
