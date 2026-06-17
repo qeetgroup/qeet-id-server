@@ -1,0 +1,20 @@
+{
+  "title": "Create your account",
+  "titleTo": "Create your account for {{client}}",
+  "subtitle": "Sign up to continue.",
+  "fields": {
+    "name": "Name",
+    "email": "Email",
+    "password": "Password",
+    "confirm": "Confirm password"
+  },
+  "hint": "Use at least 8 characters.",
+  "submit": {
+    "idle": "Create account",
+    "busy": "Creating account…"
+  },
+  "mismatch": "Those passwords don't match.",
+  "haveAccount": "Already have an account?",
+  "signIn": "Sign in",
+  "disabled": "Sign-ups aren't open for this application. Ask an administrator for an invite."
+}

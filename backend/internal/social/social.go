@@ -460,6 +460,10 @@ type Handler struct {
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only); set
 	// from SERVICE_ENV != "dev".
 	CookieSecure bool
+	// LoginBaseURL is the hosted login app origin (qeetid-login). Browser-facing
+	// ceremony failures redirect here with a generic error code rather than
+	// dumping a JSON error body at a top-level redirect.
+	LoginBaseURL string
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -566,6 +570,25 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// redirectSocialError sends a failed browser-facing social ceremony back to the
+// hosted login app with a generic error code, rather than rendering a raw JSON
+// error body at a top-level redirect. The underlying detail is intentionally
+// not leaked to the URL; the structured error is still logged server-side. The
+// return_to (present on start, encoded in state on callback) is preserved when
+// available so the user can retry into the same app.
+func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, err error) {
+	if h.LoginBaseURL == "" {
+		// No hosted login app configured — fall back to the JSON error.
+		httpx.WriteError(w, r, err)
+		return
+	}
+	q := url.Values{"error": {"social"}}
+	if rt := r.URL.Query().Get("return_to"); rt != "" {
+		q.Set("return_to", rt)
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
+}
+
 // start redirects the browser to the provider's authorization endpoint.
 // Tenant is supplied as ?tenant=<slug> or ?tenant_id=<uuid> (no JWT here).
 // ?return_to=<url> opts into the hosted flow: the callback sets the SSO cookie
@@ -578,7 +601,7 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	}
 	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, callbackURL(r, provider), r.URL.Query().Get("return_to"))
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		h.redirectSocialError(w, r, err)
 		return
 	}
 	http.Redirect(w, r, authURL, http.StatusFound)
@@ -592,7 +615,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	res, err := h.Service.CompleteCallback(r.Context(), provider, q.Get("state"), q.Get("code"))
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		h.redirectSocialError(w, r, err)
 		return
 	}
 	if res.ReturnTo != "" {

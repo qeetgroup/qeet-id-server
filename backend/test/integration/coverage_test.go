@@ -982,7 +982,7 @@ func TestRecoveryPasswordResetLifecycle(t *testing.T) {
 	}
 
 	rec := &recordSender{}
-	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com", "https://login.qeet.com")
 
 	// Anti-enumeration: an unknown email succeeds without sending mail or writing a row.
 	rec.last = notifier.Message{}
@@ -1056,7 +1056,7 @@ func TestRecoveryResetTokenExpiry(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	rec := &recordSender{}
-	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com", "https://login.qeet.com")
 	if err := svc.StartPasswordReset(ctx, tenantID, email); err != nil {
 		t.Fatalf("start reset: %v", err)
 	}
@@ -1084,7 +1084,7 @@ func TestRecoveryMagicLink(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	rec := &recordSender{}
-	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com", "https://login.qeet.com")
 
 	if err := svc.StartMagicLink(ctx, tenantID, email); err != nil {
 		t.Fatalf("start magic link: %v", err)

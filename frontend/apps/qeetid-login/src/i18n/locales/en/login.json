@@ -10,6 +10,7 @@
     "idle": "Sign in",
     "busy": "Signing in…"
   },
+  "forgotPassword": "Forgot password?",
   "passkey": {
     "idle": "Sign in with a passkey",
     "busy": "Waiting for passkey…"
@@ -17,9 +18,22 @@
   "social": {
     "divider": "or continue with"
   },
+  "noAccount": "Don't have an account?",
+  "signUp": "Sign up",
+  "mfa": {
+    "title": "Two-step verification",
+    "subtitle": "Enter the code from your authenticator app, or a recovery code.",
+    "label": "Verification code",
+    "submit": {
+      "idle": "Verify",
+      "busy": "Verifying…"
+    },
+    "back": "Back to sign in"
+  },
   "errors": {
     "passkeyUnsupported": "Passkeys aren't supported in this browser.",
     "noPasskeySelected": "No passkey was selected.",
-    "passkeyFailed": "Passkey sign-in failed."
+    "passkeyFailed": "Passkey sign-in failed.",
+    "social": "We couldn't sign you in with that provider. Please try again or use another method."
   }
 }

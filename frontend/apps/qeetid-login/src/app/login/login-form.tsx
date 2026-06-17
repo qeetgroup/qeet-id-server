@@ -11,6 +11,10 @@ type LoginFormProps = {
   clientName: string;
   tenantId: string;
   providers: string[];
+  selfRegistrationEnabled: boolean;
+  // errorCode seeds the error banner from a redirect (e.g. a failed social
+  // ceremony bounced back as ?error=social); empty when there's nothing to show.
+  errorCode: string;
 };
 
 // safeReturnTo guards against open redirects: we only ever bounce back to our
@@ -33,13 +37,34 @@ function titleCase(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFormProps) {
+// The hosted-login session endpoint returns either the user id (cookie set) or,
+// when a second factor is enrolled, a pending MFA challenge to complete.
+type SessionResponse = {
+  user_id?: string;
+  mfa_required?: boolean;
+  mfa_token?: string;
+  methods?: string[];
+};
+
+export function LoginForm({
+  returnTo,
+  clientName,
+  tenantId,
+  providers,
+  selfRegistrationEnabled,
+  errorCode,
+}: LoginFormProps) {
   const { t } = useTranslation("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    errorCode ? t(`errors.${errorCode}`, { defaultValue: t("common:errors.generic") }) : null,
+  );
   const [loading, setLoading] = useState(false);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
+  // The pending MFA challenge token is held only in memory (never the URL) and,
+  // when set, swaps the credential form for the second-factor step.
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
 
   function continueToApp() {
     const dest = safeReturnTo(returnTo);
@@ -51,12 +76,30 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
     setError(null);
     setLoading(true);
     try {
-      await apiPost("/v1/auth/session", { email, password });
+      const res = await apiPost<SessionResponse>("/v1/auth/session", { email, password });
+      if (res.mfa_required && res.mfa_token) {
+        setMfaToken(res.mfa_token);
+        setLoading(false);
+        return;
+      }
       continueToApp();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("common:errors.generic"));
       setLoading(false);
     }
+  }
+
+  if (mfaToken) {
+    return (
+      <MfaChallenge
+        mfaToken={mfaToken}
+        onVerified={continueToApp}
+        onBack={() => {
+          setMfaToken(null);
+          setError(null);
+        }}
+      />
+    );
   }
 
   // Social: a full-page redirect into the hosted social flow, which sets the SSO
@@ -85,7 +128,9 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
       const options = PK.parseRequestOptionsFromJSON
         ? PK.parseRequestOptionsFromJSON(begin.publicKey)
         : (begin.publicKey as PublicKeyCredentialRequestOptions);
-      const assertion = (await navigator.credentials.get({ publicKey: options })) as PublicKeyCredential & {
+      const assertion = (await navigator.credentials.get({
+        publicKey: options,
+      })) as PublicKeyCredential & {
         toJSON?: () => unknown;
       };
       if (!assertion) throw new Error(t("errors.noPasskeySelected"));
@@ -140,6 +185,14 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            <div className="text-right">
+              <a
+                href={`/forgot-password${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ""}`}
+                className="text-muted-foreground hover:text-foreground text-xs underline"
+              >
+                {t("forgotPassword")}
+              </a>
+            </div>
           </div>
 
           {error && (
@@ -153,7 +206,13 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
           </Button>
         </form>
 
-        <Button type="button" variant="outline" className="w-full" disabled={busy} onClick={passkeyLogin}>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          disabled={busy}
+          onClick={passkeyLogin}
+        >
           {passkeyBusy ? t("passkey.busy") : t("passkey.idle")}
         </Button>
 
@@ -180,6 +239,99 @@ export function LoginForm({ returnTo, clientName, tenantId, providers }: LoginFo
             </div>
           </div>
         )}
+
+        {selfRegistrationEnabled && (
+          <p className="text-muted-foreground text-center text-sm">
+            {t("noAccount")}{" "}
+            <a
+              href={`/signup${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ""}`}
+              className="hover:text-foreground underline"
+            >
+              {t("signUp")}
+            </a>
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// MfaChallenge is the second step of a hosted login: the password was accepted
+// but the user has a second factor enrolled. It exchanges the in-memory
+// mfa_token plus a TOTP or recovery code for the SSO cookie.
+function MfaChallenge({
+  mfaToken,
+  onVerified,
+  onBack,
+}: {
+  mfaToken: string;
+  onVerified: () => void;
+  onBack: () => void;
+}) {
+  const { t } = useTranslation("login");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      await apiPost("/v1/auth/session/mfa", { mfa_token: mfaToken, code });
+      onVerified();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("common:errors.generic"));
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Card className="w-full max-w-sm">
+      <CardContent className="space-y-6 pt-6">
+        <div className="space-y-1 text-center">
+          <h1 className="text-xl font-semibold tracking-tight">{t("mfa.title")}</h1>
+          <p className="text-muted-foreground text-sm">{t("mfa.subtitle")}</p>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="mfa-code" className="text-sm font-medium">
+              {t("mfa.label")}
+            </label>
+            <Input
+              id="mfa-code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              autoFocus
+              required
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="123456"
+            />
+          </div>
+
+          {error && (
+            <p role="alert" className="text-destructive text-sm">
+              {error}
+            </p>
+          )}
+
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading ? t("mfa.submit.busy") : t("mfa.submit.idle")}
+          </Button>
+        </form>
+
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          disabled={loading}
+          onClick={onBack}
+        >
+          {t("mfa.back")}
+        </Button>
       </CardContent>
     </Card>
   );

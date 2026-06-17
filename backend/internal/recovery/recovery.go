@@ -35,17 +35,21 @@ type Service struct {
 	pool       *pgxpool.Pool
 	sender     notifier.Sender
 	ttl        time.Duration
-	baseAppURL string // e.g. "https://app.qeet.com" — used to build links
+	baseAppURL string // e.g. "https://app.qeet.com" — used for magic-link login links
+	// loginBaseURL is the hosted-login app origin (qeetid-login). Password-reset
+	// is a pure browser credential flow, so its link lands on the hosted login
+	// app's /reset page rather than the app origin.
+	loginBaseURL string
 	// breach is the optional breached-password checker (nil = feature off, a
 	// no-op). Set via SetBreachChecker; consulted on ConfirmPasswordReset.
 	breach *hibp.Checker
 }
 
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
+func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL, loginBaseURL string) *Service {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	return &Service{pool: pool, sender: sender, ttl: ttl, baseAppURL: baseAppURL}
+	return &Service{pool: pool, sender: sender, ttl: ttl, baseAppURL: baseAppURL, loginBaseURL: loginBaseURL}
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
@@ -80,7 +84,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, em
 		Channel: "email",
 		To:      email,
 		Subject: "Reset your password",
-		Body:    fmt.Sprintf("Click to reset: %s/reset?token=%s", s.baseAppURL, raw),
+		Body:    fmt.Sprintf("Click to reset: %s/reset?token=%s", s.loginBaseURL, raw),
 	})
 }
 

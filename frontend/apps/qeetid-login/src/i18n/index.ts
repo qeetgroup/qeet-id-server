@@ -7,6 +7,8 @@ import login from "./locales/en/login.json";
 import consent from "./locales/en/consent.json";
 import device from "./locales/en/device.json";
 import loggedOut from "./locales/en/loggedOut.json";
+import recovery from "./locales/en/recovery.json";
+import signup from "./locales/en/signup.json";
 
 // Languages the UI ships catalogs for. Adding a locale is a two-step change:
 //  1. drop `src/i18n/locales/<lng>/*.json` (mirror the `en` namespaces),
@@ -32,6 +34,8 @@ const resources = {
     consent,
     device,
     loggedOut,
+    recovery,
+    signup,
   },
 } as const;
 
