@@ -14,6 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/auth"
 	"github.com/qeetgroup/qeet-id/internal/authpolicy"
 	"github.com/qeetgroup/qeet-id/internal/billing"
+	"github.com/qeetgroup/qeet-id/internal/bot"
 	"github.com/qeetgroup/qeet-id/internal/branding"
 	"github.com/qeetgroup/qeet-id/internal/emailtemplate"
 	"github.com/qeetgroup/qeet-id/internal/gdpr"
@@ -40,6 +41,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/secret"
 	"github.com/qeetgroup/qeet-id/internal/social"
 	"github.com/qeetgroup/qeet-id/internal/tenant"
+	"github.com/qeetgroup/qeet-id/internal/threat"
 	"github.com/qeetgroup/qeet-id/internal/user"
 	"github.com/qeetgroup/qeet-id/internal/verification"
 	"github.com/qeetgroup/qeet-id/internal/webhook"
@@ -81,6 +83,8 @@ type Deps struct {
 	SAML          *saml.Handler
 	LDAP          *ldap.Handler
 	IPAllow       *ipallow.Handler
+	Threat        *threat.Handler
+	Bot           *bot.Handler
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
@@ -247,6 +251,8 @@ func NewRouter(d Deps) http.Handler {
 			d.SAML.Mount(r)    // /tenants/{id}/saml admin: connection CRUD
 			d.LDAP.Mount(r)    // /tenants/{id}/ldap admin: connection CRUD + test bind
 			d.IPAllow.Mount(r) // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
+			d.Threat.Mount(r)  // /tenants/{id}/security/anomalies: detected security events
+			d.Bot.Mount(r)     // /tenants/{id}/security/bots: bot-detection telemetry + settings
 		})
 	})
 

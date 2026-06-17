@@ -3881,6 +3881,169 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/tenants/{tenantID}/security/bots:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_bots
+      summary: Bot-detection telemetry (recent verdicts + 24h stats)
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent bot verdicts and stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/security/bots/settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_bots_settings
+      summary: Get a tenant's bot-detection settings
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Bot-detection settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+    put:
+      operationId: put_v1_tenants_ByTenantID_security_bots_settings
+      summary: Update a tenant's bot-detection settings
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/security/anomalies:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies
+      summary: List detected security anomalies for a tenant (newest first)
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent anomalies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/security/anomalies/summary:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies_summary
+      summary: Security-anomaly KPI summary for a tenant
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Open/resolved/affected/high-severity counts
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
+    post:
+      operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
+      summary: Mark a security anomaly resolved
+      tags:
+      - Threats
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Anomaly resolved
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/ip-rules:
     get:
       operationId: get_v1_tenants_ByTenantID_ip_rules

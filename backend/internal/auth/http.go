@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -12,12 +13,29 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
+// BotEvaluator scores an auth attempt's User-Agent for bot-likeness and records
+// the verdict (detect-only — it never blocks). nil = bot detection off. Kept as
+// an interface so auth doesn't import the bot package; satisfied by *bot.Service.
+type BotEvaluator interface {
+	Evaluate(ctx context.Context, email, ip, ua string)
+}
+
 type Handler struct {
 	Service  *Service
 	Validate *validator.Validate
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only).
 	// Set from SERVICE_ENV != "dev".
 	CookieSecure bool
+	// Bot, when set, scores login/session attempts for bot-likeness.
+	Bot BotEvaluator
+}
+
+// evalBot runs the bot scorer for an auth attempt when detection is wired. The
+// scorer holds the request's UA + client IP and records suspicious verdicts.
+func (h *Handler) evalBot(r *http.Request, email string) {
+	if h.Bot != nil {
+		h.Bot.Evaluate(r.Context(), email, httpx.ClientIP(r), r.UserAgent())
+	}
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -119,6 +137,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	h.evalBot(r, in.Email)
 	res, err := h.Service.Login(r.Context(), LoginInput{
 		Email:     in.Email,
 		Password:  in.Password,
@@ -189,6 +208,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	h.evalBot(r, in.Email)
 	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)

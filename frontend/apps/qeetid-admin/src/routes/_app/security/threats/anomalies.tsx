@@ -6,91 +6,84 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
+  TimeSince,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertTriangleIcon, MapPinIcon, ShieldAlertIcon, UserXIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  MapPinIcon,
+  RefreshCwIcon,
+  ShieldAlertIcon,
+  UserXIcon,
+} from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
+import { useAnomalies, useAnomalySummary, useResolveAnomaly } from "@/lib/anomalies";
 
-export const Route = createFileRoute("/_app/security/threats/anomalies")({ component: AnomaliesPage });
-
-const incidents = [
-  {
-    id: "1",
-    type: "impossible_travel",
-    user: "alice@acme.com",
-    detail: "London → São Paulo in 9 minutes",
-    severity: "high",
-    when: "4m ago",
-    status: "blocked",
-  },
-  {
-    id: "2",
-    type: "credential_stuffing",
-    user: "—",
-    detail: "1,402 logins from /24 range in 2 minutes",
-    severity: "high",
-    when: "12m ago",
-    status: "rate-limited",
-  },
-  {
-    id: "3",
-    type: "new_device",
-    user: "bob@acme.com",
-    detail: "First login from macOS 15.4 / Safari",
-    severity: "low",
-    when: "31m ago",
-    status: "challenged",
-  },
-  {
-    id: "4",
-    type: "tor_exit_node",
-    user: "carol@acme.com",
-    detail: "Tor exit node 185.220.101.x",
-    severity: "medium",
-    when: "1h ago",
-    status: "challenged",
-  },
-  {
-    id: "5",
-    type: "session_hijack_suspect",
-    user: "dave@acme.com",
-    detail: "IP change mid-session, new country",
-    severity: "high",
-    when: "2h ago",
-    status: "session-revoked",
-  },
-];
-
-const summary = [
-  { label: "Open incidents", value: "3", icon: <AlertTriangleIcon className="size-4" /> },
-  { label: "Resolved (24h)", value: "12", icon: <ShieldAlertIcon className="size-4" /> },
-  { label: "Compromised accounts", value: "0", icon: <UserXIcon className="size-4" /> },
-  { label: "Geo anomalies", value: "5", icon: <MapPinIcon className="size-4" /> },
-];
+export const Route = createFileRoute("/_app/security/threats/anomalies")({
+  component: AnomaliesPage,
+});
 
 function severityBadge(s: string) {
-  if (s === "high") return <Badge variant="destructive">high</Badge>;
-  if (s === "medium") return <Badge variant="secondary">medium</Badge>;
-  return <Badge variant="outline">low</Badge>;
+  if (s === "high") return <Badge variant="destructive">{s}</Badge>;
+  if (s === "medium") return <Badge variant="secondary">{s}</Badge>;
+  return <Badge variant="outline">{s}</Badge>;
 }
 
 function AnomaliesPage() {
+  const anomaliesQ = useAnomalies();
+  const summaryQ = useAnomalySummary();
+  const resolve = useResolveAnomaly();
+  const items = anomaliesQ.data?.items ?? [];
+  const sm = summaryQ.data;
+
+  const summary = [
+    {
+      label: "Open incidents",
+      value: sm?.open ?? 0,
+      icon: <AlertTriangleIcon className="size-4" />,
+    },
+    {
+      label: "Resolved (24h)",
+      value: sm?.resolved_24h ?? 0,
+      icon: <ShieldAlertIcon className="size-4" />,
+    },
+    {
+      label: "Affected accounts",
+      value: sm?.affected_accounts ?? 0,
+      icon: <UserXIcon className="size-4" />,
+    },
+    {
+      label: "High severity (24h)",
+      value: sm?.high_severity_24h ?? 0,
+      icon: <MapPinIcon className="size-4" />,
+    },
+  ];
+
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         description="Behavioral anomalies detected across logins, sessions, and API access."
         actions={
-          <>
-            <Button variant="outline">Replay rules</Button>
-            <Button>Configure detection</Button>
-          </>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              anomaliesQ.refetch();
+              summaryQ.refetch();
+            }}
+            disabled={anomaliesQ.isFetching}
+          >
+            <RefreshCwIcon className={anomaliesQ.isFetching ? "animate-spin" : ""} />
+            Refresh
+          </Button>
         }
       />
 
@@ -111,37 +104,64 @@ function AnomaliesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Recent anomalies</CardTitle>
-          <CardDescription>Last 24 hours, newest first</CardDescription>
+          <CardDescription>Most recent detections, newest first</CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Type</TableHead>
-                <TableHead>User</TableHead>
-                <TableHead>Detail</TableHead>
-                <TableHead>Severity</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>When</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {incidents.map((i) => (
-                <TableRow key={i.id}>
-                  <TableCell className="font-mono text-xs">{i.type}</TableCell>
-                  <TableCell>{i.user}</TableCell>
-                  <TableCell className="max-w-[320px] truncate text-sm text-muted-foreground">
-                    {i.detail}
-                  </TableCell>
-                  <TableCell>{severityBadge(i.severity)}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{i.status}</Badge>
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{i.when}</TableCell>
+          <DataState
+            isLoading={anomaliesQ.isLoading}
+            isError={anomaliesQ.isError}
+            error={anomaliesQ.error}
+            isEmpty={items.length === 0}
+            emptyIcon={AlertTriangleIcon}
+            emptyTitle="No anomalies detected."
+            skeletonRows={3}
+          >
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Detail</TableHead>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {items.map((i) => (
+                  <TableRow key={i.id}>
+                    <TableCell className="font-mono text-xs">{i.type}</TableCell>
+                    <TableCell>{i.user_email ?? "—"}</TableCell>
+                    <TableCell className="max-w-[320px] truncate text-sm text-muted-foreground">
+                      {i.detail}
+                    </TableCell>
+                    <TableCell>{severityBadge(i.severity)}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{i.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <TimeSince value={i.created_at} />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {i.status === "resolved" ? (
+                        <span className="text-xs text-muted-foreground">Resolved</span>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={resolve.isPending}
+                          onClick={() => resolve.mutate(i.id)}
+                        >
+                          Resolve
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </DataState>
         </CardContent>
       </Card>
     </div>

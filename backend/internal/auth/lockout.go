@@ -42,8 +42,11 @@ func (s *Service) recordFailedLogin(ctx context.Context, email string) {
 	windowStart := now.Add(-failureWindow)
 	lockUntil := now.Add(lockoutDuration)
 	// In ON CONFLICT DO UPDATE the existing row is referenced by the bare
-	// relation name (login_attempts), not the schema-qualified form.
-	_, err := s.pool.Exec(ctx, `
+	// relation name (login_attempts), not the schema-qualified form. RETURNING
+	// the new counter lets us fire an anomaly exactly once, on the attempt that
+	// crosses the lockout threshold (not on every subsequent locked attempt).
+	var failedCount int
+	err := s.pool.QueryRow(ctx, `
 		INSERT INTO auth.login_attempts (email, failed_count, first_failed_at, last_failed_at)
 		VALUES ($1, 1, NOW(), NOW())
 		ON CONFLICT (email) DO UPDATE SET
@@ -59,9 +62,15 @@ func (s *Service) recordFailedLogin(ctx context.Context, email string) {
 					WHEN login_attempts.last_failed_at < $2 THEN 1
 					ELSE login_attempts.failed_count + 1 END) >= $3
 				THEN $4::timestamptz ELSE NULL END
-	`, email, windowStart, maxFailedLogins, lockUntil)
+		RETURNING failed_count
+	`, email, windowStart, maxFailedLogins, lockUntil).Scan(&failedCount)
 	if err != nil {
 		slog.Warn("record failed login", "err", err)
+		return
+	}
+	// Exactly at the threshold = the attempt that just locked the account.
+	if failedCount == maxFailedLogins && s.anomaly != nil {
+		s.anomaly.OnAccountLocked(ctx, email)
 	}
 }
 

@@ -38,6 +38,9 @@ type Service struct {
 	// against the tenant policy (nil = self-registration off). Set via
 	// SetRegistrationPolicy; an interface so auth doesn't import authpolicy.
 	regPolicy RegistrationPolicy
+	// anomaly receives security signals (nil = recording off). Set via
+	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
+	anomaly AnomalyRecorder
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
@@ -69,6 +72,18 @@ type RegistrationPolicy interface {
 // SetRegistrationPolicy wires the hosted self-registration gate + password
 // policy. Called from cmd/server/main.go.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
+
+// AnomalyRecorder receives security signals from the auth flow (nil = recording
+// off). Currently notified when an account crosses the brute-force lockout
+// threshold. Kept as an interface so auth doesn't import the threat package;
+// satisfied by *threat.Service. Wired via SetAnomalyRecorder.
+type AnomalyRecorder interface {
+	OnAccountLocked(ctx context.Context, email string)
+}
+
+// SetAnomalyRecorder wires the security-anomaly recorder. Called from
+// cmd/server/main.go.
+func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 
 // mfaChallengeTTL bounds how long a pending second-factor login stays valid.
 const mfaChallengeTTL = 10 * time.Minute
