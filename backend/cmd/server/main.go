@@ -25,11 +25,13 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/apikey"
 	"github.com/qeetgroup/qeet-id/internal/audit"
 	"github.com/qeetgroup/qeet-id/internal/auth"
+	"github.com/qeetgroup/qeet-id/internal/authhook"
 	"github.com/qeetgroup/qeet-id/internal/authpolicy"
 	"github.com/qeetgroup/qeet-id/internal/billing"
 	"github.com/qeetgroup/qeet-id/internal/bot"
 	"github.com/qeetgroup/qeet-id/internal/branding"
 	"github.com/qeetgroup/qeet-id/internal/config"
+	"github.com/qeetgroup/qeet-id/internal/domainverify"
 	"github.com/qeetgroup/qeet-id/internal/emailtemplate"
 	"github.com/qeetgroup/qeet-id/internal/gdpr"
 	"github.com/qeetgroup/qeet-id/internal/group"
@@ -38,6 +40,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/ipallow"
 	"github.com/qeetgroup/qeet-id/internal/ldap"
 	"github.com/qeetgroup/qeet-id/internal/mfa"
+	"github.com/qeetgroup/qeet-id/internal/notification"
 	"github.com/qeetgroup/qeet-id/internal/oidc"
 	"github.com/qeetgroup/qeet-id/internal/passkey"
 	"github.com/qeetgroup/qeet-id/internal/platform/buildinfo"
@@ -56,11 +59,13 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/policy"
 	"github.com/qeetgroup/qeet-id/internal/principal"
 	"github.com/qeetgroup/qeet-id/internal/rbac"
+	"github.com/qeetgroup/qeet-id/internal/rebac"
 	"github.com/qeetgroup/qeet-id/internal/recovery"
 	"github.com/qeetgroup/qeet-id/internal/retention"
 	"github.com/qeetgroup/qeet-id/internal/saml"
 	"github.com/qeetgroup/qeet-id/internal/scim"
 	"github.com/qeetgroup/qeet-id/internal/secret"
+	"github.com/qeetgroup/qeet-id/internal/siem"
 	"github.com/qeetgroup/qeet-id/internal/social"
 	"github.com/qeetgroup/qeet-id/internal/tenant"
 	"github.com/qeetgroup/qeet-id/internal/threat"
@@ -269,6 +274,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		slog.Warn("rbac seed", "err", err)
 	}
 	billingService := billing.NewService(pool)
+	billingService.SetPayments(billing.NewPayments(
+		cfg.StripeSecretKey, cfg.StripeWebhookSecret,
+		cfg.RazorpayKeyID, cfg.RazorpayKeySecret, cfg.RazorpayWebhookSecret,
+	)) // card payments (Stripe/Razorpay); no-op until keys are configured
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
@@ -311,9 +320,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + validate new passwords per tenant
+	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
+	authHookService := authhook.NewService(pool)
+	authService.SetLoginHook(authHookService) // synchronous Actions/Hooks gate (no-op until configured)
 	threatService := threat.NewService(pool)
 	authService.SetAnomalyRecorder(threatService) // record credential-stuffing anomalies on lockout
+	notificationService := notification.NewService(pool)
+	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
 	botService := bot.NewService(pool)
+	siemService := siem.NewService(pool)   // forwards audit events to configured log sinks
+	rebacService := rebac.NewService(pool) // fine-grained (relationship) authorization
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
@@ -429,7 +445,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Billing:       &billing.Handler{Service: billingService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: cfg.ServiceEnv != "dev"},
 		Social:        &social.Handler{Service: socialService, CookieSecure: cfg.ServiceEnv != "dev", LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},
@@ -440,6 +456,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Threat:        &threat.Handler{Service: threatService},
 		Bot:           &bot.Handler{Service: botService},
+		Notification:  &notification.Handler{Service: notificationService},
+		DomainVerify:  &domainverify.Handler{Service: domainverify.NewService(pool)},
+		SIEM:          &siem.Handler{Service: siemService},
+		AuthHook:      &authhook.Handler{Service: authHookService},
+		ReBAC:         &rebac.Handler{Service: rebacService},
 		Health:        healthHandler,
 		InFlight:      inFlight,
 
@@ -459,6 +480,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		{name: "webhook", run: webhookService.RunDispatcher},
 		{name: "gdpr", run: gdprService.Run},
 		{name: "retention", run: retentionService.Run},
+		{name: "siem", run: siemService.Run},
 	}
 	return deps, workers
 }

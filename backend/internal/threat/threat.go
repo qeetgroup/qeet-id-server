@@ -22,11 +22,23 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/platform/httpx"
 )
 
+// Notifier sends an in-app notification to a user. Satisfied by
+// *notification.Service; kept as an interface so threat doesn't import that
+// package. nil = no notifications. Wired via SetNotifier.
+type Notifier interface {
+	Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error
+}
+
 type Service struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	notifier Notifier
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+
+// SetNotifier wires the in-app notifier so security events can also alert the
+// affected user. Called from cmd/server/main.go.
+func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // Event is a detection's input. TenantID is required; UserID/IP/UserAgent are
 // optional context. Status defaults to "open" and Severity to "low" when empty.
@@ -105,6 +117,15 @@ func (s *Service) OnAccountLocked(ctx context.Context, email string) {
 		Detail:   "Account temporarily locked after repeated failed sign-in attempts.",
 	}); rerr != nil {
 		slog.Warn("record credential_stuffing anomaly", "err", rerr)
+	}
+	// Also alert the affected user in-app — a "was this you?" security nudge.
+	if s.notifier != nil {
+		if nerr := s.notifier.Notify(ctx, tenantID, userID, "alert",
+			"Unusual sign-in activity",
+			"Your account was temporarily locked after several failed sign-in attempts. If this wasn't you, reset your password.",
+			"/account/security"); nerr != nil {
+			slog.Warn("notify account locked", "err", nerr)
+		}
 	}
 }
 

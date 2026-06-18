@@ -41,6 +41,12 @@ type Service struct {
 	// anomaly receives security signals (nil = recording off). Set via
 	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
 	anomaly AnomalyRecorder
+	// devicePolicy reports whether a tenant has opted into adaptive MFA
+	// (trusted-device skip). nil = always-on MFA. Set via SetDevicePolicy.
+	devicePolicy DevicePolicy
+	// loginHook is an optional synchronous policy gate run after credentials
+	// verify (nil = no gate). Set via SetLoginHook.
+	loginHook LoginHook
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
@@ -84,6 +90,29 @@ type AnomalyRecorder interface {
 // SetAnomalyRecorder wires the security-anomaly recorder. Called from
 // cmd/server/main.go.
 func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
+
+// DevicePolicy reports whether a tenant has opted into adaptive MFA (skipping
+// the second factor on a trusted device). Satisfied by *authpolicy.Service;
+// kept as an interface so auth doesn't import authpolicy. Wired via
+// SetDevicePolicy.
+type DevicePolicy interface {
+	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
+// SetDevicePolicy wires the adaptive-MFA (trusted-device) gate. Called from
+// cmd/server/main.go.
+func (s *Service) SetDevicePolicy(d DevicePolicy) { s.devicePolicy = d }
+
+// LoginHook is a synchronous policy gate run after credentials verify: it
+// returns a non-nil error to DENY the sign-in, or nil to allow. nil hook = no
+// gate. Satisfied by *authhook.Service; an interface so auth doesn't import it.
+type LoginHook interface {
+	Run(ctx context.Context, tenantID, userID uuid.UUID, email string) error
+}
+
+// SetLoginHook wires the post-credential Actions/Hooks gate. Called from
+// cmd/server/main.go.
+func (s *Service) SetLoginHook(h LoginHook) { s.loginHook = h }
 
 // mfaChallengeTTL bounds how long a pending second-factor login stays valid.
 const mfaChallengeTTL = 10 * time.Minute
@@ -304,7 +333,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 // CompleteMFALoginSession). Otherwise it mints the SSO session cookie value.
 // Without this check the cookie flow would bypass MFA that the token flow
 // enforces.
-func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua string) (*LoginSessionResult, error) {
+func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua, trustedToken string) (*LoginSessionResult, error) {
 	u, err := s.CheckPassword(ctx, email, password)
 	if err != nil {
 		return nil, err
@@ -314,7 +343,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 		if err != nil {
 			return nil, err
 		}
-		if enrolled {
+		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken) {
 			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
 			if err != nil {
 				return nil, err
@@ -327,6 +356,21 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 		return nil, err
 	}
 	return &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
+}
+
+// deviceTrusted reports whether the second factor may be skipped for this login:
+// only when the tenant has opted into adaptive MFA AND the request carries a
+// live trusted-device token bound to this user. Any failure or missing piece
+// returns false, so the safe default is always to require MFA.
+func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID, trustedToken string) bool {
+	if s.devicePolicy == nil || trustedToken == "" {
+		return false
+	}
+	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, tenantID)
+	if err != nil || !enabled {
+		return false
+	}
+	return s.IsTrustedDevice(ctx, userID, trustedToken)
 }
 
 // RegisterInTenant creates a new end-user in the given tenant from the hosted
@@ -476,18 +520,19 @@ func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua s
 
 // CompleteMFALoginSession verifies the second-factor code for a pending
 // hosted-login challenge and, on success, mints the SSO session cookie value
-// (the cookie-flow analogue of CompleteMFALogin). Returns the user id and the
-// raw cookie value to write via SetLoginSessionCookie.
-func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, string, error) {
-	userID, _, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+// (the cookie-flow analogue of CompleteMFALogin). Returns the user id, its
+// tenant (uuid.Nil when tenant-less), and the raw cookie value to write via
+// SetLoginSessionCookie.
+func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, uuid.UUID, string, error) {
+	userID, tid, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
 	if err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, uuid.Nil, "", err
 	}
 	raw, err := s.CreateLoginSession(ctx, userID, ip, ua)
 	if err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, uuid.Nil, "", err
 	}
-	return userID, raw, nil
+	return userID, tid, raw, nil
 }
 
 // CheckPassword runs the full credential check — brute-force lockout, user
@@ -533,6 +578,13 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 				nh, u.ID); uerr != nil {
 				slog.Warn("password rehash-on-login failed", "user_id", u.ID, "err", uerr)
 			}
+		}
+	}
+	// Actions/Hooks gate: a tenant policy endpoint may deny the sign-in. No-op
+	// when no hook is wired/configured, so the common path is untouched.
+	if s.loginHook != nil {
+		if err := s.loginHook.Run(ctx, u.TenantID, u.ID, u.Email); err != nil {
+			return nil, err
 		}
 	}
 	return u, nil

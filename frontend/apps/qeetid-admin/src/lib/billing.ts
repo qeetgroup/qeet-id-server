@@ -89,6 +89,44 @@ export function useChangePlan() {
   });
 }
 
+export interface CheckoutResult {
+  status: "active" | "checkout";
+  checkout_url?: string;
+  provider?: string;
+}
+
+/**
+ * Start a paid plan change. The backend either activates the plan directly
+ * (free plan / no card provider for the currency) or returns a hosted-checkout
+ * URL (Stripe/Razorpay) to redirect to. success_url / cancel_url are this app's
+ * own billing page so the provider returns the admin here after paying.
+ */
+export function useCheckout() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { plan_code: string; currency: string }): Promise<CheckoutResult> => {
+      const base = `${window.location.origin}/settings/billing`;
+      return api<CheckoutResult>(`/v1/tenants/${tenantId}/billing/checkout`, {
+        method: "POST",
+        body: {
+          ...body,
+          success_url: `${base}?checkout=success`,
+          cancel_url: `${base}?checkout=cancelled`,
+        },
+      });
+    },
+    onSuccess: (res) => {
+      if (res.status === "checkout" && res.checkout_url) {
+        window.location.href = res.checkout_url; // redirect to provider
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["billing"] });
+    },
+    meta: { successMessage: "Subscription updated" },
+  });
+}
+
 export function useCancelSubscription() {
   const tenantId = useTenantId();
   const qc = useQueryClient();

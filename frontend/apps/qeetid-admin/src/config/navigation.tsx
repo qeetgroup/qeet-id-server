@@ -15,7 +15,9 @@ import {
   NetworkIcon,
   PaletteIcon,
   ScanSearchIcon,
+  RadioTowerIcon,
   ScrollTextIcon,
+  ZapIcon,
   ServerCogIcon,
   Settings2Icon,
   ShieldAlertIcon,
@@ -71,6 +73,7 @@ export const navGroups: NavGroup[] = [
         items: [
           { title: "Tenants", url: "/organizations/tenants" },
           { title: "Members", url: "/organizations/members" },
+          { title: "Domains", url: "/organizations/domains" },
         ],
       },
       { title: "Groups", url: "/groups", icon: <UsersRoundIcon /> },
@@ -82,6 +85,7 @@ export const navGroups: NavGroup[] = [
           { title: "Roles (RBAC)", url: "/access/roles" },
           { title: "Permissions", url: "/access/permissions" },
           { title: "Policies (ABAC)", url: "/access/policies" },
+          { title: "Relationships (ReBAC)", url: "/access/relationships" },
           { title: "Resources", url: "/access/resources" },
         ],
       },
@@ -164,6 +168,7 @@ export const navGroups: NavGroup[] = [
       },
       { title: "Rate Limits", url: "/security/rate-limits", icon: <GaugeIcon /> },
       { title: "Audit Logs", url: "/security/audit-logs", icon: <ScrollTextIcon /> },
+      { title: "Log Streaming", url: "/security/log-streaming", icon: <RadioTowerIcon /> },
       {
         title: "Compliance",
         url: "/security/compliance",
@@ -181,6 +186,7 @@ export const navGroups: NavGroup[] = [
     label: "Developer",
     items: [
       { title: "Webhooks", url: "/developer/webhooks", icon: <WebhookIcon /> },
+      { title: "Auth Hooks", url: "/developer/auth-hooks", icon: <ZapIcon /> },
       { title: "Bots & Automations", url: "/developer/bots", icon: <BotIcon /> },
       { title: "Infrastructure", url: "/developer/infrastructure", icon: <ServerCogIcon /> },
     ],

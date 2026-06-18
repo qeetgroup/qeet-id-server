@@ -24,6 +24,7 @@
     "title": "Two-step verification",
     "subtitle": "Enter the code from your authenticator app, or a recovery code.",
     "label": "Verification code",
+    "remember": "Remember this device",
     "submit": {
       "idle": "Verify",
       "busy": "Verifying…"

@@ -12,6 +12,9 @@ type LoginFormProps = {
   tenantId: string;
   providers: string[];
   selfRegistrationEnabled: boolean;
+  // rememberDeviceEnabled gates the "remember this device" option on the MFA
+  // step (adaptive MFA); true only when the tenant has opted in.
+  rememberDeviceEnabled: boolean;
   // errorCode seeds the error banner from a redirect (e.g. a failed social
   // ceremony bounced back as ?error=social); empty when there's nothing to show.
   errorCode: string;
@@ -52,6 +55,7 @@ export function LoginForm({
   tenantId,
   providers,
   selfRegistrationEnabled,
+  rememberDeviceEnabled,
   errorCode,
 }: LoginFormProps) {
   const { t } = useTranslation("login");
@@ -93,6 +97,7 @@ export function LoginForm({
     return (
       <MfaChallenge
         mfaToken={mfaToken}
+        rememberDeviceEnabled={rememberDeviceEnabled}
         onVerified={continueToApp}
         onBack={() => {
           setMfaToken(null);
@@ -261,15 +266,18 @@ export function LoginForm({
 // mfa_token plus a TOTP or recovery code for the SSO cookie.
 function MfaChallenge({
   mfaToken,
+  rememberDeviceEnabled,
   onVerified,
   onBack,
 }: {
   mfaToken: string;
+  rememberDeviceEnabled: boolean;
   onVerified: () => void;
   onBack: () => void;
 }) {
   const { t } = useTranslation("login");
   const [code, setCode] = useState("");
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -278,7 +286,7 @@ function MfaChallenge({
     setError(null);
     setLoading(true);
     try {
-      await apiPost("/v1/auth/session/mfa", { mfa_token: mfaToken, code });
+      await apiPost("/v1/auth/session/mfa", { mfa_token: mfaToken, code, remember });
       onVerified();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("common:errors.generic"));
@@ -311,6 +319,18 @@ function MfaChallenge({
               placeholder="123456"
             />
           </div>
+
+          {rememberDeviceEnabled && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              {t("mfa.remember")}
+            </label>
+          )}
 
           {error && (
             <p role="alert" className="text-destructive text-sm">
