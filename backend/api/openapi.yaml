@@ -4134,6 +4134,138 @@ paths:
         '401': *id002
         '403': *id007
         '404': *id003
+  /v1/agents/token:
+    post:
+      operationId: post_v1_agents_token
+      summary: 'AI agent: exchange agent credentials for a short-lived scoped token'
+      description: >-
+        An AI agent authenticates with its agent_id + secret (JSON body or HTTP
+        Basic) and receives an ephemeral access token marked actor_type="agent"
+        (+ agent_id claim), verifiable on the standard JWKS path. No user session.
+      tags:
+      - Agents
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - agent_id
+              - secret
+              properties:
+                agent_id:
+                  type: string
+                secret:
+                  type: string
+      responses:
+        '200':
+          description: Short-lived agent access token
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+  /v1/tenants/{tenantID}/agents:
+    get:
+      operationId: get_v1_tenants_ByTenantID_agents
+      summary: List AI-agent identities
+      tags:
+      - Agents
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Agents (secrets are write-only, not returned)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents
+      summary: Create an AI-agent identity (returns its secret once)
+      tags:
+      - Agents
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              properties:
+                name:
+                  type: string
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                token_ttl_seconds:
+                  type: integer
+      responses:
+        '201':
+          description: Agent created (secret returned once)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/agents/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_agents_ById
+      summary: Delete an AI-agent identity
+      tags:
+      - Agents
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/relation-tuples:
     get:
       operationId: get_v1_tenants_ByTenantID_relation_tuples
@@ -5970,6 +6102,41 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/vault/{name}:
+    get:
+      operationId: get_v1_vault_ByName
+      summary: 'Token vaulting: fetch a vault secret by name (scoped principal, e.g. an AI agent)'
+      description: >-
+        Returns a secret's value to a caller holding a "vault:<name>" (or
+        "vault:read") scope — e.g. an AI agent fetching a credential at runtime
+        without embedding it. Tenant comes from the caller's token; every access
+        is audited.
+      tags:
+      - Secrets
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: '{ name, value }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  value:
+                    type: string
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/secrets:
     get:
       operationId: get_v1_tenants_ByTenantID_secrets

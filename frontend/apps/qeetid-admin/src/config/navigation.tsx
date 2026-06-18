@@ -17,6 +17,7 @@ import {
   ScanSearchIcon,
   RadioTowerIcon,
   ScrollTextIcon,
+  SparklesIcon,
   ZapIcon,
   ServerCogIcon,
   Settings2Icon,
@@ -187,6 +188,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { title: "Webhooks", url: "/developer/webhooks", icon: <WebhookIcon /> },
       { title: "Auth Hooks", url: "/developer/auth-hooks", icon: <ZapIcon /> },
+      { title: "AI Agents", url: "/developer/agents", icon: <SparklesIcon /> },
       { title: "Bots & Automations", url: "/developer/bots", icon: <BotIcon /> },
       { title: "Infrastructure", url: "/developer/infrastructure", icon: <ServerCogIcon /> },
     ],

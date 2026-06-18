@@ -8,6 +8,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/qeetgroup/qeet-id/internal/agent"
 	"github.com/qeetgroup/qeet-id/internal/analytics"
 	"github.com/qeetgroup/qeet-id/internal/apikey"
 	"github.com/qeetgroup/qeet-id/internal/audit"
@@ -95,6 +96,7 @@ type Deps struct {
 	SIEM          *siem.Handler
 	AuthHook      *authhook.Handler
 	ReBAC         *rebac.Handler
+	Agent         *agent.Handler
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
@@ -167,6 +169,7 @@ func NewRouter(d Deps) http.Handler {
 				"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
 				"/v1/passkeys/login/", "/v1/social/", "/v1/invites/accept",
 				"/v1/billing/webhooks/", // provider-signed (Stripe/Razorpay), no cookie session
+				"/v1/agents/token",      // agent-credential auth (no cookie session)
 			},
 		}))
 	}
@@ -218,6 +221,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Principal.MountPublic(r) // /oauth/token (client_credentials)
 			d.Social.MountPublic(r)    // social OAuth start/callback/exchange
 			d.Billing.MountPublic(r)   // /billing/webhooks/{provider}: Stripe/Razorpay (signature-verified)
+			d.Agent.MountPublic(r)     // /agents/token: AI-agent credential → ephemeral scoped token
 			d.Passkey.MountPublic(r)   // passwordless passkey login
 			d.OIDC.MountBrowser(r)     // /oauth/authorize (SSO cookie) + decision + token-code
 		})
@@ -270,6 +274,7 @@ func NewRouter(d Deps) http.Handler {
 			d.SIEM.Mount(r)         // /tenants/{id}/log-sinks: SIEM / log streaming
 			d.AuthHook.Mount(r)     // /tenants/{id}/auth-hooks: synchronous login Actions/Hooks
 			d.ReBAC.Mount(r)        // /tenants/{id}/relation-tuples: fine-grained (ReBAC) authz
+			d.Agent.Mount(r)        // /tenants/{id}/agents: AI-agent identity admin
 		})
 	})
 

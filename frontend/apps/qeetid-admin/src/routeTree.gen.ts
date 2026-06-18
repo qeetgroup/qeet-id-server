@@ -50,6 +50,7 @@ import { Route as AppDeveloperWebhooksRouteImport } from './routes/_app/develope
 import { Route as AppDeveloperInfrastructureRouteImport } from './routes/_app/developer/infrastructure'
 import { Route as AppDeveloperBotsRouteImport } from './routes/_app/developer/bots'
 import { Route as AppDeveloperAuthHooksRouteImport } from './routes/_app/developer/auth-hooks'
+import { Route as AppDeveloperAgentsRouteImport } from './routes/_app/developer/agents'
 import { Route as AppAuthSocialRouteImport } from './routes/_app/auth/social'
 import { Route as AppAccessRolesRouteImport } from './routes/_app/access/roles'
 import { Route as AppAccessResourcesRouteImport } from './routes/_app/access/resources'
@@ -295,6 +296,11 @@ const AppDeveloperAuthHooksRoute = AppDeveloperAuthHooksRouteImport.update({
   path: '/developer/auth-hooks',
   getParentRoute: () => AppRoute,
 } as any)
+const AppDeveloperAgentsRoute = AppDeveloperAgentsRouteImport.update({
+  id: '/developer/agents',
+  path: '/developer/agents',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAuthSocialRoute = AppAuthSocialRouteImport.update({
   id: '/auth/social',
   path: '/auth/social',
@@ -531,6 +537,7 @@ export interface FileRoutesByFullPath {
   '/access/resources': typeof AppAccessResourcesRoute
   '/access/roles': typeof AppAccessRolesRouteWithChildren
   '/auth/social': typeof AppAuthSocialRoute
+  '/developer/agents': typeof AppDeveloperAgentsRoute
   '/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/developer/bots': typeof AppDeveloperBotsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
@@ -611,6 +618,7 @@ export interface FileRoutesByTo {
   '/access/resources': typeof AppAccessResourcesRoute
   '/access/roles': typeof AppAccessRolesRouteWithChildren
   '/auth/social': typeof AppAuthSocialRoute
+  '/developer/agents': typeof AppDeveloperAgentsRoute
   '/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/developer/bots': typeof AppDeveloperBotsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
@@ -694,6 +702,7 @@ export interface FileRoutesById {
   '/_app/access/resources': typeof AppAccessResourcesRoute
   '/_app/access/roles': typeof AppAccessRolesRouteWithChildren
   '/_app/auth/social': typeof AppAuthSocialRoute
+  '/_app/developer/agents': typeof AppDeveloperAgentsRoute
   '/_app/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/_app/developer/bots': typeof AppDeveloperBotsRoute
   '/_app/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
@@ -776,6 +785,7 @@ export interface FileRouteTypes {
     | '/access/resources'
     | '/access/roles'
     | '/auth/social'
+    | '/developer/agents'
     | '/developer/auth-hooks'
     | '/developer/bots'
     | '/developer/infrastructure'
@@ -856,6 +866,7 @@ export interface FileRouteTypes {
     | '/access/resources'
     | '/access/roles'
     | '/auth/social'
+    | '/developer/agents'
     | '/developer/auth-hooks'
     | '/developer/bots'
     | '/developer/infrastructure'
@@ -938,6 +949,7 @@ export interface FileRouteTypes {
     | '/_app/access/resources'
     | '/_app/access/roles'
     | '/_app/auth/social'
+    | '/_app/developer/agents'
     | '/_app/developer/auth-hooks'
     | '/_app/developer/bots'
     | '/_app/developer/infrastructure'
@@ -1291,6 +1303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDeveloperAuthHooksRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/developer/agents': {
+      id: '/_app/developer/agents'
+      path: '/developer/agents'
+      fullPath: '/developer/agents'
+      preLoaderRoute: typeof AppDeveloperAgentsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/auth/social': {
       id: '/_app/auth/social'
       path: '/auth/social'
@@ -1630,6 +1649,7 @@ interface AppRouteChildren {
   AppAccessResourcesRoute: typeof AppAccessResourcesRoute
   AppAccessRolesRoute: typeof AppAccessRolesRouteWithChildren
   AppAuthSocialRoute: typeof AppAuthSocialRoute
+  AppDeveloperAgentsRoute: typeof AppDeveloperAgentsRoute
   AppDeveloperAuthHooksRoute: typeof AppDeveloperAuthHooksRoute
   AppDeveloperBotsRoute: typeof AppDeveloperBotsRoute
   AppDeveloperInfrastructureRoute: typeof AppDeveloperInfrastructureRoute
@@ -1696,6 +1716,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccessResourcesRoute: AppAccessResourcesRoute,
   AppAccessRolesRoute: AppAccessRolesRouteWithChildren,
   AppAuthSocialRoute: AppAuthSocialRoute,
+  AppDeveloperAgentsRoute: AppDeveloperAgentsRoute,
   AppDeveloperAuthHooksRoute: AppDeveloperAuthHooksRoute,
   AppDeveloperBotsRoute: AppDeveloperBotsRoute,
   AppDeveloperInfrastructureRoute: AppDeveloperInfrastructureRoute,

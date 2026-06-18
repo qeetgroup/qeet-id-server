@@ -21,6 +21,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/qeetgroup/qeet-id/internal/agent"
 	"github.com/qeetgroup/qeet-id/internal/analytics"
 	"github.com/qeetgroup/qeet-id/internal/apikey"
 	"github.com/qeetgroup/qeet-id/internal/audit"
@@ -328,8 +329,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	notificationService := notification.NewService(pool)
 	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
 	botService := bot.NewService(pool)
-	siemService := siem.NewService(pool)   // forwards audit events to configured log sinks
-	rebacService := rebac.NewService(pool) // fine-grained (relationship) authorization
+	siemService := siem.NewService(pool)           // forwards audit events to configured log sinks
+	rebacService := rebac.NewService(pool)         // fine-grained (relationship) authorization
+	agentService := agent.NewService(pool, issuer) // AI-agent identities (ephemeral scoped tokens)
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
@@ -461,6 +463,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		SIEM:          &siem.Handler{Service: siemService},
 		AuthHook:      &authhook.Handler{Service: authHookService},
 		ReBAC:         &rebac.Handler{Service: rebacService},
+		Agent:         &agent.Handler{Service: agentService},
 		Health:        healthHandler,
 		InFlight:      inFlight,
 
