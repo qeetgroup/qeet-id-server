@@ -4134,6 +4134,139 @@ paths:
         '401': *id002
         '403': *id007
         '404': *id003
+  /v1/credentials/verify:
+    post:
+      operationId: post_v1_credentials_verify
+      summary: 'Verifiable Credentials: verify a presented JWT-VC'
+      description: >-
+        Any relying party can present a JWT-serialized W3C Verifiable Credential
+        issued by this server; the response reports validity (signature, issuer,
+        expiry, and revocation status) plus the credential subject + claims. No
+        session required.
+      tags:
+      - Credentials
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - credential
+              properties:
+                credential:
+                  type: string
+                  description: The JWT-VC string.
+      responses:
+        '200':
+          description: '{ valid, subject, issuer, vc, ... }'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422': *id005
+  /v1/tenants/{tenantID}/credentials:
+    get:
+      operationId: get_v1_tenants_ByTenantID_credentials
+      summary: List issued verifiable credentials
+      tags:
+      - Credentials
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Issued credentials (registry view)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+    post:
+      operationId: post_v1_tenants_ByTenantID_credentials
+      summary: Issue a verifiable credential (returns a signed JWT-VC)
+      tags:
+      - Credentials
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - subject
+              - type
+              properties:
+                subject:
+                  type: string
+                type:
+                  type: string
+                claims:
+                  type: object
+                  additionalProperties: true
+                ttl_seconds:
+                  type: integer
+      responses:
+        '201':
+          description: Signed JWT-VC + credential id
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/credentials/{id}/revoke:
+    post:
+      operationId: post_v1_tenants_ByTenantID_credentials_ById_revoke
+      summary: Revoke an issued credential
+      tags:
+      - Credentials
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Revoked
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/agents/token:
     post:
       operationId: post_v1_agents_token

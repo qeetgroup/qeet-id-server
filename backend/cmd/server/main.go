@@ -71,6 +71,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/tenant"
 	"github.com/qeetgroup/qeet-id/internal/threat"
 	"github.com/qeetgroup/qeet-id/internal/user"
+	"github.com/qeetgroup/qeet-id/internal/vc"
 	"github.com/qeetgroup/qeet-id/internal/verification"
 	"github.com/qeetgroup/qeet-id/internal/webhook"
 )
@@ -332,6 +333,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	siemService := siem.NewService(pool)           // forwards audit events to configured log sinks
 	rebacService := rebac.NewService(pool)         // fine-grained (relationship) authorization
 	agentService := agent.NewService(pool, issuer) // AI-agent identities (ephemeral scoped tokens)
+	vcService := vc.NewService(pool, issuer)       // W3C verifiable credentials (JWT-VC)
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
@@ -464,6 +466,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		AuthHook:      &authhook.Handler{Service: authHookService},
 		ReBAC:         &rebac.Handler{Service: rebacService},
 		Agent:         &agent.Handler{Service: agentService},
+		VC:            &vc.Handler{Service: vcService},
 		Health:        healthHandler,
 		InFlight:      inFlight,
 
