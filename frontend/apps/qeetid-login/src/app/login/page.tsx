@@ -7,6 +7,7 @@ type LoginContext = {
   tenant_id?: string;
   providers?: string[];
   self_registration_enabled?: boolean;
+  remember_device_enabled?: boolean;
 };
 
 function clientIDFromReturnTo(returnTo: string): string {
@@ -50,6 +51,7 @@ export default async function LoginPage({
       tenantId={ctx.tenant_id ?? ""}
       providers={ctx.providers ?? []}
       selfRegistrationEnabled={ctx.self_registration_enabled ?? false}
+      rememberDeviceEnabled={ctx.remember_device_enabled ?? false}
       errorCode={error ?? ""}
     />
   );

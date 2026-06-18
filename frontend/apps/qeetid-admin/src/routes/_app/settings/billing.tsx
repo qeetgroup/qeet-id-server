@@ -29,7 +29,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   formatMoney,
   useCancelSubscription,
-  useChangePlan,
+  useCheckout,
   useInvoices,
   usePlans,
   useSubscription,
@@ -41,7 +41,7 @@ function BillingPage() {
   const plansQ = usePlans();
   const subQ = useSubscription();
   const invoicesQ = useInvoices();
-  const changeM = useChangePlan();
+  const checkoutM = useCheckout();
   const cancelM = useCancelSubscription();
 
   const plans = useMemo(() => plansQ.data?.items ?? [], [plansQ.data]);
@@ -55,7 +55,8 @@ function BillingPage() {
   }, [plans]);
 
   const [currency, setCurrency] = useState<string | null>(null);
-  const activeCurrency = currency ?? sub?.currency ?? (currencies.includes("USD") ? "USD" : currencies[0]) ?? "USD";
+  const activeCurrency =
+    currency ?? sub?.currency ?? (currencies.includes("USD") ? "USD" : currencies[0]) ?? "USD";
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -160,10 +161,16 @@ function BillingPage() {
                   </ul>
                   <Button
                     variant={plan.code === "pro" ? "default" : "outline"}
-                    disabled={isCurrent || !priced || changeM.isPending}
-                    onClick={() => changeM.mutate({ plan_code: plan.code, currency: activeCurrency })}
+                    disabled={isCurrent || !priced || checkoutM.isPending}
+                    onClick={() =>
+                      checkoutM.mutate({ plan_code: plan.code, currency: activeCurrency })
+                    }
                   >
-                    {isCurrent ? "Current plan" : !priced ? `Not priced in ${activeCurrency}` : `Switch to ${plan.name}`}
+                    {isCurrent
+                      ? "Current plan"
+                      : !priced
+                        ? `Not priced in ${activeCurrency}`
+                        : `Switch to ${plan.name}`}
                   </Button>
                 </CardContent>
               </Card>

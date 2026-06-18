@@ -19,6 +19,11 @@ export interface AuthPolicy {
   passkey_enabled: boolean;
   otp_email_enabled: boolean;
   otp_sms_enabled: boolean;
+  // Hosted end-user self-registration (B2C signup). Full-replace PUT preserves
+  // it even on pages that don't edit it.
+  self_registration_enabled: boolean;
+  // Adaptive MFA: allow skipping the second factor on a trusted device.
+  remember_device_enabled: boolean;
 }
 
 export function useAuthPolicy() {

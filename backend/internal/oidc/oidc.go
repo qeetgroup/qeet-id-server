@@ -223,7 +223,15 @@ type TokenResponse struct {
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 	Scope        string `json:"scope,omitempty"`
+	// IssuedTokenType is set for RFC 8693 token-exchange responses.
+	IssuedTokenType string `json:"issued_token_type,omitempty"`
 }
+
+// RFC 8693 token-exchange identifiers.
+const (
+	grantTypeTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
+	tokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"
+)
 
 // authenticateClient verifies a confidential client's secret and returns its grant types.
 func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) ([]string, error) {
@@ -245,6 +253,87 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 		}
 	}
 	return grantTypes, nil
+}
+
+// TokenExchange implements RFC 8693 in its downscoping form: a confidential
+// client exchanges a valid Qeet access token (subject_token) for a fresh
+// access token carrying a SUBSET of the subject's scopes. It never escalates
+// scope and never crosses subject/tenant, so it's safe for handing a
+// narrowed-down credential to a less-trusted component. The client must be
+// granted "token_exchange". Only access tokens are supported as subject and
+// requested token type.
+func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope string) (*TokenResponse, error) {
+	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
+		return nil, err
+	}
+	if !containsAny(grantTypes, "token_exchange", grantTypeTokenExchange) {
+		return nil, errs.ErrForbidden.WithDetail("client is not permitted the token-exchange grant")
+	}
+	if subjectToken == "" {
+		return nil, errs.ErrBadRequest.WithDetail("subject_token is required")
+	}
+	if subjectTokenType != "" && subjectTokenType != tokenTypeAccessToken {
+		return nil, errs.ErrBadRequest.WithDetail("only access_token subject_token_type is supported")
+	}
+	if requestedTokenType != "" && requestedTokenType != tokenTypeAccessToken {
+		return nil, errs.ErrBadRequest.WithDetail("only access_token requested_token_type is supported")
+	}
+	claims, err := s.issuer.VerifyAccess(subjectToken)
+	if err != nil {
+		return nil, errs.ErrUnauthorized.WithDetail("invalid or expired subject_token")
+	}
+	userID, err := uuid.Parse(claims.Subject)
+	if err != nil {
+		return nil, errs.ErrUnauthorized.WithDetail("subject_token has no user subject")
+	}
+	// Downscope: the result is at most the subject's scopes (never escalate).
+	granted, ok := downscope(strings.Fields(claims.Scope), scope)
+	if !ok {
+		return nil, errs.ErrForbidden.WithDetail("requested scope exceeds the subject token's scope")
+	}
+	// Preserve the originating session so the exchanged token traces back to it.
+	sid := claims.SessionID
+	if sid == uuid.Nil {
+		sid = uuid.New()
+	}
+	access, exp, err := s.issuer.IssueAccess(userID, claims.TenantID, sid, strings.Join(granted, " "))
+	if err != nil {
+		return nil, err
+	}
+	return &TokenResponse{
+		AccessToken:     access,
+		TokenType:       "Bearer",
+		ExpiresIn:       int(time.Until(exp).Seconds()),
+		Scope:           strings.Join(granted, " "),
+		IssuedTokenType: tokenTypeAccessToken,
+	}, nil
+}
+
+// downscope returns the scopes to grant for a token-exchange: the requested
+// scopes if every one is held by the subject (never escalate), or the subject's
+// own scopes when no scope is requested. ok=false means the request asked for a
+// scope the subject token doesn't carry.
+func downscope(subjectScopes []string, requestedScope string) (granted []string, ok bool) {
+	if strings.TrimSpace(requestedScope) == "" {
+		return subjectScopes, true
+	}
+	requested := strings.Fields(requestedScope)
+	for _, r := range requested {
+		if !contains(subjectScopes, r) {
+			return nil, false
+		}
+	}
+	return requested, true
+}
+
+func containsAny(set []string, vs ...string) bool {
+	for _, v := range vs {
+		if contains(set, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // ExchangeCode swaps an authorization_code for tokens.
@@ -538,6 +627,13 @@ type RegistrationChecker interface {
 	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }
 
+// DeviceTrustChecker reports whether a tenant has opted into adaptive MFA, so
+// the login-context tells the hosted app whether to offer "remember this
+// device" on the MFA step. Satisfied by *authpolicy.Service (optional).
+type DeviceTrustChecker interface {
+	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
 type Handler struct {
 	Service *Service
 	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
@@ -547,6 +643,7 @@ type Handler struct {
 	Sessions     SessionManager
 	Providers    ProviderLister
 	Registration RegistrationChecker
+	DeviceTrust  DeviceTrustChecker
 	LoginBaseURL string
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
 	// clearing it on logout; set from SERVICE_ENV != "dev".
@@ -627,11 +724,18 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			selfRegistration = enabled
 		}
 	}
+	rememberDevice := false
+	if h.DeviceTrust != nil {
+		if enabled, derr := h.DeviceTrust.RememberDeviceEnabled(r.Context(), tenantID); derr == nil {
+			rememberDevice = enabled
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"client_name":               name,
 		"tenant_id":                 tenantID,
 		"providers":                 providers,
 		"self_registration_enabled": selfRegistration,
+		"remember_device_enabled":   rememberDevice,
 	})
 }
 
@@ -890,6 +994,11 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	case "refresh_token":
 		resp, err = h.Service.RefreshToken(r.Context(),
 			clientID, clientSecret, r.Form.Get("refresh_token"))
+	case grantTypeTokenExchange:
+		resp, err = h.Service.TokenExchange(r.Context(),
+			clientID, clientSecret,
+			r.Form.Get("subject_token"), r.Form.Get("subject_token_type"),
+			r.Form.Get("requested_token_type"), r.Form.Get("scope"))
 	case "urn:ietf:params:oauth:grant-type:device_code":
 		// RFC 8628 §3.4 polling. The device authenticates with its client_id +
 		// device_code; the device_code itself is the proof, so a client_secret is
@@ -991,7 +1100,7 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"scopes_supported":                      []string{"openid", "profile", "email"},
-		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code"},
+		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange},
 		"code_challenge_methods_supported":      []string{"S256"},
 	})
 }

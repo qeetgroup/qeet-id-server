@@ -73,8 +73,28 @@ export function useDeleteSamlConnection() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<void>(`/v1/tenants/${tenantId}/saml/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      api<void>(`/v1/tenants/${tenantId}/saml/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saml"] }),
     meta: { successMessage: "SAML connection deleted" },
+  });
+}
+
+export interface SamlTestCheck {
+  name: string;
+  ok: boolean;
+  detail?: string;
+}
+export interface SamlTestResult {
+  ok: boolean;
+  checks: SamlTestCheck[];
+}
+
+/** Preflight a connection's config (offline checks) before enabling it. */
+export function useTestSamlConnection() {
+  const tenantId = useTenantId();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api<SamlTestResult>(`/v1/tenants/${tenantId}/saml/${id}/test`, { method: "POST" }),
   });
 }

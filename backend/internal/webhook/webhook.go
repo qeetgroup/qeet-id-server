@@ -131,6 +131,72 @@ func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID
 	return disabledTenant, url, nil
 }
 
+// Delivery is one attempt-tracked dispatch of an event to a subscription,
+// projected for the admin delivery viewer (payload + response for debugging).
+type Delivery struct {
+	ID            uuid.UUID  `json:"id"`
+	EventType     string     `json:"event_type"`
+	Attempt       int        `json:"attempt"`
+	StatusCode    *int       `json:"status_code,omitempty"`
+	Error         *string    `json:"error,omitempty"`
+	Payload       string     `json:"payload"`
+	ResponseBody  *string    `json:"response_body,omitempty"`
+	DeliveredAt   *time.Time `json:"delivered_at,omitempty"`
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+// ListDeliveries returns recent deliveries for a subscription, newest first.
+// Tenant-scoped via the subscription join, so one tenant can't read another's
+// delivery history.
+func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID uuid.UUID, limit int) ([]Delivery, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id, d.event_type, d.attempt, d.status_code, d.error,
+		       d.payload::text, d.response_body, d.delivered_at, d.next_attempt_at, d.created_at
+		FROM tenant.webhook_deliveries d
+		JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
+		WHERE d.subscription_id = $1 AND sub.tenant_id = $2
+		ORDER BY d.created_at DESC
+		LIMIT $3
+	`, subscriptionID, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Delivery, 0)
+	for rows.Next() {
+		var d Delivery
+		if err := rows.Scan(&d.ID, &d.EventType, &d.Attempt, &d.StatusCode, &d.Error,
+			&d.Payload, &d.ResponseBody, &d.DeliveredAt, &d.NextAttemptAt, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// RetryDelivery re-queues a delivery for immediate redelivery by the dispatcher
+// (clears delivered_at + error and sets next_attempt_at to now). Tenant-scoped
+// via the subscription join. ErrNotFound when the delivery isn't the tenant's.
+func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
+	ct, err := s.pool.Exec(ctx, `
+		UPDATE tenant.webhook_deliveries d
+		SET delivered_at = NULL, error = NULL, next_attempt_at = NOW()
+		FROM tenant.webhook_subscriptions sub
+		WHERE d.id = $1 AND d.subscription_id = sub.id AND sub.tenant_id = $2
+	`, deliveryID, tenantID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
 // Enqueue persists a delivery for every matching subscription.
 func (s *Service) Enqueue(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error {
 	body, err := json.Marshal(payload)
@@ -290,8 +356,67 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/webhooks", h.create)
 	r.Get("/tenants/{tenantID}/webhooks", h.list)
+	r.Get("/webhooks/{id}", h.get)
 	r.Delete("/webhooks/{id}", h.disable)
 	r.Post("/webhooks/{id}/test", h.test)
+	r.Get("/webhooks/{id}/deliveries", h.listDeliveries)
+	r.Post("/webhooks/{id}/deliveries/{deliveryID}/retry", h.retryDelivery)
+}
+
+func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	sub, err := h.Service.Get(r.Context(), id, tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, sub)
+}
+
+func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListDeliveries(r.Context(), id, tenantID, 50)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
+	deliveryID, err := uuid.Parse(chi.URLParam(r, "deliveryID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid deliveryID"))
+		return
+	}
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.RetryDelivery(r.Context(), deliveryID, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Delivery re-queued."})
 }
 
 func auditActor(r *http.Request) (*uuid.UUID, string) {
@@ -465,4 +590,3 @@ type EventBus interface {
 // dependency. Kept here intentionally to keep webhook a self-contained
 // API boundary.
 var _ EventBus = (*Service)(nil)
-

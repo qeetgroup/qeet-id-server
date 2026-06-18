@@ -12,7 +12,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -69,11 +71,26 @@ type Invoice struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	// payments is the optional card-payment provider set (Stripe/Razorpay). nil
+	// or empty = invoice-only: a paid plan change activates directly. Set via
+	// SetPayments.
+	payments *Payments
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+// SetPayments wires the card-payment providers. Called from cmd/server/main.go.
+func (s *Service) SetPayments(p *Payments) { s.payments = p }
+
+// CheckoutResult is either an immediately-active subscription (free plan or no
+// card provider for the currency) or a hosted-checkout URL to redirect to.
+type CheckoutResult struct {
+	Status      string `json:"status"` // "active" | "checkout"
+	CheckoutURL string `json:"checkout_url,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+}
 
 // --- seeding ---
 
@@ -304,6 +321,137 @@ func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 	return nil
 }
 
+// Checkout starts a paid plan change. For a free plan or a currency no card
+// provider serves, it activates the subscription immediately (invoice-only,
+// the existing behaviour). Otherwise it records a pending checkout and opens a
+// hosted payment, returning the URL to redirect the admin to; the provider's
+// webhook later completes it via CompleteCheckout.
+func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, currency, successURL, cancelURL string) (*CheckoutResult, error) {
+	cur, ok := normalizeCurrency(currency)
+	if !ok {
+		return nil, errs.ErrUnprocessable.WithDetail("currency must be a 3-letter ISO-4217 code")
+	}
+	planID, _, planName, err := s.planByCode(ctx, planCode)
+	if err != nil {
+		return nil, err
+	}
+	amt, priced, err := s.priceFor(ctx, planID, cur)
+	if err != nil {
+		return nil, err
+	}
+	if !priced {
+		return nil, errs.ErrUnprocessable.WithDetail("plan " + planCode + " is not priced in " + cur)
+	}
+
+	var provider PaymentProvider
+	if s.payments != nil {
+		provider = s.payments.forCurrency(cur)
+	}
+	// Free plan, or no card provider for this currency → activate directly.
+	if amt == 0 || provider == nil {
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(ctx)
+		if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, cur); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return &CheckoutResult{Status: "active"}, nil
+	}
+
+	// Paid plan with a provider → pending checkout + hosted payment.
+	var checkoutID uuid.UUID
+	if err := s.pool.QueryRow(ctx, `
+		INSERT INTO tenant.billing_checkouts (tenant_id, provider, plan_code, currency, amount_minor)
+		VALUES ($1, $2, $3, $4, $5) RETURNING id
+	`, tenantID, provider.Name(), planCode, cur, amt).Scan(&checkoutID); err != nil {
+		return nil, err
+	}
+	redirectURL, providerRef, err := provider.CreateCheckout(ctx, CheckoutInput{
+		Ref:         checkoutID.String(),
+		PlanName:    planName,
+		Currency:    cur,
+		AmountMinor: amt,
+		SuccessURL:  successURL,
+		CancelURL:   cancelURL,
+	})
+	if err != nil {
+		_, _ = s.pool.Exec(ctx, `UPDATE tenant.billing_checkouts SET status = 'failed' WHERE id = $1`, checkoutID)
+		return nil, errs.ErrInternal.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
+	}
+	_, _ = s.pool.Exec(ctx, `UPDATE tenant.billing_checkouts SET provider_ref = $2 WHERE id = $1`, checkoutID, providerRef)
+	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
+}
+
+// CompleteCheckout activates the plan behind a paid checkout. It is idempotent:
+// the pending→completed transition is claimed atomically, so webhook retries
+// (or a duplicate event) activate the subscription exactly once.
+func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
+	id, err := uuid.Parse(ref)
+	if err != nil {
+		return errs.ErrBadRequest.WithDetail("invalid checkout ref")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var tenantID uuid.UUID
+	var planCode, currency string
+	err = tx.QueryRow(ctx, `
+		UPDATE tenant.billing_checkouts SET status = 'completed', completed_at = NOW()
+		WHERE id = $1 AND status = 'pending'
+		RETURNING tenant_id, plan_code, currency
+	`, id).Scan(&tenantID, &planCode, &currency)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // already completed, failed, or unknown — idempotent no-op
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currency); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// HandleWebhook verifies a provider webhook and completes the referenced
+// checkout on a successful payment. Non-payment events are acknowledged
+// (no-op). An unknown provider returns ErrNotFound; a bad signature ErrUnauthorized.
+func (s *Service) HandleWebhook(ctx context.Context, providerName string, body []byte, signature string) error {
+	if s.payments == nil {
+		return errs.ErrNotFound
+	}
+	prov := s.payments.byName(providerName)
+	if prov == nil {
+		return errs.ErrNotFound
+	}
+	ref, paid, err := prov.VerifyAndParse(body, signature)
+	if err != nil {
+		return errs.ErrUnauthorized.WithDetail("webhook verification failed")
+	}
+	if !paid || ref == "" {
+		return nil
+	}
+	return s.CompleteCheckout(ctx, ref)
+}
+
+// WebhookSignatureHeader returns the HTTP signature header for a provider, or
+// "" if the provider isn't configured.
+func (s *Service) WebhookSignatureHeader(providerName string) string {
+	if s.payments == nil {
+		return ""
+	}
+	if prov := s.payments.byName(providerName); prov != nil {
+		return prov.SignatureHeader()
+	}
+	return ""
+}
+
 func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoice, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at
@@ -335,7 +483,15 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/billing/subscription", h.getSubscription)
 	r.Put("/tenants/{tenantID}/billing/subscription", h.changePlan)
 	r.Post("/tenants/{tenantID}/billing/subscription/cancel", h.cancel)
+	r.Post("/tenants/{tenantID}/billing/checkout", h.checkout)
 	r.Get("/tenants/{tenantID}/billing/invoices", h.listInvoices)
+}
+
+// MountPublic mounts the provider webhook endpoints. They authenticate via the
+// provider's signature (not a user session), so they live in the public group
+// and are CSRF-exempt (see router.go).
+func (h *Handler) MountPublic(r chi.Router) {
+	r.Post("/billing/webhooks/{provider}", h.webhook)
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -430,6 +586,70 @@ func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, sub)
+}
+
+// checkout starts a paid plan change: returns either a hosted-payment URL to
+// redirect to, or {status:"active"} when the plan is free / no card provider
+// serves the currency (direct activation, the invoice-only path).
+func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		PlanCode   string `json:"plan_code"`
+		Currency   string `json:"currency"`
+		SuccessURL string `json:"success_url"`
+		CancelURL  string `json:"cancel_url"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
+		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("success_url and cancel_url must be absolute http(s) URLs"))
+		return
+	}
+	res, err := h.Service.Checkout(r.Context(), tenantID, in.PlanCode, in.Currency, in.SuccessURL, in.CancelURL)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// validReturnURL guards the success/cancel URLs handed to the provider: an
+// absolute http(s) URL with a host. (They're the admin app's own origin.)
+func validReturnURL(s string) bool {
+	if s == "" {
+		return false
+	}
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
+}
+
+// webhook receives a provider's payment webhook. The raw body is read for
+// signature verification; on a verified successful payment the referenced
+// checkout is completed (idempotently). Always returns 200 on a benign no-op so
+// the provider doesn't keep retrying acknowledged events.
+func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
+	provider := chi.URLParam(r, "provider")
+	sigHeader := h.Service.WebhookSignatureHeader(provider)
+	if sigHeader == "" {
+		httpx.WriteError(w, r, errs.ErrNotFound.WithDetail("unknown or unconfigured provider"))
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	if err := h.Service.HandleWebhook(r.Context(), provider, body, r.Header.Get(sigHeader)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {

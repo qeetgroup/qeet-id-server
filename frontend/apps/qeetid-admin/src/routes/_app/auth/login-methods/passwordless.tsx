@@ -9,14 +9,23 @@ import {
   Switch,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { FingerprintIcon, KeyRoundIcon, MailIcon, MessageSquareIcon, WandSparklesIcon } from "lucide-react";
+import {
+  FingerprintIcon,
+  KeyRoundIcon,
+  MailIcon,
+  MessageSquareIcon,
+  ShieldCheckIcon,
+  WandSparklesIcon,
+} from "lucide-react";
 import { useState } from "react";
 import type { ComponentType } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { type AuthPolicy, useAuthPolicy, useUpdateAuthPolicy } from "@/lib/auth-policy";
 
-export const Route = createFileRoute("/_app/auth/login-methods/passwordless")({ component: PasswordlessPage });
+export const Route = createFileRoute("/_app/auth/login-methods/passwordless")({
+  component: PasswordlessPage,
+});
 
 function PasswordlessPage() {
   const policyQ = useAuthPolicy();
@@ -44,10 +53,30 @@ const METHODS: {
   description: string;
   icon: ComponentType<{ className?: string }>;
 }[] = [
-  { key: "passkey_enabled", title: "Passkeys", description: "WebAuthn / FIDO2 — phishing-resistant, the recommended default.", icon: FingerprintIcon },
-  { key: "magic_link_enabled", title: "Magic links", description: "A one-time sign-in link sent to the member's email.", icon: WandSparklesIcon },
-  { key: "otp_email_enabled", title: "Email OTP", description: "A one-time passcode delivered by email.", icon: MailIcon },
-  { key: "otp_sms_enabled", title: "SMS OTP", description: "A one-time passcode delivered by text message.", icon: MessageSquareIcon },
+  {
+    key: "passkey_enabled",
+    title: "Passkeys",
+    description: "WebAuthn / FIDO2 — phishing-resistant, the recommended default.",
+    icon: FingerprintIcon,
+  },
+  {
+    key: "magic_link_enabled",
+    title: "Magic links",
+    description: "A one-time sign-in link sent to the member's email.",
+    icon: WandSparklesIcon,
+  },
+  {
+    key: "otp_email_enabled",
+    title: "Email OTP",
+    description: "A one-time passcode delivered by email.",
+    icon: MailIcon,
+  },
+  {
+    key: "otp_sms_enabled",
+    title: "SMS OTP",
+    description: "A one-time passcode delivered by text message.",
+    icon: MessageSquareIcon,
+  },
 ];
 
 function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
@@ -85,10 +114,33 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheckIcon className="size-4" /> Trusted devices (adaptive MFA)
+          </CardTitle>
+          <CardDescription>
+            Let members who have completed two-factor verification skip the second factor on that
+            device for 30 days. New or unrecognized devices are always challenged. Off by default.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            {draft.remember_device_enabled ? "Enabled" : "Off"}
+          </span>
+          <Switch
+            checked={draft.remember_device_enabled}
+            aria-label="Trusted devices (adaptive MFA)"
+            onCheckedChange={(v) => setDraft((d) => ({ ...d, remember_device_enabled: v }))}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
             <KeyRoundIcon className="size-4" /> Passkeys management
           </CardTitle>
           <CardDescription>
-            Individual passkeys are registered and revoked per device under Login methods → Passkeys.
+            Individual passkeys are registered and revoked per device under Login methods →
+            Passkeys.
           </CardDescription>
         </CardHeader>
       </Card>

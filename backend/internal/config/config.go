@@ -106,6 +106,16 @@ type Config struct {
 	// redis://:pass@host:6379/0. Empty = in-process limits (single instance).
 	RedisURL string `envconfig:"REDIS_URL" default:""`
 
+	// Card payments (Stripe / Razorpay) for paid plan changes. Each provider is
+	// OFF until its keys are set; with none configured, billing stays on the
+	// internal invoice-only model (a paid plan change activates directly).
+	// Routing: INR → Razorpay, every other currency → Stripe.
+	StripeSecretKey       string `envconfig:"STRIPE_SECRET_KEY" default:""`
+	StripeWebhookSecret   string `envconfig:"STRIPE_WEBHOOK_SECRET" default:""`
+	RazorpayKeyID         string `envconfig:"RAZORPAY_KEY_ID" default:""`
+	RazorpayKeySecret     string `envconfig:"RAZORPAY_KEY_SECRET" default:""`
+	RazorpayWebhookSecret string `envconfig:"RAZORPAY_WEBHOOK_SECRET" default:""`
+
 	// BreachedPasswordCheck enables breached-password detection (Have I Been
 	// Pwned k-anonymity range API) on every password-setting flow. OFF by
 	// default so dev/CI and offline deploys are unaffected, and FAIL-OPEN at

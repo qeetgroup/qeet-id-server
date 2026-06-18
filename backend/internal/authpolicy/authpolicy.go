@@ -46,6 +46,10 @@ type Policy struct {
 	// SelfRegistrationEnabled gates the hosted end-user signup flow (B2C). Off by
 	// default so tenants stay invite-only unless they opt in.
 	SelfRegistrationEnabled bool `json:"self_registration_enabled"`
+	// RememberDeviceEnabled gates adaptive MFA: when on, an enrolled user may
+	// skip the second factor on a previously-trusted device. Off by default so
+	// MFA stays always-on unless a tenant opts in.
+	RememberDeviceEnabled bool `json:"remember_device_enabled"`
 }
 
 // DefaultPolicy mirrors the column defaults — returned when a tenant has no
@@ -100,14 +104,14 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 const cols = `password_enabled, password_min_length, password_require_uppercase,
               password_require_number, password_require_symbol, magic_link_enabled,
               magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
-              self_registration_enabled`
+              self_registration_enabled, remember_device_enabled`
 
 func scan(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.PasswordEnabled, &p.PasswordMinLength, &p.PasswordRequireUppercase,
 		&p.PasswordRequireNumber, &p.PasswordRequireSymbol, &p.MagicLinkEnabled,
 		&p.MagicLinkTTLMinutes, &p.PasskeyEnabled, &p.OTPEmailEnabled, &p.OTPSMSEnabled,
-		&p.SelfRegistrationEnabled); err != nil {
+		&p.SelfRegistrationEnabled, &p.RememberDeviceEnabled); err != nil {
 		return nil, err
 	}
 	return &p, nil
@@ -144,8 +148,8 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 			(tenant_id, password_enabled, password_min_length, password_require_uppercase,
 			 password_require_number, password_require_symbol, magic_link_enabled,
 			 magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
-			 self_registration_enabled, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+			 self_registration_enabled, remember_device_enabled, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
 		ON CONFLICT (tenant_id) DO UPDATE SET
 			password_enabled = EXCLUDED.password_enabled,
 			password_min_length = EXCLUDED.password_min_length,
@@ -158,12 +162,13 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 			otp_email_enabled = EXCLUDED.otp_email_enabled,
 			otp_sms_enabled = EXCLUDED.otp_sms_enabled,
 			self_registration_enabled = EXCLUDED.self_registration_enabled,
+			remember_device_enabled = EXCLUDED.remember_device_enabled,
 			updated_at = NOW()
 		RETURNING `+cols,
 		tenantID, p.PasswordEnabled, p.PasswordMinLength, p.PasswordRequireUppercase,
 		p.PasswordRequireNumber, p.PasswordRequireSymbol, p.MagicLinkEnabled,
 		p.MagicLinkTTLMinutes, p.PasskeyEnabled, p.OTPEmailEnabled, p.OTPSMSEnabled,
-		p.SelfRegistrationEnabled))
+		p.SelfRegistrationEnabled, p.RememberDeviceEnabled))
 }
 
 // ValidateForTenant loads the tenant policy and validates a password against
@@ -193,6 +198,17 @@ func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUI
 		return false, err
 	}
 	return p.SelfRegistrationEnabled, nil
+}
+
+// RememberDeviceEnabled reports whether the tenant allows adaptive MFA (skipping
+// the second factor on a previously-trusted device). Gates the trusted-device
+// skip and the "remember this device" option on the hosted MFA step.
+func (s *Service) RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return p.RememberDeviceEnabled, nil
 }
 
 type Handler struct {

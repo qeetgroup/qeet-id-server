@@ -20,7 +20,15 @@ import {
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
-import { ArrowLeftIcon, PlayIcon, Trash2Icon, WebhookIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChevronDownIcon,
+  PlayIcon,
+  RotateCwIcon,
+  Trash2Icon,
+  WebhookIcon,
+} from "lucide-react";
+import { Fragment, useState } from "react";
 
 import { ApiError, api } from "@/lib/api";
 
@@ -39,19 +47,21 @@ type Webhook = {
 
 type Delivery = {
   id: string;
-  webhook_subscription_id: string;
-  event: string;
+  event_type: string;
+  attempt: number;
   status_code?: number | null;
-  attempts: number;
+  error?: string | null;
+  payload: string;
+  response_body?: string | null;
   next_attempt_at?: string | null;
   delivered_at?: string | null;
-  payload?: unknown;
   created_at: string;
 };
 
 function WebhookDetailPage() {
   const { id } = Route.useParams();
   const qc = useQueryClient();
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const webhookQ = useQuery({
     queryKey: ["webhook", id],
@@ -80,6 +90,13 @@ function WebhookDetailPage() {
     mutationFn: () => api<void>(`/v1/webhooks/${id}/test`, { method: "POST" }),
     onSettled: () => qc.invalidateQueries({ queryKey: ["webhook-deliveries", id] }),
     meta: { successMessage: "Test event queued" },
+  });
+
+  const retryM = useMutation({
+    mutationFn: (deliveryId: string) =>
+      api<void>(`/v1/webhooks/${id}/deliveries/${deliveryId}/retry`, { method: "POST" }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["webhook-deliveries", id] }),
+    meta: { successMessage: "Delivery re-queued" },
   });
 
   const disableM = useMutation({
@@ -184,37 +201,86 @@ function WebhookDetailPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8" />
                   <TableHead>When</TableHead>
                   <TableHead>Event</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Attempts</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {deliveriesQ.data?.items?.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell>
-                      <TimeSince value={d.created_at} className="font-mono text-xs" />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{d.event}</TableCell>
-                    <TableCell>
-                      <StatusPill
-                        kind={
-                          d.delivered_at
-                            ? "success"
-                            : d.status_code && d.status_code >= 500
-                              ? "danger"
-                              : d.status_code
-                                ? "warning"
-                                : "muted"
-                        }
-                        dot
-                      >
-                        {d.delivered_at ? "Delivered" : `${d.status_code ?? "Pending"}`}
-                      </StatusPill>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{d.attempts}</TableCell>
-                  </TableRow>
+                  <Fragment key={d.id}>
+                    <TableRow>
+                      <TableCell>
+                        <button
+                          type="button"
+                          aria-label={expanded === d.id ? "Collapse" : "Expand"}
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => setExpanded(expanded === d.id ? null : d.id)}
+                        >
+                          <ChevronDownIcon
+                            className={`size-4 transition-transform ${expanded === d.id ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={d.created_at} className="font-mono text-xs" />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{d.event_type}</TableCell>
+                      <TableCell>
+                        <StatusPill
+                          kind={
+                            d.delivered_at
+                              ? "success"
+                              : d.status_code && d.status_code >= 500
+                                ? "danger"
+                                : d.status_code
+                                  ? "warning"
+                                  : "muted"
+                          }
+                          dot
+                        >
+                          {d.delivered_at ? "Delivered" : `${d.status_code ?? "Pending"}`}
+                        </StatusPill>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{d.attempt}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => retryM.mutate(d.id)}
+                          disabled={retryM.isPending}
+                        >
+                          <RotateCwIcon /> Retry
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                    {expanded === d.id && (
+                      <TableRow key={`${d.id}-detail`}>
+                        <TableCell colSpan={6} className="bg-muted/30">
+                          <div className="flex flex-col gap-3 py-2">
+                            {d.error && <p className="text-destructive text-xs">{d.error}</p>}
+                            <div>
+                              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                                Request payload
+                              </p>
+                              <CodeBlock language="json" value={d.payload} />
+                            </div>
+                            {d.response_body && (
+                              <div>
+                                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                                  Response body
+                                </p>
+                                <CodeBlock language="text" value={d.response_body} />
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>

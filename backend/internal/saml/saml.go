@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -179,6 +180,60 @@ func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID)
 }
 
 // --- SAML SP construction ---
+
+// TestCheck is one preflight check in a connection test.
+type TestCheck struct {
+	Name   string `json:"name"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// TestResult is the outcome of a SAML connection preflight: OK only when every
+// check passed.
+type TestResult struct {
+	OK     bool        `json:"ok"`
+	Checks []TestCheck `json:"checks"`
+}
+
+// TestConnection runs an offline preflight over a SAML connection's config so an
+// admin can catch the common misconfigurations (missing entity ID, a non-https
+// SSO URL, an unparseable or expired signing certificate, no email mapping)
+// before turning the connection on for real logins. It performs no network I/O.
+func (s *Service) TestConnection(ctx context.Context, id, tenantID uuid.UUID) (*TestResult, error) {
+	c, err := s.Get(ctx, id, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	res := &TestResult{OK: true}
+	add := func(name string, ok bool, detail string) {
+		res.Checks = append(res.Checks, TestCheck{Name: name, OK: ok, Detail: detail})
+		if !ok {
+			res.OK = false
+		}
+	}
+
+	add("IdP entity ID", strings.TrimSpace(c.IdpEntityID) != "", "The IdP's entity ID (issuer) must be set.")
+
+	u, perr := url.Parse(strings.TrimSpace(c.IdpSSOURL))
+	ssoOK := perr == nil && u.Scheme == "https" && u.Host != ""
+	add("IdP SSO URL", ssoOK, "Must be an absolute https:// URL.")
+
+	cert, cerr := parseCertificate(c.IdpCertificate)
+	add("Signing certificate", cerr == nil, "Must be a valid PEM block or base64-encoded DER certificate.")
+	if cerr == nil {
+		now := time.Now()
+		valid := now.After(cert.NotBefore) && now.Before(cert.NotAfter)
+		detail := "Valid until " + cert.NotAfter.Format("2006-01-02") + "."
+		if !valid {
+			detail = "Certificate is expired or not yet valid (expires " + cert.NotAfter.Format("2006-01-02") + ")."
+		}
+		add("Certificate validity period", valid, detail)
+	}
+
+	add("Email attribute mapping", strings.TrimSpace(c.EmailAttribute) != "", "Needed to resolve each user's email from the SAML assertion.")
+
+	return res, nil
+}
 
 // parseCertificate accepts a PEM block or bare base64 DER and returns the cert.
 func parseCertificate(raw string) (*x509.Certificate, error) {
@@ -346,6 +401,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/tenants/{tenantID}/saml", h.create)
 	r.Get("/tenants/{tenantID}/saml/{id}", h.get)
 	r.Patch("/tenants/{tenantID}/saml/{id}", h.update)
+	r.Post("/tenants/{tenantID}/saml/{id}/test", h.test)
 	r.Delete("/tenants/{tenantID}/saml/{id}", h.del)
 
 	// IdP side: downstream Service Providers that consume Qeet as their IdP.
@@ -495,6 +551,27 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, conn)
+}
+
+// test runs a config preflight over a SAML connection and returns per-check
+// results so the admin can fix issues before enabling it.
+func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	res, err := h.Service.TestConnection(r.Context(), id, tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {

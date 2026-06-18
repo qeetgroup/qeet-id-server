@@ -36,12 +36,15 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  CheckCircle2Icon,
   DownloadIcon,
   ExternalLinkIcon,
   Loader2Icon,
   PlusIcon,
+  ShieldCheckIcon,
   Trash2Icon,
   WorkflowIcon,
+  XCircleIcon,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -54,6 +57,7 @@ import {
   useCreateSamlConnection,
   useDeleteSamlConnection,
   useSamlConnections,
+  useTestSamlConnection,
   useUpdateSamlConnection,
 } from "@/lib/saml";
 
@@ -156,6 +160,7 @@ function SamlPage() {
                       {c.last_login_at ? <TimeSince value={c.last_login_at} /> : "—"}
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
+                      <ValidateConnection id={c.id} />
                       <Button
                         variant="ghost"
                         size="sm"
@@ -210,6 +215,67 @@ function SamlPage() {
   );
 }
 
+// ValidateConnection runs an offline config preflight (POST .../saml/{id}/test)
+// and shows the per-check results in a side panel — complementary to "Test SSO"
+// (a live IdP round-trip), this catches config errors before any login.
+function ValidateConnection({ id }: { id: string }) {
+  const testM = useTestSamlConnection();
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={testM.isPending}
+        onClick={() => {
+          setOpen(true);
+          testM.mutate(id);
+        }}
+        title="Validate this connection's configuration (offline preflight)"
+      >
+        {testM.isPending ? <Loader2Icon className="animate-spin" /> : <ShieldCheckIcon />} Validate
+      </Button>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md">
+          <div className="flex h-full flex-col">
+            <SheetHeader>
+              <SheetTitle>Connection check</SheetTitle>
+              <SheetDescription>
+                Offline preflight of this connection&apos;s configuration. Run a full Test SSO for
+                an end-to-end check against the IdP.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="flex-1 overflow-y-auto p-4">
+              {testM.isPending && <p className="text-sm text-muted-foreground">Running checks…</p>}
+              {testM.error && (
+                <p className="text-destructive text-sm">{(testM.error as ApiError).message}</p>
+              )}
+              {testM.data && (
+                <ul className="flex flex-col gap-3">
+                  {testM.data.checks.map((c) => (
+                    <li key={c.name} className="flex items-start gap-2">
+                      {c.ok ? (
+                        <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                      ) : (
+                        <XCircleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{c.name}</p>
+                        {c.detail && <p className="text-xs text-muted-foreground">{c.detail}</p>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </>
+  );
+}
+
 function CreateConnectionSheet({
   open,
   onOpenChange,
@@ -256,11 +322,22 @@ function CreateConnectionSheet({
               </Field>
               <Field>
                 <FieldLabel htmlFor="idp_entity_id">IdP entity ID / issuer</FieldLabel>
-                <Input id="idp_entity_id" name="idp_entity_id" placeholder="http://www.okta.com/exk1abc" required />
+                <Input
+                  id="idp_entity_id"
+                  name="idp_entity_id"
+                  placeholder="http://www.okta.com/exk1abc"
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="idp_sso_url">IdP SSO URL</FieldLabel>
-                <Input id="idp_sso_url" name="idp_sso_url" type="url" placeholder="https://acme.okta.com/app/.../sso/saml" required />
+                <Input
+                  id="idp_sso_url"
+                  name="idp_sso_url"
+                  type="url"
+                  placeholder="https://acme.okta.com/app/.../sso/saml"
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="idp_certificate">IdP signing certificate</FieldLabel>
@@ -272,19 +349,32 @@ function CreateConnectionSheet({
                   placeholder="-----BEGIN CERTIFICATE----- … or bare base64 from IdP metadata"
                   required
                 />
-                <FieldDescription>PEM or the bare base64 from the IdP metadata&apos;s X509Certificate.</FieldDescription>
+                <FieldDescription>
+                  PEM or the bare base64 from the IdP metadata&apos;s X509Certificate.
+                </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="email_attribute">Email attribute</FieldLabel>
-                <Input id="email_attribute" name="email_attribute" placeholder="email (blank = use NameID)" />
+                <Input
+                  id="email_attribute"
+                  name="email_attribute"
+                  placeholder="email (blank = use NameID)"
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="name_attribute">Display-name attribute</FieldLabel>
-                <Input id="name_attribute" name="name_attribute" placeholder="displayName (optional)" />
+                <Input
+                  id="name_attribute"
+                  name="name_attribute"
+                  placeholder="displayName (optional)"
+                />
               </Field>
               <Field>
                 <FieldLabel>Initial status</FieldLabel>
-                <Select value={status} onValueChange={(v) => setStatus(v as SamlConnection["status"])}>
+                <Select
+                  value={status}
+                  onValueChange={(v) => setStatus(v as SamlConnection["status"])}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -293,7 +383,9 @@ function CreateConnectionSheet({
                     <SelectItem value="active">Active</SelectItem>
                   </SelectContent>
                 </Select>
-                <FieldDescription>Draft connections accept test logins but aren&apos;t advertised.</FieldDescription>
+                <FieldDescription>
+                  Draft connections accept test logins but aren&apos;t advertised.
+                </FieldDescription>
               </Field>
               {createM.error && (
                 <Field>

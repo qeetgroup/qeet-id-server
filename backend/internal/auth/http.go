@@ -164,6 +164,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 type mfaLoginInput struct {
 	MFAToken string `json:"mfa_token" validate:"required"`
 	Code     string `json:"code" validate:"required"`
+	// Remember opts into adaptive MFA on the hosted flow: trust this device so
+	// future logins from it can skip the second factor (honoured only when the
+	// tenant has enabled it). Ignored by the token-flow /v1/auth/mfa endpoint.
+	Remember bool `json:"remember"`
 }
 
 // mfaLogin completes a two-step login: it exchanges the mfa_token from /login
@@ -209,7 +213,13 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.evalBot(r, in.Email)
-	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent())
+	// A trusted-device cookie (when the tenant allows adaptive MFA) lets an
+	// enrolled user skip the second factor on a previously-remembered device.
+	trusted := ""
+	if c, cerr := r.Cookie(TrustedDeviceCookie); cerr == nil {
+		trusted = c.Value
+	}
+	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent(), trusted)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -241,12 +251,20 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	userID, raw, err := h.Service.CompleteMFALoginSession(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
+	userID, tenantID, raw, err := h.Service.CompleteMFALoginSession(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	// Trust this device when asked — MaybeRememberDevice is a no-op unless the
+	// tenant has opted into adaptive MFA, so a client-supplied flag can't grant
+	// trust the policy forbids.
+	if in.Remember {
+		if draw, derr := h.Service.MaybeRememberDevice(r.Context(), userID, tenantID, r.UserAgent()); derr == nil && draw != "" {
+			SetTrustedDeviceCookie(w, draw, h.CookieSecure)
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
 }
 

@@ -1187,6 +1187,12 @@ paths:
                 code:
                   type: string
                   description: A TOTP code or a one-time recovery code.
+                remember:
+                  type: boolean
+                  description: >-
+                    Trust this device so future logins can skip the second
+                    factor (adaptive MFA). Honoured only when the tenant has
+                    enabled remember-device; sets the qe_td cookie.
       responses:
         '200':
           description: Second factor verified; SSO cookie set
@@ -1353,6 +1359,90 @@ paths:
         '401': *id002
         '403': *id007
         '422': *id005
+  /v1/tenants/{tenantID}/billing/checkout:
+    post:
+      operationId: post_v1_tenants_ByTenantID_billing_checkout
+      summary: Start a paid plan change (hosted Stripe/Razorpay checkout)
+      description: >-
+        Returns a hosted-payment URL to redirect the admin to, or
+        {status:"active"} when the plan is free or no card provider serves the
+        currency (direct activation). Provider routing: INR → Razorpay, else →
+        Stripe. The provider's webhook later activates the subscription.
+      tags:
+      - Billing
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - plan_code
+              - currency
+              - success_url
+              - cancel_url
+              properties:
+                plan_code:
+                  type: string
+                currency:
+                  type: string
+                success_url:
+                  type: string
+                  format: uri
+                cancel_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '422': *id005
+  /v1/billing/webhooks/{provider}:
+    post:
+      operationId: post_v1_billing_webhooks_ByProvider
+      summary: 'Payment provider webhook (Stripe/Razorpay) — signature-verified'
+      description: >-
+        Receives provider payment events. Authenticated by the provider's
+        webhook signature (no user session); on a verified successful payment
+        the referenced checkout is completed idempotently.
+      tags:
+      - Billing
+      security: []
+      parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [stripe, razorpay]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Event acknowledged
+        '401': *id002
+        '404': *id003
   /v1/billing/plans:
     get:
       operationId: get_v1_billing_plans
@@ -4044,6 +4134,423 @@ paths:
         '401': *id002
         '403': *id007
         '404': *id003
+  /v1/tenants/{tenantID}/relation-tuples:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples
+      summary: List ReBAC relationship tuples on an object
+      tags:
+      - ReBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: object
+        in: query
+        required: true
+        schema:
+          type: string
+        description: 'Object ref "type:id", e.g. document:readme'
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Tuples on the object
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+    post:
+      operationId: post_v1_tenants_ByTenantID_relation_tuples
+      summary: Write a ReBAC relationship tuple
+      tags:
+      - ReBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - object
+              - relation
+              - subject
+              properties:
+                object:
+                  type: string
+                  description: '"type:id"'
+                relation:
+                  type: string
+                subject:
+                  type: string
+                  description: '"user:<id>" or "type:id#relation" (userset)'
+      responses:
+        '201':
+          description: Tuple written
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/relation-tuples/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_relation_tuples_ById
+      summary: Delete a relationship tuple
+      tags:
+      - ReBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/tenants/{tenantID}/relation-tuples/check:
+    post:
+      operationId: post_v1_tenants_ByTenantID_relation_tuples_check
+      summary: Check whether a user has a relation on an object (ReBAC)
+      tags:
+      - ReBAC
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - object
+              - relation
+              - user_id
+              properties:
+                object:
+                  type: string
+                relation:
+                  type: string
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: '{ allowed: bool }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed:
+                    type: boolean
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/auth-hooks:
+    get:
+      operationId: get_v1_tenants_ByTenantID_auth_hooks
+      summary: List a tenant's login Actions/Hooks
+      tags:
+      - Auth Hooks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Configured hooks (secrets are write-only, not returned)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+    post:
+      operationId: post_v1_tenants_ByTenantID_auth_hooks
+      summary: Add a synchronous login hook (post-credential allow/deny gate)
+      tags:
+      - Auth Hooks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                fail_open:
+                  type: boolean
+      responses:
+        '201':
+          description: Hook created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/auth-hooks/{id}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_auth_hooks_ById
+      summary: Update a hook (enabled / fail_open)
+      tags:
+      - Auth Hooks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                fail_open:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated
+        '401': *id002
+        '403': *id007
+        '404': *id003
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_auth_hooks_ById
+      summary: Remove a hook
+      tags:
+      - Auth Hooks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/tenants/{tenantID}/log-sinks:
+    get:
+      operationId: get_v1_tenants_ByTenantID_log_sinks
+      summary: List a tenant's SIEM / log-streaming sinks
+      tags:
+      - Log Sinks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Configured sinks (tokens are write-only, not returned)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+    post:
+      operationId: post_v1_tenants_ByTenantID_log_sinks
+      summary: Add a SIEM / log-streaming sink (Splunk HEC, Datadog, or HTTP)
+      tags:
+      - Log Sinks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - type
+              - endpoint
+              properties:
+                type:
+                  type: string
+                  enum: [splunk_hec, datadog, http]
+                endpoint:
+                  type: string
+                  format: uri
+                token:
+                  type: string
+      responses:
+        '201':
+          description: Sink created (streams new audit events from now)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '422': *id005
+  /v1/tenants/{tenantID}/log-sinks/{id}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_log_sinks_ById
+      summary: Enable or disable a sink
+      tags:
+      - Log Sinks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated
+        '401': *id002
+        '403': *id007
+        '404': *id003
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_log_sinks_ById
+      summary: Remove a sink
+      tags:
+      - Log Sinks
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/ip-rules:
     get:
       operationId: get_v1_tenants_ByTenantID_ip_rules
@@ -5219,6 +5726,41 @@ paths:
         '401': *id002
         '403': *id007
         '404': *id003
+  /v1/tenants/{tenantID}/saml/{id}/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_ById_test
+      summary: Preflight-test a SAML connection's config before rollout
+      description: >-
+        Runs offline checks (entity ID present, https SSO URL, the signing
+        certificate parses and is in its validity window, email attribute
+        mapped) and returns per-check results. No network I/O.
+      tags:
+      - SAML
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Per-check preflight results
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/tenants/{tenantID}/saml/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_saml_ById
@@ -6263,6 +6805,170 @@ paths:
         '401': *id002
         '403': *id007
         '404': *id003
+  /v1/tenants/{tenantID}/domains:
+    get:
+      operationId: get_v1_tenants_ByTenantID_domains
+      summary: List a tenant's claimed/verified email domains
+      tags:
+      - Domains
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Domains with their DNS verification records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+    post:
+      operationId: post_v1_tenants_ByTenantID_domains
+      summary: Claim a domain (returns the DNS TXT record to publish)
+      tags:
+      - Domains
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - domain
+              properties:
+                domain:
+                  type: string
+      responses:
+        '201':
+          description: Domain claimed; publish the returned TXT record then verify
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '409': *id004
+        '422': *id005
+  /v1/tenants/{tenantID}/domains/{id}/verify:
+    post:
+      operationId: post_v1_tenants_ByTenantID_domains_ById_verify
+      summary: Check the DNS TXT record and mark the domain verified
+      tags:
+      - Domains
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Verification result (verified_at set on success)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
+        '409': *id004
+        '422': *id005
+  /v1/tenants/{tenantID}/domains/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_domains_ById
+      summary: Remove a claimed domain
+      tags:
+      - Domains
+      parameters:
+      - name: tenantID
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: Domain removed
+        '401': *id002
+        '403': *id007
+        '404': *id003
+  /v1/notifications:
+    get:
+      operationId: get_v1_notifications
+      summary: List the current user's in-app notifications + unread count
+      tags:
+      - Notifications
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Notification inbox
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  unread_count:
+                    type: integer
+        '401': *id002
+  /v1/notifications/mark-all-read:
+    post:
+      operationId: post_v1_notifications_mark_all_read
+      summary: Mark all of the current user's notifications read
+      tags:
+      - Notifications
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '204':
+          description: All notifications marked read
+        '401': *id002
   /v1/webhooks:
     post:
       operationId: post_v1_webhooks
@@ -6295,6 +7001,31 @@ paths:
         '422': *id005
         '429': *id006
   /v1/webhooks/{id}:
+    get:
+      operationId: get_v1_webhooks_ById
+      summary: Get a single webhook subscription
+      tags:
+      - Webhooks
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Webhook subscription
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': *id002
+        '403': *id007
+        '404': *id003
     delete:
       operationId: delete_v1_webhooks_ById
       summary: Delete webhooks
@@ -6318,6 +7049,62 @@ paths:
         '404': *id003
         '422': *id005
         '429': *id006
+  /v1/webhooks/{id}/deliveries:
+    get:
+      operationId: get_v1_webhooks_ById_deliveries
+      summary: List recent delivery attempts for a webhook (with payload + response)
+      tags:
+      - Webhooks
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401': *id002
+        '403': *id007
+  /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
+    post:
+      operationId: post_v1_webhooks_ById_deliveries_ByDeliveryID_retry
+      summary: Re-queue a webhook delivery for immediate redelivery
+      tags:
+      - Webhooks
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: deliveryID
+        in: path
+        required: true
+        schema:
+          type: string
+      security:
+      - bearerAuth: []
+      - apiKeyAuth: []
+      responses:
+        '200':
+          description: Delivery re-queued
+        '401': *id002
+        '403': *id007
+        '404': *id003
   /v1/webhooks/{id}/test:
     post:
       operationId: post_v1_webhooks_ById_test

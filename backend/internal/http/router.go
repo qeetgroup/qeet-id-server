@@ -12,10 +12,12 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/apikey"
 	"github.com/qeetgroup/qeet-id/internal/audit"
 	"github.com/qeetgroup/qeet-id/internal/auth"
+	"github.com/qeetgroup/qeet-id/internal/authhook"
 	"github.com/qeetgroup/qeet-id/internal/authpolicy"
 	"github.com/qeetgroup/qeet-id/internal/billing"
 	"github.com/qeetgroup/qeet-id/internal/bot"
 	"github.com/qeetgroup/qeet-id/internal/branding"
+	"github.com/qeetgroup/qeet-id/internal/domainverify"
 	"github.com/qeetgroup/qeet-id/internal/emailtemplate"
 	"github.com/qeetgroup/qeet-id/internal/gdpr"
 	"github.com/qeetgroup/qeet-id/internal/group"
@@ -23,6 +25,7 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/ipallow"
 	"github.com/qeetgroup/qeet-id/internal/ldap"
 	"github.com/qeetgroup/qeet-id/internal/mfa"
+	"github.com/qeetgroup/qeet-id/internal/notification"
 	"github.com/qeetgroup/qeet-id/internal/oidc"
 	"github.com/qeetgroup/qeet-id/internal/passkey"
 	"github.com/qeetgroup/qeet-id/internal/platform/health"
@@ -34,11 +37,13 @@ import (
 	"github.com/qeetgroup/qeet-id/internal/policy"
 	"github.com/qeetgroup/qeet-id/internal/principal"
 	"github.com/qeetgroup/qeet-id/internal/rbac"
+	"github.com/qeetgroup/qeet-id/internal/rebac"
 	"github.com/qeetgroup/qeet-id/internal/recovery"
 	"github.com/qeetgroup/qeet-id/internal/retention"
 	"github.com/qeetgroup/qeet-id/internal/saml"
 	"github.com/qeetgroup/qeet-id/internal/scim"
 	"github.com/qeetgroup/qeet-id/internal/secret"
+	"github.com/qeetgroup/qeet-id/internal/siem"
 	"github.com/qeetgroup/qeet-id/internal/social"
 	"github.com/qeetgroup/qeet-id/internal/tenant"
 	"github.com/qeetgroup/qeet-id/internal/threat"
@@ -85,6 +90,11 @@ type Deps struct {
 	IPAllow       *ipallow.Handler
 	Threat        *threat.Handler
 	Bot           *bot.Handler
+	Notification  *notification.Handler
+	DomainVerify  *domainverify.Handler
+	SIEM          *siem.Handler
+	AuthHook      *authhook.Handler
+	ReBAC         *rebac.Handler
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
@@ -156,6 +166,7 @@ func NewRouter(d Deps) http.Handler {
 				"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
 				"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
 				"/v1/passkeys/login/", "/v1/social/", "/v1/invites/accept",
+				"/v1/billing/webhooks/", // provider-signed (Stripe/Razorpay), no cookie session
 			},
 		}))
 	}
@@ -206,6 +217,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Invite.MountPublic(r)    // accept-invite
 			d.Principal.MountPublic(r) // /oauth/token (client_credentials)
 			d.Social.MountPublic(r)    // social OAuth start/callback/exchange
+			d.Billing.MountPublic(r)   // /billing/webhooks/{provider}: Stripe/Razorpay (signature-verified)
 			d.Passkey.MountPublic(r)   // passwordless passkey login
 			d.OIDC.MountBrowser(r)     // /oauth/authorize (SSO cookie) + decision + token-code
 		})
@@ -246,13 +258,18 @@ func NewRouter(d Deps) http.Handler {
 			d.Passkey.Mount(r)
 			d.Social.Mount(r)
 			d.Group.Mount(r)
-			d.SCIM.Mount(r)    // /tenants/{id}/scim admin: token rotate/revoke/status
-			d.Secret.Mount(r)  // /tenants/{id}/secrets: encrypted secrets vault
-			d.SAML.Mount(r)    // /tenants/{id}/saml admin: connection CRUD
-			d.LDAP.Mount(r)    // /tenants/{id}/ldap admin: connection CRUD + test bind
-			d.IPAllow.Mount(r) // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
-			d.Threat.Mount(r)  // /tenants/{id}/security/anomalies: detected security events
-			d.Bot.Mount(r)     // /tenants/{id}/security/bots: bot-detection telemetry + settings
+			d.SCIM.Mount(r)         // /tenants/{id}/scim admin: token rotate/revoke/status
+			d.Secret.Mount(r)       // /tenants/{id}/secrets: encrypted secrets vault
+			d.SAML.Mount(r)         // /tenants/{id}/saml admin: connection CRUD
+			d.LDAP.Mount(r)         // /tenants/{id}/ldap admin: connection CRUD + test bind
+			d.IPAllow.Mount(r)      // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
+			d.Threat.Mount(r)       // /tenants/{id}/security/anomalies: detected security events
+			d.Bot.Mount(r)          // /tenants/{id}/security/bots: bot-detection telemetry + settings
+			d.Notification.Mount(r) // /notifications: in-app inbox (principal-scoped)
+			d.DomainVerify.Mount(r) // /tenants/{id}/domains: DNS domain verification
+			d.SIEM.Mount(r)         // /tenants/{id}/log-sinks: SIEM / log streaming
+			d.AuthHook.Mount(r)     // /tenants/{id}/auth-hooks: synchronous login Actions/Hooks
+			d.ReBAC.Mount(r)        // /tenants/{id}/relation-tuples: fine-grained (ReBAC) authz
 		})
 	})
 

@@ -39,17 +39,21 @@ import { Route as AppSettingsBrandingRouteImport } from './routes/_app/settings/
 import { Route as AppSettingsBillingRouteImport } from './routes/_app/settings/billing'
 import { Route as AppSecuritySessionsRouteImport } from './routes/_app/security/sessions'
 import { Route as AppSecurityRateLimitsRouteImport } from './routes/_app/security/rate-limits'
+import { Route as AppSecurityLogStreamingRouteImport } from './routes/_app/security/log-streaming'
 import { Route as AppSecurityDeviceAuthorizationsRouteImport } from './routes/_app/security/device-authorizations'
 import { Route as AppSecurityAuditLogsRouteImport } from './routes/_app/security/audit-logs'
 import { Route as AppOrganizationsTenantsRouteImport } from './routes/_app/organizations/tenants'
 import { Route as AppOrganizationsMembersRouteImport } from './routes/_app/organizations/members'
+import { Route as AppOrganizationsDomainsRouteImport } from './routes/_app/organizations/domains'
 import { Route as AppGroupsGroupIdRouteImport } from './routes/_app/groups.$groupId'
 import { Route as AppDeveloperWebhooksRouteImport } from './routes/_app/developer/webhooks'
 import { Route as AppDeveloperInfrastructureRouteImport } from './routes/_app/developer/infrastructure'
 import { Route as AppDeveloperBotsRouteImport } from './routes/_app/developer/bots'
+import { Route as AppDeveloperAuthHooksRouteImport } from './routes/_app/developer/auth-hooks'
 import { Route as AppAuthSocialRouteImport } from './routes/_app/auth/social'
 import { Route as AppAccessRolesRouteImport } from './routes/_app/access/roles'
 import { Route as AppAccessResourcesRouteImport } from './routes/_app/access/resources'
+import { Route as AppAccessRelationshipsRouteImport } from './routes/_app/access/relationships'
 import { Route as AppAccessPoliciesRouteImport } from './routes/_app/access/policies'
 import { Route as AppAccessPermissionsRouteImport } from './routes/_app/access/permissions'
 import { Route as AppAccessCheckRouteImport } from './routes/_app/access/check'
@@ -234,6 +238,11 @@ const AppSecurityRateLimitsRoute = AppSecurityRateLimitsRouteImport.update({
   path: '/security/rate-limits',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSecurityLogStreamingRoute = AppSecurityLogStreamingRouteImport.update({
+  id: '/security/log-streaming',
+  path: '/security/log-streaming',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSecurityDeviceAuthorizationsRoute =
   AppSecurityDeviceAuthorizationsRouteImport.update({
     id: '/security/device-authorizations',
@@ -253,6 +262,11 @@ const AppOrganizationsTenantsRoute = AppOrganizationsTenantsRouteImport.update({
 const AppOrganizationsMembersRoute = AppOrganizationsMembersRouteImport.update({
   id: '/organizations/members',
   path: '/organizations/members',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOrganizationsDomainsRoute = AppOrganizationsDomainsRouteImport.update({
+  id: '/organizations/domains',
+  path: '/organizations/domains',
   getParentRoute: () => AppRoute,
 } as any)
 const AppGroupsGroupIdRoute = AppGroupsGroupIdRouteImport.update({
@@ -276,6 +290,11 @@ const AppDeveloperBotsRoute = AppDeveloperBotsRouteImport.update({
   path: '/developer/bots',
   getParentRoute: () => AppRoute,
 } as any)
+const AppDeveloperAuthHooksRoute = AppDeveloperAuthHooksRouteImport.update({
+  id: '/developer/auth-hooks',
+  path: '/developer/auth-hooks',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAuthSocialRoute = AppAuthSocialRouteImport.update({
   id: '/auth/social',
   path: '/auth/social',
@@ -289,6 +308,11 @@ const AppAccessRolesRoute = AppAccessRolesRouteImport.update({
 const AppAccessResourcesRoute = AppAccessResourcesRouteImport.update({
   id: '/access/resources',
   path: '/access/resources',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccessRelationshipsRoute = AppAccessRelationshipsRouteImport.update({
+  id: '/access/relationships',
+  path: '/access/relationships',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAccessPoliciesRoute = AppAccessPoliciesRouteImport.update({
@@ -503,17 +527,21 @@ export interface FileRoutesByFullPath {
   '/access/check': typeof AppAccessCheckRoute
   '/access/permissions': typeof AppAccessPermissionsRoute
   '/access/policies': typeof AppAccessPoliciesRoute
+  '/access/relationships': typeof AppAccessRelationshipsRoute
   '/access/resources': typeof AppAccessResourcesRoute
   '/access/roles': typeof AppAccessRolesRouteWithChildren
   '/auth/social': typeof AppAuthSocialRoute
+  '/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/developer/bots': typeof AppDeveloperBotsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
   '/groups/$groupId': typeof AppGroupsGroupIdRoute
+  '/organizations/domains': typeof AppOrganizationsDomainsRoute
   '/organizations/members': typeof AppOrganizationsMembersRoute
   '/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/security/audit-logs': typeof AppSecurityAuditLogsRoute
   '/security/device-authorizations': typeof AppSecurityDeviceAuthorizationsRoute
+  '/security/log-streaming': typeof AppSecurityLogStreamingRoute
   '/security/rate-limits': typeof AppSecurityRateLimitsRoute
   '/security/sessions': typeof AppSecuritySessionsRoute
   '/settings/billing': typeof AppSettingsBillingRoute
@@ -579,17 +607,21 @@ export interface FileRoutesByTo {
   '/access/check': typeof AppAccessCheckRoute
   '/access/permissions': typeof AppAccessPermissionsRoute
   '/access/policies': typeof AppAccessPoliciesRoute
+  '/access/relationships': typeof AppAccessRelationshipsRoute
   '/access/resources': typeof AppAccessResourcesRoute
   '/access/roles': typeof AppAccessRolesRouteWithChildren
   '/auth/social': typeof AppAuthSocialRoute
+  '/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/developer/bots': typeof AppDeveloperBotsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
   '/groups/$groupId': typeof AppGroupsGroupIdRoute
+  '/organizations/domains': typeof AppOrganizationsDomainsRoute
   '/organizations/members': typeof AppOrganizationsMembersRoute
   '/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/security/audit-logs': typeof AppSecurityAuditLogsRoute
   '/security/device-authorizations': typeof AppSecurityDeviceAuthorizationsRoute
+  '/security/log-streaming': typeof AppSecurityLogStreamingRoute
   '/security/rate-limits': typeof AppSecurityRateLimitsRoute
   '/security/sessions': typeof AppSecuritySessionsRoute
   '/settings/billing': typeof AppSettingsBillingRoute
@@ -658,17 +690,21 @@ export interface FileRoutesById {
   '/_app/access/check': typeof AppAccessCheckRoute
   '/_app/access/permissions': typeof AppAccessPermissionsRoute
   '/_app/access/policies': typeof AppAccessPoliciesRoute
+  '/_app/access/relationships': typeof AppAccessRelationshipsRoute
   '/_app/access/resources': typeof AppAccessResourcesRoute
   '/_app/access/roles': typeof AppAccessRolesRouteWithChildren
   '/_app/auth/social': typeof AppAuthSocialRoute
+  '/_app/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/_app/developer/bots': typeof AppDeveloperBotsRoute
   '/_app/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/_app/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
   '/_app/groups/$groupId': typeof AppGroupsGroupIdRoute
+  '/_app/organizations/domains': typeof AppOrganizationsDomainsRoute
   '/_app/organizations/members': typeof AppOrganizationsMembersRoute
   '/_app/organizations/tenants': typeof AppOrganizationsTenantsRoute
   '/_app/security/audit-logs': typeof AppSecurityAuditLogsRoute
   '/_app/security/device-authorizations': typeof AppSecurityDeviceAuthorizationsRoute
+  '/_app/security/log-streaming': typeof AppSecurityLogStreamingRoute
   '/_app/security/rate-limits': typeof AppSecurityRateLimitsRoute
   '/_app/security/sessions': typeof AppSecuritySessionsRoute
   '/_app/settings/billing': typeof AppSettingsBillingRoute
@@ -736,17 +772,21 @@ export interface FileRouteTypes {
     | '/access/check'
     | '/access/permissions'
     | '/access/policies'
+    | '/access/relationships'
     | '/access/resources'
     | '/access/roles'
     | '/auth/social'
+    | '/developer/auth-hooks'
     | '/developer/bots'
     | '/developer/infrastructure'
     | '/developer/webhooks'
     | '/groups/$groupId'
+    | '/organizations/domains'
     | '/organizations/members'
     | '/organizations/tenants'
     | '/security/audit-logs'
     | '/security/device-authorizations'
+    | '/security/log-streaming'
     | '/security/rate-limits'
     | '/security/sessions'
     | '/settings/billing'
@@ -812,17 +852,21 @@ export interface FileRouteTypes {
     | '/access/check'
     | '/access/permissions'
     | '/access/policies'
+    | '/access/relationships'
     | '/access/resources'
     | '/access/roles'
     | '/auth/social'
+    | '/developer/auth-hooks'
     | '/developer/bots'
     | '/developer/infrastructure'
     | '/developer/webhooks'
     | '/groups/$groupId'
+    | '/organizations/domains'
     | '/organizations/members'
     | '/organizations/tenants'
     | '/security/audit-logs'
     | '/security/device-authorizations'
+    | '/security/log-streaming'
     | '/security/rate-limits'
     | '/security/sessions'
     | '/settings/billing'
@@ -890,17 +934,21 @@ export interface FileRouteTypes {
     | '/_app/access/check'
     | '/_app/access/permissions'
     | '/_app/access/policies'
+    | '/_app/access/relationships'
     | '/_app/access/resources'
     | '/_app/access/roles'
     | '/_app/auth/social'
+    | '/_app/developer/auth-hooks'
     | '/_app/developer/bots'
     | '/_app/developer/infrastructure'
     | '/_app/developer/webhooks'
     | '/_app/groups/$groupId'
+    | '/_app/organizations/domains'
     | '/_app/organizations/members'
     | '/_app/organizations/tenants'
     | '/_app/security/audit-logs'
     | '/_app/security/device-authorizations'
+    | '/_app/security/log-streaming'
     | '/_app/security/rate-limits'
     | '/_app/security/sessions'
     | '/_app/settings/billing'
@@ -1166,6 +1214,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSecurityRateLimitsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/security/log-streaming': {
+      id: '/_app/security/log-streaming'
+      path: '/security/log-streaming'
+      fullPath: '/security/log-streaming'
+      preLoaderRoute: typeof AppSecurityLogStreamingRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/security/device-authorizations': {
       id: '/_app/security/device-authorizations'
       path: '/security/device-authorizations'
@@ -1192,6 +1247,13 @@ declare module '@tanstack/react-router' {
       path: '/organizations/members'
       fullPath: '/organizations/members'
       preLoaderRoute: typeof AppOrganizationsMembersRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/organizations/domains': {
+      id: '/_app/organizations/domains'
+      path: '/organizations/domains'
+      fullPath: '/organizations/domains'
+      preLoaderRoute: typeof AppOrganizationsDomainsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/groups/$groupId': {
@@ -1222,6 +1284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDeveloperBotsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/developer/auth-hooks': {
+      id: '/_app/developer/auth-hooks'
+      path: '/developer/auth-hooks'
+      fullPath: '/developer/auth-hooks'
+      preLoaderRoute: typeof AppDeveloperAuthHooksRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/auth/social': {
       id: '/_app/auth/social'
       path: '/auth/social'
@@ -1241,6 +1310,13 @@ declare module '@tanstack/react-router' {
       path: '/access/resources'
       fullPath: '/access/resources'
       preLoaderRoute: typeof AppAccessResourcesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/access/relationships': {
+      id: '/_app/access/relationships'
+      path: '/access/relationships'
+      fullPath: '/access/relationships'
+      preLoaderRoute: typeof AppAccessRelationshipsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/access/policies': {
@@ -1550,16 +1626,20 @@ interface AppRouteChildren {
   AppAccessCheckRoute: typeof AppAccessCheckRoute
   AppAccessPermissionsRoute: typeof AppAccessPermissionsRoute
   AppAccessPoliciesRoute: typeof AppAccessPoliciesRoute
+  AppAccessRelationshipsRoute: typeof AppAccessRelationshipsRoute
   AppAccessResourcesRoute: typeof AppAccessResourcesRoute
   AppAccessRolesRoute: typeof AppAccessRolesRouteWithChildren
   AppAuthSocialRoute: typeof AppAuthSocialRoute
+  AppDeveloperAuthHooksRoute: typeof AppDeveloperAuthHooksRoute
   AppDeveloperBotsRoute: typeof AppDeveloperBotsRoute
   AppDeveloperInfrastructureRoute: typeof AppDeveloperInfrastructureRoute
   AppDeveloperWebhooksRoute: typeof AppDeveloperWebhooksRouteWithChildren
+  AppOrganizationsDomainsRoute: typeof AppOrganizationsDomainsRoute
   AppOrganizationsMembersRoute: typeof AppOrganizationsMembersRoute
   AppOrganizationsTenantsRoute: typeof AppOrganizationsTenantsRoute
   AppSecurityAuditLogsRoute: typeof AppSecurityAuditLogsRoute
   AppSecurityDeviceAuthorizationsRoute: typeof AppSecurityDeviceAuthorizationsRoute
+  AppSecurityLogStreamingRoute: typeof AppSecurityLogStreamingRoute
   AppSecurityRateLimitsRoute: typeof AppSecurityRateLimitsRoute
   AppSecuritySessionsRoute: typeof AppSecuritySessionsRoute
   AppSettingsBillingRoute: typeof AppSettingsBillingRoute
@@ -1612,16 +1692,20 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccessCheckRoute: AppAccessCheckRoute,
   AppAccessPermissionsRoute: AppAccessPermissionsRoute,
   AppAccessPoliciesRoute: AppAccessPoliciesRoute,
+  AppAccessRelationshipsRoute: AppAccessRelationshipsRoute,
   AppAccessResourcesRoute: AppAccessResourcesRoute,
   AppAccessRolesRoute: AppAccessRolesRouteWithChildren,
   AppAuthSocialRoute: AppAuthSocialRoute,
+  AppDeveloperAuthHooksRoute: AppDeveloperAuthHooksRoute,
   AppDeveloperBotsRoute: AppDeveloperBotsRoute,
   AppDeveloperInfrastructureRoute: AppDeveloperInfrastructureRoute,
   AppDeveloperWebhooksRoute: AppDeveloperWebhooksRouteWithChildren,
+  AppOrganizationsDomainsRoute: AppOrganizationsDomainsRoute,
   AppOrganizationsMembersRoute: AppOrganizationsMembersRoute,
   AppOrganizationsTenantsRoute: AppOrganizationsTenantsRoute,
   AppSecurityAuditLogsRoute: AppSecurityAuditLogsRoute,
   AppSecurityDeviceAuthorizationsRoute: AppSecurityDeviceAuthorizationsRoute,
+  AppSecurityLogStreamingRoute: AppSecurityLogStreamingRoute,
   AppSecurityRateLimitsRoute: AppSecurityRateLimitsRoute,
   AppSecuritySessionsRoute: AppSecuritySessionsRoute,
   AppSettingsBillingRoute: AppSettingsBillingRoute,
