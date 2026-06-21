@@ -112,6 +112,109 @@ func TestVerifyAccess_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestIssueAccess_NoActClaimByDefault(t *testing.T) {
+	i, _ := testIssuer(t)
+	tok, _, err := i.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+	if err != nil {
+		t.Fatalf("IssueAccess: %v", err)
+	}
+	c, err := i.VerifyAccess(tok)
+	if err != nil {
+		t.Fatalf("VerifyAccess: %v", err)
+	}
+	if c.Act != nil {
+		t.Errorf("ordinary access token must not carry an act claim, got %+v", c.Act)
+	}
+}
+
+func TestIssueAccessActor_CarriesActClaim(t *testing.T) {
+	i, _ := testIssuer(t)
+	uid, tid, sid := uuid.New(), uuid.New(), uuid.New()
+	agent := "agent-123"
+	tok, _, err := i.IssueAccessActor(uid, tid, sid, "doc.read", agent)
+	if err != nil {
+		t.Fatalf("IssueAccessActor: %v", err)
+	}
+	c, err := i.VerifyAccess(tok)
+	if err != nil {
+		t.Fatalf("VerifyAccess: %v", err)
+	}
+	// Delegated token: subject is still the user; act names the acting agent.
+	if c.Subject != uid.String() {
+		t.Errorf("subject should be the user, got %q", c.Subject)
+	}
+	if c.Act == nil || c.Act.Subject != agent {
+		t.Errorf("act claim must name the actor %q, got %+v", agent, c.Act)
+	}
+}
+
+func TestVerifyAccess_SurfacesActorClaims(t *testing.T) {
+	// Agent/service tokens carry actor_type/agent_id (custom claims); verify they
+	// round-trip into Claims so introspection can surface them.
+	i, _ := testIssuer(t)
+	now := time.Now().UTC()
+	tok, err := i.Sign(Claims{
+		TenantID:  uuid.New(),
+		Scope:     "vault:read",
+		ActorType: "agent",
+		AgentID:   "agent-xyz",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "qeet-test",
+			Audience:  jwt.ClaimStrings{"qeet-test"},
+			Subject:   uuid.NewString(),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(now),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	c, err := i.VerifyAccess(tok)
+	if err != nil {
+		t.Fatalf("VerifyAccess: %v", err)
+	}
+	if c.ActorType != "agent" || c.AgentID != "agent-xyz" {
+		t.Errorf("actor claims not surfaced: actor_type=%q agent_id=%q", c.ActorType, c.AgentID)
+	}
+}
+
+func TestVerifyVC_RoundTripAndRejection(t *testing.T) {
+	i, _ := testIssuer(t)
+	now := time.Now().UTC()
+	type vcClaims struct {
+		VC map[string]any `json:"vc"`
+		jwt.RegisteredClaims
+	}
+	make := func(iss string) string {
+		s, err := i.Sign(vcClaims{
+			VC: map[string]any{"type": []string{"VerifiableCredential", "TestCred"}},
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    iss,
+				Subject:   "did:example:123",
+				ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(now),
+			},
+		})
+		if err != nil {
+			t.Fatalf("sign: %v", err)
+		}
+		return s
+	}
+
+	// Our credential verifies and the vc claim is accessible.
+	claims, err := i.VerifyVC(make("qeet-test"))
+	if err != nil {
+		t.Fatalf("VerifyVC: %v", err)
+	}
+	if _, ok := claims["vc"].(map[string]any); !ok {
+		t.Error("vc claim missing from verified credential")
+	}
+	// A credential claiming a different issuer must be rejected.
+	if _, err := i.VerifyVC(make("evil-issuer")); err == nil {
+		t.Error("VerifyVC must reject a foreign issuer")
+	}
+}
+
 func TestVerifyAccess_RejectsTokenWithoutKID(t *testing.T) {
 	i, priv := testIssuer(t)
 	tok := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{

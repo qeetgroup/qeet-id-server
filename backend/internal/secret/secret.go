@@ -190,6 +190,25 @@ func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, s
 	return name, val, nil
 }
 
+// GetByName decrypts a secret by its name (for agent/credential retrieval via
+// the scoped vault endpoint). Returns the secret id (for auditing) + value.
+func (s *Service) GetByName(ctx context.Context, tenantID uuid.UUID, name string) (uuid.UUID, string, error) {
+	var id uuid.UUID
+	var ct, nonce []byte
+	err := s.pool.QueryRow(ctx, `SELECT id, ciphertext, nonce FROM tenant.secrets WHERE tenant_id = $1 AND name = $2`, tenantID, name).Scan(&id, &ct, &nonce)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, "", errs.ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	val, err := s.decrypt(ct, nonce)
+	if err != nil {
+		return uuid.Nil, "", errs.ErrInternal.WithDetail("decryption failed")
+	}
+	return id, val, nil
+}
+
 func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.secrets WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	if err != nil {
@@ -213,6 +232,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Patch("/tenants/{tenantID}/secrets/{id}", h.update)
 	r.Post("/tenants/{tenantID}/secrets/{id}/reveal", h.reveal)
 	r.Delete("/tenants/{tenantID}/secrets/{id}", h.del)
+	// Token vaulting: a scoped principal (e.g. an AI agent) fetches a vault
+	// secret by name. Gated by a vault:<name> (or vault:read) scope; audited.
+	r.Get("/vault/{name}", h.vaultGet)
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -356,6 +378,54 @@ func (h *Handler) reveal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
+}
+
+// hasVaultScope reports whether a principal's scopes permit reading the named
+// vault secret: a specific "vault:<name>" (least-privilege) or a blanket
+// "vault:read".
+func hasVaultScope(scopes []string, name string) bool {
+	for _, s := range scopes {
+		if s == "vault:read" || s == "vault:"+name {
+			return true
+		}
+	}
+	return false
+}
+
+// vaultGet returns a vault secret's value to a scoped principal (e.g. an AI
+// agent fetching a credential at runtime). Tenant comes from the caller's
+// token; access requires a matching vault scope and is always audited.
+func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	name := chi.URLParam(r, "name")
+	if !hasVaultScope(p.Scopes, name) {
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("missing vault:"+name+" (or vault:read) scope"))
+		return
+	}
+	ctx := r.Context()
+	id, value, err := h.Service.GetByName(ctx, tenantID, name)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Credential access is sensitive — always audit it.
+	tx, terr := h.Service.Pool().Begin(ctx)
+	if terr == nil {
+		defer tx.Rollback(ctx)
+		if aerr := h.recordAudit(ctx, tx, r, tenantID, id, "vault.accessed", map[string]any{"name": name}); aerr == nil {
+			_ = tx.Commit(ctx)
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "value": value})
 }
 
 func (h *Handler) del(w http.ResponseWriter, r *http.Request) {

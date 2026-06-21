@@ -44,7 +44,22 @@ type Claims struct {
 	TenantID  uuid.UUID `json:"tenant_id"`
 	SessionID uuid.UUID `json:"sid"`
 	Scope     string    `json:"scope,omitempty"`
+	// ActorType distinguishes the principal kind on non-user tokens
+	// ("service", "agent"); empty on ordinary user tokens. AgentID is set on
+	// agent tokens. Both are surfaced by introspection so resource servers
+	// (incl. MCP servers) can authorize agents distinctly.
+	ActorType string `json:"actor_type,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+	// Act is the RFC 8693 actor claim: present on delegated tokens (token
+	// exchange with an actor_token), naming the party acting on the subject's
+	// behalf — e.g. an AI agent exercising a user's authority. Absent otherwise.
+	Act *ActClaim `json:"act,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// ActClaim identifies the acting party in a delegated token (RFC 8693 §4.1).
+type ActClaim struct {
+	Subject string `json:"sub"`
 }
 
 // signingKey couples a key with its JWS algorithm. priv is nil for verify-only
@@ -161,6 +176,17 @@ func (i *Issuer) Sign(claims jwt.Claims) (string, error) {
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil)
+}
+
+// IssueAccessActor mints an access token like IssueAccess but with an RFC 8693
+// actor (act) claim, marking it a delegated token: the subject's authority is
+// being exercised by actorSubject (e.g. an AI agent acting for a user).
+func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject})
+}
+
+func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim) (string, time.Time, error) {
 	now := time.Now().UTC()
 	exp := now.Add(i.accessTTL)
 	claims := Claims{
@@ -168,6 +194,7 @@ func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 		TenantID:  tenantID,
 		SessionID: sessionID,
 		Scope:     scopes,
+		Act:       act,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    i.issuer,
 			Audience:  jwt.ClaimStrings{i.audience},
@@ -221,6 +248,27 @@ func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
 	claims, ok := tok.Claims.(*Claims)
 	if !ok || !tok.Valid {
 		return nil, errors.New("invalid token")
+	}
+	return claims, nil
+}
+
+// VerifyVC verifies a JWT-serialized Verifiable Credential this issuer signed:
+// it checks the signature (via the JWKS keys + kid), the issuer, and expiry,
+// but NOT the access-token audience (VCs aren't audience-bound). Returns the
+// full claim map so the caller can read the embedded `vc` object. Use this only
+// for credentials issued by this server (iss == our issuer).
+func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
+	parser := jwt.NewParser(
+		jwt.WithValidMethods(validMethods),
+		jwt.WithIssuer(i.issuer),
+	)
+	claims := jwt.MapClaims{}
+	tok, err := parser.ParseWithClaims(raw, claims, i.keyFunc)
+	if err != nil {
+		return nil, err
+	}
+	if !tok.Valid {
+		return nil, errors.New("invalid credential")
 	}
 	return claims, nil
 }

@@ -48,8 +48,10 @@ import { Route as AppOrganizationsDomainsRouteImport } from './routes/_app/organ
 import { Route as AppGroupsGroupIdRouteImport } from './routes/_app/groups.$groupId'
 import { Route as AppDeveloperWebhooksRouteImport } from './routes/_app/developer/webhooks'
 import { Route as AppDeveloperInfrastructureRouteImport } from './routes/_app/developer/infrastructure'
+import { Route as AppDeveloperCredentialsRouteImport } from './routes/_app/developer/credentials'
 import { Route as AppDeveloperBotsRouteImport } from './routes/_app/developer/bots'
 import { Route as AppDeveloperAuthHooksRouteImport } from './routes/_app/developer/auth-hooks'
+import { Route as AppDeveloperAgentsRouteImport } from './routes/_app/developer/agents'
 import { Route as AppAuthSocialRouteImport } from './routes/_app/auth/social'
 import { Route as AppAccessRolesRouteImport } from './routes/_app/access/roles'
 import { Route as AppAccessResourcesRouteImport } from './routes/_app/access/resources'
@@ -285,6 +287,11 @@ const AppDeveloperInfrastructureRoute =
     path: '/developer/infrastructure',
     getParentRoute: () => AppRoute,
   } as any)
+const AppDeveloperCredentialsRoute = AppDeveloperCredentialsRouteImport.update({
+  id: '/developer/credentials',
+  path: '/developer/credentials',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDeveloperBotsRoute = AppDeveloperBotsRouteImport.update({
   id: '/developer/bots',
   path: '/developer/bots',
@@ -293,6 +300,11 @@ const AppDeveloperBotsRoute = AppDeveloperBotsRouteImport.update({
 const AppDeveloperAuthHooksRoute = AppDeveloperAuthHooksRouteImport.update({
   id: '/developer/auth-hooks',
   path: '/developer/auth-hooks',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDeveloperAgentsRoute = AppDeveloperAgentsRouteImport.update({
+  id: '/developer/agents',
+  path: '/developer/agents',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAuthSocialRoute = AppAuthSocialRouteImport.update({
@@ -531,8 +543,10 @@ export interface FileRoutesByFullPath {
   '/access/resources': typeof AppAccessResourcesRoute
   '/access/roles': typeof AppAccessRolesRouteWithChildren
   '/auth/social': typeof AppAuthSocialRoute
+  '/developer/agents': typeof AppDeveloperAgentsRoute
   '/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/developer/bots': typeof AppDeveloperBotsRoute
+  '/developer/credentials': typeof AppDeveloperCredentialsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
   '/groups/$groupId': typeof AppGroupsGroupIdRoute
@@ -611,8 +625,10 @@ export interface FileRoutesByTo {
   '/access/resources': typeof AppAccessResourcesRoute
   '/access/roles': typeof AppAccessRolesRouteWithChildren
   '/auth/social': typeof AppAuthSocialRoute
+  '/developer/agents': typeof AppDeveloperAgentsRoute
   '/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/developer/bots': typeof AppDeveloperBotsRoute
+  '/developer/credentials': typeof AppDeveloperCredentialsRoute
   '/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
   '/groups/$groupId': typeof AppGroupsGroupIdRoute
@@ -694,8 +710,10 @@ export interface FileRoutesById {
   '/_app/access/resources': typeof AppAccessResourcesRoute
   '/_app/access/roles': typeof AppAccessRolesRouteWithChildren
   '/_app/auth/social': typeof AppAuthSocialRoute
+  '/_app/developer/agents': typeof AppDeveloperAgentsRoute
   '/_app/developer/auth-hooks': typeof AppDeveloperAuthHooksRoute
   '/_app/developer/bots': typeof AppDeveloperBotsRoute
+  '/_app/developer/credentials': typeof AppDeveloperCredentialsRoute
   '/_app/developer/infrastructure': typeof AppDeveloperInfrastructureRoute
   '/_app/developer/webhooks': typeof AppDeveloperWebhooksRouteWithChildren
   '/_app/groups/$groupId': typeof AppGroupsGroupIdRoute
@@ -776,8 +794,10 @@ export interface FileRouteTypes {
     | '/access/resources'
     | '/access/roles'
     | '/auth/social'
+    | '/developer/agents'
     | '/developer/auth-hooks'
     | '/developer/bots'
+    | '/developer/credentials'
     | '/developer/infrastructure'
     | '/developer/webhooks'
     | '/groups/$groupId'
@@ -856,8 +876,10 @@ export interface FileRouteTypes {
     | '/access/resources'
     | '/access/roles'
     | '/auth/social'
+    | '/developer/agents'
     | '/developer/auth-hooks'
     | '/developer/bots'
+    | '/developer/credentials'
     | '/developer/infrastructure'
     | '/developer/webhooks'
     | '/groups/$groupId'
@@ -938,8 +960,10 @@ export interface FileRouteTypes {
     | '/_app/access/resources'
     | '/_app/access/roles'
     | '/_app/auth/social'
+    | '/_app/developer/agents'
     | '/_app/developer/auth-hooks'
     | '/_app/developer/bots'
+    | '/_app/developer/credentials'
     | '/_app/developer/infrastructure'
     | '/_app/developer/webhooks'
     | '/_app/groups/$groupId'
@@ -1277,6 +1301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDeveloperInfrastructureRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/developer/credentials': {
+      id: '/_app/developer/credentials'
+      path: '/developer/credentials'
+      fullPath: '/developer/credentials'
+      preLoaderRoute: typeof AppDeveloperCredentialsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/developer/bots': {
       id: '/_app/developer/bots'
       path: '/developer/bots'
@@ -1289,6 +1320,13 @@ declare module '@tanstack/react-router' {
       path: '/developer/auth-hooks'
       fullPath: '/developer/auth-hooks'
       preLoaderRoute: typeof AppDeveloperAuthHooksRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/developer/agents': {
+      id: '/_app/developer/agents'
+      path: '/developer/agents'
+      fullPath: '/developer/agents'
+      preLoaderRoute: typeof AppDeveloperAgentsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/auth/social': {
@@ -1630,8 +1668,10 @@ interface AppRouteChildren {
   AppAccessResourcesRoute: typeof AppAccessResourcesRoute
   AppAccessRolesRoute: typeof AppAccessRolesRouteWithChildren
   AppAuthSocialRoute: typeof AppAuthSocialRoute
+  AppDeveloperAgentsRoute: typeof AppDeveloperAgentsRoute
   AppDeveloperAuthHooksRoute: typeof AppDeveloperAuthHooksRoute
   AppDeveloperBotsRoute: typeof AppDeveloperBotsRoute
+  AppDeveloperCredentialsRoute: typeof AppDeveloperCredentialsRoute
   AppDeveloperInfrastructureRoute: typeof AppDeveloperInfrastructureRoute
   AppDeveloperWebhooksRoute: typeof AppDeveloperWebhooksRouteWithChildren
   AppOrganizationsDomainsRoute: typeof AppOrganizationsDomainsRoute
@@ -1696,8 +1736,10 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccessResourcesRoute: AppAccessResourcesRoute,
   AppAccessRolesRoute: AppAccessRolesRouteWithChildren,
   AppAuthSocialRoute: AppAuthSocialRoute,
+  AppDeveloperAgentsRoute: AppDeveloperAgentsRoute,
   AppDeveloperAuthHooksRoute: AppDeveloperAuthHooksRoute,
   AppDeveloperBotsRoute: AppDeveloperBotsRoute,
+  AppDeveloperCredentialsRoute: AppDeveloperCredentialsRoute,
   AppDeveloperInfrastructureRoute: AppDeveloperInfrastructureRoute,
   AppDeveloperWebhooksRoute: AppDeveloperWebhooksRouteWithChildren,
   AppOrganizationsDomainsRoute: AppOrganizationsDomainsRoute,

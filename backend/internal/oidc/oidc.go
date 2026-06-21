@@ -262,7 +262,7 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 // narrowed-down credential to a less-trusted component. The client must be
 // granted "token_exchange". Only access tokens are supported as subject and
 // requested token type.
-func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope string) (*TokenResponse, error) {
+func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope, actorToken, actorTokenType string) (*TokenResponse, error) {
 	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
@@ -292,12 +292,35 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if !ok {
 		return nil, errs.ErrForbidden.WithDetail("requested scope exceeds the subject token's scope")
 	}
+	// Delegation (RFC 8693): an actor_token names the party acting on the
+	// subject's behalf (e.g. an AI agent exercising a user's authority). The
+	// issued token records it in an `act` claim for downstream authz + audit.
+	var actorSubject string
+	if actorToken != "" {
+		if actorTokenType != "" && actorTokenType != tokenTypeAccessToken {
+			return nil, errs.ErrBadRequest.WithDetail("only access_token actor_token_type is supported")
+		}
+		actorClaims, aerr := s.issuer.VerifyAccess(actorToken)
+		if aerr != nil {
+			return nil, errs.ErrUnauthorized.WithDetail("invalid or expired actor_token")
+		}
+		actorSubject = actorClaims.Subject
+	}
 	// Preserve the originating session so the exchanged token traces back to it.
 	sid := claims.SessionID
 	if sid == uuid.Nil {
 		sid = uuid.New()
 	}
-	access, exp, err := s.issuer.IssueAccess(userID, claims.TenantID, sid, strings.Join(granted, " "))
+	scopeStr := strings.Join(granted, " ")
+	var (
+		access string
+		exp    time.Time
+	)
+	if actorSubject != "" {
+		access, exp, err = s.issuer.IssueAccessActor(userID, claims.TenantID, sid, scopeStr, actorSubject)
+	} else {
+		access, exp, err = s.issuer.IssueAccess(userID, claims.TenantID, sid, scopeStr)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +328,7 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		AccessToken:     access,
 		TokenType:       "Bearer",
 		ExpiresIn:       int(time.Until(exp).Seconds()),
-		Scope:           strings.Join(granted, " "),
+		Scope:           scopeStr,
 		IssuedTokenType: tokenTypeAccessToken,
 	}, nil
 }
@@ -998,7 +1021,8 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		resp, err = h.Service.TokenExchange(r.Context(),
 			clientID, clientSecret,
 			r.Form.Get("subject_token"), r.Form.Get("subject_token_type"),
-			r.Form.Get("requested_token_type"), r.Form.Get("scope"))
+			r.Form.Get("requested_token_type"), r.Form.Get("scope"),
+			r.Form.Get("actor_token"), r.Form.Get("actor_token_type"))
 	case "urn:ietf:params:oauth:grant-type:device_code":
 		// RFC 8628 §3.4 polling. The device authenticates with its client_id +
 		// device_code; the device_code itself is the proof, so a client_secret is
@@ -1172,6 +1196,17 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 			}
 			if claims.SessionID != uuid.Nil {
 				out["sid"] = claims.SessionID
+			}
+			// Actor context so resource/MCP servers can authorize non-user
+			// principals distinctly (agent vs service) and see delegation.
+			if claims.ActorType != "" {
+				out["actor_type"] = claims.ActorType
+			}
+			if claims.AgentID != "" {
+				out["agent_id"] = claims.AgentID
+			}
+			if claims.Act != nil && claims.Act.Subject != "" {
+				out["act"] = map[string]any{"sub": claims.Act.Subject}
 			}
 			return out, nil
 		}
