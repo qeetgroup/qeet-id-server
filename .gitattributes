@@ -59,4 +59,4 @@ yarn.lock            text eol=lf -diff
 documents/source-requirements/** linguist-vendored
 
 # ── Hide marketing / docs static content from language stats ───────────────
-frontend/apps/qeetid-docs/content/** linguist-documentation
+apps/docs/** linguist-documentation

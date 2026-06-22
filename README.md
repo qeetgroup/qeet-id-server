@@ -21,29 +21,28 @@ This monorepo contains the full Qeet ID identity platform: a Go modular-monolith
 
 ## Repository layout
 
+Single Go module + pnpm/Turbo workspace, both rooted at the repo root.
+
 ```
 qeet-id/
-├── backend/                Go API server (chi + pgx + PostgreSQL)
-│   ├── api/
-│   │   ├── openapi.yaml    OpenAPI 3.x specification
-│   │   └── postman/        Postman collection + Newman runner
-│   ├── cmd/server/         Service entrypoint
-│   ├── internal/           ~40 domain modules (auth, oidc, rbac, rebac, saml, scim, ldap, siem, authhook, agent, vc, billing, secret, …)
-│   ├── migrations/         62 SQL migrations (golang-migrate)
-│   ├── Dockerfile(.migrate) Distroless app image + migration runner
-│   └── Makefile            Backend build / test / migrate targets
-├── frontend/               pnpm + Turborepo workspace
-│   ├── apps/
-│   │   ├── qeetid-admin/   Admin dashboard (Vite + TanStack Router)
-│   │   ├── qeetid-web/     Marketing site (Next.js)
-│   │   └── qeetid-login/   Hosted login (Next.js)
-│   └── packages/
-│       ├── qeetid-tsconfig/   Shared TypeScript configs
-│       ├── qeetid-eslint/     Shared ESLint config
-│       └── qeetid-{sdk,nextjs,react}/  TypeScript SDKs
-├── sdk/                    First-party Go + Python SDKs (go/, python/)
+├── cmd/                    Go entrypoints (server, seed)
+├── domains/                business logic by bounded context:
+│   ├── identity/           users, organizations(+branding), groups, invitations, verification, domains
+│   ├── access/             authentication, authorization/{rbac,rebac,policy,authpolicy}, mfa, passkeys,
+│   │                       recovery, risk/ipallow, threat-detection/{threat,bot}
+│   ├── federation/         oidc, saml, scim, ldap, social
+│   ├── developer/          api-keys, service-accounts, credentials/{secrets,vc}, auth-hooks, webhooks, agents
+│   └── operations/         audit, analytics, notifications, email-templates, retention, compliance, billing, siem
+├── platform/               shared infra (db, tokens, httpx, http router/wiring, config, logger, …)
+├── apps/                   frontend: console (admin, Vite), website (Next.js), login (Next.js) [+ docs/, status/]
+├── packages/               shared JS config (qeetid-tsconfig, qeetid-eslint)
+├── sdk/                    SDKs: js/{sdk,nextjs,react}, go, python
+├── api/                    openapi.yaml (OpenAPI 3.x) + postman/ (Newman runner)
+├── migrations/             62 SQL migrations (golang-migrate)   ·   sqlc/  codegen inputs
+├── tests/                  Go integration tests (testcontainers)
 ├── deploy/                 Compose (prod), Helm chart, observability, RUNBOOK
-└── Makefile                Root targets that delegate into backend/ + frontend/
+├── Dockerfile(.migrate)    Distroless app image + migration runner (build context = repo root)
+└── Makefile                Root targets for the Go module + pnpm workspace
 ```
 
 ---
@@ -66,16 +65,15 @@ make install              # go mod tidy + pnpm install
 ### 2. Bring up the database
 
 ```bash
-cp backend/.env.example backend/.env   # adjust if needed
-# DB / migrate / seed targets live in backend/Makefile — run via `make -C backend …`
-make -C backend db-up          # Postgres on :5001 (Docker)
-make -C backend migrate-up     # apply all migrations
-make -C backend seed-reset     # (optional) fill the DB with demo data to click around
+cp .env.example .env       # adjust if needed
+make db-up                 # Postgres on :5001 (Docker)
+make migrate-up            # apply all migrations
+make seed-reset            # (optional) fill the DB with demo data to click around
 ```
 
-`make -C backend seed-reset` creates two demo workspaces with users, roles, groups, API
+`make seed-reset` creates two demo workspaces with users, roles, groups, API
 keys, webhooks, SSO providers and audit history. Log in with `owner@acme.test`
-(password `Password123!`); see [backend/README.md](./backend/README.md#seed-demo-data) for all accounts.
+(password `Password123!`); see [docs/BACKEND.md](./docs/BACKEND.md#seed-demo-data) for all accounts.
 
 ### 3. Run the stack
 
@@ -97,7 +95,7 @@ Sanity check the API: `curl http://localhost:4001/healthz`.
 ### Containerised paths
 
 ```bash
-make -C backend db-up     # backend/docker-compose.yml — Postgres only (dev)
+make db-up     # docker-compose.yml — Postgres only (dev)
 ```
 
 For a production-shaped stack (backend + Postgres + Redis + TLS proxy + migration
@@ -123,7 +121,7 @@ make typecheck            # frontend tsc --noEmit
 make format               # frontend prettier
 ```
 
-CI-style API run with JUnit + HTML reports: `make test-api-ci` (artifacts land under [backend/api/postman/reports/](./backend/api/postman/)).
+CI-style API run with JUnit + HTML reports: `make test-api-ci` (artifacts land under [api/postman/reports/](./api/postman/)).
 
 ---
 
@@ -250,20 +248,20 @@ delivery is wired (log-only fallback when unconfigured).
 ## Documentation
 
 - **Implementation status** — [Feature status](#feature-status)
-- **Example apps** — [frontend/examples/](./frontend/examples/) — runnable integrations: a [Next.js app](./frontend/examples/nextjs-app) (server-side flow) and a [React SPA](./frontend/examples/react-app) (browser-side PKCE)
-- **Backend module guide** — [backend/README.md](./backend/README.md)
-- **Architecture & conventions** — [backend/ARCHITECTURE.md](./backend/ARCHITECTURE.md)
+- **Example apps** — [examples/](./examples/) — runnable integrations: a [Next.js app](./examples/nextjs-app) (server-side flow) and a [React SPA](./examples/react-app) (browser-side PKCE)
+- **Backend module guide** — [docs/BACKEND.md](./docs/BACKEND.md)
+- **Architecture & conventions** — [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - **Deploy & operations** — [deploy/RUNBOOK.md](./deploy/RUNBOOK.md)
 - **End-user docs** — standalone `qeet-docs` site (docs.qeet.in)
-- **API spec** — [backend/api/openapi.yaml](./backend/api/openapi.yaml) — 100% route coverage, guarded in CI (a `chi.Walk` test fails the build on any undocumented route)
-- **Postman collection** — [backend/api/postman/qeet-id.postman_collection.json](./backend/api/postman/qeet-id.postman_collection.json)
+- **API spec** — [api/openapi.yaml](./api/openapi.yaml) — 100% route coverage, guarded in CI (a `chi.Walk` test fails the build on any undocumented route)
+- **Postman collection** — [api/postman/qeet-id.postman_collection.json](./api/postman/qeet-id.postman_collection.json)
 
 ---
 
 ## For AI assistants
 
 - [CLAUDE.md](./CLAUDE.md) — top-level brief for any AI assistant working in this codebase.
-- [backend/ARCHITECTURE.md](./backend/ARCHITECTURE.md) — backend conventions new code must follow.
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — backend conventions new code must follow.
 
 Read [CLAUDE.md](./CLAUDE.md) before making changes if you're a model. Humans see [CONTRIBUTING.md](./CONTRIBUTING.md).
 

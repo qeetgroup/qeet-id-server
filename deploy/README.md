@@ -1,8 +1,8 @@
 # deploy/
 
 Deployment artifacts for Qeet ID. The backend ships as a distroless container
-([../backend/Dockerfile](../backend/Dockerfile)); schema migrations ship as a
-separate one-shot image ([../backend/Dockerfile.migrate](../backend/Dockerfile.migrate)).
+([../Dockerfile](../Dockerfile)); schema migrations ship as a
+separate one-shot image ([../Dockerfile.migrate](../Dockerfile.migrate)).
 
 | Path | Use |
 | --- | --- |

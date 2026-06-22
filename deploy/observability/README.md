@@ -11,7 +11,7 @@ set). This directory holds the operator-facing config to consume them.
 | `grafana/dashboards/qeet-id.json` | Importable Grafana dashboard (request rate, 5xx rate, p50/p95/p99 latency, top routes, runtime, build_info). |
 | `otel-collector-config.yaml` | OTel Collector pipeline that receives app traces and forwards to a backend (Tempo by default). |
 
-## Metrics emitted (see `backend/internal/platform/metrics`)
+## Metrics emitted (see `platform/metrics`)
 - `http_requests_total{method,route,status}` — counter (route = chi pattern, bounded cardinality).
 - `http_request_duration_seconds_{bucket,sum,count}{method,route}` — latency histogram.
 - `build_info{version,commit,goversion}` — constant `1`, for pivoting dashboards/alerts by deployed version.

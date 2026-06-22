@@ -53,8 +53,8 @@ jobs:
         id: build_app
         uses: docker/build-push-action@v6
         with:
-          context: backend
-          file: backend/Dockerfile
+          context: .
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -80,8 +80,8 @@ jobs:
         id: build_migrate
         uses: docker/build-push-action@v6
         with:
-          context: backend
-          file: backend/Dockerfile.migrate
+          context: .
+          file: Dockerfile.migrate
           push: true
           tags: ${{ steps.meta_migrate.outputs.tags }}
           labels: ${{ steps.meta_migrate.outputs.labels }}
@@ -110,9 +110,6 @@ jobs:
     name: Publish npm SDKs
     if: ${{ vars.PUBLISH_SDKS == 'true' }}
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v6
@@ -123,7 +120,7 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
           cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@qeetid/sdk" --filter "@qeetid/nextjs" --filter "@qeetid/react" build
       - name: Publish (only changed versions)

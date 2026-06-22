@@ -1,0 +1,41 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "sdk/js/*"
+  - "examples/*"
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
+
+catalog:
+  # React
+  react: ^19.2.6
+  react-dom: ^19.2.6
+  "@types/react": ^19.2.15
+  "@types/react-dom": ^19.2.3
+
+  # TypeScript
+  typescript: ^6.0.3
+  "@types/node": ^22.19.19
+
+  # Tailwind
+  tailwindcss: ^4.3.0
+  "@tailwindcss/postcss": ^4.3.0
+  "@tailwindcss/vite": ^4.3.0
+  tw-animate-css: ^1.3.6
+  tailwind-merge: ^3.6.0
+
+  # Tooling
+  "babel-plugin-react-compiler": ^1.0.0
+
+  # Shared libs
+  "lucide-react": ^0.577.0
+  "@thesvg/react": ^3.0.7
+  "class-variance-authority": ^0.7.1
+  "clsx": ^2.1.1
+  "zod": ^4.4.3
+  "recharts": ^3.8.1
+
+  # Next
+  next: 16.2.6

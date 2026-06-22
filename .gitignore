@@ -38,6 +38,23 @@ Desktop.ini
 # graphify output (regenerated on demand)
 graphify-out/
 
+# Go — build output, test/coverage artifacts (merged from backend/.gitignore on hoist)
+/bin/
+*.test
+*.out
+coverage.html
+
+# JS/Node — deps, stores, build outputs (merged from frontend/.gitignore on hoist)
+node_modules/
+.pnpm-store/
+dist/
+build/
+.next/
+.nitro/
+.output/
+.tanstack/
+coverage/
+
 # Env / secrets — never commit (but keep .env*.example templates)
 .env
 .env.local
@@ -47,9 +64,9 @@ graphify-out/
 .env.production
 # …but the frontend apps' .env.production hold only PUBLIC NEXT_PUBLIC_/VITE_
 # build-time config (no secrets) — version-control them.
-!frontend/apps/qeetid-web/.env.production
-!frontend/apps/qeetid-admin/.env.production
-!frontend/apps/qeetid-login/.env.production
+!apps/website/.env.production
+!apps/console/.env.production
+!apps/login/.env.production
 *.pem
 *.key
 *.crt

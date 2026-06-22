@@ -1,0 +1,43 @@
+{
+  "name": "@qeetid/frontend",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "turbo run dev --filter=./apps/*",
+    "dev:admin": "turbo run dev --filter=@qeetid/admin",
+    "dev:web": "turbo run dev --filter=@qeetid/web",
+    "dev:login": "turbo run dev --filter=@qeetid/login",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "format": "turbo run format",
+    "check": "turbo run check",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "rm -rf node_modules .turbo apps/*/node_modules apps/*/.turbo apps/*/dist apps/*/.netlify apps/*/.output packages/*/node_modules packages/*/.turbo packages/*/dist sdk/js/*/node_modules sdk/js/*/.turbo sdk/js/*/dist examples/*/node_modules examples/*/.turbo examples/*/dist"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.6",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
+    "prettier-plugin-tailwindcss": "^0.8.0",
+    "turbo": "^2.9.16",
+    "typescript-eslint": "^8.60.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lightningcss",
+      "sharp",
+      "unrs-resolver"
+    ]
+  }
+}

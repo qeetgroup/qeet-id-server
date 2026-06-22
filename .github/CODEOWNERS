@@ -9,37 +9,51 @@
 # ── Default owners (every PR) ──────────────────────────────────────────────
 *                                @qeetgroup/maintainers
 
-# ── Backend ────────────────────────────────────────────────────────────────
-/backend/                        @qeetgroup/backend
-/backend/internal/auth/          @qeetgroup/backend @qeetgroup/security
-/backend/internal/oidc/          @qeetgroup/backend @qeetgroup/security
-/backend/internal/passkey/       @qeetgroup/backend @qeetgroup/security
-/backend/internal/social/        @qeetgroup/backend @qeetgroup/security
-/backend/internal/mfa/           @qeetgroup/backend @qeetgroup/security
-/backend/internal/apikey/        @qeetgroup/backend @qeetgroup/security
-/backend/internal/rbac/          @qeetgroup/backend @qeetgroup/security
-/backend/internal/gdpr/          @qeetgroup/backend @qeetgroup/compliance
-/backend/internal/audit/         @qeetgroup/backend @qeetgroup/compliance
-/backend/internal/platform/      @qeetgroup/backend @qeetgroup/platform
-/backend/migrations/             @qeetgroup/backend @qeetgroup/data
-/backend/api/                    @qeetgroup/backend @qeetgroup/api
+# ── Backend (single Go module at root: cmd / domains / platform) ─────────────
+/cmd/                                          @qeetgroup/backend
+/domains/                                      @qeetgroup/backend
+/platform/                                     @qeetgroup/backend @qeetgroup/platform
+/domains/access/                               @qeetgroup/backend @qeetgroup/security
+/domains/access/authentication/                @qeetgroup/backend @qeetgroup/security
+/domains/access/authorization/                 @qeetgroup/backend @qeetgroup/security
+/domains/access/mfa/                           @qeetgroup/backend @qeetgroup/security
+/domains/access/passkeys/                      @qeetgroup/backend @qeetgroup/security
+/domains/federation/                           @qeetgroup/backend @qeetgroup/security
+/domains/developer/api-keys/                   @qeetgroup/backend @qeetgroup/security
+/domains/developer/credentials/                @qeetgroup/backend @qeetgroup/security
+/domains/operations/compliance/                @qeetgroup/backend @qeetgroup/compliance
+/domains/operations/audit/                     @qeetgroup/backend @qeetgroup/compliance
+/migrations/                                   @qeetgroup/backend @qeetgroup/data
+/sqlc/                                         @qeetgroup/backend @qeetgroup/data
+/api/                                          @qeetgroup/backend @qeetgroup/api
 
-# ── Frontend ───────────────────────────────────────────────────────────────
-/frontend/                       @qeetgroup/frontend
-/frontend/apps/qeetid-admin/     @qeetgroup/frontend
-/frontend/apps/qeetid-web/       @qeetgroup/frontend @qeetgroup/marketing
-/frontend/apps/qeetid-docs/      @qeetgroup/frontend @qeetgroup/devrel
-/frontend/packages/qeetid-ui/    @qeetgroup/frontend @qeetgroup/design
+# ── Frontend apps + shared packages ─────────────────────────────────────────
+/apps/                           @qeetgroup/frontend
+/apps/console/                   @qeetgroup/frontend
+/apps/website/                   @qeetgroup/frontend @qeetgroup/marketing
+/apps/login/                     @qeetgroup/frontend
+/apps/docs/                      @qeetgroup/frontend @qeetgroup/devrel
+/apps/status/                    @qeetgroup/frontend @qeetgroup/platform
+/packages/                       @qeetgroup/frontend @qeetgroup/design
+
+# ── SDKs (js / go / python) ──────────────────────────────────────────────────
+/sdk/                            @qeetgroup/backend @qeetgroup/frontend
+/sdk/js/                         @qeetgroup/frontend
+/sdk/go/                         @qeetgroup/backend
+/sdk/python/                     @qeetgroup/backend
 
 # ── Documentation ──────────────────────────────────────────────────────────
-/documents/                      @qeetgroup/maintainers @qeetgroup/product
+/docs/                           @qeetgroup/maintainers @qeetgroup/product
 README.md                        @qeetgroup/maintainers
 CHANGELOG.md                     @qeetgroup/maintainers
 SECURITY.md                      @qeetgroup/security
 CONTRIBUTING.md                  @qeetgroup/maintainers
 CODE_OF_CONDUCT.md               @qeetgroup/maintainers
 
-# ── CI / tooling ───────────────────────────────────────────────────────────
+# ── CI / tooling / deploy ────────────────────────────────────────────────────
 /.github/                        @qeetgroup/maintainers @qeetgroup/platform
 /Makefile                        @qeetgroup/maintainers
+/Dockerfile                      @qeetgroup/platform
+/Dockerfile.migrate              @qeetgroup/platform @qeetgroup/data
 /docker-compose.yml              @qeetgroup/platform
+/deploy/                         @qeetgroup/platform
