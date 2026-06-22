@@ -24,7 +24,7 @@ jobs:
       packages: write
       id-token: write # cosign keyless signing via OIDC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: sigstore/cosign-installer@v3
 
@@ -114,7 +114,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.4
@@ -138,7 +138,7 @@ jobs:
     permissions:
       id-token: write # PyPI Trusted Publishing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
