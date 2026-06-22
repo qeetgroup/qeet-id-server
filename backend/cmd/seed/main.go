@@ -157,6 +157,43 @@ func main() {
 		fmt.Printf("  • api key %-14q %s\n", k.Name, full)
 	}
 
+	// ---- Demo OIDC client for the Next.js example app (frontend/examples/nextjs-app) ----
+	// Fixed client_id + dev secret so the example's committed .env.example works out
+	// of the box. Dev-only (this whole seed is dev-only). RegisterClient mints random
+	// ids/secrets, so we insert directly to pin known values.
+	const exampleClientID = "qci_example_app"
+	const exampleClientSecret = "example-app-dev-secret-change-me"
+	exHash, err := password.Hash(exampleClientSecret)
+	must(err, "hash example client secret")
+	_, err = pool.Exec(ctx, `
+		INSERT INTO auth.oidc_clients (
+			tenant_id, client_id, client_secret_hash, type, name,
+			redirect_uris, post_logout_uris, grant_types, scopes
+		) VALUES ($1, $2, $3, 'confidential', 'Example Web App',
+			$4, $5, '{authorization_code,refresh_token}', '{openid,profile,email}')
+		ON CONFLICT (client_id) DO NOTHING
+	`, acme.ID, exampleClientID, exHash,
+		[]string{"http://localhost:3010/api/auth/callback"},
+		[]string{"http://localhost:3010", "http://localhost:3010/"})
+	must(err, "create example oidc client")
+	fmt.Printf("  • oidc client  %-14q %s (secret: %s)\n", "Example Web App", exampleClientID, exampleClientSecret)
+
+	// A PUBLIC client (no secret) for the React SPA example (frontend/examples/react-app),
+	// which runs the Authorization-Code + PKCE flow entirely in the browser. The SPA's
+	// origin must also be in ALLOWED_ORIGINS for the cross-origin token/userinfo calls.
+	_, err = pool.Exec(ctx, `
+		INSERT INTO auth.oidc_clients (
+			tenant_id, client_id, client_secret_hash, type, name,
+			redirect_uris, post_logout_uris, grant_types, scopes
+		) VALUES ($1, $2, NULL, 'public', 'Example SPA (React)',
+			$3, $4, '{authorization_code}', '{openid,profile,email}')
+		ON CONFLICT (client_id) DO NOTHING
+	`, acme.ID, "qci_example_spa",
+		[]string{"http://localhost:3020/callback"},
+		[]string{"http://localhost:3020", "http://localhost:3020/"})
+	must(err, "create example spa oidc client")
+	fmt.Printf("  • oidc client  %-14q %s (public, PKCE — no secret)\n", "Example SPA", "qci_example_spa")
+
 	// ---- Webhooks ----
 	inTx("webhook 1", func(tx pgx.Tx) error {
 		_, e := webhookSvc.Create(ctx, tx, webhook.CreateInput{TenantID: acme.ID, URL: "https://hooks.acme.test/qeet", Events: []string{"user.created", "auth.login_succeeded"}})
@@ -224,6 +261,7 @@ func main() {
 	fmt.Printf("   admin   alice@acme.test   %s\n", seedPassword)
 	fmt.Printf("   member  bob@acme.test     %s\n", seedPassword)
 	fmt.Println("   Tenants: Acme Inc (acme), Globex Corp (globex)")
+	fmt.Printf("   Example OAuth clients: %s (Next.js), qci_example_spa (React SPA) — see frontend/examples/\n", exampleClientID)
 }
 
 func must(err error, what string) {

@@ -1,0 +1,27 @@
+{
+  "name": "@qeetid/example-nextjs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Example Next.js app that logs users in with Qeet ID via @qeetid/nextjs + @qeetid/react.",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3010",
+    "build": "next build",
+    "start": "next start -p 3010",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@qeetid/nextjs": "workspace:*",
+    "@qeetid/react": "workspace:*",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@qeetid/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}

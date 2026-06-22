@@ -261,6 +261,9 @@ importers:
       '@qeetrix/ui':
         specifier: ^0.1.0
         version: 0.1.0(@types/node@22.19.19)(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(redux@5.0.1)(typescript@6.0.3)
+      '@thesvg/react':
+        specifier: 'catalog:'
+        version: 3.0.10(react@19.2.6)
       i18next:
         specifier: ^26.3.1
         version: 26.3.1(typescript@6.0.3)
@@ -359,6 +362,71 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
+
+  examples/nextjs-app:
+    dependencies:
+      '@qeetid/nextjs':
+        specifier: workspace:*
+        version: link:../../packages/qeetid-nextjs
+      '@qeetid/react':
+        specifier: workspace:*
+        version: link:../../packages/qeetid-react
+      next:
+        specifier: 'catalog:'
+        version: 16.2.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.6(react@19.2.6)
+    devDependencies:
+      '@qeetid/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/qeetid-tsconfig
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.19.19
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.15
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.15)
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  examples/react-app:
+    dependencies:
+      '@qeetid/react':
+        specifier: workspace:*
+        version: link:../../packages/qeetid-react
+      react:
+        specifier: 'catalog:'
+        version: 19.2.6
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.2.6(react@19.2.6)
+    devDependencies:
+      '@qeetid/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/qeetid-tsconfig
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.15
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.15)
+      '@vitejs/plugin-react':
+        specifier: ^6.0.2
+        version: 6.0.2(@rolldown/plugin-babel@0.2.3(@babel/core@7.29.7)(@babel/runtime@7.29.7)(rolldown@1.0.3)(vite@8.0.16(@types/node@22.19.19)(esbuild@0.28.0)(jiti@2.7.0)))(babel-plugin-react-compiler@1.0.0)(vite@8.0.16(@types/node@22.19.19)(esbuild@0.28.0)(jiti@2.7.0))
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vite:
+        specifier: ^8.0.16
+        version: 8.0.16(@types/node@22.19.19)(esbuild@0.28.0)(jiti@2.7.0)
 
   packages/qeetid-nextjs:
     dependencies:

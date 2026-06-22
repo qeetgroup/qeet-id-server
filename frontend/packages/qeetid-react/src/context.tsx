@@ -5,9 +5,10 @@ import { createContext, useContext, type ReactNode } from "react";
 import type { QeetidState, QeetidUser } from "./types.js";
 
 const StateContext = createContext<QeetidState>({ isLoaded: false, isAuthenticated: false });
-const PathsContext = createContext<{ loginUrl: string; logoutUrl: string }>({
+const PathsContext = createContext<{ loginUrl: string; logoutUrl: string; signUpUrl: string }>({
   loginUrl: "/api/auth/login",
   logoutUrl: "/api/auth/logout",
+  signUpUrl: "/api/auth/sign-up",
 });
 
 export interface QeetidProviderProps {
@@ -18,10 +19,12 @@ export interface QeetidProviderProps {
    * paint without reading the HttpOnly cookie.
    */
   initialState?: Partial<QeetidState>;
-  /** Where <SignInButton> sends the browser. Default /api/auth/login. */
+  /** Where <SignInButton> / <SignInWithQeet> send the browser. Default /api/auth/login. */
   loginUrl?: string;
   /** Where <SignOutButton> sends the browser. Default /api/auth/logout. */
   logoutUrl?: string;
+  /** Where <SignUpWithQeet> sends the browser. Default /api/auth/sign-up. */
+  signUpUrl?: string;
 }
 
 export function QeetidProvider({
@@ -29,6 +32,7 @@ export function QeetidProvider({
   initialState,
   loginUrl = "/api/auth/login",
   logoutUrl = "/api/auth/logout",
+  signUpUrl = "/api/auth/sign-up",
 }: QeetidProviderProps) {
   const state: QeetidState = {
     isLoaded: true,
@@ -39,7 +43,7 @@ export function QeetidProvider({
     user: initialState?.user ?? null,
   };
   return (
-    <PathsContext.Provider value={{ loginUrl, logoutUrl }}>
+    <PathsContext.Provider value={{ loginUrl, logoutUrl, signUpUrl }}>
       <StateContext.Provider value={state}>{children}</StateContext.Provider>
     </PathsContext.Provider>
   );
@@ -67,6 +71,6 @@ export function useUser(): { isLoaded: boolean; isAuthenticated: boolean; user: 
 export function useQeetidState(): QeetidState {
   return useContext(StateContext);
 }
-export function usePaths(): { loginUrl: string; logoutUrl: string } {
+export function usePaths(): { loginUrl: string; logoutUrl: string; signUpUrl: string } {
   return useContext(PathsContext);
 }

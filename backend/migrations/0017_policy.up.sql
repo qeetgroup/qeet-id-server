@@ -14,17 +14,7 @@ CREATE TABLE tenant.security_policies (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Device trust: remember a (user, device fingerprint) pair so we can skip
--- MFA / re-auth on a trusted device.
-CREATE TABLE auth.trusted_devices (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id             UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,
-    fingerprint_hash    TEXT NOT NULL,
-    label               TEXT,
-    last_seen_ip        INET,
-    last_seen_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at          TIMESTAMPTZ,
-    revoked_at          TIMESTAMPTZ,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX uq_trusted_devices ON auth.trusted_devices (user_id, fingerprint_hash);
+-- NOTE: auth.trusted_devices is created later in 0054_trusted_devices (the
+-- adaptive-MFA "remember this device" feature, token_hash-based). An earlier
+-- fingerprint-based draft of the table used to live here, but it was unused and
+-- collided with 0054 on a clean migrate, so it was removed.

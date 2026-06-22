@@ -38,6 +38,12 @@ dev-web:                    ## Run marketing site only (:3001)
 dev-login:                  ## Run hosted login only (:3004)
 	cd frontend && $(PNPM) dev:login
 
+dev-example:                ## Run the Next.js example app only (:3010, see frontend/examples/nextjs-app)
+	cd frontend && $(PNPM) --filter @qeetid/example-nextjs dev
+
+dev-example-react:          ## Run the React SPA example only (:3020, see frontend/examples/react-app)
+	cd frontend && $(PNPM) --filter @qeetid/example-react dev
+
 # ── Build ───────────────────────────────────────────────────────────────────
 build: build-backend build-frontend  ## Build backend + all frontend apps
 
