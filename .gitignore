@@ -92,3 +92,6 @@ yarn-error.log*
 *.tar
 *.tar.gz
 *.zip
+
+# product-manager agent run logs (see .claude/README.md)
+.claude/logs/

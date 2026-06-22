@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job: runs the Qeet ID product-manager agent at 09:00, 13:00, 20:00 local time (IST).
+  Install (one-time):
+    cp qeet-id/.claude/scheduling/com.qeet.product-manager.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.qeet.product-manager.plist
+  See qeet-id/.claude/README.md.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.qeet.product-manager</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/a3097640/Desktop/QG/qeet-id/.claude/scripts/run-product-manager.sh</string>
+    </array>
+
+    <!-- 09:00, 13:00, 20:00 local time. launchd uses the system timezone (IST). -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>13</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>20</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- launchd starts with a minimal environment; give it PATH (claude + node) and HOME. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/a3097640/.local/bin:/Users/a3097640/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/a3097640</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/a3097640/Desktop/QG/qeet-id/.claude/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/a3097640/Desktop/QG/qeet-id/.claude/logs/launchd.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

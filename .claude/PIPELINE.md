@@ -1,0 +1,56 @@
+# Qeet ID — feature delivery pipeline
+
+How a competitive proposal becomes shipped, tested, security-reviewed code. The
+**product-manager** agent finds gaps; this pipeline builds them.
+
+## The agents
+
+| Stage | Agent | Output | Model |
+|---|---|---|---|
+| 0. Research | `product-manager` | `qeet-files/qeet-id/FEATURE-PROPOSALS.md` | sonnet |
+| 1. Spec | `feature-architect` | `docs/specs/<slug>.md` | opus |
+| 2a. Backend | `backend-engineer` | Go domain pkg + migration + OpenAPI + wiring | sonnet |
+| 2b. Frontend | `frontend-engineer` | React app(s) + SDK updates | sonnet |
+| 3. Tests | `qa-test-engineer` | unit + integration + API + Vitest | sonnet |
+| 4. Security | `security-reviewer` | findings report (read-only) | opus |
+| 5. Docs / loop | `docs-writer` | docs + proposal marked `done` | sonnet |
+
+**Reuse (don't duplicate):** `/code-review` (general correctness), `/verify` (run it & confirm it works), `/simplify` (cleanup), `code-architect` (general design), `/security-review` (generic pass; `security-reviewer` goes deeper on IAM).
+
+## The flow
+```
+FEATURE-PROPOSALS.md
+        │  pick one (e.g. FP-013)
+        ▼
+feature-architect ──► docs/specs/<slug>.md
+        │
+        ├─► backend-engineer  ─┐
+        └─► frontend-engineer ─┤  (implement from the spec, in parallel where independent)
+                               ▼
+                       qa-test-engineer   (suite green: build + vet + go test + arch + coverage + pnpm test)
+                               ▼
+                       security-reviewer  (IAM audit of the diff → engineers fix findings)
+                               ▼
+                       /code-review + /verify   (general correctness + does-it-run)
+                               ▼
+                       docs-writer        (docs + flip proposal to Status: done, update QEET-ID-STATUS.md)
+                               ▼
+                       YOU: review the diff and commit
+```
+
+## How to run it
+You (or this Claude session) orchestrate by invoking each subagent in turn — there's no nested auto-orchestrator (subagents don't deeply nest). For example, in a session opened in `qeet-id/`:
+
+> "Use the **feature-architect** agent to spec FP-013, then the **backend-engineer** to implement it, then **qa-test-engineer**, then **security-reviewer**."
+
+Or step by step, reviewing each hand-off. Run one feature at a time.
+
+## Definition of done
+- `go build ./... && go vet ./... && go test ./...` green
+- `go test -count=1 ./tests/architecture/...` green (arch boundaries)
+- OpenAPI coverage test green (`api/openapi.yaml` documents every route)
+- `pnpm typecheck && pnpm lint && pnpm test` green (if frontend touched)
+- `make test-integration` green (if Docker available)
+- security-reviewer findings resolved (no open Critical/High)
+- `docs/` updated; proposal `Status: done`; `QEET-ID-STATUS.md` updated
+- **You** have reviewed the diff — then commit (agents don't commit/push)
