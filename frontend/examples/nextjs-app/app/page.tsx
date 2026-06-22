@@ -16,7 +16,7 @@ export default function Home() {
       <SignedOut>
         <p>You are signed out. Click below to sign in with Qeet.</p>
         <div className="btn-wrap">
-          <SignInWithQeet />
+          <SignInWithQeet/>
         </div>
       </SignedOut>
 

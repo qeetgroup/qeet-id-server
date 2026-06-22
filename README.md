@@ -250,7 +250,7 @@ delivery is wired (log-only fallback when unconfigured).
 ## Documentation
 
 - **Implementation status** — [Feature status](#feature-status)
-- **Example apps** — [frontend/examples/](./frontend/examples/) — runnable integrations; start with the [Next.js app](./frontend/examples/nextjs-app)
+- **Example apps** — [frontend/examples/](./frontend/examples/) — runnable integrations: a [Next.js app](./frontend/examples/nextjs-app) (server-side flow) and a [React SPA](./frontend/examples/react-app) (browser-side PKCE)
 - **Backend module guide** — [backend/README.md](./backend/README.md)
 - **Architecture & conventions** — [backend/ARCHITECTURE.md](./backend/ARCHITECTURE.md)
 - **Deploy & operations** — [deploy/RUNBOOK.md](./deploy/RUNBOOK.md)
