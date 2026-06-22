@@ -1,7 +1,0 @@
-/bin/
-/.env
-*.test
-*.out
-coverage.html
-.idea/
-.vscode/

@@ -22,12 +22,12 @@ Fixes #<issue-number>
 
 ## Affected areas
 
-- [ ] Backend — `backend/internal/<module>`
-- [ ] Frontend — admin dashboard
-- [ ] Frontend — marketing site
-- [ ] Frontend — docs site
-- [ ] Shared UI library (`@qeetid/ui`)
-- [ ] Database migrations
+- [ ] Backend — `domains/<area>/<module>` or `platform/<module>`
+- [ ] Frontend — admin console (`apps/console`)
+- [ ] Frontend — marketing site (`apps/website`)
+- [ ] Frontend — hosted login (`apps/login`)
+- [ ] SDKs (`sdk/js`, `sdk/go`, `sdk/python`)
+- [ ] Database migrations (`migrations/`)
 - [ ] CI / build / tooling
 - [ ] Documentation only
 
@@ -36,9 +36,9 @@ Fixes #<issue-number>
 <!-- How did you verify this works? Include commands and what you observed. -->
 
 ```bash
-# e.g.
-cd backend && make test
-cd frontend && pnpm typecheck && pnpm lint
+# e.g. (all run from the repo root now — single Go module + pnpm workspace)
+make test-backend
+make typecheck && make lint
 ```
 
 ## Screenshots / recordings (frontend changes only)
@@ -47,11 +47,9 @@ cd frontend && pnpm typecheck && pnpm lint
 
 ## Documentation updates
 
-- [ ] Updated [documents/IMPLEMENTATION-STATUS.md](../documents/IMPLEMENTATION-STATUS.md) / [documents/FEATURE-MATRIX.md](../documents/FEATURE-MATRIX.md) if a feature status changed
-- [ ] Updated [documents/PROTOCOL-STATUS.md](../documents/PROTOCOL-STATUS.md) if a protocol implementation changed
-- [ ] Updated [backend/api/openapi.yaml](../backend/api/openapi.yaml) for new/changed endpoints
+- [ ] Updated [api/openapi.yaml](../api/openapi.yaml) for new/changed endpoints
 - [ ] Updated [CHANGELOG.md](../CHANGELOG.md) under "Unreleased"
-- [ ] Updated end-user docs in [frontend/apps/qeetid-docs/](../frontend/apps/qeetid-docs/) if user-facing
+- [ ] Updated end-user docs in the standalone `qeet-docs` repo if user-facing
 
 ## Checklist
 

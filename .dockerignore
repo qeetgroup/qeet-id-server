@@ -1,0 +1,70 @@
+# Build context is the REPO ROOT (single Go module at root). Keep only what the
+# Go image build needs: go.mod/go.sum + cmd/ domains/ platform/ (+ migrations/
+# for the shared Dockerfile.migrate). Everything else is excluded.
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# JS / frontend workspace — never needed by the Go binary build
+node_modules/
+apps/
+packages/
+sdk/
+examples/
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+turbo.json
+eslint.config.mjs
+.npmrc
+.prettierrc
+.prettierignore
+.next/
+dist/
+.turbo/
+.pnpm-store/
+*.tsbuildinfo
+
+# Infra / deploy / docs / codegen inputs / tests — not needed to build the binary
+# (migrations/ is intentionally KEPT: the shared Dockerfile.migrate copies it)
+deploy/
+docs/
+graphify-out/
+tests/
+api/
+sqlc/
+sqlc.yaml
+
+# Build artifacts
+bin/
+*.exe
+*.test
+*.out
+coverage.html
+coverage.txt
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Docs/build files that don't ship in the image
+README.md
+CHANGELOG.md
+Makefile
+docker-compose.yml
+Dockerfile
+Dockerfile.migrate
+
+# CI
+.github/

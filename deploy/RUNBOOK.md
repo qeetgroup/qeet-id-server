@@ -80,7 +80,7 @@ release is aborted and the old pods keep serving.
 
 ## Database migrations
 
-Migrations are golang-migrate SQL pairs in `backend/migrations/` (never edit an applied one —
+Migrations are golang-migrate SQL pairs in `migrations/` (never edit an applied one —
 add a new pair). The `qeet-id-migrate` image bakes them in.
 
 ```bash

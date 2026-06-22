@@ -21,9 +21,6 @@ jobs:
   backend:
     name: Backend (Go)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
     services:
       postgres:
         image: postgres:16
@@ -46,8 +43,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
 
       - name: Install golang-migrate
         run: |
@@ -61,7 +58,6 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.61
-          working-directory: backend
           args: --timeout=5m
 
       - name: go vet
@@ -91,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage
-          path: backend/coverage.out
+          path: coverage.out
           retention-days: 7
 
   # ────────────────────────────────────────────────────────────────────
@@ -135,8 +131,8 @@ jobs:
       - name: Build & push (app)
         uses: docker/build-push-action@v6
         with:
-          context: backend
-          file: backend/Dockerfile
+          context: .
+          file: Dockerfile
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -159,8 +155,8 @@ jobs:
       - name: Build & push (migrate)
         uses: docker/build-push-action@v6
         with:
-          context: backend
-          file: backend/Dockerfile.migrate
+          context: .
+          file: Dockerfile.migrate
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta-migrate.outputs.tags }}
           labels: ${{ steps.meta-migrate.outputs.labels }}
@@ -188,9 +184,6 @@ jobs:
   frontend:
     name: Frontend (pnpm)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -202,7 +195,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -234,7 +227,7 @@ jobs:
         with:
           node-version: 20
       - name: Spectral lint
-        run: npx -y @stoplight/spectral-cli lint backend/api/openapi.yaml
+        run: npx -y @stoplight/spectral-cli lint api/openapi.yaml
 
   # ────────────────────────────────────────────────────────────────────
   # Lockfile freshness — catch package.json edits that didn't update
@@ -243,9 +236,6 @@ jobs:
   lockfile-fresh:
     name: Lockfile freshness
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v6

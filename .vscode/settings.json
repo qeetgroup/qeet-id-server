@@ -52,11 +52,12 @@
   "[yaml]":            { "editor.defaultFormatter": "esbenp.prettier-vscode" },
   "[markdown]":        { "editor.defaultFormatter": "esbenp.prettier-vscode" },
   "[mdx]":             { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "typescript.tsdk": "frontend/node_modules/typescript/lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
   "typescript.enablePromptUseWorkspaceTsdk": true,
   "eslint.workingDirectories": [
-    { "pattern": "frontend/apps/*" },
-    { "pattern": "frontend/packages/*" }
+    { "pattern": "apps/*" },
+    { "pattern": "packages/*" },
+    { "pattern": "sdk/js/*" }
   ],
   "eslint.useFlatConfig": true,
 
