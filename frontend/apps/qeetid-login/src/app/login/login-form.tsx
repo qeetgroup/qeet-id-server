@@ -1,9 +1,11 @@
 "use client";
 
+import { QeetLogo } from "@qeetrix/brand";
 import { Button, Card, CardContent, Input } from "@qeetrix/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { ProviderIcon } from "@/components/social-providers";
 import { API_BASE_URL, ApiError, apiPost } from "@/lib/api";
 
 type LoginFormProps = {
@@ -156,7 +158,8 @@ export function LoginForm({
   return (
     <Card className="w-full max-w-sm">
       <CardContent className="space-y-6 pt-6">
-        <div className="space-y-1 text-center">
+        <div className="space-y-2 text-center">
+          <QeetLogo size={40} className="mx-auto" />
           <h1 className="text-xl font-semibold tracking-tight">
             {clientName ? t("titleTo", { client: clientName }) : t("title")}
           </h1>
@@ -234,10 +237,11 @@ export function LoginForm({
                   key={p}
                   type="button"
                   variant="outline"
-                  className="w-full"
+                  className="w-full justify-center gap-2"
                   disabled={busy}
                   onClick={() => socialStart(p)}
                 >
+                  <ProviderIcon provider={p} />
                   {t(`common:providers.${p}`, { defaultValue: titleCase(p) })}
                 </Button>
               ))}

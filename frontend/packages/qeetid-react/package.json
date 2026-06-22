@@ -1,7 +1,7 @@
 {
   "name": "@qeetid/react",
   "version": "0.1.0",
-  "description": "React client components & hooks for Qeet ID — <SignedIn>, useUser, <SignInButton>, and a provider for the hosted-login flow.",
+  "description": "React client components & hooks for Qeet ID — branded <SignInWithQeet>/<SignUpWithQeet> buttons, <SignedIn>, useUser, <UserButton>, and a provider for the hosted-login flow.",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
