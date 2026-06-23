@@ -14,6 +14,7 @@ How a competitive proposal becomes shipped, tested, security-reviewed code. The
 | 3. Tests | `qa-test-engineer` | unit + integration + API + Vitest | sonnet |
 | 4. Security | `security-reviewer` | findings report (read-only) | opus |
 | 5. Docs / loop | `docs-writer` | docs + proposal marked `done` | sonnet |
+| 6. Deploy (when shipping) | `devops-engineer` | Helm/Compose/CI/migration-rollout, validated | sonnet |
 
 **Reuse (don't duplicate):** `/code-review` (general correctness), `/verify` (run it & confirm it works), `/simplify` (cleanup), `code-architect` (general design), `/security-review` (generic pass; `security-reviewer` goes deeper on IAM).
 
@@ -36,6 +37,8 @@ feature-architect ──► docs/specs/<slug>.md
                        docs-writer        (docs + flip proposal to Status: done, update QEET-ID-STATUS.md)
                                ▼
                        YOU: review the diff and commit
+                               ▼
+                       devops-engineer    (at release time: Helm/Compose/CI/migration rollout — validated, never deployed)
 ```
 
 ## How to run it
