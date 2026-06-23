@@ -13,6 +13,9 @@
       "Bash(pnpm:*)",
       "Bash(make:*)",
       "Bash(sqlc:*)",
+      "Bash(helm:*)",
+      "Bash(docker:*)",
+      "Bash(kubectl:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)"

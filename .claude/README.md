@@ -14,6 +14,7 @@ Turns a `FEATURE-PROPOSALS.md` row into shipped, tested, security-reviewed code.
 | [`agents/qa-test-engineer.md`](agents/qa-test-engineer.md) | Unit + testcontainers integration + Postman + Vitest; never weakens tests. |
 | [`agents/security-reviewer.md`](agents/security-reviewer.md) | IAM threat-model audit of the diff (tenant isolation, authz, tokens, CSRF…). **Read-only.** |
 | [`agents/docs-writer.md`](agents/docs-writer.md) | Updates docs/OpenAPI + closes the loop (proposal → `done`, updates `QEET-ID-STATUS.md`). |
+| [`agents/devops-engineer.md`](agents/devops-engineer.md) | Deploy/release: Helm chart, Compose, Dockerfiles, CI/CD, migration rollout. Validates with helm lint/template + docker build; **never deploys/pushes**. |
 
 Reuse the existing `/code-review`, `/verify`, `/simplify` skills + `code-architect` plugin — don't duplicate them. Agents implement in the working tree and run tests, but **don't commit** — you review & commit.
 
