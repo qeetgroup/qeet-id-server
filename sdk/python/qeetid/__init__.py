@@ -97,7 +97,7 @@ class Qeetid:
     api_key:
         Server-side API key (``qk_…``). Required.
     base_url:
-        API base URL. Defaults to ``https://api.qeetid.com``.
+        API base URL. Defaults to ``https://api.id.qeet.in``.
     timeout:
         Per-request timeout in seconds (default 10).
     max_retries:

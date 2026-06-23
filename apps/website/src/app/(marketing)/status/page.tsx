@@ -170,10 +170,10 @@ export default function StatusPage() {
                 wired to real uptime monitoring with incident history and subscribe-to-updates. For
                 anything urgent today, reach{" "}
                 <a
-                  href="mailto:support@qeet.id"
+                  href="mailto:support@qeet.in"
                   className="font-medium text-brand-text underline focus-ring-brand"
                 >
-                  support@qeet.id
+                  support@qeet.in
                 </a>
                 .
               </p>

@@ -60,14 +60,14 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: id.example.com
+    - host: api.id.qeet.in
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: qeet-id-tls
       hosts:
-        - id.example.com
+        - api.id.qeet.in
 
 resources:
   requests:
@@ -105,10 +105,10 @@ config:
   SERVICE_NAME: "qeet-id"
   HTTP_PORT: "4001"
   LOG_LEVEL: "info"
-  APP_BASE_URL: "https://app.example.com"
-  LOGIN_BASE_URL: "https://login.example.com"
-  ALLOWED_ORIGINS: "https://app.example.com,https://login.example.com"
-  CSRF_COOKIE_DOMAIN: ".example.com"
+  APP_BASE_URL: "https://app.id.qeet.in"
+  LOGIN_BASE_URL: "https://login.id.qeet.in"
+  ALLOWED_ORIGINS: "https://app.id.qeet.in,https://login.id.qeet.in"
+  CSRF_COOKIE_DOMAIN: ".id.qeet.in"
   DB_MIN_CONNS: "2"
   DB_MAX_CONNS: "20"
   REDIS_URL: "redis://qeet-id-redis:6379/0"
@@ -119,13 +119,13 @@ config:
   BREACHED_PASSWORD_CHECK: "true"
   SMTP_HOST: ""
   SMTP_PORT: "587"
-  SMTP_FROM: "no-reply@example.com"
+  SMTP_FROM: "noreply@qeet.in"
   SMTP_USERNAME: ""
   TWILIO_ACCOUNT_SID: ""
   TWILIO_FROM: ""
-  WEBAUTHN_RP_ID: "example.com"
+  WEBAUTHN_RP_ID: "id.qeet.in"
   WEBAUTHN_RP_DISPLAY_NAME: "Qeet ID"
-  WEBAUTHN_RP_ORIGINS: "https://app.example.com,https://login.example.com"
+  WEBAUTHN_RP_ORIGINS: "https://app.id.qeet.in,https://login.id.qeet.in"
 
 # Sensitive env. The Deployment loads these via envFrom -> Secret. Either:
 #   1) point existingSecret at an operator-managed Secret, or

@@ -187,7 +187,7 @@ export default function CareersPage() {
           {roles.map((r) => (
             <StaggerItem key={r.title}>
               <a
-                href={`mailto:careers@qeet.id?subject=${encodeURIComponent(`Application: ${r.title}`)}`}
+                href={`mailto:careers@qeet.in?subject=${encodeURIComponent(`Application: ${r.title}`)}`}
                 className="group flex flex-col gap-3 rounded-2xl border border-border/60 bg-card p-6 transition-colors hover:border-brand/50 focus-ring-brand sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="flex flex-col gap-2">
@@ -222,7 +222,7 @@ export default function CareersPage() {
                 We&apos;re always glad to meet exceptional people. Tell us what you&apos;d build.
               </p>
             </div>
-            <ButtonLink variant="outline" href="mailto:careers@qeet.id">
+            <ButtonLink variant="outline" href="mailto:careers@qeet.in">
               Get in touch
             </ButtonLink>
           </div>

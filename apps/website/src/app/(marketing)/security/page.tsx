@@ -140,7 +140,7 @@ const dataHandling = [
 ];
 
 const disclosure = [
-  "Report suspected vulnerabilities to security@qeet.id — we acknowledge within one business day.",
+  "Report suspected vulnerabilities to security@qeet.in — we acknowledge within one business day.",
   "We operate a coordinated disclosure policy with a safe-harbour for good-faith research.",
   "Critical fixes are prioritised; we'll keep you updated through remediation and credit you (if you wish) on resolution.",
   "Please don't access or modify other users' data, degrade the service, or run automated scans against shared infrastructure.",
@@ -261,11 +261,11 @@ export default function SecurityPage() {
               and we&apos;ll work the issue with you.
             </p>
             <a
-              href="mailto:security@qeet.id"
+              href="mailto:security@qeet.in"
               className="inline-flex w-fit items-center gap-2 text-sm font-medium text-brand-text underline focus-ring-brand"
             >
               <FingerprintIcon className="size-4" aria-hidden />
-              security@qeet.id
+              security@qeet.in
             </a>
           </Reveal>
           <Stagger staggerDelay={0.07} className="grid gap-3">

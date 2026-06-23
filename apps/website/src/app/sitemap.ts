@@ -21,8 +21,8 @@ import { stories } from "@/lib/customers";
  */
 
 // Canonical marketing origin — must match `metadataBase` in app/layout.tsx,
-// robots.ts, and the JSON-LD in structured-data.tsx (all `qeetid.com`).
-const BASE_URL = "https://qeetid.com";
+// robots.ts, and the JSON-LD in structured-data.tsx (all `id.qeet.in`).
+const BASE_URL = "https://id.qeet.in";
 
 type ChangeFrequency = NonNullable<MetadataRoute.Sitemap[number]["changeFrequency"]>;
 

@@ -19,7 +19,7 @@ func withCSRF(t *testing.T, cfg CSRFConfig) http.Handler {
 }
 
 func TestCSRF_GETIssuesCookie(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodGet, "/anything", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -33,7 +33,7 @@ func TestCSRF_GETIssuesCookie(t *testing.T) {
 }
 
 func TestCSRF_GETKeepsExistingCookie(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: strings.Repeat("a", 32)})
 	rec := httptest.NewRecorder()
@@ -44,9 +44,9 @@ func TestCSRF_GETKeepsExistingCookie(t *testing.T) {
 }
 
 func TestCSRF_POSTWithoutCookieRejected(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req.Header.Set("Origin", "https://app.qeetid.com")
+	req.Header.Set("Origin", "https://app.id.qeet.in")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -55,7 +55,7 @@ func TestCSRF_POSTWithoutCookieRejected(t *testing.T) {
 }
 
 func TestCSRF_POSTWithoutOriginRejected(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "tok"})
 	req.Header.Set(csrfHeaderName, "tok")
@@ -67,7 +67,7 @@ func TestCSRF_POSTWithoutOriginRejected(t *testing.T) {
 }
 
 func TestCSRF_POSTWrongOriginRejected(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "tok"})
 	req.Header.Set(csrfHeaderName, "tok")
@@ -80,11 +80,11 @@ func TestCSRF_POSTWrongOriginRejected(t *testing.T) {
 }
 
 func TestCSRF_POSTTokenMismatchRejected(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "cookie-token"})
 	req.Header.Set(csrfHeaderName, "different-token")
-	req.Header.Set("Origin", "https://app.qeetid.com")
+	req.Header.Set("Origin", "https://app.id.qeet.in")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -93,11 +93,11 @@ func TestCSRF_POSTTokenMismatchRejected(t *testing.T) {
 }
 
 func TestCSRF_POSTValid(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "matched-token"})
 	req.Header.Set(csrfHeaderName, "matched-token")
-	req.Header.Set("Origin", "https://app.qeetid.com")
+	req.Header.Set("Origin", "https://app.id.qeet.in")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -106,7 +106,7 @@ func TestCSRF_POSTValid(t *testing.T) {
 }
 
 func TestCSRF_BearerBypass(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.qeetid.com"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://app.id.qeet.in"}})
 	// No cookie, no Origin — but a bearer token. M2M API key / service
 	// JWT traffic should sail through.
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -135,11 +135,11 @@ func TestCSRF_RefererFallback(t *testing.T) {
 func TestCSRF_NormaliseOriginsTrimsSlashAndCases(t *testing.T) {
 	got := normaliseOrigins([]string{
 		"https://id.qeet.in/",
-		"  https://Web.Qeetid.com   ",
+		"  https://Web.Id.Qeet.in   ",
 		"*",
 		"",
 	})
-	wantKeys := []string{"https://id.qeet.in", "https://web.qeetid.com"}
+	wantKeys := []string{"https://id.qeet.in", "https://web.id.qeet.in"}
 	for _, k := range wantKeys {
 		if _, ok := got[k]; !ok {
 			t.Errorf("expected key %q in normalised set, got %v", k, got)
@@ -169,7 +169,7 @@ func TestNewCSRFTokenIsRandom(t *testing.T) {
 
 func TestCSRF_ExemptPathBypassesMutationCheck(t *testing.T) {
 	mw := withCSRF(t, CSRFConfig{
-		AllowedOrigins: []string{"https://admin.qeetid.com"},
+		AllowedOrigins: []string{"https://admin.id.qeet.in"},
 		ExemptPaths:    []string{"/saml/acs/"},
 	})
 

@@ -77,7 +77,7 @@ type Config struct {
 	AuthDevTrustHeaders bool   `envconfig:"AUTH_DEV_TRUST_HEADERS" default:"false"`
 	CSRFDisabled        bool   `envconfig:"CSRF_DISABLED" default:"false"`
 	// CSRFCookieDomain scopes the CSRF cookie so the double-submit token is
-	// readable across sibling subdomains (e.g. ".qeetid.com" lets the hosted
+	// readable across sibling subdomains (e.g. ".id.qeet.in" lets the hosted
 	// login app read a token issued by the API). Empty = host-only.
 	CSRFCookieDomain string `envconfig:"CSRF_COOKIE_DOMAIN" default:""`
 

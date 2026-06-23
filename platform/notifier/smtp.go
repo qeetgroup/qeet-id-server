@@ -25,7 +25,7 @@ type SMTPSender struct {
 	Host     string // host alone, for PLAIN auth's server name
 	Username string
 	Password string
-	From     string // RFC 5322 From, e.g. `Qeet ID <noreply@qeetid.com>`
+	From     string // RFC 5322 From, e.g. `Qeet ID <noreply@qeet.in>`
 }
 
 func (s SMTPSender) Send(ctx context.Context, m Message) error {

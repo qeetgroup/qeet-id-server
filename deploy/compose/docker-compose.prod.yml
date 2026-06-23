@@ -127,7 +127,7 @@ services:
       - caddydata:/data
       - caddyconfig:/config
     environment:
-      QEETID_DOMAIN: ${QEETID_DOMAIN:?public hostname, e.g. id.example.com}
+      QEETID_DOMAIN: ${QEETID_DOMAIN:?public hostname, e.g. api.id.qeet.in}
     networks: [edge]
 
 volumes:
