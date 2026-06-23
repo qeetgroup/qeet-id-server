@@ -32,7 +32,7 @@ This Code of Conduct applies within all community spaces — the GitHub reposito
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported to the maintainers at `conduct@qeetid.com`. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported to the maintainers at `conduct@qeet.in`. All complaints will be reviewed and investigated promptly and fairly.
 
 All maintainers are obligated to respect the privacy and security of the reporter of any incident.
 

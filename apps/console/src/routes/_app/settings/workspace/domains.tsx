@@ -121,7 +121,7 @@ function DomainsPage() {
                 <Field>
                   <FieldLabel>Required DNS</FieldLabel>
                   <div className="rounded-md border bg-muted/50 p-3 text-xs font-mono space-y-1">
-                    <div>CNAME @ → {tenantId ? `${tenantId.slice(0, 8)}.tenants.qeetid.com` : "<tenant>.tenants.qeetid.com"}</div>
+                    <div>CNAME @ → {tenantId ? `${tenantId.slice(0, 8)}.tenants.id.qeet.in` : "<tenant>.tenants.id.qeet.in"}</div>
                     <div>TXT _qeetid-verify → {tenantId ? `qeetid-verify=${tenantId.slice(0, 16)}` : "qeetid-verify=<token>"}</div>
                   </div>
                   <FieldDescription>Records aren&apos;t enforced yet; we&apos;ll start checking them in the DNS-verification wizard.</FieldDescription>

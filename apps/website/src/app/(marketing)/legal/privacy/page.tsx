@@ -44,8 +44,8 @@ export default function PrivacyPage() {
         <p>
           Depending on your jurisdiction, you may have rights to access, correct, delete, or port
           your personal data, and to object to or restrict certain processing. Submit requests to{" "}
-          <a className="text-primary underline" href="mailto:privacy@qeetid.com">
-            privacy@qeetid.com
+          <a className="text-primary underline" href="mailto:privacy@qeet.in">
+            privacy@qeet.in
           </a>
           .
         </p>
@@ -60,8 +60,8 @@ export default function PrivacyPage() {
       <LegalSection heading="7. Contact">
         <p>
           Our Data Protection Officer can be reached at{" "}
-          <a className="text-primary underline" href="mailto:dpo@qeetid.com">
-            dpo@qeetid.com
+          <a className="text-primary underline" href="mailto:dpo@qeet.in">
+            dpo@qeet.in
           </a>
           .
         </p>

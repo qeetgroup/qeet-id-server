@@ -19,7 +19,7 @@ The platform is pre-1.0; until v1.0 ships we support only the `main` branch.
 Report privately via one of:
 
 1. **GitHub Security Advisory** (preferred) — [Open a private advisory](https://github.com/qeetgroup/qeet-id/security/advisories/new). GitHub will notify the maintainers and keep the conversation private.
-2. **Email** — `security@qeetid.com` with subject `[SECURITY] <short summary>`. PGP key available on request.
+2. **Email** — `security@qeet.in` with subject `[SECURITY] <short summary>`. PGP key available on request.
 
 Please include:
 

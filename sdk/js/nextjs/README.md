@@ -1,6 +1,6 @@
 # @qeetid/nextjs
 
-[Qeet ID](https://qeetid.com) for Next.js (App Router). Protect routes, run the
+[Qeet ID](https://id.qeet.in) for Next.js (App Router). Protect routes, run the
 hosted-login OAuth flow, and read the signed-in user — in a few lines.
 
 ```bash
@@ -12,7 +12,7 @@ pnpm add @qeetid/nextjs
 ```bash
 QEETID_CLIENT_ID=qci_…
 QEETID_CLIENT_SECRET=…
-QEETID_API_URL=https://api.qeetid.com
+QEETID_API_URL=https://api.id.qeet.in
 QEETID_APP_URL=https://app.acme.com        # this app's URL
 QEETID_COOKIE_SECRET=…                      # ≥32 random chars
 # QEETID_SCOPES="openid profile email"      # optional

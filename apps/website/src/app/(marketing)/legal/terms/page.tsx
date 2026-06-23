@@ -56,8 +56,8 @@ export default function TermsPage() {
       <LegalSection heading="7. Contact">
         <p>
           Questions about these terms? Email{" "}
-          <a className="text-primary underline" href="mailto:legal@qeetid.com">
-            legal@qeetid.com
+          <a className="text-primary underline" href="mailto:legal@qeet.in">
+            legal@qeet.in
           </a>
           .
         </p>

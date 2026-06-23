@@ -46,8 +46,8 @@ export default function SubprocessorsPage() {
       </div>
       <p className="text-sm text-muted-foreground">
         We provide advance notice of new subprocessors. To receive updates, email{" "}
-        <a className="text-primary underline" href="mailto:privacy@qeetid.com">
-          privacy@qeetid.com
+        <a className="text-primary underline" href="mailto:privacy@qeet.in">
+          privacy@qeet.in
         </a>
         .
       </p>

@@ -1,6 +1,6 @@
 # qeetid-go
 
-Server-side Go SDK for [Qeet ID](https://qeetid.com) — manage users and tenants,
+Server-side Go SDK for [Qeet ID](https://id.qeet.in) — manage users and tenants,
 run authorization checks, and verify sessions/JWTs. **No third-party
 dependencies** (standard library only).
 
@@ -76,7 +76,7 @@ honoring `Retry-After`.
 ```go
 qeetidsdk.New(qeetidsdk.Options{
 	APIKey:     "qk_…",                  // required
-	BaseURL:    "https://api.qeetid.com", // default
+	BaseURL:    "https://api.id.qeet.in", // default
 	HTTPClient: &http.Client{Timeout: 10 * time.Second},
 	MaxRetries: 2,
 })

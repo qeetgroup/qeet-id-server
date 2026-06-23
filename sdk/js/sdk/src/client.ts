@@ -6,7 +6,7 @@ export type FetchLike = typeof globalThis.fetch;
 export interface QeetidOptions {
   /** Server-side API key (`qk_…`). Never expose this in a browser. */
   apiKey: string;
-  /** API base URL. Defaults to https://api.qeetid.com. */
+  /** API base URL. Defaults to https://api.id.qeet.in. */
   baseUrl?: string;
   /** Per-request timeout in ms (default 10000). */
   timeoutMs?: number;
@@ -23,7 +23,7 @@ interface RequestOptions {
   idempotent?: boolean;
 }
 
-const DEFAULT_BASE_URL = "https://api.qeetid.com";
+const DEFAULT_BASE_URL = "https://api.id.qeet.in";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

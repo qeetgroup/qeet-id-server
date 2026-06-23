@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
 // Crawl rules for the marketing + docs surface. The admin and account
-// areas live on a different host (admin.qeetid.com) and have their own
+// areas live on a different host (admin.id.qeet.in) and have their own
 // robots; this file only covers the marketing-public origin.
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -14,7 +14,7 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/api/", "/legal/draft/"],
       },
     ],
-    sitemap: "https://qeetid.com/sitemap.xml",
-    host: "https://qeetid.com",
+    sitemap: "https://id.qeet.in/sitemap.xml",
+    host: "https://id.qeet.in",
   };
 }

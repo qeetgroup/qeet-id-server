@@ -3,7 +3,7 @@ import { Sessions } from "./sessions.js";
 import { Tenants } from "./tenants.js";
 import { Users } from "./users.js";
 
-const DEFAULT_BASE_URL = "https://api.qeetid.com";
+const DEFAULT_BASE_URL = "https://api.id.qeet.in";
 
 /** A single RBAC permission check (maps to GET /v1/check). */
 export interface PermissionCheck {

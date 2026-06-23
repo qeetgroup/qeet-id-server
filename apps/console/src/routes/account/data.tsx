@@ -44,7 +44,7 @@ function DataPage() {
           throw new ApiError(
             err.status,
             "endpoint_unavailable",
-            "Self-service deletion isn't enabled yet. Contact support@qeetid.com for now.",
+            "Self-service deletion isn't enabled yet. Contact support@qeet.in for now.",
           );
         }
         throw err;

@@ -129,7 +129,7 @@ export default async function Image() {
             color: "#78716C",
           }}
         >
-          <div style={{ display: "flex" }}>qeetid.com</div>
+          <div style={{ display: "flex" }}>id.qeet.in</div>
           <div style={{ display: "flex", gap: 16 }}>
             <span>SOC 2</span>
             <span style={{ opacity: 0.5 }}>·</span>

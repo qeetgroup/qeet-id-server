@@ -1,6 +1,6 @@
 # @qeetid/react
 
-React client components & hooks for [Qeet ID](https://qeetid.com): the branded
+React client components & hooks for [Qeet ID](https://id.qeet.in): the branded
 **"Sign in / Sign up / Continue with Qeet"** buttons, plus `<SignedIn>`,
 `<SignedOut>`, `<UserButton>`, `useUser()`, `useAuth()`, and the provider for the
 hosted-login flow.

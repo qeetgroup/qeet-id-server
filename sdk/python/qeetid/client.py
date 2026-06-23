@@ -16,7 +16,7 @@ from .errors import QeetidError, error_from_response
 
 __all__ = ["HttpClient", "DEFAULT_BASE_URL"]
 
-DEFAULT_BASE_URL = "https://api.qeetid.com"
+DEFAULT_BASE_URL = "https://api.id.qeet.in"
 
 _MAX_RESPONSE_BYTES = 1 << 20  # 1 MiB, matching the Go client's LimitReader.
 

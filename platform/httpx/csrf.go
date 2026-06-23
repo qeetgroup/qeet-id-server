@@ -46,7 +46,7 @@ type CSRFConfig struct {
 	AllowedOrigins []string
 	CookieSecure   bool
 	// CookieDomain is set on issuance so a single token works across
-	// sub-domains (e.g. admin.qeetid.com / api.qeetid.com). Leave empty
+	// sub-domains (e.g. admin.id.qeet.in / api.id.qeet.in). Leave empty
 	// to scope strictly to the issuing host.
 	CookieDomain string
 	// ExemptPaths are URL-path prefixes the double-submit/origin check is

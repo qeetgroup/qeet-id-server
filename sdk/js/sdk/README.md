@@ -1,6 +1,6 @@
 # @qeetid/sdk
 
-Server-side TypeScript SDK for [Qeet ID](https://qeetid.com). Manage users and
+Server-side TypeScript SDK for [Qeet ID](https://id.qeet.in). Manage users and
 tenants, run authorization checks, and verify sessions — from your backend.
 
 > **Server-side only.** Authenticate with a secret API key (`qk_…`). Never ship
@@ -74,7 +74,7 @@ honoring `Retry-After`.
 ```ts
 new Qeetid({
   apiKey: "qk_…",                 // required
-  baseUrl: "https://api.qeetid.com", // default
+  baseUrl: "https://api.id.qeet.in", // default
   timeoutMs: 10_000,
   maxRetries: 2,
   fetch: customFetch,             // optional (e.g. a proxy agent)

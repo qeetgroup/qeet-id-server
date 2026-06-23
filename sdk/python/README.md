@@ -1,6 +1,6 @@
 # qeetid (Python)
 
-Server-side Python SDK for [Qeet ID](https://qeetid.com). Manage users and
+Server-side Python SDK for [Qeet ID](https://id.qeet.in). Manage users and
 tenants, run authorization checks, and verify sessions — from your backend.
 
 > **Server-side only.** Authenticate with a secret API key (`qk_…`). Never ship
@@ -73,7 +73,7 @@ honoring `Retry-After`.
 ```python
 Qeetid(
     api_key="qk_…",                  # required
-    base_url="https://api.qeetid.com",  # default
+    base_url="https://api.id.qeet.in",  # default
     timeout=10.0,                    # seconds
     max_retries=2,
     http_client=custom_httpx_client, # optional

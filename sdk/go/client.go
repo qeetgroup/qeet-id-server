@@ -13,12 +13,12 @@ import (
 	"time"
 )
 
-const defaultBaseURL = "https://api.qeetid.com"
+const defaultBaseURL = "https://api.id.qeet.in"
 
 // Options configures the client. APIKey is required (a server-side `qk_…` key).
 type Options struct {
 	APIKey     string
-	BaseURL    string       // default https://api.qeetid.com
+	BaseURL    string       // default https://api.id.qeet.in
 	HTTPClient *http.Client // default: 10s timeout
 	MaxRetries int          // default 2 (429 + 5xx on idempotent calls)
 }

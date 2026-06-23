@@ -7,7 +7,7 @@
  * Spec: https://schema.org / https://developers.google.com/search/docs/appearance/structured-data
  */
 
-const BASE = "https://qeetid.com";
+const BASE = "https://id.qeet.in";
 
 interface JsonLdProps {
   data: Record<string, unknown>;

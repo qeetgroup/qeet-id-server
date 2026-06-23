@@ -5,7 +5,7 @@ export interface QeetidConfig {
   clientId: string;
   /** OIDC client secret (server-only). */
   clientSecret: string;
-  /** Qeet ID API base URL, e.g. https://api.qeetid.com. */
+  /** Qeet ID API base URL, e.g. https://api.id.qeet.in. */
   apiUrl: string;
   /** This app's own base URL, e.g. https://app.acme.com. */
   appUrl: string;

@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   },
   description:
     "Qeet ID is the identity platform for modern teams. SSO, MFA, passkeys, RBAC, and session management — built for developers, trusted by enterprises.",
-  metadataBase: new URL("https://qeetid.com"),
+  metadataBase: new URL("https://id.qeet.in"),
   alternates: {
     canonical: "/",
   },
@@ -50,7 +50,7 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "Qeet ID",
     locale: "en_US",
-    url: "https://qeetid.com",
+    url: "https://id.qeet.in",
   },
   twitter: {
     card: "summary_large_image",
@@ -82,7 +82,7 @@ export const metadata: Metadata = {
     "open source identity",
     "self-hosted auth",
   ],
-  authors: [{ name: "Qeet ID", url: "https://qeetid.com" }],
+  authors: [{ name: "Qeet ID", url: "https://id.qeet.in" }],
   creator: "Qeet ID",
   publisher: "Qeet ID",
 };
