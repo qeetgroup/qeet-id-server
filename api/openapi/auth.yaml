@@ -1,0 +1,2718 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Authentication & Access API
+  version: 0.2.0
+  description: 'Qeet ID identity platform — full HTTP surface.
+
+
+    This document is generated to cover EVERY route mounted by the chi router (internal/http/router.go) and is guarded by internal/http/openapi_coverage_test.go, which fails CI if any mounted route is undocumented. Launch-critical families (Auth, OIDC/OAuth, SCIM, SAML, Users, Tenants, RBAC, API Keys) carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies (noted in each operation''s description).
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
+servers:
+  - url: http://localhost:4001
+    description: Local (docker compose)
+  - url: http://localhost:4000
+    description: Local (make dev-backend)
+tags:
+  - name: Auth
+    description: Login, signup, refresh, sessions, hosted-login SSO cookie.
+  - name: RBAC
+    description: Roles, permissions, assignments, and authorization checks.
+  - name: MFA
+    description: TOTP and OTP (email/SMS) second factors plus recovery codes.
+  - name: Passkeys
+    description: WebAuthn passkey registration and passwordless login.
+  - name: IP Rules
+    description: Per-tenant IP allow/deny CIDR rules.
+  - name: Auth Policy
+    description: Per-tenant password rules and allowed login methods.
+  - name: Policy
+    description: Per-tenant security policy.
+paths:
+  /v1/auth/forgot-password:
+    post:
+      operationId: post_v1_auth_forgot_password
+      summary: Start a password-reset flow (enumeration-safe)
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/login:
+    post:
+      operationId: post_v1_auth_login
+      summary: Password login; issues a token pair, or an MFA challenge if a second factor is enrolled
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: |
+            Either a full token pair (no MFA) or, when the user has a second
+            factor enrolled, an MFA challenge `{mfa_required:true, mfa_token,
+            methods[]}` to complete at POST /v1/auth/mfa.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    properties:
+                      mfa_required:
+                        type: boolean
+                      mfa_token:
+                        type: string
+                      methods:
+                        type: array
+                        items:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/mfa:
+    post:
+      operationId: post_v1_auth_mfa
+      summary: Complete a two-step login by verifying a second-factor code
+      description: Exchanges the mfa_token from /v1/auth/login plus a TOTP or recovery code for a token pair.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mfa_token
+                - code
+              properties:
+                mfa_token:
+                  type: string
+                code:
+                  type: string
+                  description: A TOTP code or a one-time recovery code.
+      responses:
+        '200':
+          description: Second factor verified; token pair issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/auth/logout:
+    post:
+      operationId: post_v1_auth_logout
+      summary: Revoke the caller's current session
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      responses:
+        '200':
+          description: Signed out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/auth/magic-link/consume:
+    post:
+      operationId: post_v1_auth_magic_link_consume
+      summary: Consume a magic-link token and issue a token pair
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/auth/magic-link/start:
+    post:
+      operationId: post_v1_auth_magic_link_start
+      summary: Send a passwordless magic-link email
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/me:
+    get:
+      operationId: get_v1_auth_me
+      summary: Return the authenticated principal (user/tenant/session/scopes)
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Current principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Principal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/auth/refresh:
+    post:
+      operationId: post_v1_auth_refresh
+      summary: Rotate a refresh token (reuse triggers session revocation)
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Rotated token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/auth/reset-password:
+    post:
+      operationId: post_v1_auth_reset_password
+      summary: Complete a password reset with a reset token
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+                - new_password
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+                  maxLength: 256
+      responses:
+        '200':
+          description: Password reset; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/auth/session:
+    delete:
+      operationId: delete_v1_auth_session
+      summary: 'Hosted-login logout: revoke the SSO session and clear the cookie'
+      tags:
+        - Auth
+      security: []
+      responses:
+        '204':
+          description: Session revoked, cookie cleared
+    post:
+      operationId: post_v1_auth_session
+      summary: 'Hosted-login: verify credentials and set the SSO cookie (qe_ls)'
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: |
+            Either the SSO cookie was set (`{user_id}`) or, when the user has a
+            second factor enrolled, an MFA challenge `{mfa_required:true,
+            mfa_token, methods[]}` to complete at POST /v1/auth/session/mfa
+            (no cookie is set until then).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      user_id:
+                        type: string
+                        format: uuid
+                  - type: object
+                    properties:
+                      mfa_required:
+                        type: boolean
+                      mfa_token:
+                        type: string
+                      methods:
+                        type: array
+                        items:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/auth/session/mfa:
+    post:
+      operationId: post_v1_auth_session_mfa
+      summary: 'Hosted-login: complete a two-step login and set the SSO cookie'
+      description: Exchanges the mfa_token from POST /v1/auth/session plus a TOTP or recovery code for the SSO cookie (qe_ls).
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mfa_token
+                - code
+              properties:
+                mfa_token:
+                  type: string
+                code:
+                  type: string
+                  description: A TOTP code or a one-time recovery code.
+                remember:
+                  type: boolean
+                  description: >-
+                    Trust this device so future logins can skip the second factor (adaptive MFA). Honoured only when the tenant has enabled remember-device; sets the qe_td cookie.
+      responses:
+        '200':
+          description: Second factor verified; SSO cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/auth/register:
+    post:
+      operationId: post_v1_auth_register
+      summary: 'Hosted-login: end-user self-registration into a tenant (B2C)'
+      description: |
+        Creates a new end-user in the client's tenant and sets the SSO cookie
+        (qe_ls) so they continue into the OAuth authorize flow. Gated by the
+        tenant's self_registration_enabled policy (403 when disabled).
+        Enumeration-safe: an existing email returns a neutral 422.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tenant_id
+                - email
+                - password
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                display_name:
+                  type: string
+      responses:
+        '201':
+          description: User created and SSO cookie set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/sessions:
+    get:
+      operationId: get_v1_auth_sessions
+      summary: List the caller's active sessions
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/auth/sessions/{id}:
+    delete:
+      operationId: delete_v1_auth_sessions_ById
+      summary: Revoke one of the caller's sessions
+      tags:
+        - Auth
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/auth/signup:
+    post:
+      operationId: post_v1_auth_signup
+      summary: 'Self-service signup: create user + personal workspace, return token pair'
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: Created; token pair + user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignupResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/switch-tenant:
+    post:
+      operationId: post_v1_auth_switch_tenant
+      summary: Issue a token pair scoped to another tenant the caller belongs to
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tenant_id
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Token pair scoped to the target tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/check:
+    get:
+      operationId: get_v1_check
+      summary: Authorize an action (permission check)
+      tags:
+        - RBAC
+      parameters:
+        - in: query
+          name: user_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: tenant_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: permission
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: explain
+          required: false
+          description: >-
+            When "true", return the full authorization trace (allowed, the grant path(s), and a reason on denial) instead of the bare {allowed} object.
+          schema:
+            type: string
+            enum:
+              - "true"
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: >-
+            Decision. The default shape is {allowed}. With explain=true the response is the Explanation object (allowed, paths, reason).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      allowed:
+                        type: boolean
+                  - $ref: '#/components/schemas/AuthzExplanation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/mfa/otp/factors:
+    get:
+      operationId: get_v1_mfa_otp_factors
+      summary: Get factors
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_mfa_otp_factors
+      summary: Create factors
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/otp/factors/{id}:
+    delete:
+      operationId: delete_v1_mfa_otp_factors_ById
+      summary: Delete factors
+      tags:
+        - MFA
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/otp/factors/{id}/challenge:
+    post:
+      operationId: post_v1_mfa_otp_factors_ById_challenge
+      summary: Create challenge
+      tags:
+        - MFA
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/otp/factors/{id}/confirm:
+    post:
+      operationId: post_v1_mfa_otp_factors_ById_confirm
+      summary: Create confirm
+      tags:
+        - MFA
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/otp/verify:
+    post:
+      operationId: post_v1_mfa_otp_verify
+      summary: Create verify
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/recovery-codes:
+    get:
+      operationId: get_v1_mfa_recovery_codes
+      summary: Get recovery codes
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/recovery-codes/regenerate:
+    post:
+      operationId: post_v1_mfa_recovery_codes_regenerate
+      summary: Create regenerate
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/step-up/status:
+    get:
+      operationId: get_v1_mfa_step_up_status
+      summary: Get step-up MFA status
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Reports whether the principal completed a second-factor verification within the step-up window, and when.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/totp:
+    delete:
+      operationId: delete_v1_mfa_totp
+      summary: Delete totp
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/totp/enroll/confirm:
+    post:
+      operationId: post_v1_mfa_totp_enroll_confirm
+      summary: Create confirm
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/totp/enroll/start:
+    post:
+      operationId: post_v1_mfa_totp_enroll_start
+      summary: Create start
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/totp/verify:
+    post:
+      operationId: post_v1_mfa_totp_verify
+      summary: Create verify
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/webauthn/challenge:
+    post:
+      operationId: post_v1_mfa_webauthn_challenge
+      summary: Begin WebAuthn second-factor assertion
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Starts a WebAuthn assertion ceremony over the authenticated user's existing passkey credentials, used as a second factor (no token is issued).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '501':
+          description: WebAuthn second factor not enabled
+  /v1/mfa/webauthn/verify:
+    post:
+      operationId: post_v1_mfa_webauthn_verify
+      summary: Verify WebAuthn second-factor assertion
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Verifies a WebAuthn assertion against the user's registered credentials and records a step-up verification on success.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '501':
+          description: WebAuthn second factor not enabled
+  /v1/passkeys:
+    get:
+      operationId: get_v1_passkeys
+      summary: Get passkeys
+      tags:
+        - Passkeys
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/login/begin:
+    post:
+      operationId: post_v1_passkeys_login_begin
+      summary: Create begin
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/login/finish:
+    post:
+      operationId: post_v1_passkeys_login_finish
+      summary: Create finish
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/register/begin:
+    post:
+      operationId: post_v1_passkeys_register_begin
+      summary: Create begin
+      tags:
+        - Passkeys
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/register/finish:
+    post:
+      operationId: post_v1_passkeys_register_finish
+      summary: Create finish
+      tags:
+        - Passkeys
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/{id}:
+    delete:
+      operationId: delete_v1_passkeys_ById
+      summary: Delete passkeys
+      tags:
+        - Passkeys
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/permissions:
+    get:
+      operationId: get_v1_permissions
+      summary: List all platform permissions
+      tags:
+        - RBAC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Permission'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/roles/{roleID}/permissions/{permID}:
+    delete:
+      operationId: delete_v1_roles_ByRoleID_permissions_ByPermID
+      summary: Revoke a permission from a role
+      tags:
+        - RBAC
+      parameters:
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: permID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_roles_ByRoleID_permissions_ByPermID
+      summary: Grant a permission to a role
+      tags:
+        - RBAC
+      parameters:
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: permID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      responses:
+        '204':
+          description: Granted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/auth-policy:
+    get:
+      operationId: get_v1_tenants_ByTenantID_auth_policy
+      summary: Get auth policy
+      tags:
+        - Auth Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      operationId: put_v1_tenants_ByTenantID_auth_policy
+      summary: Replace auth policy
+      tags:
+        - Auth Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/groups/{groupID}/roles:
+    get:
+      operationId: get_v1_tenants_ByTenantID_groups_ByGroupID_roles
+      summary: List roles granted to a group
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: groupID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Roles granted to the group
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupRole'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}:
+    post:
+      operationId: post_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
+      summary: Grant a role to a group
+      description: >-
+        Grant a role to a group. Every member of the group inherits the role's permissions (effective permissions = direct user grants UNION group-derived grants). The role and group must belong to the tenant.
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: groupID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Granted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
+      summary: Revoke a role from a group
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: groupID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/security/bots:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_bots
+      summary: Bot-detection telemetry (recent verdicts + 24h stats)
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent bot verdicts and stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/security/bots/settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_bots_settings
+      summary: Get a tenant's bot-detection settings
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Bot-detection settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_security_bots_settings
+      summary: Update a tenant's bot-detection settings
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/security/anomalies:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies
+      summary: List detected security anomalies for a tenant (newest first)
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent anomalies
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/security/anomalies/summary:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies_summary
+      summary: Security-anomaly KPI summary for a tenant
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Open/resolved/affected/high-severity counts
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
+    post:
+      operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
+      summary: Mark a security anomaly resolved
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Anomaly resolved
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/relation-tuples:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples
+      summary: List ReBAC relationship tuples on an object
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Object ref "type:id", e.g. document:readme'
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Tuples on the object
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_relation_tuples
+      summary: Write a ReBAC relationship tuple
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - object
+                - relation
+                - subject
+              properties:
+                object:
+                  type: string
+                  description: '"type:id"'
+                relation:
+                  type: string
+                subject:
+                  type: string
+                  description: '"user:<id>" or "type:id#relation" (userset)'
+      responses:
+        '201':
+          description: Tuple written
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/relation-tuples/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_relation_tuples_ById
+      summary: Delete a relationship tuple
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/relation-tuples/check:
+    post:
+      operationId: post_v1_tenants_ByTenantID_relation_tuples_check
+      summary: Check whether a user has a relation on an object (ReBAC)
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - object
+                - relation
+                - user_id
+              properties:
+                object:
+                  type: string
+                relation:
+                  type: string
+                user_id:
+                  type: string
+      responses:
+        '200':
+          description: '{ allowed: bool }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  allowed:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/ip-rules:
+    get:
+      operationId: get_v1_tenants_ByTenantID_ip_rules
+      summary: Get ip rules
+      tags:
+        - IP Rules
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_tenants_ByTenantID_ip_rules
+      summary: Create ip rules
+      tags:
+        - IP Rules
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ip-rules/check:
+    post:
+      operationId: post_v1_tenants_ByTenantID_ip_rules_check
+      summary: Create check
+      tags:
+        - IP Rules
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ip-rules/config:
+    put:
+      operationId: put_v1_tenants_ByTenantID_ip_rules_config
+      summary: Replace config
+      tags:
+        - IP Rules
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ip-rules/{ruleID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_ip_rules_ByRuleID
+      summary: Delete ip rules
+      tags:
+        - IP Rules
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/policy:
+    get:
+      operationId: get_v1_tenants_ByTenantID_policy
+      summary: Get policy
+      tags:
+        - Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      operationId: put_v1_tenants_ByTenantID_policy
+      summary: Replace policy
+      tags:
+        - Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/roles:
+    get:
+      operationId: get_v1_tenants_ByTenantID_roles
+      summary: List a tenant's roles
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Roles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Role'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_roles
+      summary: Create a role in a tenant
+      tags:
+        - RBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '201':
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/{userID}/tenants/{tenantID}/permissions:
+    get:
+      operationId: get_v1_users_ByUserID_tenants_ByTenantID_permissions
+      summary: List a user's effective permissions in a tenant
+      tags:
+        - RBAC
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Effective permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
+    delete:
+      operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
+      summary: Unassign a role from a user in a tenant
+      tags:
+        - RBAC
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Unassigned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
+      summary: Assign a role to a user in a tenant
+      tags:
+        - RBAC
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      responses:
+        '204':
+          description: Assigned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'User or service JWT: `Authorization: Bearer <token>`.'
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth.'
+    scimBearer:
+      type: http
+      scheme: bearer
+      description: 'Per-tenant SCIM provisioning token presented by the IdP: `Authorization: Bearer <scim-token>`. Distinct from user JWTs; rotated via the SCIM admin endpoints.'
+    clientCredentials:
+      type: oauth2
+      description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
+      flows:
+        clientCredentials:
+          tokenUrl: /v1/oauth/token
+          scopes: {}
+    ssoCookie:
+      type: apiKey
+      in: cookie
+      name: qe_ls
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      description: Canonical error envelope (internal/platform/httpx.WriteError).
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Stable machine code
+              example: unauthorized
+            message:
+              type: string
+              example: authentication required
+            detail:
+              type: string
+              description: Optional human detail
+            request_id:
+              type: string
+              description: Correlates with the X-Request-Id header
+    TokenPair:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+          nullable: true
+    Principal:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+        tenant_id:
+          type: string
+          format: uuid
+          nullable: true
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+        actor:
+          type: string
+          example: user
+        scopes:
+          type: array
+          items:
+            type: string
+    Session:
+      type: object
+      additionalProperties: true
+      description: An active session (id, ip, user agent, timestamps).
+    SignupRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+          maxLength: 256
+        display_name:
+          type: string
+          maxLength: 200
+    SignupResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    RefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        phone_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum:
+            - active
+            - suspended
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    Role:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        is_system:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    GroupRole:
+      type: object
+      description: A role granted to a group, with the role's name for display.
+      properties:
+        role_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        granted_at:
+          type: string
+          format: date-time
+    AuthzGrantStep:
+      type: object
+      description: >-
+        One link in an authorization decision's grant path: a role that confers the requested permission and how that role reaches the user.
+      properties:
+        permission:
+          type: string
+        granted_by:
+          type: string
+          description: 'The conferring role, e.g. "role:admin".'
+        via:
+          type: string
+          description: '"direct" for a user grant, or "group:<name>" for a group-derived grant.'
+        group_id:
+          type: string
+          format: uuid
+          description: Set only when via is a group grant.
+        role_id:
+          type: string
+          format: uuid
+    AuthzExplanation:
+      type: object
+      description: >-
+        The structured "why?" for a single permission check: the decision plus every distinct grant (direct and group-derived) that confers it. Returned from GET /check when explain=true.
+      properties:
+        allowed:
+          type: boolean
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuthzGrantStep'
+        reason:
+          type: string
+          description: Set only on a denial.
+    RoleCreate:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 500
+    Permission:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        description:
+          type: string

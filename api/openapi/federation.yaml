@@ -1,0 +1,3206 @@
+openapi: 3.1.0
+info:
+  title: Qeet ID — Federation API (OIDC/SAML/SCIM/LDAP/Social)
+  version: 0.2.0
+  description: 'Qeet ID identity platform — full HTTP surface.
+
+
+    This document is generated to cover EVERY route mounted by the chi router (internal/http/router.go) and is guarded by internal/http/openapi_coverage_test.go, which fails CI if any mounted route is undocumented. Launch-critical families (Auth, OIDC/OAuth, SCIM, SAML, Users, Tenants, RBAC, API Keys) carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies (noted in each operation''s description).
+
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
+servers:
+  - url: http://localhost:4001
+    description: Local (docker compose)
+  - url: http://localhost:4000
+    description: Local (make dev-backend)
+tags:
+  - name: OIDC
+    description: 'OpenID Connect / OAuth 2.0 provider: discovery, authorize, token, userinfo, clients, grants, revocation, introspection, RP-initiated logout, and machine-to-machine service principals.'
+  - name: SAML
+    description: SAML 2.0 SSO — Qeet as Service Provider (consuming external IdPs) and as Identity Provider (serving downstream SPs).
+  - name: SCIM
+    description: SCIM 2.0 user/group provisioning (per-tenant bearer token presented by the IdP) plus tenant-admin token management.
+  - name: Social
+    description: Social/OAuth identity-provider login and account linking.
+  - name: LDAP
+    description: LDAP / Active Directory connection management and bind authentication.
+paths:
+  /.well-known/jwks.json:
+    get:
+      operationId: get_wellKnown_jwks_json
+      summary: JSON Web Key Set for verifying issued tokens
+      tags:
+        - OIDC
+      security: []
+      responses:
+        '200':
+          description: JWK Set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JWKS'
+  /.well-known/openid-configuration:
+    get:
+      operationId: get_wellKnown_openid_configuration
+      summary: OIDC discovery document
+      tags:
+        - OIDC
+      security: []
+      responses:
+        '200':
+          description: Discovery metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCDiscovery'
+  /ldap/{id}/authenticate:
+    post:
+      operationId: post_ldap_ById_authenticate
+      summary: Authenticate an end user against an LDAP/AD connection (bind)
+      tags:
+        - LDAP
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /oauth/introspect:
+    post:
+      operationId: post_oauth_introspect
+      summary: RFC 7662 token introspection (client-authenticated)
+      tags:
+        - OIDC
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                token_type_hint:
+                  type: string
+      responses:
+        '200':
+          description: Introspection result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Introspection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /oauth/revoke:
+    post:
+      operationId: post_oauth_revoke
+      summary: RFC 7009 token revocation (client-authenticated)
+      tags:
+        - OIDC
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                token_type_hint:
+                  type: string
+                  enum:
+                    - access_token
+                    - refresh_token
+      responses:
+        '200':
+          description: 'Revoked (RFC 7009: always 200 even for unknown tokens)'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /saml/acs/{id}:
+    post:
+      operationId: post_saml_acs_ById
+      summary: Assertion Consumer Service (CSRF-exempt; signature-validated)
+      tags:
+        - SAML
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                SAMLResponse:
+                  type: string
+                RelayState:
+                  type: string
+      responses:
+        '302':
+          description: Signature-validated; redirect with a one-time login code
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /saml/exchange:
+    post:
+      operationId: post_saml_exchange
+      summary: Exchange a one-time SAML login code for a token pair
+      tags:
+        - SAML
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /saml/idp/metadata:
+    get:
+      operationId: get_saml_idp_metadata
+      summary: IdP metadata XML (Qeet as IdP)
+      tags:
+        - SAML
+      security: []
+      responses:
+        '200':
+          description: IdP metadata XML
+          content:
+            application/xml:
+              schema:
+                type: string
+  /saml/idp/sso:
+    get:
+      operationId: get_saml_idp_sso
+      summary: IdP SingleSignOnService (HTTP-Redirect binding)
+      tags:
+        - SAML
+      parameters:
+        - in: query
+          name: SAMLRequest
+          schema:
+            type: string
+        - in: query
+          name: RelayState
+          schema:
+            type: string
+      security: []
+      responses:
+        '200':
+          description: Auto-submit POST form back to the SP ACS with a signed SAMLResponse
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect to hosted login when no SSO session
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: post_saml_idp_sso
+      summary: IdP SingleSignOnService (HTTP-POST binding; CSRF-exempt)
+      tags:
+        - SAML
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                SAMLRequest:
+                  type: string
+                RelayState:
+                  type: string
+      responses:
+        '200':
+          description: Auto-submit POST form back to the SP ACS with a signed SAMLResponse
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Redirect to hosted login when no SSO session
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /saml/login/{id}:
+    get:
+      operationId: get_saml_login_ById
+      summary: SP-initiated login redirect to the external IdP
+      tags:
+        - SAML
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      responses:
+        '302':
+          description: Redirect to the external IdP with an AuthnRequest
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /saml/metadata/{id}:
+    get:
+      operationId: get_saml_metadata_ById
+      summary: SP metadata XML for a SAML connection (Qeet as SP)
+      tags:
+        - SAML
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      responses:
+        '200':
+          description: SP metadata XML
+          content:
+            application/xml:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /scim/v2/Groups:
+    get:
+      operationId: get_scim_v2_Groups
+      summary: List/filter SCIM groups
+      tags:
+        - SCIM
+      parameters:
+        - in: query
+          name: filter
+          schema:
+            type: string
+        - in: query
+          name: startIndex
+          schema:
+            type: integer
+        - in: query
+          name: count
+          schema:
+            type: integer
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: ListResponse
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_scim_v2_Groups
+      summary: Create a SCIM group
+      tags:
+        - SCIM
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMGroup'
+      responses:
+        '201':
+          description: Group created
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /scim/v2/Groups/{id}:
+    delete:
+      operationId: delete_scim_v2_Groups_ById
+      summary: Delete a SCIM group
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: get_scim_v2_Groups_ById
+      summary: Get a SCIM group
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: Group
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMGroup'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_scim_v2_Groups_ById
+      summary: Patch a SCIM group (PatchOp; member add/remove)
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMPatchOp'
+      responses:
+        '200':
+          description: Patched
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: put_scim_v2_Groups_ById
+      summary: Replace a SCIM group
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMGroup'
+      responses:
+        '200':
+          description: Replaced
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMGroup'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /scim/v2/ResourceTypes:
+    get:
+      operationId: get_scim_v2_ResourceTypes
+      summary: SCIM ResourceTypes
+      tags:
+        - SCIM
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: SCIM metadata
+          content:
+            application/scim+json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /scim/v2/Schemas:
+    get:
+      operationId: get_scim_v2_Schemas
+      summary: SCIM Schemas
+      tags:
+        - SCIM
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: SCIM metadata
+          content:
+            application/scim+json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /scim/v2/ServiceProviderConfig:
+    get:
+      operationId: get_scim_v2_ServiceProviderConfig
+      summary: SCIM ServiceProviderConfig
+      tags:
+        - SCIM
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: SCIM metadata
+          content:
+            application/scim+json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /scim/v2/Users:
+    get:
+      operationId: get_scim_v2_Users
+      summary: List/filter SCIM users
+      tags:
+        - SCIM
+      parameters:
+        - in: query
+          name: filter
+          schema:
+            type: string
+          description: SCIM filter, e.g. userName eq "a@b.com"
+        - in: query
+          name: startIndex
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: count
+          schema:
+            type: integer
+            minimum: 0
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: ListResponse
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_scim_v2_Users
+      summary: Provision a SCIM user
+      tags:
+        - SCIM
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMUser'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SCIMUser'
+      responses:
+        '201':
+          description: User provisioned
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /scim/v2/Users/{id}:
+    delete:
+      operationId: delete_scim_v2_Users_ById
+      summary: Delete (deprovision) a SCIM user
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      responses:
+        '204':
+          description: Deprovisioned
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: get_scim_v2_Users_ById
+      summary: Get a SCIM user
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      responses:
+        '200':
+          description: User
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_scim_v2_Users_ById
+      summary: Patch a SCIM user (PatchOp; e.g. deprovision via active=false)
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMPatchOp'
+      responses:
+        '200':
+          description: Patched
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: put_scim_v2_Users_ById
+      summary: Replace a SCIM user
+      tags:
+        - SCIM
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - scimBearer: []
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: '#/components/schemas/SCIMUser'
+      responses:
+        '200':
+          description: Replaced
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/SCIMUser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/oauth/authorize:
+    get:
+      operationId: get_v1_oauth_authorize
+      summary: OAuth 2.0 authorization endpoint (SSO-cookie gated)
+      tags:
+        - OIDC
+      parameters:
+        - in: query
+          name: client_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: redirect_uri
+          required: true
+          schema:
+            type: string
+            format: uri
+        - in: query
+          name: response_type
+          required: true
+          schema:
+            type: string
+            enum:
+              - code
+        - in: query
+          name: scope
+          schema:
+            type: string
+        - in: query
+          name: state
+          schema:
+            type: string
+        - in: query
+          name: code_challenge
+          schema:
+            type: string
+        - in: query
+          name: code_challenge_method
+          schema:
+            type: string
+            enum:
+              - S256
+        - in: query
+          name: nonce
+          schema:
+            type: string
+      security:
+        - ssoCookie: []
+      responses:
+        '302':
+          description: Redirect to the hosted-login UI or back to the client with a code
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oauth/authorize/decision:
+    post:
+      operationId: post_v1_oauth_authorize_decision
+      summary: Record the user's consent decision for an authorization request
+      tags:
+        - OIDC
+      security:
+        - ssoCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - request_id
+                - decision
+              properties:
+                request_id:
+                  type: string
+                decision:
+                  type: string
+                  enum:
+                    - allow
+                    - deny
+      responses:
+        '302':
+          description: Redirect back to the client with code or error
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oauth/device:
+    get:
+      operationId: get_v1_oauth_device
+      summary: Device verification context (RFC 8628) for the hosted /device page
+      description: Returns the requesting client's display name and requested scopes for a pending device-authorization, looked up by user_code, so the hosted-login /device page can render the approval screen. SSO-cookie gated.
+      tags:
+        - OIDC
+      parameters:
+        - in: query
+          name: user_code
+          required: true
+          schema:
+            type: string
+          description: The human-typed user_code (e.g. BCDF-GHJK).
+      security:
+        - ssoCookie: []
+      responses:
+        '200':
+          description: Device verification context
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_name:
+                    type: string
+                  scopes:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/oauth/device/decision:
+    post:
+      operationId: post_v1_oauth_device_decision
+      summary: Record the user's approve/deny for a device-authorization (RFC 8628)
+      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant) is bound and the device can complete its token poll.
+      tags:
+        - OIDC
+      security:
+        - ssoCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_code
+                - approve
+              properties:
+                user_code:
+                  type: string
+                approve:
+                  type: boolean
+      responses:
+        '200':
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - authorized
+                      - denied
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/oauth/device_authorization:
+    post:
+      operationId: post_v1_oauth_device_authorization
+      summary: OAuth 2.0 Device Authorization endpoint (RFC 8628 §3.1)
+      description: Client-authenticated endpoint for input-constrained (CLI/TV/IoT) clients. Returns a (device_code, user_code) pair plus the verification URIs; the device then polls /v1/oauth/token-code with grant_type=urn:ietf:params:oauth:grant-type:device_code.
+      tags:
+        - OIDC
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - client_id
+              properties:
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                scope:
+                  type: string
+      responses:
+        '200':
+          description: Device authorization response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceAuthorizationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oauth/login-context:
+    get:
+      operationId: get_v1_oauth_login_context
+      summary: Return the hosted-login UI context for an in-flight authorize request
+      tags:
+        - OIDC
+      parameters:
+        - in: query
+          name: request_id
+          required: true
+          schema:
+            type: string
+      security:
+        - ssoCookie: []
+      responses:
+        '200':
+          description: Hosted-login context (client name, scopes, branding)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/oauth/logout:
+    get:
+      operationId: get_v1_oauth_logout
+      summary: RP-initiated logout (end session)
+      tags:
+        - OIDC
+      parameters:
+        - in: query
+          name: id_token_hint
+          schema:
+            type: string
+        - in: query
+          name: post_logout_redirect_uri
+          schema:
+            type: string
+            format: uri
+        - in: query
+          name: state
+          schema:
+            type: string
+      security:
+        - ssoCookie: []
+      responses:
+        '302':
+          description: Redirect to post_logout_redirect_uri
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: post_v1_oauth_logout
+      summary: RP-initiated logout (end session)
+      tags:
+        - OIDC
+      parameters:
+        - in: query
+          name: id_token_hint
+          schema:
+            type: string
+        - in: query
+          name: post_logout_redirect_uri
+          schema:
+            type: string
+            format: uri
+        - in: query
+          name: state
+          schema:
+            type: string
+      security:
+        - ssoCookie: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      responses:
+        '302':
+          description: Redirect to post_logout_redirect_uri
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/oauth/token:
+    post:
+      operationId: post_v1_oauth_token
+      summary: OAuth token endpoint for client_credentials (service principals)
+      tags:
+        - OIDC
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - grant_type
+              properties:
+                grant_type:
+                  type: string
+                  enum:
+                    - client_credentials
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                scope:
+                  type: string
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oauth/token-code:
+    post:
+      operationId: post_v1_oauth_token_code
+      summary: 'OAuth token endpoint: exchange authorization_code or refresh_token'
+      tags:
+        - OIDC
+      security:
+        - clientCredentials: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OAuthTokenRequest'
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oauth/userinfo:
+    get:
+      operationId: get_v1_oauth_userinfo
+      summary: OIDC UserInfo endpoint
+      tags:
+        - OIDC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: UserInfo claims
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub:
+                    type: string
+                    format: uuid
+                  tenant_id:
+                    type: string
+                    format: uuid
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oidc/clients:
+    post:
+      operationId: post_v1_oidc_clients
+      summary: Register an OIDC/OAuth client
+      tags:
+        - OIDC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCClientCreate'
+      responses:
+        '201':
+          description: Client created (secret shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client:
+                    $ref: '#/components/schemas/OIDCClient'
+                  client_secret:
+                    type: string
+                  warning:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/oidc/clients/{id}:
+    delete:
+      operationId: delete_v1_oidc_clients_ById
+      summary: Delete an OIDC client (tenant scoped by caller's token)
+      tags:
+        - OIDC
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Client deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/oidc/signing-keys:
+    get:
+      operationId: get_v1_oidc_signing_keys
+      summary: List issuer signing-key metadata (no key material)
+      tags:
+        - OIDC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Signing keys (active + retired)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SigningKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/service-principals:
+    post:
+      operationId: post_v1_service_principals
+      summary: Create a machine-to-machine service principal (client credentials)
+      tags:
+        - OIDC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServicePrincipalCreate'
+      responses:
+        '201':
+          description: Service principal created (secret shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/service-principals/{id}:
+    delete:
+      operationId: delete_v1_service_principals_ById
+      summary: Disable a service principal
+      tags:
+        - OIDC
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/exchange:
+    post:
+      operationId: post_v1_social_exchange
+      summary: Create exchange
+      tags:
+        - Social
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/identities/{id}:
+    delete:
+      operationId: delete_v1_social_identities_ById
+      summary: Delete identities
+      tags:
+        - Social
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/providers:
+    post:
+      operationId: post_v1_social_providers
+      summary: Create providers
+      tags:
+        - Social
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/{provider}/callback:
+    get:
+      operationId: get_v1_social_ByProvIDer_callback
+      summary: Get callback
+      tags:
+        - Social
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/{provider}/start:
+    get:
+      operationId: get_v1_social_ByProvIDer_start
+      summary: Get start
+      tags:
+        - Social
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ldap:
+    get:
+      operationId: get_v1_tenants_ByTenantID_ldap
+      summary: List LDAP/AD connections
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_tenants_ByTenantID_ldap
+      summary: Create an LDAP/AD connection
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ldap/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_ldap_ById
+      summary: Delete an LDAP/AD connection
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      operationId: get_v1_tenants_ByTenantID_ldap_ById
+      summary: Get an LDAP/AD connection
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_ldap_ById
+      summary: Update an LDAP/AD connection
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/ldap/{id}/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_ldap_ById_test
+      summary: Test-bind an LDAP/AD connection
+      tags:
+        - LDAP
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/oauth/devices:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oauth_devices
+      summary: List a tenant's device authorizations (RFC 8628)
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Device authorizations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OAuthDeviceAuthorization'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oauth/devices/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oauth_devices_ById
+      summary: Revoke a device authorization
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Device authorization revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oidc/clients:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_clients
+      summary: List a tenant's OIDC clients
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OIDC clients
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OIDCClient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_clients
+      summary: Register an OIDC client under the tenant
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCClientCreate'
+      responses:
+        '201':
+          description: Client created (secret shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client:
+                    $ref: '#/components/schemas/OIDCClient'
+                  client_secret:
+                    type: string
+                  warning:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/oidc/clients/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_clients_ById
+      summary: Get an OIDC client
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OIDC client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCClient'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_oidc_clients_ById
+      summary: Update an OIDC client (partial)
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCClientUpdate'
+      responses:
+        '200':
+          description: Updated OIDC client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCClient'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oidc_clients_ById
+      summary: Delete an OIDC client
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Client deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret:
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_clients_ById_rotate_secret
+      summary: Rotate a confidential OIDC client's secret
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: New client secret (shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_secret:
+                    type: string
+                  warning:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/oauth/grants:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oauth_grants
+      summary: List a tenant's OAuth consent grants
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Consent grants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oauth/grants/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oauth_grants_ById
+      summary: Revoke an OAuth consent grant
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Grant revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/saml:
+    get:
+      operationId: get_v1_tenants_ByTenantID_saml
+      summary: List external-IdP SAML connections (SP side)
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Connections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SAMLConnection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml
+      summary: Create an external-IdP SAML connection (SP side)
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SAMLConnectionCreate'
+      responses:
+        '201':
+          description: Connection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml-providers:
+    get:
+      operationId: get_v1_tenants_ByTenantID_saml_providers
+      summary: List downstream SAML service providers (IdP side)
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Service providers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SAMLServiceProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_providers
+      summary: Register a downstream SAML service provider (IdP side)
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SAMLServiceProviderCreate'
+      responses:
+        '201':
+          description: SP registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLServiceProvider'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/saml-providers/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_saml_providers_ById
+      summary: Delete a SAML service provider
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: get_v1_tenants_ByTenantID_saml_providers_ById
+      summary: Get a SAML service provider
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Service provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLServiceProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_saml_providers_ById
+      summary: Update a SAML service provider
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SAMLServiceProviderCreate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLServiceProvider'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/saml/{id}/test:
+    post:
+      operationId: post_v1_tenants_ByTenantID_saml_ById_test
+      summary: Preflight-test a SAML connection's config before rollout
+      description: >-
+        Runs offline checks (entity ID present, https SSO URL, the signing certificate parses and is in its validity window, email attribute mapped) and returns per-check results. No network I/O.
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Per-check preflight results
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/saml/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_saml_ById
+      summary: Delete a SAML connection
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: get_v1_tenants_ByTenantID_saml_ById
+      summary: Get a SAML connection
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Connection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLConnection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_saml_ById
+      summary: Update a SAML connection
+      tags:
+        - SAML
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SAMLConnectionCreate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLConnection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/scim:
+    get:
+      operationId: get_v1_tenants_ByTenantID_scim
+      summary: Get the tenant's SCIM provisioning config/status
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/scim/token:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_scim_token
+      summary: Revoke the tenant's SCIM bearer token
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_tenants_ByTenantID_scim_token
+      summary: Rotate the tenant's SCIM bearer token
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/scim/users:
+    get:
+      operationId: get_v1_tenants_ByTenantID_scim_users
+      summary: 'Admin: list SCIM-provisioned users for a tenant'
+      tags:
+        - SCIM
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/service-principals:
+    get:
+      operationId: get_v1_tenants_ByTenantID_service_principals
+      summary: List a tenant's service principals
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/social/providers:
+    get:
+      operationId: get_v1_tenants_ByTenantID_social_providers
+      summary: Get providers
+      tags:
+        - Social
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/users/{userID}/social/identities:
+    get:
+      operationId: get_v1_users_ByUserID_social_identities
+      summary: List a user's linked social identities
+      tags:
+        - Social
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'User or service JWT: `Authorization: Bearer <token>`.'
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'API key credential. Send `Authorization: ApiKey <key>` (note the `ApiKey ` prefix). Accepted on the same authenticated routes as bearerAuth.'
+    scimBearer:
+      type: http
+      scheme: bearer
+      description: 'Per-tenant SCIM provisioning token presented by the IdP: `Authorization: Bearer <scim-token>`. Distinct from user JWTs; rotated via the SCIM admin endpoints.'
+    clientCredentials:
+      type: oauth2
+      description: OAuth 2.0 client credentials. Clients authenticate at the token endpoint via form params (`client_id`/`client_secret`) or HTTP Basic. Revocation/introspection use the same client auth.
+      flows:
+        clientCredentials:
+          tokenUrl: /v1/oauth/token
+          scopes: {}
+    ssoCookie:
+      type: apiKey
+      in: cookie
+      name: qe_ls
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Authenticated but not permitted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      description: Canonical error envelope (internal/platform/httpx.WriteError).
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Stable machine code
+              example: unauthorized
+            message:
+              type: string
+              example: authentication required
+            detail:
+              type: string
+              description: Optional human detail
+            request_id:
+              type: string
+              description: Correlates with the X-Request-Id header
+    TokenPair:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_at:
+          type: string
+          format: date-time
+        refresh_token:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+          nullable: true
+    OIDCClient:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+        type:
+          type: string
+          enum:
+            - public
+            - confidential
+        name:
+          type: string
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        post_logout_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        grant_types:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+    OIDCClientCreate:
+      type: object
+      required:
+        - tenant_id
+        - name
+        - type
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum:
+            - public
+            - confidential
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        post_logout_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        grant_types:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    OIDCClientUpdate:
+      type: object
+      description: Partial (COALESCE-style) update; omitted fields are left unchanged.
+      properties:
+        name:
+          type: string
+        redirect_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        post_logout_uris:
+          type: array
+          items:
+            type: string
+            format: uri
+        grant_types:
+          type: array
+          items:
+            type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    OAuthDeviceAuthorization:
+      type: object
+      description: Admin view of an RFC 8628 device-authorization row. Never includes the device_code or its hash.
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+        user_code:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - authorized
+            - denied
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_email:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_polled_at:
+          type: string
+          format: date-time
+          nullable: true
+    SigningKey:
+      type: object
+      description: Non-secret metadata for an issuer signing key (no key material).
+      properties:
+        kid:
+          type: string
+          description: RFC 7638 JWK thumbprint of the public key.
+        alg:
+          type: string
+          example: ES256
+        use:
+          type: string
+          example: sig
+        status:
+          type: string
+          enum:
+            - active
+            - retired
+    ServicePrincipalCreate:
+      type: object
+      required:
+        - tenant_id
+        - name
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    OAuthTokenRequest:
+      type: object
+      required:
+        - grant_type
+      properties:
+        grant_type:
+          type: string
+          enum:
+            - authorization_code
+            - refresh_token
+            - urn:ietf:params:oauth:grant-type:device_code
+        code:
+          type: string
+        redirect_uri:
+          type: string
+          format: uri
+        code_verifier:
+          type: string
+        refresh_token:
+          type: string
+        device_code:
+          type: string
+          description: Present when grant_type is the RFC 8628 device_code grant.
+        client_id:
+          type: string
+        client_secret:
+          type: string
+    DeviceAuthorizationResponse:
+      type: object
+      description: RFC 8628 §3.2 device authorization response.
+      required:
+        - device_code
+        - user_code
+        - verification_uri
+        - expires_in
+      properties:
+        device_code:
+          type: string
+        user_code:
+          type: string
+          description: Human-friendly code (XXXX-XXXX) from an unambiguous alphabet.
+        verification_uri:
+          type: string
+          format: uri
+        verification_uri_complete:
+          type: string
+          format: uri
+        expires_in:
+          type: integer
+        interval:
+          type: integer
+          description: Minimum seconds the device must wait between token polls.
+    OAuthTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+        id_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+        scope:
+          type: string
+    Introspection:
+      type: object
+      properties:
+        active:
+          type: boolean
+      additionalProperties: true
+      description: RFC 7662 response; `active` plus claims when active.
+    OIDCDiscovery:
+      type: object
+      additionalProperties: true
+      description: OIDC discovery metadata (issuer, endpoints, supported features).
+    JWKS:
+      type: object
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    SAMLConnection:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        idp_entity_id:
+          type: string
+        idp_sso_url:
+          type: string
+          format: uri
+        idp_certificate:
+          type: string
+        email_attribute:
+          type: string
+        name_attribute:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+    SAMLConnectionCreate:
+      type: object
+      required:
+        - name
+        - idp_entity_id
+        - idp_sso_url
+        - idp_certificate
+      properties:
+        name:
+          type: string
+        idp_entity_id:
+          type: string
+        idp_sso_url:
+          type: string
+          format: uri
+        idp_certificate:
+          type: string
+          description: PEM or base64 DER X.509 signing certificate
+        email_attribute:
+          type: string
+        name_attribute:
+          type: string
+        status:
+          type: string
+    SAMLServiceProvider:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        entity_id:
+          type: string
+        acs_url:
+          type: string
+          format: uri
+        name_id_format:
+          type: string
+        name_id_attribute:
+          type: string
+        certificate:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+    SAMLServiceProviderCreate:
+      type: object
+      required:
+        - name
+        - entity_id
+        - acs_url
+      properties:
+        name:
+          type: string
+        entity_id:
+          type: string
+        acs_url:
+          type: string
+          format: uri
+        name_id_format:
+          type: string
+        name_id_attribute:
+          type: string
+        certificate:
+          type: string
+    SCIMUser:
+      type: object
+      required:
+        - schemas
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example:
+            - urn:ietf:params:scim:schemas:core:2.0:User
+        id:
+          type: string
+        externalId:
+          type: string
+        userName:
+          type: string
+        displayName:
+          type: string
+        active:
+          type: boolean
+        name:
+          type: object
+          properties:
+            formatted:
+              type: string
+            givenName:
+              type: string
+            familyName:
+              type: string
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+              primary:
+                type: boolean
+              type:
+                type: string
+        meta:
+          type: object
+          additionalProperties: true
+    SCIMGroup:
+      type: object
+      required:
+        - schemas
+        - displayName
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example:
+            - urn:ietf:params:scim:schemas:core:2.0:Group
+        id:
+          type: string
+        externalId:
+          type: string
+        displayName:
+          type: string
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                description: User id
+              display:
+                type: string
+        meta:
+          type: object
+          additionalProperties: true
+    SCIMPatchOp:
+      type: object
+      required:
+        - schemas
+        - Operations
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example:
+            - urn:ietf:params:scim:api:messages:2.0:PatchOp
+        Operations:
+          type: array
+          items:
+            type: object
+            required:
+              - op
+            properties:
+              op:
+                type: string
+                enum:
+                  - add
+                  - remove
+                  - replace
+              path:
+                type: string
+              value: {}
+    SCIMListResponse:
+      type: object
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example:
+            - urn:ietf:params:scim:api:messages:2.0:ListResponse
+        totalResults:
+          type: integer
+        startIndex:
+          type: integer
+        itemsPerPage:
+          type: integer
+        Resources:
+          type: array
+          items:
+            type: object
+            additionalProperties: true

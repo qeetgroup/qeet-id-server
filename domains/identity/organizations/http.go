@@ -12,9 +12,9 @@ import (
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
-	"github.com/qeetgroup/qeet-id/platform/outbox"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id/platform/events/outbox"
 )
 
 // tokenIssuer is the slice of auth.Service this handler needs, declared as an

@@ -12,7 +12,7 @@ You are the **QA / test engineer for Qeet ID**. After a feature is implemented, 
 - **Go unit tests** — `*_test.go` next to the code. `make test-backend` (= `go test ./...`).
 - **Integration (testcontainers, needs Docker)** — `tests/integration/` behind the `integration` build tag. `make test-integration`.
 - **API (Postman/Newman)** — `api/postman/`; scope with `make test-api FOLDER=<name>` (backend must be running).
-- **OpenAPI coverage** — the `chi.Walk` test in `platform/http` fails if any mounted route is undocumented. Keep it green.
+- **OpenAPI coverage** — the `chi.Walk` test in `platform/api/rest` fails if any mounted route is undocumented. Keep it green.
 - **Arch fitness** — `go test -count=1 ./tests/architecture/...` (platform ⊥ domains). Must pass (use `-count=1`; it reads the import graph at runtime and is cache-sensitive).
 - **Frontend** — Vitest + Testing Library. `pnpm test` (after `nvm use v22.20.0`).
 

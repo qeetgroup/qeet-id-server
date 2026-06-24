@@ -9,8 +9,8 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
 
 // BotEvaluator scores an auth attempt's User-Agent for bot-likeness and records

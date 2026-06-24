@@ -13,7 +13,7 @@ A row from `../../qeet-files/qeet-id/FEATURE-PROPOSALS.md` (e.g. "FP-013 …"), 
 
 ## Orient first (read, don't assume)
 - `../../qeet-files/qeet-id/QEET-ID-STATUS.md` — what already exists (don't redesign shipped features).
-- The codebase: `domains/<context>/<pkg>`, `platform/*`, `api/openapi.yaml`, `migrations/` (note the highest `NNNN`), `docs/ARCHITECTURE.md`, `docs/BACKEND.md`, and `tests/architecture/arch_test.go` (the layering rules).
+- The codebase: `domains/<context>/<pkg>`, `platform/*`, `api/openapi/`, `migrations/` (note the highest `NNNN`), `docs/ARCHITECTURE.md`, `docs/BACKEND.md`, and `tests/architecture/arch_test.go` (the layering rules).
 - Confirm which bounded context the feature belongs in: `identity` / `access` / `federation` / `developer` / `operations`.
 
 ## Output — write `docs/specs/<feature-slug>.md`
@@ -21,7 +21,7 @@ A concise, skimmable spec with these sections:
 1. **Summary & acceptance criteria** — what "done" looks like, as checkable bullets.
 2. **Bounded context & packages** — exact `domains/<ctx>/<pkg>` (new or existing) + any `platform/*` touched. Respect the arch boundary: domains may use `platform/*`; `platform/*` must not import `domains/*`.
 3. **Data model & migration plan** — tables/columns/indexes; the **next** migration number (`printf '%04d' $((highest+1))`) and the `NNNN_<name>.{up,down}.sql` pair to add; **every table carries `tenant_id`** (multi-tenant) unless explicitly global.
-4. **API surface** — new/changed routes (method + path under `/v1/...`), request/response shapes, and the exact `api/openapi.yaml` additions. Note that the `chi.Walk` coverage test in `platform/http` requires every mounted route to be documented.
+4. **API surface** — new/changed routes (method + path under `/v1/...`), request/response shapes, and the exact `api/openapi/` additions. Note that the `chi.Walk` coverage test in `platform/api/rest` requires every mounted route to be documented.
 5. **Security & tenant isolation** — authz (RBAC/ReBAC) needed, `RequireTenant`/`RequireUser` middleware, audit events to emit, secrets/crypto, anything the **security-reviewer** must check.
 6. **Frontend surfaces** — which app(s) (`apps/console|login|website`), screens/components (via `@qeetrix/*`), and whether the SDKs (`sdk/js/*`, `sdk/go`, `sdk/python`) need updating.
 7. **Task breakdown & hand-off** — ordered tasks, each tagged with the owning agent (`backend-engineer`, `frontend-engineer`, `qa-test-engineer`), then `security-reviewer`, then `docs-writer`.

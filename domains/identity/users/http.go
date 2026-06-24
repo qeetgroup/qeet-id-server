@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
-	"github.com/qeetgroup/qeet-id/platform/outbox"
-	"github.com/qeetgroup/qeet-id/platform/password"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id/platform/security/encryption"
 )
 
 // mfaResetter clears a user's MFA factors (admin account-recovery). Kept as an

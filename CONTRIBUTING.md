@@ -118,9 +118,9 @@ Steps to add a module:
 1. Create the package directory under the right `domains/<context>/`.
 2. Add SQL migrations under `migrations/` with the next number — both `.up.sql` and `.down.sql`.
 3. Add domain types, repository, service, and HTTP handlers.
-4. Mount the routes in [platform/http/router.go](./platform/http/router.go).
+4. Mount the routes in [platform/api/rest/router.go](./platform/api/rest/router.go).
 5. Add tests next to the code (`*_test.go`).
-6. Update [api/openapi.yaml](./api/openapi.yaml).
+6. Update [api/openapi/](./api/openapi/).
 
 ---
 
@@ -153,7 +153,7 @@ If your change affects:
 
 | Change | Update |
 |---|---|
-| Backend API | [api/openapi.yaml](./api/openapi.yaml) |
+| Backend API | [api/openapi/](./api/openapi/) |
 | Architecture / conventions | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
 | Security posture | [SECURITY.md](./SECURITY.md) |
 | End-user docs | standalone `qeet-docs` repo (docs.qeet.in) |

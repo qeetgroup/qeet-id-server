@@ -1,6 +1,7 @@
 # Build context is the REPO ROOT (single Go module at root). Keep only what the
-# Go image build needs: go.mod/go.sum + cmd/ domains/ platform/ (+ migrations/
-# for the shared Dockerfile.migrate). Everything else is excluded.
+# Go image build needs: go.mod/go.sum + cmd/ domains/ platform/ (the shared
+# Dockerfile.migrate copies platform/database/migrations). Everything else is
+# excluded.
 
 # Git
 .git
@@ -28,14 +29,12 @@ dist/
 *.tsbuildinfo
 
 # Infra / deploy / docs / codegen inputs / tests — not needed to build the binary
-# (migrations/ is intentionally KEPT: the shared Dockerfile.migrate copies it)
+# (platform/database/migrations IS kept: the shared Dockerfile.migrate copies it)
 deploy/
 docs/
 graphify-out/
 tests/
 api/
-sqlc/
-sqlc.yaml
 
 # Build artifacts
 bin/

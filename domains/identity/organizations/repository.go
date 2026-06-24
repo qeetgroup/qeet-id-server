@@ -11,10 +11,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/platform/dbutil"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/paging"
-	"github.com/qeetgroup/qeet-id/platform/pgxerr"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/paging"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
 )
 
 type Repository struct {

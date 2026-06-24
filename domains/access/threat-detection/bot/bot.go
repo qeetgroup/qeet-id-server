@@ -22,8 +22,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
 
 // recordFloor is the minimum score worth logging: clean human clients score 0

@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id/platform/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 )
 
 const schemaGroup = "urn:ietf:params:scim:schemas:core:2.0:Group"

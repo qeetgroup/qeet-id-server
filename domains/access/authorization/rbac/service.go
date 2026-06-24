@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 )
 
 // Service wraps the Repository so each mutation owns its transaction and writes

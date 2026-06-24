@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qeet-id-migrate
+  namespace: qeet-id
+  annotations:
+    # Delete Job after 600s whether it succeeded or failed (keeps namespace clean)
+    ttlSecondsAfterFinished: "600"
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: qeet-id
+      containers:
+        - name: migrate
+          image: ghcr.io/qeetgroup/qeet-id-migrate:latest  # override in overlay
+          imagePullPolicy: IfNotPresent
+          args: ["-database", "$(DB_URL)", "up"]
+          env:
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: qeet-id-secrets
+                  key: DB_URL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

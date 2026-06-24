@@ -33,12 +33,11 @@ qeet-id/
 │   ├── federation/         oidc, saml, scim, ldap, social
 │   ├── developer/          api-keys, service-accounts, credentials/{secrets,vc}, auth-hooks, webhooks, agents
 │   └── operations/         audit, analytics, notifications, email-templates, retention, compliance, billing, siem
-├── platform/               shared infra (db, tokens, httpx, http router/wiring, config, logger, …)
+├── platform/               shared infra by concern: api/ database/ (incl. migrations) cache/ messaging/ events/ observability/ security/ config/
 ├── apps/                   frontend: console (admin, Vite), website (Next.js), login (Next.js) [+ docs/, status/]
 ├── packages/               shared JS config (qeetid-tsconfig, qeetid-eslint)
 ├── sdk/                    SDKs: js/{sdk,nextjs,react}, go, python
-├── api/                    openapi.yaml (OpenAPI 3.x) + postman/ (Newman runner)
-├── migrations/             62 SQL migrations (golang-migrate)   ·   sqlc/  codegen inputs
+├── api/                    openapi/ (5 split OpenAPI 3.1 specs) + postman/ (Newman runner)
 ├── tests/                  Go integration tests (testcontainers)
 ├── deploy/                 Compose (prod), Helm chart, observability, RUNBOOK
 ├── Dockerfile(.migrate)    Distroless app image + migration runner (build context = repo root)
@@ -253,7 +252,7 @@ delivery is wired (log-only fallback when unconfigured).
 - **Architecture & conventions** — [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - **Deploy & operations** — [deploy/RUNBOOK.md](./deploy/RUNBOOK.md)
 - **End-user docs** — standalone `qeet-docs` site (docs.qeet.in)
-- **API spec** — [api/openapi.yaml](./api/openapi.yaml) — 100% route coverage, guarded in CI (a `chi.Walk` test fails the build on any undocumented route)
+- **API spec** — [api/openapi/](./api/openapi/) — 100% route coverage, guarded in CI (a `chi.Walk` test fails the build on any undocumented route)
 - **Postman collection** — [api/postman/qeet-id.postman_collection.json](./api/postman/qeet-id.postman_collection.json)
 
 ---

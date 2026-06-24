@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
 
 // tokenIssuer is the slice of auth.Service this handler needs (mockable).

@@ -18,9 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
-	"github.com/qeetgroup/qeet-id/platform/codes"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
 
 type Provider struct {

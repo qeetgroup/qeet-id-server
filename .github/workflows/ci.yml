@@ -71,6 +71,19 @@ jobs:
       - name: go test
         run: go test -race -count=1 -coverprofile=coverage.out ./...
 
+      - name: Coverage floor
+        # Regression floor only — unit coverage is intentionally modest because
+        # much of the suite is integration (testcontainers, `integration` tag)
+        # and Postman/API, neither counted here. Ratchet COVERAGE_FLOOR up as
+        # unit tests are added to the currently-untested domains.
+        env:
+          COVERAGE_FLOOR: "11.0"
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "total unit coverage: ${total}% (floor: ${COVERAGE_FLOOR}%)"
+          awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN { if (t+0 < f+0) exit 1 }' \
+            || { echo "::error::unit coverage ${total}% is below the ${COVERAGE_FLOOR}% floor"; exit 1; }
+
       - name: go build
         run: go build -o bin/qeet-id ./cmd/server
 
@@ -81,7 +94,7 @@ jobs:
         # Catches missing or non-reversible down migrations before main.
         # We don't reapply after — `migrate-up` already ran in the prior
         # step and proved forward direction works.
-        run: migrate -path migrations -database "$DB_URL" down -all
+        run: migrate -path platform/database/migrations -database "$DB_URL" down -all
 
       - name: Upload coverage artefact
         uses: actions/upload-artifact@v4
@@ -227,7 +240,8 @@ jobs:
         with:
           node-version: 20
       - name: Spectral lint
-        run: npx -y @stoplight/spectral-cli lint api/openapi.yaml
+        # The contract is split into five self-contained specs under api/openapi/.
+        run: npx -y @stoplight/spectral-cli lint "api/openapi/*.yaml"
 
   # ────────────────────────────────────────────────────────────────────
   # Lockfile freshness — catch package.json edits that didn't update

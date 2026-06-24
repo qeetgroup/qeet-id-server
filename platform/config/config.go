@@ -8,7 +8,7 @@ import (
 
 	"github.com/kelseyhightower/envconfig"
 
-	"github.com/qeetgroup/qeet-id/platform/tracing"
+	"github.com/qeetgroup/qeet-id/platform/observability/tracing"
 )
 
 type Config struct {

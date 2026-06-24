@@ -19,7 +19,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
 	"github.com/qeetgroup/qeet-id/domains/federation/oidc"
-	"github.com/qeetgroup/qeet-id/platform/codes"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 )
 
 // =====================================================================
