@@ -54,7 +54,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/base/docker/Dockerfile
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -66,37 +66,12 @@ jobs:
           provenance: mode=max
           cache-from: type=gha
 
-      - name: Metadata (migrate)
-        id: meta_migrate
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/qeet-id-migrate
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-
-      - name: Build & push (migrate)
-        id: build_migrate
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/base/docker/Dockerfile.migrate
-          push: true
-          tags: ${{ steps.meta_migrate.outputs.tags }}
-          labels: ${{ steps.meta_migrate.outputs.labels }}
-          sbom: true
-          provenance: mode=max
-          cache-from: type=gha
-
-      - name: Sign images (keyless)
+      - name: Sign image (keyless)
         env:
           OWNER: ${{ github.repository_owner }}
           APP_DIGEST: ${{ steps.build_app.outputs.digest }}
-          MIGRATE_DIGEST: ${{ steps.build_migrate.outputs.digest }}
         run: |
           cosign sign --yes "ghcr.io/${OWNER}/qeet-id@${APP_DIGEST}"
-          cosign sign --yes "ghcr.io/${OWNER}/qeet-id-migrate@${MIGRATE_DIGEST}"
 
   # ────────────────────────────────────────────────────────────────────
   # SDK publishing — opt-in via repo variable PUBLISH_SDKS=true so releases
@@ -104,7 +79,7 @@ jobs:
   #   npm  -> secret NPM_TOKEN
   #   PyPI -> Trusted Publishing (OIDC) configured for the `qeetid` project
   # The Go SDK lives at module github.com/qeetgroup/qeetid-go (a SEPARATE repo);
-  # publish it by mirroring sdk/go there and tagging vX.Y.Z — see deploy/runbooks/operations.md.
+  # publish it by mirroring sdk/go there and tagging vX.Y.Z — see deploy/prod/operations.md.
   # ────────────────────────────────────────────────────────────────────
   npm:
     name: Publish npm SDKs

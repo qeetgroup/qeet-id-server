@@ -32,7 +32,7 @@ func (l *Limiter) Allow(key string) bool {
 }
 ```
 
-Store errors are logged at ERROR level. An alert rule (`deploy/base/observability/prometheus/alerts.yml`) fires if rate-limit store errors exceed a threshold.
+Store errors are logged at ERROR level. An alert rule (`git history: deploy/base/observability/prometheus/alerts.yml`) fires if rate-limit store errors exceed a threshold.
 
 ## Consequences
 

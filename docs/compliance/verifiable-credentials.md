@@ -106,7 +106,7 @@ Credentials are stored but the VC JWT itself is not re-issued from storage — i
 
 ```json
 {
-  "iss": "https://id.qeet.in",
+  "iss": "https://api.id.qeet.in",
   "sub": "01J...",
   "jti": "01J...",
   "iat": 1750000000,

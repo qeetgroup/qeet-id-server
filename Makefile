@@ -40,7 +40,7 @@ MIGRATIONS_DIR ?= platform/database/migrations
 
 # psql inside the running container
 PG_SERVICE ?= postgres
-COMPOSE     = docker compose -f deploy/environments/dev/docker-compose.yml
+COMPOSE     = docker compose -f deploy/dev/docker-compose.yml
 PSQL_EXEC   = $(COMPOSE) exec -T $(PG_SERVICE) psql -U $(POSTGRES_USER) -d $(POSTGRES_DB) -p $(POSTGRES_PORT)
 
 help:                       ## Show this help
@@ -161,7 +161,7 @@ migrate-down-all:
 	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" down -all
 
 # Postgres is the only containerised service for local dev; the app runs on the
-# host via `make dev-backend`. (The prod-shaped stack lives in deploy/environments/prod/compose.)
+# host via `make dev-backend`. (The prod stack lives in deploy/prod/.)
 db-up:
 	$(COMPOSE) up -d
 

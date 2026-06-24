@@ -119,12 +119,12 @@ func TestCSRF_BearerBypass(t *testing.T) {
 }
 
 func TestCSRF_RefererFallback(t *testing.T) {
-	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://id.qeet.in"}})
+	h := withCSRF(t, CSRFConfig{AllowedOrigins: []string{"https://api.id.qeet.in"}})
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "tok"})
 	req.Header.Set(csrfHeaderName, "tok")
 	// No Origin header, but Referer is present and on the allow-list.
-	req.Header.Set("Referer", "https://id.qeet.in/users")
+	req.Header.Set("Referer", "https://api.id.qeet.in/users")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -134,7 +134,7 @@ func TestCSRF_RefererFallback(t *testing.T) {
 
 func TestCSRF_NormaliseOriginsTrimsSlashAndCases(t *testing.T) {
 	got := normaliseOrigins([]string{
-		"https://id.qeet.in/",
+		"https://api.id.qeet.in/",
 		"  https://Web.Id.Qeet.in   ",
 		"*",
 		"",

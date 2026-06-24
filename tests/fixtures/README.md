@@ -27,7 +27,7 @@ func TestSomething(t *testing.T) {
 
 ## Design notes
 
-- `NewTestDB` uses `testcontainers-go` to spin up `postgres:16-alpine` — same version as `deploy/environments/dev/docker-compose.yml`
+- `NewTestDB` uses `testcontainers-go` to spin up `postgres:16-alpine` — same version as `deploy/dev/docker-compose.yml`
 - Each `TestXxx` gets its own database (via `CREATE DATABASE test_<uuid>`) to avoid cross-test contamination
 - `SeedMinimal` inserts only what every test needs; tests add their own domain-specific data
 - `AdminToken` mints a token with the `platform:admin` scope; `UserToken` mints a member-scoped token

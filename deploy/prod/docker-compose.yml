@@ -1,0 +1,59 @@
+name: qeet-id-prod
+
+# Production: EC2 + Docker Compose + AWS RDS.
+# Postgres is NOT here — DB_URL points to RDS.
+# Migrations run automatically on app startup.
+#
+# Start:   docker compose up -d
+# Logs:    docker compose logs -f app
+# Update:  docker build -t qeet-id:latest /path/to/repo && docker compose up -d app
+# Stop:    docker compose down
+
+services:
+
+  app:
+    image: qeet-id:latest
+    env_file: .env
+    networks: [internal, edge]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4001/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", ""]
+    networks: [internal]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    networks: [edge]
+    restart: unless-stopped
+
+volumes:
+  caddydata:
+  caddyconfig:
+
+networks:
+  internal:
+  edge:

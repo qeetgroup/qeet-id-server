@@ -43,4 +43,4 @@ All mutable tables carry a `tenant_id` column. Queries are always scoped by `ten
 **Negative / watch-outs:**
 - `search_path` must be set correctly for each session or queries must use fully-qualified names (`schema.table`). Qeet ID always uses fully-qualified names in SQL
 - Foreign keys across schemas are possible in PostgreSQL but we intentionally avoid them — a `user.users.id` referenced from `auth.credentials.user_id` is enforced at the application level (interface-mediated) rather than as a DB-level constraint. This is the trade-off for future extractability
-- Six schemas require the migration runner to connect to the right database with permissions to create schemas (handled by `Dockerfile.migrate` running as the owner role)
+- Six schemas require the migration runner to connect to the right database with permissions to create schemas (the app binary handles this at startup via `platform/database/migrations/runner.go`)

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Qeet ID uses Prometheus + Grafana for metrics, OTel for distributed tracing, and structured JSON logs for observability. All observability configuration is in [`deploy/base/observability/`](../../deploy/base/observability/).
+Qeet ID uses Prometheus + Grafana for metrics, OTel for distributed tracing, and structured JSON logs for observability. Observability config (Prometheus scrape rules, Grafana dashboard, OTel collector) is not bundled with the current simple deploy — set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable tracing; metrics are always available at `/metrics`.
 
 ## Prometheus metrics
 
@@ -17,35 +17,19 @@ Exposed at `GET /metrics` (Prometheus scrape format).
 | `http_requests_total` | Counter | Total requests (labels: `method`, `path`, `status`) |
 | `build_info` | Gauge | Version metadata (labels: `version`, `commit`, `go_version`) |
 
-### Kubernetes scraping
+### Prometheus scrape config (EC2 + Docker Compose)
 
-The Helm chart includes a `ServiceMonitor` (`deploy/base/helm/qeet-id/templates/servicemonitor.yaml`) for automatic Prometheus Operator discovery. Ensure Prometheus Operator is installed in the cluster.
-
-Manual scrape config (without Operator):
+Add a scrape job pointing at the host:
 ```yaml
-# deploy/base/observability/prometheus/prometheus.yml
 scrape_configs:
   - job_name: qeet-id
     static_configs:
-      - targets: ['qeet-id-service:4001']
+      - targets: ['<EC2-PRIVATE-IP>:4001']
 ```
 
-## Grafana dashboard
+> Grafana dashboards and Prometheus alert rules are in git history (`deploy/base/observability/`) — restore when you add a monitoring stack.
 
-Dashboard: [`deploy/base/observability/grafana/dashboards/qeet-id.json`](../../deploy/base/observability/grafana/dashboards/qeet-id.json)
-
-Import via Grafana UI: Dashboards → Import → Upload JSON file.
-
-**Key panels:**
-- Request rate (req/s by status code)
-- P50/P95/P99 latency by endpoint
-- Error rate (4xx and 5xx)
-- In-flight requests
-- Rate limit hits (429s)
-
-## Alert rules
-
-Defined in [`deploy/base/observability/prometheus/alerts.yml`](../../deploy/base/observability/prometheus/alerts.yml).
+## Alert rules (recommended thresholds)
 
 | Alert | Condition | Severity |
 |---|---|---|
@@ -60,14 +44,9 @@ Defined in [`deploy/base/observability/prometheus/alerts.yml`](../../deploy/base
 
 Tracing is enabled when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. When unset, tracing is a no-op with zero overhead.
 
-OTel Collector config: [`deploy/base/observability/otel-collector-config.yaml`](../../deploy/base/observability/otel-collector-config.yaml)
-
-To enable in Kubernetes:
-```yaml
-# In environments/prod/values.yaml
-env:
-  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
-  OTEL_SERVICE_NAME: "qeet-id"
+To enable tracing, set in `.env`:
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://your-otel-collector:4318
 ```
 
 Traces are propagated via W3C Trace Context headers (`traceparent`, `tracestate`).
@@ -93,15 +72,10 @@ PII fields (email, display_name, passwords) are never logged — the redacting s
 
 ### Searching logs
 
-Kubernetes:
 ```bash
-kubectl logs -n qeet-id deploy/qeet-id --tail=100 --follow | jq 'select(.status >= 500)'
-kubectl logs -n qeet-id deploy/qeet-id | jq 'select(.request_id == "req_01J...")'
-```
-
-Docker Compose:
-```bash
-docker compose -f deploy/environments/prod/compose/docker-compose.prod.yml logs api --follow --tail=100
+docker compose -f deploy/prod/docker-compose.yml logs app --follow --tail=100
+docker compose -f deploy/prod/docker-compose.yml logs app | jq 'select(.status >= 500)'
+docker compose -f deploy/prod/docker-compose.yml logs app | jq 'select(.request_id == "req_01J...")'
 ```
 
 ## Health probes

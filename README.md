@@ -225,16 +225,25 @@ export function Navbar() {
 
 ## 🚢 Deployment
 
-Ships as a **distroless** container ([Dockerfile](./deploy/base/docker/Dockerfile)); migrations are a separate one-shot image that runs **before** the app. Both build with the repo root as context.
+Ships as a **distroless nonroot** container; migrations run as a separate one-shot image **before** the app starts. Both build with the repo root as context.
 
-| Path | Best for |
+```
+EC2 instance  ←  Caddy (TLS)  ←  qeet-id app  ←  AWS RDS (Postgres 16)
+                                  Redis (rate-limit)
+```
+
+| File | Purpose |
 |:---|:---|
-| 🐳 [Compose (prod-shaped)](./deploy/environments/prod/compose/) | VPS / bare-metal — Caddy TLS + Postgres + Redis |
-| ☸️ [Kubernetes + Helm](./deploy/base/helm/qeet-id/) | Deployment/Service/Ingress/HPA/PDB + migration Job + ExternalSecrets |
-| ☁️ [AWS Terraform](./deploy/base/terraform/) | RDS · ECR · KMS CMK · Secrets Manager |
-| 📈 [Observability](./deploy/base/observability/) | Prometheus · Grafana · OTel Collector |
+| [deploy/prod/docker-compose.yml](./deploy/prod/docker-compose.yml) | Production stack (app + migrate + redis + caddy) |
+| [deploy/prod/.env.example](./deploy/prod/.env.example) | All required env vars with comments |
+| [deploy/prod/Caddyfile](./deploy/prod/Caddyfile) | TLS + reverse proxy config |
+| [deploy/prod/setup.sh](./deploy/prod/setup.sh) | One-shot EC2 bootstrap (Docker install) |
+| [deploy/prod/deploy.md](./deploy/prod/deploy.md) | Step-by-step first-deploy guide (start here) |
+| [deploy/prod/secrets.md](./deploy/prod/secrets.md) | Secret generation commands |
 
-Release images are cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id` (+ `-migrate`). Start with [runbooks/operations.md](./deploy/runbooks/operations.md).
+Release image is cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id`. Migrations run automatically on startup — no separate image needed.
+
+> Kubernetes (Helm), Terraform, and multi-env staging configs are available in git history and tracked in [ROADMAP.md](./ROADMAP.md) for when you're ready to scale.
 
 ---
 

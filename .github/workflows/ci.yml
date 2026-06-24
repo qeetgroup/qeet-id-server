@@ -104,12 +104,12 @@ jobs:
           retention-days: 7
 
   # ────────────────────────────────────────────────────────────────────
-  # Container images: always build (proves the Dockerfiles still work); on
-  # push to main/develop, also push app + migrate images to GHCR with branch
-  # and SHA tags. Release-tag builds (semver) + signing/SBOM live in release.yml.
+  # Container image: always build (proves the Dockerfile still works); on
+  # push to main/develop, also push to GHCR with branch and SHA tags.
+  # Release-tag builds (semver) + signing/SBOM live in release.yml.
   # ────────────────────────────────────────────────────────────────────
   backend-image:
-    name: Backend images
+    name: Backend image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -145,7 +145,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: deploy/base/docker/Dockerfile
+          file: Dockerfile
           push: ${{ env.PUSH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -153,26 +153,6 @@ jobs:
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             BUILD_DATE=${{ steps.date.outputs.date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Metadata (migrate)
-        id: meta-migrate
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/qeet-id-migrate
-          tags: |
-            type=ref,event=branch
-            type=sha,format=long
-
-      - name: Build & push (migrate)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/base/docker/Dockerfile.migrate
-          push: ${{ env.PUSH == 'true' }}
-          tags: ${{ steps.meta-migrate.outputs.tags }}
-          labels: ${{ steps.meta-migrate.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -2,154 +2,114 @@
 
 ## Overview
 
-Qeet ID supports two deployment paths:
+Qeet ID deploys as a **single Go binary** in a Docker container, with PostgreSQL (AWS RDS) as the primary datastore and Redis for rate limiting. TLS is handled by Caddy (Let's Encrypt, automatic certificate renewal).
 
-| Path | When to use | Config |
-|---|---|---|
-| **Helm (Kubernetes)** | Production, staging | `deploy/base/helm/qeet-id/` |
-| **Docker Compose** | Single-server, local dev | `deploy/environments/prod/compose/docker-compose.prod.yml` |
+Current production topology: **EC2 + Docker Compose + AWS RDS**.
+
+```
+Internet
+   │  443 / 80
+   ▼
+EC2 instance
+   ├── Caddy         (TLS termination, reverse proxy)  ← ports 80 + 443
+   ├── qeet-id app   (Go binary, distroless container)  ← :4001, internal only
+   └── Redis         (rate limiting, ephemeral)         ← :6379, internal only
+
+AWS RDS (PostgreSQL 16)   ← accessible only from EC2 security group
+```
 
 ---
 
-## Kubernetes (Helm)
+## Docker Compose stack
 
-Chart location: [`deploy/base/helm/qeet-id/`](../../deploy/base/helm/qeet-id/)
+Config: [`deploy/prod/docker-compose.yml`](../../deploy/prod/docker-compose.yml)
 
-### Chart templates
+| Service | Image | Purpose |
+|:--------|:------|:--------|
+| `app` | `qeet-id:latest` | Go API server — runs migrations on startup then serves |
+| `redis` | `redis:7-alpine` | Rate limiting (ephemeral — no backup needed) |
+| `caddy` | `caddy:2-alpine` | TLS termination + reverse proxy |
 
-| Template | Purpose |
-|---|---|
-| `deployment.yaml` | Go API server (single container, `go-qeet-id` image) |
-| `migration-job.yaml` | Init-style Kubernetes Job that runs `golang-migrate up` before rollout |
-| `service.yaml` | ClusterIP service exposing port 4001 |
-| `ingress.yaml` | Ingress with TLS termination (cert-manager ready) |
-| `hpa.yaml` | Horizontal Pod Autoscaler (CPU + memory metrics) |
-| `pdb.yaml` | Pod Disruption Budget (min 1 replica available) |
-| `serviceaccount.yaml` | Service account for workload identity |
-| `configmap.yaml` | Non-secret environment variables |
-| `externalsecret.yaml` | External Secrets Operator integration (fetches from AWS Secrets Manager / Vault) |
-| `servicemonitor.yaml` | Prometheus `ServiceMonitor` for automatic scraping of `/metrics` |
+Startup order: `redis` healthy → `app` starts (runs `migrate up` then listens) → `caddy` begins routing.
 
-### Deploy workflow
+Migrations run automatically inside the app binary at startup using the embedded SQL files (`//go:embed *.sql` in `platform/database/migrations/runner.go`). They are a no-op when already up-to-date.
+
+### Deploy / upgrade
 
 ```bash
-# Deploy / upgrade
-helm upgrade --install qeet-id deploy/base/helm/qeet-id/ \
-  -f deploy/environments/prod/values.yaml \
-  --set image.tag=<git-sha>
+cd /opt/qeet-id-src
+git pull
+docker build -f Dockerfile -t qeet-id:latest .
 
-# Rollback
-helm rollback qeet-id <revision>
-
-# Check status
-helm status qeet-id
-kubectl get pods -l app.kubernetes.io/name=qeet-id
+cd /opt/qeet-id
+docker compose up -d --no-deps app   # migrations run automatically on restart
 ```
 
-The migration Job runs as a Helm hook (`pre-upgrade`, `pre-install`) — it completes before the new Deployment rollout starts.
-
-### Required secrets
-
-| Secret key | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SIGNING_KEY` | EC P-256 private key (PEM or base64) |
-| `JWT_SECRET` | Legacy HMAC secret (kept for session validation) |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Email delivery |
-| `SAML_SIGNING_KEY`, `SAML_SIGNING_CERT` | SAML IdP signing keypair |
-| `CSRF_KEY` | 32-byte HMAC key for CSRF token signing |
-| `AWS_KMS_KEY_ARN` | (Optional) AWS KMS key for secrets vault |
-
-### Values files
-
-| File | Environment |
-|---|---|
-| `values.yaml` | Defaults (safe for review; no secrets) |
-| `environments/stage/values.yaml` | Staging overrides (reduced replicas, staging domain) |
-| `environments/prod/values.yaml` | Production overrides (HPA enabled, prod domain, resource limits) |
-
----
-
-## Docker Compose (production single-server)
-
-Config: [`deploy/environments/prod/compose/docker-compose.prod.yml`](../../deploy/environments/prod/compose/docker-compose.prod.yml)
-
-Services:
-- `api` — the Go server
-- `migrate` — runs migrations on startup, then exits
-- `caddy` — Caddy reverse proxy (TLS termination, HTTPS redirect)
-- `postgres` — (optional; typically external managed DB in prod)
-
-Secrets are loaded from `deploy/environments/prod/compose/secrets/` via Docker secrets.
+### Rollback
 
 ```bash
-cd deploy/environments/prod/compose
-docker compose -f docker-compose.prod.yml up -d
+cd /opt/qeet-id-src
+git checkout vX.Y.Z
+docker build -f Dockerfile -t qeet-id:latest .
+
+cd /opt/qeet-id
+docker compose up -d --no-deps app
 ```
+
+> ⚠️ Never roll back a migration. If a migration has a bug, write a new one to fix it forward.
 
 ---
 
-## Build and image
+## Images
 
-The Docker build context is the **repo root** (single Go module). The API image is built from the root `Dockerfile`:
+One image. The Docker build context is the **repo root**:
 
 ```bash
-docker build -t go-qeet-id:<tag> .
+docker build -f Dockerfile -t qeet-id:latest .
 ```
 
-Build metadata (version, commit SHA, Go version) is stamped via `-ldflags` into `platform/observability/buildinfo` at build time and surfaced on `/healthz` and the `build_info` Prometheus metric.
+| Image | Base | Notes |
+|:------|:-----|:------|
+| `qeet-id` | `gcr.io/distroless/static-debian12:nonroot` | No shell, nonroot user (65532), readonly FS; migrations embedded |
 
-The migration image is built from `Dockerfile.migrate` (copies only `migrations/`).
-
----
-
-## Observability stack
-
-Config: [`deploy/base/observability/`](../../deploy/base/observability/)
-
-```
-Go API  ──OTLP──►  OTel Collector  ──►  Prometheus / Tempo
-                       │
-                       └──►  Prometheus scrape ──►  Grafana
-
-/metrics  ──────────────────────────────►  Prometheus (also scraped directly)
-```
-
-| Component | Config file |
-|---|---|
-| OTel Collector | `deploy/base/observability/otel-collector-config.yaml` |
-| Prometheus | `deploy/base/observability/prometheus/prometheus.yml` |
-| Prometheus alerts | `deploy/base/observability/prometheus/alerts.yml` |
-| Grafana dashboard | `deploy/base/observability/grafana/dashboards/qeet-id.json` |
-
-**Tracing:** Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable; no-op (zero overhead) when unset.
-
-**Key Prometheus metrics:**
-- `http_request_duration_seconds` — per-route latency histogram
-- `http_requests_in_flight` — current concurrent request count
-- `build_info` — version + commit labels
+Build metadata (version, commit SHA, Go version) is stamped via `-ldflags` into `platform/observability/buildinfo`.
 
 ---
 
 ## Health probes
 
-| Probe | Endpoint | What it checks |
-|---|---|---|
+| Probe | Endpoint | Checks |
+|:------|:---------|:-------|
 | Liveness | `GET /healthz` | Process alive; returns build info JSON |
-| Readiness | `GET /readyz` | Alive + `pgxpool.Ping()` succeeds |
-
-Kubernetes uses `/readyz` for readiness; traffic is held until the DB connection is confirmed. `/healthz` returns immediately (never fails unless the process is dead).
+| Readiness | `GET /readyz` | Alive + `pgxpool.Ping()` + Redis ping |
 
 ---
 
 ## Frontend deployment
 
-The three frontend apps are **separate build artifacts**:
+The three frontend apps are separate build artifacts deployed independently:
 
-| App | Build output | Served by |
-|---|---|---|
-| `@qeetid/admin` (console) | `apps/console/dist/` | Static CDN or Nginx sidecar |
-| `@qeetid/web` (website) | Next.js SSR | Vercel or Node.js container |
-| `@qeetid/login` (hosted login) | Next.js SSR | Vercel or Node.js container |
+| App | Build output | Recommended hosting |
+|:----|:-------------|:--------------------|
+| `@qeetid/admin` (console) | `apps/console/dist/` (Vite SPA) | S3 + CloudFront, or Nginx on the same EC2 |
+| `@qeetid/login` (hosted login) | Next.js SSR | Vercel, or Node container |
+| `@qeetid/web` (website) | Next.js SSR | Vercel, or Node container |
 
-Frontend builds: `pnpm build` (Turborepo runs all three in parallel with shared cache). Node ≥ 20.9 required (`nvm use v22.20.0`).
+Frontend builds: `pnpm build` (Turborepo runs all three in parallel). Node ≥ 20.9 required (`nvm use v22.20.0`).
+
+---
+
+## Observability
+
+The Go API exposes:
+- `GET /metrics` — Prometheus-compatible metrics
+- `GET /healthz` — liveness
+- `GET /readyz` — readiness (DB + Redis)
+- Structured JSON logs to stdout
+- Optional OTel tracing: set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable (no-op when unset)
+
+---
+
+## Upgrade path
+
+When ready to scale beyond a single server, Kubernetes (Helm) manifests, Terraform AWS modules, and a multi-environment staging setup are available in git history. See [ROADMAP.md](../../ROADMAP.md).

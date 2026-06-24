@@ -89,7 +89,7 @@ If the bucket has ≥ 1 token, the request is allowed and 1 token is consumed. I
 Rate limit hits are observable via:
 - Server access log: `"status":429` lines
 - Prometheus metric: `http_requests_total{status="429"}` — breakable by path
-- Alert rule in `deploy/base/observability/prometheus/alerts.yml`: fires when 429 rate exceeds threshold over 5 minutes
+- Alert rule in `git history: deploy/base/observability/prometheus/alerts.yml`: fires when 429 rate exceeds threshold over 5 minutes
 
 ## Redis considerations
 

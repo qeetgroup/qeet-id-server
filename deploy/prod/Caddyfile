@@ -1,0 +1,25 @@
+(common) {
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+    # Block direct access to metrics — scrape from inside the network only
+    @metrics path /metrics
+    respond @metrics 403
+    reverse_proxy app:4001
+}
+
+api.id.qeet.in {
+    import common
+}
+
+auth.id.qeet.in {
+    import common
+}
+
+console.id.qeet.in {
+    import common
+}

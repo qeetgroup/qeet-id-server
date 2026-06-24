@@ -1,7 +1,6 @@
 # Build context is the REPO ROOT (single Go module at root). Keep only what the
-# Go image build needs: go.mod/go.sum + cmd/ domains/ platform/ (the shared
-# Dockerfile.migrate copies platform/database/migrations). Everything else is
-# excluded.
+# Go image build needs: go.mod/go.sum + cmd/ domains/ platform/. Everything else
+# is excluded.
 
 # Git
 .git
@@ -29,7 +28,7 @@ dist/
 *.tsbuildinfo
 
 # Infra / deploy / docs / codegen inputs / tests — not needed to build the binary
-# (platform/database/migrations IS kept: the shared Dockerfile.migrate copies it)
+# (platform/database/migrations IS kept: embedded via //go:embed at compile time)
 deploy/
 docs/
 graphify-out/
@@ -61,8 +60,7 @@ Thumbs.db
 README.md
 CHANGELOG.md
 Makefile
-# (Dockerfiles live under deploy/, already excluded above; they're read via
-#  `-f`, not copied from the context, so no separate ignore is needed.)
+Dockerfile
 
 # CI
 .github/

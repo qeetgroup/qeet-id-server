@@ -8,9 +8,9 @@ Qeet ID issues **ES256 JWTs** (ECDSA P-256, asymmetric). All tokens are signed w
 
 ```json
 {
-  "iss": "https://id.qeet.in",
+  "iss": "https://api.id.qeet.in",
   "sub": "01J...",
-  "aud": ["https://id.qeet.in"],
+  "aud": ["https://api.id.qeet.in"],
   "iat": 1750000000,
   "exp": 1750000900,
   "jti": "01J..."

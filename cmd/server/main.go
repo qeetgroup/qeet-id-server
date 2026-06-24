@@ -62,6 +62,7 @@ import (
 	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
 	"github.com/qeetgroup/qeet-id/platform/config"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres"
+	dbmigrations "github.com/qeetgroup/qeet-id/platform/database/migrations"
 	"github.com/qeetgroup/qeet-id/platform/observability/health"
 	"github.com/qeetgroup/qeet-id/platform/security/hibp"
 	httpapi "github.com/qeetgroup/qeet-id/platform/api/rest"
@@ -140,6 +141,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+
+	slog.Info("running database migrations")
+	if err := dbmigrations.Run(cfg.DBURL); err != nil {
+		slog.Error("migrations failed", "err", err)
+		os.Exit(1)
+	}
 
 	deps, workers := buildDeps(rootCtx, cfg, pool)
 

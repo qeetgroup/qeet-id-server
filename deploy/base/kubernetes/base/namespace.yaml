@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: qeet-id
-  labels:
-    app.kubernetes.io/name: qeet-id

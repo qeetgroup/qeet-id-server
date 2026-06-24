@@ -10,6 +10,18 @@ backlog is distilled by the [`product-manager`](./.claude/agents/product-manager
 
 ---
 
+## 🚢 Deployment (current → future)
+
+**Current:** EC2 + Docker Compose + AWS RDS — see [deploy/prod/deploy.md](./deploy/prod/deploy.md).
+
+**Future (in git history, restore when ready):**
+- 🟡 **Kubernetes + Helm** — chart with Deployment/Service/Ingress/HPA/PDB + pre-upgrade migration Job + ExternalSecrets; per-env `values.yaml` for stage + prod
+- 🟡 **AWS Terraform** — RDS, ECR, KMS CMK, Secrets Manager; root module + per-env `tfvars`
+- 🟢 **Multi-env staging** — `environments/stage/` overlay; promote dev → stage → prod pipeline
+- 🟢 **Observability stack** — Prometheus scrape rules, Grafana dashboard, OTel Collector config
+
+---
+
 ## ✅ Shipped — available today
 
 ### 🔑 Authentication & sessions
@@ -114,8 +126,8 @@ Placeholder directories were removed so the tree only contains real code; the in
 | `platform/messaging/kafka` | Kafka producer/consumer wrappers | For cross-service streaming. |
 | `platform/messaging/nats` | NATS JetStream wrappers | Lightweight alternative to Kafka. |
 | `platform/messaging/queues` | Generic async job queue | DB-backed (outbox) or in-process. |
-| `platform/observability/alerts` | Prometheus alert-rule generation | Runtime rules live in `deploy/base/observability/`. |
-| `platform/observability/dashboards` | Grafana dashboard generation | Runtime dashboards in `deploy/base/observability/`. |
+| `platform/observability/alerts` | Prometheus alert-rule generation | Runtime rules in git history (deploy/base/observability/). |
+| `platform/observability/dashboards` | Grafana dashboard generation | Runtime dashboards in git history (deploy/base/observability/). |
 | `platform/scheduler` | Cron-style maintenance scheduler | Session cleanup, retention purge, outbox sweep. |
 | `platform/security/kms` | AWS KMS / envelope-encryption client | Used when `SECRETS_PROVIDER=aws-kms` (powers KMS BYOK above). |
 | `platform/security/secrets` | Promoted per-tenant vault client | Real impl today: `domains/developer/credentials/secrets`. |

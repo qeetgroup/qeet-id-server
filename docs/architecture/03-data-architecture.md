@@ -35,7 +35,7 @@ Migrations live in [`platform/database/migrations/`](../../platform/database/mig
 **Rules:**
 - Never edit an applied migration. Add a new pair instead.
 - Migrations are sequential (0001–0062 as of pre-1.0).
-- The production migration image is [`Dockerfile.migrate`](../../deploy/base/docker/Dockerfile.migrate) — it copies `platform/database/migrations/` and runs `golang-migrate up` as a Kubernetes Job (see [`deploy/base/helm/qeet-id/templates/migration-job.yaml`](../../deploy/base/helm/qeet-id/templates/migration-job.yaml)).
+- Migrations run automatically on app startup: `platform/database/migrations/runner.go` embeds all SQL files with `//go:embed *.sql` and calls `migrate.Up()` before the HTTP server starts. This is a no-op when already up-to-date, and fails fast (preventing startup) if a migration errors.
 
 Apply locally:
 ```bash
