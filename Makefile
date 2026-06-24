@@ -88,7 +88,7 @@ dev-example-react:          ## Run the React SPA example only (:3020, see exampl
 	$(PNPM) --filter @qeetid/example-react dev
 
 # ── Build ───────────────────────────────────────────────────────────────────
-build: build-backend build-frontend  ## Build backend + all frontend apps
+build: build-backend        ## Build the backend binary
 
 build-backend:              ## Build the backend binary
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id ./cmd/server
@@ -102,8 +102,8 @@ build-scheduler:            ## Build the scheduler binary
 build-migrate:              ## Build the migration runner binary
 	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id-migrate ./cmd/migrate
 
-build-frontend:             ## Build all frontend apps
-	$(PNPM) build
+build-frontend:             ## Build the 3 frontend apps (admin, login, web) — excludes examples
+	$(PNPM) turbo build --filter=@qeetid/admin --filter=@qeetid/login --filter=@qeetid/web
 
 # ── Test ────────────────────────────────────────────────────────────────────
 test: test-backend test-frontend  ## Run all tests
