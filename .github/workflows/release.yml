@@ -54,7 +54,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: deploy/base/docker/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -81,7 +81,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.migrate
+          file: deploy/base/docker/Dockerfile.migrate
           push: true
           tags: ${{ steps.meta_migrate.outputs.tags }}
           labels: ${{ steps.meta_migrate.outputs.labels }}
@@ -104,7 +104,7 @@ jobs:
   #   npm  -> secret NPM_TOKEN
   #   PyPI -> Trusted Publishing (OIDC) configured for the `qeetid` project
   # The Go SDK lives at module github.com/qeetgroup/qeetid-go (a SEPARATE repo);
-  # publish it by mirroring sdk/go there and tagging vX.Y.Z — see deploy/RUNBOOK.md.
+  # publish it by mirroring sdk/go there and tagging vX.Y.Z — see deploy/runbooks/operations.md.
   # ────────────────────────────────────────────────────────────────────
   npm:
     name: Publish npm SDKs

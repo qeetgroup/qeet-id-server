@@ -50,7 +50,7 @@ Manager via External Secrets Operator, the prod default).
 
 ### Staging (Docker Compose)
 ```bash
-cd deploy/compose
+cd deploy/environments/prod/compose
 cp .env.prod.example .env.prod                 # fill non-secret config
 export JWT_SECRET=… JWT_SIGNING_KEY="$(cat signing.pem)" SECRETS_KEY=… \
        SAML_IDP_KEY="$(cat idp.key)" SAML_IDP_CERT="$(cat idp.crt)" POSTGRES_PASSWORD=…
@@ -62,9 +62,9 @@ The `migrate` one-shot applies schema before `backend` starts.
 
 ### Production (Helm)
 ```bash
-helm upgrade --install qeet-id deploy/helm/qeet-id \
+helm upgrade --install qeet-id deploy/base/helm/qeet-id \
   -n qeet-id --create-namespace \
-  -f deploy/helm/qeet-id/values-prod.yaml \
+  -f deploy/environments/prod/values.yaml \
   --set image.tag=X.Y.Z --set migrate.image.tag=X.Y.Z
 kubectl -n qeet-id rollout status deploy/qeet-id
 ```
@@ -123,7 +123,7 @@ Rotate `SAML_IDP_KEY`/`SAML_IDP_CERT` before expiry and re-publish IdP metadata 
 
 ## Incident response
 
-1. **Triage** with the Grafana dashboard + alerts (`deploy/observability/`): error rate, p99
+1. **Triage** with the Grafana dashboard + alerts (`deploy/base/observability/`): error rate, p99
    latency, target down, goroutines.
 2. **App won't boot** → `config.Validate()` failure; the log names the exact invariant. Fix the
    env/secret and redeploy.

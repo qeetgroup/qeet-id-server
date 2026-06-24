@@ -6,14 +6,14 @@ Qeet ID supports two deployment paths:
 
 | Path | When to use | Config |
 |---|---|---|
-| **Helm (Kubernetes)** | Production, staging | `deploy/helm/qeet-id/` |
-| **Docker Compose** | Single-server, local dev | `deploy/compose/docker-compose.prod.yml` |
+| **Helm (Kubernetes)** | Production, staging | `deploy/base/helm/qeet-id/` |
+| **Docker Compose** | Single-server, local dev | `deploy/environments/prod/compose/docker-compose.prod.yml` |
 
 ---
 
 ## Kubernetes (Helm)
 
-Chart location: [`deploy/helm/qeet-id/`](../../deploy/helm/qeet-id/)
+Chart location: [`deploy/base/helm/qeet-id/`](../../deploy/base/helm/qeet-id/)
 
 ### Chart templates
 
@@ -34,8 +34,8 @@ Chart location: [`deploy/helm/qeet-id/`](../../deploy/helm/qeet-id/)
 
 ```bash
 # Deploy / upgrade
-helm upgrade --install qeet-id deploy/helm/qeet-id/ \
-  -f deploy/helm/qeet-id/values-prod.yaml \
+helm upgrade --install qeet-id deploy/base/helm/qeet-id/ \
+  -f deploy/environments/prod/values.yaml \
   --set image.tag=<git-sha>
 
 # Rollback
@@ -65,14 +65,14 @@ The migration Job runs as a Helm hook (`pre-upgrade`, `pre-install`) — it comp
 | File | Environment |
 |---|---|
 | `values.yaml` | Defaults (safe for review; no secrets) |
-| `values-staging.yaml` | Staging overrides (reduced replicas, staging domain) |
-| `values-prod.yaml` | Production overrides (HPA enabled, prod domain, resource limits) |
+| `environments/stage/values.yaml` | Staging overrides (reduced replicas, staging domain) |
+| `environments/prod/values.yaml` | Production overrides (HPA enabled, prod domain, resource limits) |
 
 ---
 
 ## Docker Compose (production single-server)
 
-Config: [`deploy/compose/docker-compose.prod.yml`](../../deploy/compose/docker-compose.prod.yml)
+Config: [`deploy/environments/prod/compose/docker-compose.prod.yml`](../../deploy/environments/prod/compose/docker-compose.prod.yml)
 
 Services:
 - `api` — the Go server
@@ -80,10 +80,10 @@ Services:
 - `caddy` — Caddy reverse proxy (TLS termination, HTTPS redirect)
 - `postgres` — (optional; typically external managed DB in prod)
 
-Secrets are loaded from `deploy/compose/secrets/` via Docker secrets.
+Secrets are loaded from `deploy/environments/prod/compose/secrets/` via Docker secrets.
 
 ```bash
-cd deploy/compose
+cd deploy/environments/prod/compose
 docker compose -f docker-compose.prod.yml up -d
 ```
 
@@ -105,7 +105,7 @@ The migration image is built from `Dockerfile.migrate` (copies only `migrations/
 
 ## Observability stack
 
-Config: [`deploy/observability/`](../../deploy/observability/)
+Config: [`deploy/base/observability/`](../../deploy/base/observability/)
 
 ```
 Go API  ──OTLP──►  OTel Collector  ──►  Prometheus / Tempo
@@ -117,10 +117,10 @@ Go API  ──OTLP──►  OTel Collector  ──►  Prometheus / Tempo
 
 | Component | Config file |
 |---|---|
-| OTel Collector | `deploy/observability/otel-collector-config.yaml` |
-| Prometheus | `deploy/observability/prometheus/prometheus.yml` |
-| Prometheus alerts | `deploy/observability/prometheus/alerts.yml` |
-| Grafana dashboard | `deploy/observability/grafana/dashboards/qeet-id.json` |
+| OTel Collector | `deploy/base/observability/otel-collector-config.yaml` |
+| Prometheus | `deploy/base/observability/prometheus/prometheus.yml` |
+| Prometheus alerts | `deploy/base/observability/prometheus/alerts.yml` |
+| Grafana dashboard | `deploy/base/observability/grafana/dashboards/qeet-id.json` |
 
 **Tracing:** Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable; no-op (zero overhead) when unset.
 

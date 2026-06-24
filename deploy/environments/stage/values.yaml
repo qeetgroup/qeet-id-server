@@ -1,5 +1,5 @@
-# Staging overrides. Apply with: helm upgrade --install qeet-id ./deploy/helm/qeet-id \
-#   -n qeet-id-staging -f deploy/helm/qeet-id/values-staging.yaml
+# Staging overrides. Apply with: helm upgrade --install qeet-id ./deploy/base/helm/qeet-id \
+#   -n qeet-id-staging -f deploy/environments/stage/values.yaml
 replicaCount: 1
 
 autoscaling:

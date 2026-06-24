@@ -66,8 +66,8 @@ services:
   migrate:
     image: *migrate_image
     build:
-      context: ../..
-      dockerfile: Dockerfile.migrate
+      context: ../../../..
+      dockerfile: deploy/base/docker/Dockerfile.migrate
     command: ["-database", *db_url, "up"]
     depends_on:
       postgres:
@@ -78,8 +78,8 @@ services:
   backend:
     image: *backend_image
     build:
-      context: ../..
-      dockerfile: Dockerfile
+      context: ../../../..
+      dockerfile: deploy/base/docker/Dockerfile
       args:
         VERSION: ${QEETID_VERSION:-dev}
         COMMIT: ${QEETID_COMMIT:-none}

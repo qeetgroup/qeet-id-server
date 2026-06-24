@@ -3,8 +3,8 @@
 #
 # Project name encodes the environment (qeet-id-dev) so containers/network/volume
 # all carry the `qeet-id-dev_` prefix. The prod-shaped stack uses qeet-id-prod
-# (see deploy/compose/docker-compose.prod.yml) with the same `pgdata` key, so
-# dev and prod never share a volume.
+# (see deploy/environments/prod/compose/docker-compose.prod.yml) with the same
+# `pgdata` key, so dev and prod never share a volume.
 name: qeet-id-dev
 
 services:

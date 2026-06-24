@@ -2,7 +2,7 @@
 
 ## Overview
 
-Qeet ID uses Prometheus + Grafana for metrics, OTel for distributed tracing, and structured JSON logs for observability. All observability configuration is in [`deploy/observability/`](../../deploy/observability/).
+Qeet ID uses Prometheus + Grafana for metrics, OTel for distributed tracing, and structured JSON logs for observability. All observability configuration is in [`deploy/base/observability/`](../../deploy/base/observability/).
 
 ## Prometheus metrics
 
@@ -19,11 +19,11 @@ Exposed at `GET /metrics` (Prometheus scrape format).
 
 ### Kubernetes scraping
 
-The Helm chart includes a `ServiceMonitor` (`deploy/helm/qeet-id/templates/servicemonitor.yaml`) for automatic Prometheus Operator discovery. Ensure Prometheus Operator is installed in the cluster.
+The Helm chart includes a `ServiceMonitor` (`deploy/base/helm/qeet-id/templates/servicemonitor.yaml`) for automatic Prometheus Operator discovery. Ensure Prometheus Operator is installed in the cluster.
 
 Manual scrape config (without Operator):
 ```yaml
-# deploy/observability/prometheus/prometheus.yml
+# deploy/base/observability/prometheus/prometheus.yml
 scrape_configs:
   - job_name: qeet-id
     static_configs:
@@ -32,7 +32,7 @@ scrape_configs:
 
 ## Grafana dashboard
 
-Dashboard: [`deploy/observability/grafana/dashboards/qeet-id.json`](../../deploy/observability/grafana/dashboards/qeet-id.json)
+Dashboard: [`deploy/base/observability/grafana/dashboards/qeet-id.json`](../../deploy/base/observability/grafana/dashboards/qeet-id.json)
 
 Import via Grafana UI: Dashboards → Import → Upload JSON file.
 
@@ -45,7 +45,7 @@ Import via Grafana UI: Dashboards → Import → Upload JSON file.
 
 ## Alert rules
 
-Defined in [`deploy/observability/prometheus/alerts.yml`](../../deploy/observability/prometheus/alerts.yml).
+Defined in [`deploy/base/observability/prometheus/alerts.yml`](../../deploy/base/observability/prometheus/alerts.yml).
 
 | Alert | Condition | Severity |
 |---|---|---|
@@ -60,11 +60,11 @@ Defined in [`deploy/observability/prometheus/alerts.yml`](../../deploy/observabi
 
 Tracing is enabled when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. When unset, tracing is a no-op with zero overhead.
 
-OTel Collector config: [`deploy/observability/otel-collector-config.yaml`](../../deploy/observability/otel-collector-config.yaml)
+OTel Collector config: [`deploy/base/observability/otel-collector-config.yaml`](../../deploy/base/observability/otel-collector-config.yaml)
 
 To enable in Kubernetes:
 ```yaml
-# In values-prod.yaml
+# In environments/prod/values.yaml
 env:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
   OTEL_SERVICE_NAME: "qeet-id"
@@ -101,7 +101,7 @@ kubectl logs -n qeet-id deploy/qeet-id | jq 'select(.request_id == "req_01J...")
 
 Docker Compose:
 ```bash
-docker compose -f deploy/compose/docker-compose.prod.yml logs api --follow --tail=100
+docker compose -f deploy/environments/prod/compose/docker-compose.prod.yml logs api --follow --tail=100
 ```
 
 ## Health probes

@@ -103,10 +103,10 @@ qeet-id/
 ├── sdk/                     SDKs: js/{sdk,nextjs,react}, go, python
 ├── api/                    openapi/ (5 bounded-context OpenAPI 3.1 specs) + postman/ (Newman runner)
 ├── tests/                  architecture (fitness) · integration (testcontainers) · e2e · performance · security · fixtures
-├── deploy/                 local · docker · compose · kubernetes · helm · terraform · observability · runbooks
+├── deploy/                 base/ (docker incl. Dockerfiles, helm, kubernetes, terraform, observability)
+│                           + environments/{dev,test,stage,prod} + runbooks
 ├── tools/                  codegen · migration-tools · benchmarks · scripts · openapi-split
 ├── docs/                   architecture · adr · api · security · compliance · onboarding · runbooks
-├── Dockerfile(.migrate)    distroless app image + migration runner (build context = repo root)
 ├── Makefile                root targets for the Go module + pnpm workspace
 └── ROADMAP.md              planned (not-yet-built) packages & surfaces
 ```
@@ -134,7 +134,7 @@ make install              # go mod tidy + pnpm install
 
 ```bash
 cp .env.example .env       # adjust if needed
-make db-up                 # Postgres on :5001 (deploy/local/docker-compose.yml)
+make db-up                 # Postgres on :5001 (deploy/environments/dev/docker-compose.yml)
 make migrate-up            # apply all migrations (platform/database/migrations)
 make seed-reset            # (optional) demo workspaces + users to click around
 ```
@@ -160,16 +160,17 @@ Sanity check: `curl http://localhost:4001/healthz`. Full target list: `make help
 
 ## Deployment
 
-The backend ships as a **distroless** container ([Dockerfile](./Dockerfile)); migrations ship as a separate one-shot image ([Dockerfile.migrate](./Dockerfile.migrate)). Pick the path that fits your target:
+The backend ships as a **distroless** container ([Dockerfile](./deploy/base/docker/Dockerfile)); migrations ship as a separate one-shot image ([Dockerfile.migrate](./deploy/base/docker/Dockerfile.migrate)). Both build with the **repo root as context** (`docker build -f deploy/base/docker/Dockerfile .`). Pick the path that fits your target:
 
 | Path | Directory | Use |
 | --- | --- | --- |
-| **Local dev** | [deploy/local/](./deploy/local/) | Postgres-only Compose (what `make db-up` uses) |
-| **Single host / staging** | [deploy/compose/](./deploy/compose/) | Hardened Compose: Caddy TLS + Postgres + Redis + migration one-shot |
-| **Kubernetes (kustomize)** | [deploy/kubernetes/](./deploy/kubernetes/) | Raw manifests, `base/` + `overlays/{staging,prod}` |
-| **Kubernetes (Helm)** | [deploy/helm/qeet-id/](./deploy/helm/qeet-id/) | Production chart: Deployment/Service/Ingress/HPA/PDB + pre-upgrade migration Job, External Secrets, ServiceMonitor |
-| **AWS infrastructure** | [deploy/terraform/](./deploy/terraform/) | RDS PostgreSQL, ECR, KMS CMK, Secrets Manager (staging + prod) |
-| **Observability** | [deploy/observability/](./deploy/observability/) | Prometheus scrape + alerts, Grafana dashboard, OTel Collector |
+| **Local dev** | [deploy/environments/dev/](./deploy/environments/dev/) | Postgres-only Compose (what `make db-up` uses) |
+| **Test** | [deploy/environments/test/](./deploy/environments/test/) | Test-DB Compose (CI is the authoritative test env) |
+| **Single host (prod-shaped)** | [deploy/environments/prod/compose/](./deploy/environments/prod/compose/) | Hardened Compose: Caddy TLS + Postgres + Redis + migration one-shot |
+| **Kubernetes (kustomize)** | [base/kubernetes/base/](./deploy/base/kubernetes/base/) + [environments/{stage,prod}/kubernetes/](./deploy/environments/) | Shared base + per-env overlays |
+| **Kubernetes (Helm)** | [base/helm/qeet-id/](./deploy/base/helm/qeet-id/) + [environments/{stage,prod}/values.yaml](./deploy/environments/) | Chart in base/; values per env. Deployment/Service/Ingress/HPA/PDB + migration Job, External Secrets, ServiceMonitor |
+| **AWS infrastructure** | [base/terraform/](./deploy/base/terraform/) + [environments/{stage,prod}/terraform.tfvars](./deploy/environments/) | RDS, ECR, KMS CMK, Secrets Manager; modules in base/, tfvars per env |
+| **Observability** | [deploy/base/observability/](./deploy/base/observability/) | Prometheus scrape + alerts, Grafana dashboard, OTel Collector |
 | **Runbooks** | [deploy/runbooks/](./deploy/runbooks/) | Operations, secrets generation/rotation, scaling, disaster recovery |
 
 Images are published by CI (cosign-signed, with SBOM + provenance): `ghcr.io/qeetgroup/qeet-id` and `ghcr.io/qeetgroup/qeet-id-migrate`. Start with [deploy/runbooks/operations.md](./deploy/runbooks/operations.md).

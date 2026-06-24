@@ -19,8 +19,8 @@ day code lands in it.
 | `platform/messaging/kafka` | Kafka producer/consumer wrappers | For cross-service streaming. |
 | `platform/messaging/nats` | NATS JetStream wrappers | Lightweight alternative to Kafka. |
 | `platform/messaging/queues` | Generic async job queue | DB-backed (outbox) or in-process. |
-| `platform/observability/alerts` | Prometheus alert-rule generation | Runtime rules live in `deploy/observability/`. |
-| `platform/observability/dashboards` | Grafana dashboard generation | Runtime dashboards in `deploy/observability/`. |
+| `platform/observability/alerts` | Prometheus alert-rule generation | Runtime rules live in `deploy/base/observability/`. |
+| `platform/observability/dashboards` | Grafana dashboard generation | Runtime dashboards in `deploy/base/observability/`. |
 | `platform/scheduler` | Cron-style maintenance scheduler | Session cleanup, retention purge, outbox sweep. |
 | `platform/security/kms` | AWS KMS / envelope-encryption client | Used when `SECRETS_PROVIDER=aws-kms`. |
 | `platform/security/secrets` | Promoted per-tenant vault client | Real impl today: `domains/developer/credentials/secrets`. |
