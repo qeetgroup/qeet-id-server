@@ -35,10 +35,6 @@ docs/
 graphify-out/
 tests/
 api/
-sqlc.yaml
-# sqlc codegen inputs (the generated .go stays; the SQL source isn't needed in the image)
-platform/database/sqlc/schema.sql
-platform/database/sqlc/queries/
 
 # Build artifacts
 bin/

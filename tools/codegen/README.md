@@ -6,21 +6,10 @@ Code generation scripts and configurations for Qeet ID.
 
 | Tool | How to run | Output |
 |---|---|---|
-| sqlc | `make sqlc-generate` | `platform/database/sqlc/` |
 | OpenAPI client | `tools/codegen/openapi-gen.sh` | `sdk/js/sdk/src/generated/` |
 | Protobuf / gRPC | `tools/codegen/proto-gen.sh` | `platform/api/grpc/` (planned) |
 
-## sqlc
-
-sqlc generates type-safe Go query code from SQL. Config is at `sqlc.yaml`.
-
-```bash
-# Regenerate after adding queries to platform/database/sqlc/queries/
-make sqlc-generate
-
-# Refresh the schema snapshot after new migrations
-make sqlc-schema
-```
+> Data access is **hand-written SQL via pgx** — there is no sqlc/ORM codegen step (see [ADR-0003](../../docs/adr/0003-postgresql-hand-written-sql.md)).
 
 ## OpenAPI
 

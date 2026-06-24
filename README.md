@@ -38,7 +38,7 @@ qeet-id/
 ├── packages/               shared JS config (qeetid-tsconfig, qeetid-eslint)
 ├── sdk/                    SDKs: js/{sdk,nextjs,react}, go, python
 ├── api/                    openapi/ (5 split OpenAPI 3.1 specs) + postman/ (Newman runner)
-├── migrations/             62 SQL migrations (golang-migrate)   ·   sqlc/  codegen inputs
+├── migrations/             62 SQL migrations (golang-migrate)
 ├── tests/                  Go integration tests (testcontainers)
 ├── deploy/                 Compose (prod), Helm chart, observability, RUNBOOK
 ├── Dockerfile(.migrate)    Distroless app image + migration runner (build context = repo root)

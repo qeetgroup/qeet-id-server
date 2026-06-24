@@ -9,12 +9,12 @@ cmd/        Go entrypoints (server, worker, scheduler, migrate, seed)
 domains/    business logic, grouped by bounded context:
             identity/ access/ federation/ developer/ operations/
 platform/   shared infra, grouped by concern:
-            api/{rest,grpc,openapi}  database/{postgres,migrations,sqlc,repositories}
+            api/{rest,grpc,openapi}  database/{postgres,migrations,repositories}
             cache/  messaging/  events/  observability/  security/  config/ …
 apps/       frontend apps: console (admin), login, website (+ docs/, status/ placeholders)
 packages/   shared JS config (qeetid-tsconfig, qeetid-eslint)
 sdk/        SDKs: js/{sdk,react,nextjs}, go, python
-            platform/database/migrations golang-migrate SQL pairs   api/ openapi/ (5 split specs) + Postman   platform/database/sqlc codegen inputs
+            platform/database/migrations golang-migrate SQL pairs   api/ openapi/ (5 split specs) + Postman
 tests/      Go integration tests        deploy/ Helm + compose + observability        tools/ codegen + scripts + benchmarks
 ```
 
@@ -33,12 +33,11 @@ make test                 # go test ./...  +  frontend turbo test
 make test-backend         # Go only   ·   make test-integration (testcontainers, needs Docker)
 make seed / seed-reset    # demo data
 make migrate-up/down/force V=<n> / migrate-down-all   ·   db-up/db-down/db-reset/db-wipe/db-psql
-make sqlc-generate / sqlc-schema
 make test-api FOLDER=Auth # Postman/Newman against a running backend; scope by folder
 make lint typecheck format   ·   make kill   # free stuck dev-server ports
 ```
 
-All DB/migrate/seed/sqlc targets now live in the **root** Makefile (they used to be in `backend/Makefile`). Single Go test: `go test ./domains/access/authentication/... -run TestName`.
+All DB/migrate/seed targets now live in the **root** Makefile (they used to be in `backend/Makefile`). Single Go test: `go test ./domains/access/authentication/... -run TestName`.
 
 Frontend uses **pnpm@9.15.4** + Turborepo at the repo root (`@qeetid/*` workspace; globs `apps/* packages/* sdk/js/* examples/*`).
 

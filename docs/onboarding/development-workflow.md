@@ -44,10 +44,6 @@ make migrate-up
 make migrate-down   # roll back ONE step (dev only)
 ```
 
-After modifying the schema, regenerate the sqlc schema snapshot if you're using sqlc:
-```bash
-make sqlc-schema
-```
 
 ## Making a frontend change
 

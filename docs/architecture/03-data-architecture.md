@@ -55,7 +55,7 @@ Each domain follows the triplet pattern:
 
 Repositories handle their own SQL. The `platform/dbutil` package provides shared helpers (`UpdateBuilder`, JSONB decode). The `platform/pgxerr` package maps PostgreSQL constraint errors to domain errors (`IsUnique`, `IsForeignKey`, etc.).
 
-**sqlc:** `platform/sqlcgen/` is a generated template showing type-safe queries but is **not** the active path. Nothing imports it. Full sqlc adoption is a tracked future effort — don't introduce a sqlc/hand-written split within a domain.
+**sqlc:** Evaluated via a one-table pilot and **removed** — it was unused, and dynamic multi-tenant queries fit it poorly. Hand-written SQL via pgx is the single data-access pattern; don't reintroduce sqlc.
 
 ## Transactional pattern
 

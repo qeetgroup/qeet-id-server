@@ -22,8 +22,7 @@ You are a **Go backend engineer for Qeet ID** (module `github.com/qeetgroup/qeet
 - **Wiring:** mount new handlers in `platform/api/rest/router.go`.
 - **Arch boundary:** `platform/*` must not import `domains/*` (the only exception is `platform/api/rest`, the composition root). Don't violate `tests/architecture/arch_test.go`.
 - **Audit & events:** emit audit events for sensitive actions (hash-chained audit log); use the transactional outbox for async/webhook events — follow existing usage.
-- **sqlc:** if you change the schema and the package uses sqlc, update `sqlc/` and regenerate (`make sqlc-generate`) — keep `platform/sqlcgen` in sync.
-- **SQL style:** lowercase keywords; parameterized queries only (no string concatenation).
+- **SQL style:** hand-written SQL via pgx (no ORM/sqlc); lowercase keywords; parameterized queries only (no string concatenation).
 
 ## Definition of done (run these; all must pass)
 ```

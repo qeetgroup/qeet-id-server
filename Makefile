@@ -1,7 +1,7 @@
 .PHONY: help env install tidy dev run dev-backend dev-worker dev-scheduler dev-frontend dev-admin dev-web dev-login dev-example dev-example-react \
         build build-backend build-worker build-scheduler build-migrate build-frontend \
         test test-backend test-frontend test-integration test-api test-api-ci \
-        seed seed-reset sqlc-generate sqlc-schema \
+        seed seed-reset \
         migrate-up migrate-down migrate-force migrate-down-all \
         db-up db-down db-reset db-wipe db-psql \
         lint typecheck format \
@@ -35,9 +35,8 @@ POSTGRES_DB   ?= qeet_id
 POSTGRES_PORT ?= 5001
 DB_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
-# Schema migrations + sqlc codegen inputs live under platform/database.
+# Schema migrations live under platform/database.
 MIGRATIONS_DIR ?= platform/database/migrations
-SQLC_DIR       ?= platform/database/sqlc
 
 # psql inside the running container
 PG_SERVICE ?= postgres
@@ -133,14 +132,6 @@ seed:
 
 seed-reset:
 	$(GO) run ./cmd/seed -reset
-
-# sqlc-schema refreshes the schema snapshot sqlc reads (run after new migrations).
-sqlc-schema:
-	$(COMPOSE) exec -T $(PG_SERVICE) pg_dump -U $(POSTGRES_USER) -d $(POSTGRES_DB) --schema-only --no-owner --no-privileges > $(SQLC_DIR)/schema.sql
-
-# sqlc-generate regenerates the type-safe query package from $(SQLC_DIR)/queries.
-sqlc-generate:
-	sqlc generate
 
 # Requires `migrate` CLI from golang-migrate.
 migrate-up:

@@ -30,7 +30,7 @@ Three persistence approaches were evaluated:
 - `platform/pgxerr` maps PostgreSQL constraint errors to domain errors
 - `platform/dbutil` provides shared helpers: `UpdateBuilder` (dynamic SET clauses), `DecodeJSONB`
 
-**sqlc:** `sqlc.yaml` is configured and `platform/sqlcgen/` is a generated template, but **nothing imports it**. Full sqlc adoption is a tracked future effort. Do not introduce a sqlc/hand-written split within a domain.
+**sqlc:** Evaluated via a one-table pilot, then **removed** — nothing imported it, and the platform's many dynamic, multi-tenant queries (optional filters, conditional `WHERE`, keyset pagination) fit sqlc's static-query model poorly. Hand-written SQL via pgx is the single, project-wide data-access pattern; do not reintroduce a sqlc/hand-written split within a domain.
 
 **ORMs:** Rejected. Multi-tenancy requires explicit `tenant_id` on every query. ORMs make it too easy to accidentally issue unscoped queries, and they hide the SQL needed to write and review safe multi-tenant queries.
 
@@ -45,6 +45,6 @@ Three persistence approaches were evaluated:
 **Negative / watch-outs:**
 - More boilerplate than an ORM or sqlc for simple CRUD
 - Dynamic queries (e.g., filter-by-optional-fields) require careful `UpdateBuilder` patterns to avoid SQL injection
-- Schema drift between `sqlc/` inputs and the actual migrations must be managed manually if sqlc is ever adopted
+- Row-scanning is hand-written, so adding a column means updating the SQL, the struct, and the scan together
 
 **Security note:** All queries use parameterized placeholders (`$1`, `$2`). String concatenation into SQL is never used. Dynamic query construction (for UPDATE SET clauses) goes through `platform/dbutil.UpdateBuilder` which only appends safe column names, never raw user input.
