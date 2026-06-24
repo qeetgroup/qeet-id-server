@@ -22,8 +22,6 @@ AWS RDS (PostgreSQL 16)   ← accessible only from EC2 security group
 
 ## Docker Compose stack
 
-Config: [`deploy/prod/docker-compose.yml`](../../deploy/prod/docker-compose.yml)
-
 | Service | Image | Purpose |
 |:--------|:------|:--------|
 | `app` | `qeet-id:latest` | Go API server — runs migrations on startup then serves |

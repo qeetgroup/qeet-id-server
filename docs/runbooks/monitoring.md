@@ -27,7 +27,7 @@ scrape_configs:
       - targets: ['<EC2-PRIVATE-IP>:4001']
 ```
 
-> Grafana dashboards and Prometheus alert rules are in git history (`deploy/base/observability/`) — restore when you add a monitoring stack.
+> Grafana dashboards and Prometheus alert rules are in git history — restore when you add a monitoring stack.
 
 ## Alert rules (recommended thresholds)
 
@@ -73,9 +73,9 @@ PII fields (email, display_name, passwords) are never logged — the redacting s
 ### Searching logs
 
 ```bash
-docker compose -f deploy/prod/docker-compose.yml logs app --follow --tail=100
-docker compose -f deploy/prod/docker-compose.yml logs app | jq 'select(.status >= 500)'
-docker compose -f deploy/prod/docker-compose.yml logs app | jq 'select(.request_id == "req_01J...")'
+docker compose logs app --follow --tail=100
+docker compose logs app | jq 'select(.status >= 500)'
+docker compose logs app | jq 'select(.request_id == "req_01J...")'
 ```
 
 ## Health probes

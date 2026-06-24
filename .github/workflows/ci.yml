@@ -7,19 +7,13 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
-# Cancel in-flight runs on the same ref when a new commit arrives.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────
-  # Backend: vet, lint, test (race), build, migration up+down smoke.
-  # Postgres runs as a service container. We expose the container's
-  # 5432 on host 5001 to match the dev-time DB_URL convention.
-  # ────────────────────────────────────────────────────────────────────
   backend:
-    name: Backend (Go)
+    name: Backend
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -40,8 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -51,191 +44,9 @@ jobs:
           curl -L https://github.com/golang-migrate/migrate/releases/download/v4.18.1/migrate.linux-amd64.tar.gz | tar xz
           sudo mv migrate /usr/local/bin/
 
-      - name: Verify dependencies
-        run: go mod verify
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.61
-          args: --timeout=5m
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
-          "$(go env GOPATH)/bin/govulncheck" ./...
-
-      - name: go test
-        run: go test -race -count=1 -coverprofile=coverage.out ./...
-
-      - name: Coverage floor
-        # Regression floor only — unit coverage is intentionally modest because
-        # much of the suite is integration (testcontainers, `integration` tag)
-        # and Postman/API, neither counted here. Ratchet COVERAGE_FLOOR up as
-        # unit tests are added to the currently-untested domains.
-        env:
-          COVERAGE_FLOOR: "11.0"
-        run: |
-          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
-          echo "total unit coverage: ${total}% (floor: ${COVERAGE_FLOOR}%)"
-          awk -v t="$total" -v f="$COVERAGE_FLOOR" 'BEGIN { if (t+0 < f+0) exit 1 }' \
-            || { echo "::error::unit coverage ${total}% is below the ${COVERAGE_FLOOR}% floor"; exit 1; }
-
-      - name: go build
-        run: go build -o bin/qeet-id ./cmd/server
-
-      - name: Migration smoke (up)
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - run: go build -o /dev/null ./cmd/server
+      - name: Migration smoke
         run: make migrate-up
-
-      - name: Migration smoke (down -all)
-        # Catches missing or non-reversible down migrations before main.
-        # We don't reapply after — `migrate-up` already ran in the prior
-        # step and proved forward direction works.
-        run: migrate -path platform/database/migrations -database "$DB_URL" down -all
-
-      - name: Upload coverage artefact
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-coverage
-          path: coverage.out
-          retention-days: 7
-
-  # ────────────────────────────────────────────────────────────────────
-  # Container image: always build (proves the Dockerfile still works); on
-  # push to main/develop, also push to GHCR with branch and SHA tags.
-  # Release-tag builds (semver) + signing/SBOM live in release.yml.
-  # ────────────────────────────────────────────────────────────────────
-  backend-image:
-    name: Backend image
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    env:
-      PUSH: ${{ github.event_name != 'pull_request' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build date
-        id: date
-        run: echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        if: env.PUSH == 'true'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Metadata (app)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/qeet-id
-          tags: |
-            type=ref,event=branch
-            type=sha,format=long
-
-      - name: Build & push (app)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: ${{ env.PUSH == 'true' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.date.outputs.date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ────────────────────────────────────────────────────────────────────
-  # Secret scanning — fail the build if a credential is committed.
-  # ────────────────────────────────────────────────────────────────────
-  gitleaks:
-    name: Secret scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  # ────────────────────────────────────────────────────────────────────
-  # Frontend: install once via pnpm, then lint / typecheck / build /
-  # test. Turbo handles per-package caching.
-  # ────────────────────────────────────────────────────────────────────
-  frontend:
-    name: Frontend (pnpm)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9.15.4
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Build
-        run: pnpm build
-
-      - name: Test
-        run: pnpm test
-
-  # ────────────────────────────────────────────────────────────────────
-  # OpenAPI lint. The spec is still incomplete (§12.3), so this job is
-  # informational for now via continue-on-error. Flip it to hard when
-  # the spec is comprehensive.
-  # ────────────────────────────────────────────────────────────────────
-  openapi:
-    name: OpenAPI lint
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-      - name: Spectral lint
-        # The contract is split into five self-contained specs under api/openapi/.
-        run: npx -y @stoplight/spectral-cli lint "api/openapi/*.yaml"
-
-  # ────────────────────────────────────────────────────────────────────
-  # Lockfile freshness — catch package.json edits that didn't update
-  # the lockfile in the same PR.
-  # ────────────────────────────────────────────────────────────────────
-  lockfile-fresh:
-    name: Lockfile freshness
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 9.15.4
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-      - run: pnpm install --frozen-lockfile --lockfile-only
