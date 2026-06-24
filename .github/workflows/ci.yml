@@ -81,7 +81,7 @@ jobs:
         # Catches missing or non-reversible down migrations before main.
         # We don't reapply after — `migrate-up` already ran in the prior
         # step and proved forward direction works.
-        run: migrate -path migrations -database "$DB_URL" down -all
+        run: migrate -path platform/database/migrations -database "$DB_URL" down -all
 
       - name: Upload coverage artefact
         uses: actions/upload-artifact@v4
@@ -227,7 +227,8 @@ jobs:
         with:
           node-version: 20
       - name: Spectral lint
-        run: npx -y @stoplight/spectral-cli lint api/openapi.yaml
+        # The contract is split into five self-contained specs under api/openapi/.
+        run: npx -y @stoplight/spectral-cli lint "api/openapi/*.yaml"
 
   # ────────────────────────────────────────────────────────────────────
   # Lockfile freshness — catch package.json edits that didn't update

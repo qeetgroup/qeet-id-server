@@ -20,7 +20,7 @@ Qeet ID is a passkeys-first, multi-tenant identity platform — a self-hostable 
 │                                                                         │
 │  End Users       ─► apps/login  (Next.js, :3004)  ─►  /v1/auth/*       │
 │  Org Admins      ─► apps/console (Vite, :3002)    ─►  /v1/users/*      │
-│  Developers      ─►  api/openapi.yaml              ─►  /v1/api-keys/*   │
+│  Developers      ─►  api/openapi/                  ─►  /v1/api-keys/*   │
 │  Service Accts   ─►  Bearer JWT (client_credentials) ─► /v1/...        │
 │  AI Agents       ─►  POST /v1/agents/token  ─►  ephemeral actor token  │
 │  IdPs / SPs      ─►  /.well-known/*, /saml/*, /scim/v2/...             │
@@ -89,7 +89,7 @@ Each context owns its own PostgreSQL schema. Cross-context calls go through smal
 | Admin console | `http://localhost:3002` |
 | Login app | `http://localhost:3004` |
 | Website | `http://localhost:3001` |
-| OpenAPI spec | `api/openapi.yaml` |
+| OpenAPI specs | `api/openapi/` (5 bounded-context files) |
 | Postman collection | `api/postman/qeet-id.postman_collection.json` |
 
 ## Production domain

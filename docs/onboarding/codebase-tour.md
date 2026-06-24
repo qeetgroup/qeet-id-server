@@ -101,10 +101,11 @@ Migrations are named `NNNN_<name>.{up,down}.sql`. Read the `.up.sql` for the sch
 
 ## Reading the OpenAPI spec
 
-`api/openapi.yaml` is the authoritative API reference. It's large (~222 KB), so use a viewer:
-- **VS Code:** Install the OpenAPI Preview extension
-- **Swagger UI:** `docker run -p 8080:8080 -e SWAGGER_JSON=/api.yaml -v $(pwd)/api/openapi.yaml:/api.yaml swaggerapi/swagger-ui`
-- **Stoplight Studio:** Desktop app that renders the spec with navigation
+`api/openapi/` holds the authoritative API reference as **five bounded-context specs** (`auth`, `management`, `federation`, `developer`, `operations`). To view the whole surface in one place, merge them first:
+- **Merge to one file:** `go run ./tools/openapi-split merge > /tmp/openapi.yaml`
+- **VS Code:** open any of the five files with the OpenAPI Preview extension
+- **Swagger UI:** `docker run -p 8080:8080 -e SWAGGER_JSON=/api.yaml -v /tmp/openapi.yaml:/api.yaml swaggerapi/swagger-ui` (after merging)
+- **Stoplight Studio:** Desktop app that renders the merged spec with navigation
 
 ## Running a single test
 

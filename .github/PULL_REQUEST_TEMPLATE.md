@@ -47,7 +47,7 @@ make typecheck && make lint
 
 ## Documentation updates
 
-- [ ] Updated [api/openapi.yaml](../api/openapi.yaml) for new/changed endpoints
+- [ ] Updated [api/openapi/](../api/openapi/) for new/changed endpoints
 - [ ] Updated [CHANGELOG.md](../CHANGELOG.md) under "Unreleased"
 - [ ] Updated end-user docs in the standalone `qeet-docs` repo if user-facing
 

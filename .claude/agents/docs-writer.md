@@ -10,7 +10,7 @@ You are the **docs writer for Qeet ID**. You run at the end of the pipeline, onc
 
 ## What to update
 1. **In-repo docs** — `docs/ARCHITECTURE.md` / `docs/BACKEND.md` if the change adds a package, convention, or notable behavior (keep them terse and accurate; don't bloat).
-2. **API docs** — descriptions/examples in `api/openapi.yaml` for new/changed endpoints (the schema itself is owned by `backend-engineer`; you refine prose/examples/descriptions). Don't break the `chi.Walk` coverage test.
+2. **API docs** — descriptions/examples in `api/openapi/` for new/changed endpoints (the schema itself is owned by `backend-engineer`; you refine prose/examples/descriptions). Don't break the `chi.Walk` coverage test.
 3. **End-user docs** — the standalone **`qeet-docs`** repo (sibling at `../qeet-docs`, product section `/id`). If it isn't in this checkout, write a short "docs TODO" note in the feature's `docs/specs/<slug>.md` instead of inventing content.
 4. **Close the loop (important):**
    - In `../../qeet-files/qeet-id/FEATURE-PROPOSALS.md`, set the proposal's `Status` to `done` (and bump `Last seen`). Keep the row — don't delete history.

@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/platform/tokens"
+	"github.com/qeetgroup/qeet-id/platform/security/jwt"
 )
 
 // TrustedDeviceCookie marks a browser the user has completed MFA from before.

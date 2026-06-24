@@ -5,14 +5,15 @@
 //
 // Enforced today (see docs/ARCHITECTURE.md → "Enforced dependency rules"):
 //
-//	R1  platform/* (EXCEPT the platform/http composition root) must NOT import
+//	R1  platform/* (EXCEPT the platform/api/rest composition root) must NOT import
 //	    domains/* or cmd/* — platform is infrastructure; it never depends on
-//	    business domains or entrypoints. platform/http is the one wiring
+//	    business domains or entrypoints. platform/api/rest is the one wiring
 //	    exception (it mounts every domain handler and is imported only by cmd).
 //
-//	R2  domains/* must NOT import cmd/* or the platform/http router — domain
-//	    logic sits below wiring and entrypoints. (Importing the platform/httpx
-//	    *utilities* is fine; only the platform/http router is off-limits.)
+//	R2  domains/* must NOT import cmd/* or the platform/api/rest router — domain
+//	    logic sits below wiring and entrypoints. (Importing the platform/api/rest
+//	    sub-packages — middleware, paging, errs, codes — is fine; only the
+//	    platform/api/rest router itself is off-limits.)
 //
 // Intentionally NOT enforced yet (would fail on current code — tighten later,
 // e.g. with go-arch-lint once the graph is curated):
@@ -77,8 +78,11 @@ func rel(importPath string) string {
 }
 
 func underCmd(p string) bool { return p == "cmd" || strings.HasPrefix(p, "cmd/") }
+
+// underRouter matches only the wiring-root package (platform/api/rest), not its
+// utility sub-packages (middleware, paging, errs, codes) which domains may use freely.
 func underRouter(p string) bool {
-	return p == "platform/http" || strings.HasPrefix(p, "platform/http/")
+	return p == "platform/api/rest"
 }
 
 // R1 — platform stays pure infrastructure.
@@ -86,13 +90,13 @@ func TestPlatformDoesNotImportDomainsOrCmd(t *testing.T) {
 	for _, p := range loadPackages(t) {
 		self := rel(p.ImportPath)
 		if !strings.HasPrefix(self, "platform/") || underRouter(self) {
-			continue // not platform-core (platform/http is the allowed wiring exception)
+			continue // not platform-core (platform/api/rest is the allowed wiring exception)
 		}
 		for _, imp := range p.Imports {
 			dep := rel(imp)
 			switch {
 			case strings.HasPrefix(dep, "domains/"):
-				t.Errorf("R1 violation: %s imports %s — platform/* must not depend on domains/* (wiring belongs in platform/http only)", self, dep)
+				t.Errorf("R1 violation: %s imports %s — platform/* must not depend on domains/* (wiring belongs in platform/api/rest only)", self, dep)
 			case underCmd(dep):
 				t.Errorf("R1 violation: %s imports %s — platform/* must not depend on cmd/*", self, dep)
 			}
@@ -113,7 +117,7 @@ func TestDomainsDoNotImportCmdOrRouter(t *testing.T) {
 			case underCmd(dep):
 				t.Errorf("R2 violation: %s imports %s — domains/* must not depend on cmd/*", self, dep)
 			case underRouter(dep):
-				t.Errorf("R2 violation: %s imports %s — domains/* must not depend on the platform/http router (use platform/httpx utilities instead)", self, dep)
+				t.Errorf("R2 violation: %s imports %s — domains/* must not depend on the platform/api/rest router (use platform/api/rest/middleware utilities instead)", self, dep)
 			}
 		}
 	}

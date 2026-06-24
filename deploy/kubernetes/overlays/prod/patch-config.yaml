@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qeet-id-config
+data:
+  APP_BASE_URL: "https://api.id.qeet.in"
+  ALLOWED_ORIGINS: "https://admin.id.qeet.in,https://id.qeet.in"

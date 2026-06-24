@@ -30,7 +30,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
-	"github.com/qeetgroup/qeet-id/platform/codes"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 )
 
 var testPool *pgxpool.Pool
@@ -80,7 +80,8 @@ func run(m *testing.M) int {
 
 func upMigrations() ([]string, error) {
 	_, thisFile, _, _ := runtime.Caller(0)
-	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	// scim is three levels deep (domains/federation/scim) → climb to repo root.
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "platform", "database", "migrations")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err

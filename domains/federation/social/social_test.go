@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id/platform/codes"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 )
 
 // TestCallbackURL_SchemeAndPath builds the public redirect_uri that must match

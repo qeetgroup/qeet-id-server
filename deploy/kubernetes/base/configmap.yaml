@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qeet-id-config
+  namespace: qeet-id
+data:
+  # Non-secret configuration. Secrets must be in a Secret resource (not here).
+  SERVICE_ENV: "production"
+  HTTP_PORT: "4001"
+  LOG_LEVEL: "info"
+  # Override in overlays:
+  # APP_BASE_URL: "https://api.id.qeet.in"
+  # ALLOWED_ORIGINS: "https://admin.id.qeet.in,https://id.qeet.in"

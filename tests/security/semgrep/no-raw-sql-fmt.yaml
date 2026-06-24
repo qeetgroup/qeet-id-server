@@ -1,0 +1,52 @@
+rules:
+  - id: no-raw-sql-fmt
+    patterns:
+      - pattern: fmt.Sprintf("... $SQL ...", ...)
+      - pattern-not: fmt.Sprintf("...", ...) # exclude non-SQL
+    message: |
+      Avoid building SQL queries with fmt.Sprintf — use parameterised queries ($1, $2, ...).
+      See docs/security/cryptography.md for the persistence layer pattern.
+    languages: [go]
+    severity: ERROR
+    paths:
+      include:
+        - domains/
+        - platform/
+
+  - id: no-raw-sql-concat
+    pattern: |
+      $QUERY = $A + $B
+    message: |
+      Possible SQL string concatenation. Use parameterised queries instead.
+    languages: [go]
+    severity: WARNING
+    paths:
+      include:
+        - domains/
+        - platform/
+
+  - id: no-weak-rand
+    patterns:
+      - pattern: math/rand.Int()
+      - pattern: math/rand.Intn(...)
+    message: |
+      Use crypto/rand for security-sensitive randomness, not math/rand.
+    languages: [go]
+    severity: ERROR
+    paths:
+      include:
+        - domains/
+        - platform/
+
+  - id: no-md5-sha1
+    patterns:
+      - pattern: crypto/md5.New()
+      - pattern: crypto/sha1.New()
+    message: |
+      MD5 and SHA-1 are not safe for security-sensitive use. Use SHA-256 or SHA-512.
+    languages: [go]
+    severity: ERROR
+    paths:
+      include:
+        - domains/
+        - platform/

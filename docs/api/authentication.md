@@ -1,6 +1,6 @@
 # Authentication API
 
-This document covers the token-minting endpoints. For the full OpenAPI spec, see [`api/openapi.yaml`](../../api/openapi.yaml).
+This document covers the token-minting endpoints. For the full OpenAPI spec, see [`api/openapi/`](../../api/openapi/).
 
 ## Email + password login
 

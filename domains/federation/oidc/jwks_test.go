@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-id/platform/tokens"
+	"github.com/qeetgroup/qeet-id/platform/security/jwt"
 )
 
 // TestJWKSEndpoint_ServesActivePublicKey proves the provider surface a relying

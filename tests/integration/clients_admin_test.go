@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id/domains/federation/oidc"
-	"github.com/qeetgroup/qeet-id/platform/password"
+	"github.com/qeetgroup/qeet-id/platform/security/encryption"
 )
 
 // beginTx opens a transaction for the service-layer admin mutations (which take

@@ -1,6 +1,6 @@
 # API Overview
 
-Qeet ID exposes a REST API under `/v1` plus protocol-defined paths for OIDC, SAML, and SCIM. The complete machine-readable contract is at [`api/openapi.yaml`](../../api/openapi.yaml) (OpenAPI 3.1.0).
+Qeet ID exposes a REST API under `/v1` plus protocol-defined paths for OIDC, SAML, and SCIM. The complete machine-readable contract is at [`api/openapi/`](../../api/openapi/) (OpenAPI 3.1.0).
 
 ## Base URLs
 
@@ -96,7 +96,7 @@ Error responses: see [errors.md](errors.md).
 
 ## OpenAPI spec and Postman
 
-- **OpenAPI 3.1.0:** [`api/openapi.yaml`](../../api/openapi.yaml)
+- **OpenAPI 3.1.0:** [`api/openapi/`](../../api/openapi/)
 - **Postman collection:** [`api/postman/qeet-id.postman_collection.json`](../../api/postman/qeet-id.postman_collection.json)
 - **Run Postman tests:** `make test-api FOLDER=Auth` (requires running API)
 

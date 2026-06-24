@@ -51,7 +51,7 @@ Or step by step, reviewing each hand-off. Run one feature at a time.
 ## Definition of done
 - `go build ./... && go vet ./... && go test ./...` green
 - `go test -count=1 ./tests/architecture/...` green (arch boundaries)
-- OpenAPI coverage test green (`api/openapi.yaml` documents every route)
+- OpenAPI coverage test green (`api/openapi/` documents every route)
 - `pnpm typecheck && pnpm lint && pnpm test` green (if frontend touched)
 - `make test-integration` green (if Docker available)
 - security-reviewer findings resolved (no open Critical/High)

@@ -16,12 +16,12 @@ import (
 
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/hibp"
-	"github.com/qeetgroup/qeet-id/platform/outbox"
-	"github.com/qeetgroup/qeet-id/platform/password"
-	"github.com/qeetgroup/qeet-id/platform/pgxerr"
-	"github.com/qeetgroup/qeet-id/platform/tokens"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/security/hibp"
+	"github.com/qeetgroup/qeet-id/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id/platform/security/encryption"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id/platform/security/jwt"
 )
 
 type Service struct {

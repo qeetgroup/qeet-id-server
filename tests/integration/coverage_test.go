@@ -21,12 +21,12 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/access/recovery"
 	"github.com/qeetgroup/qeet-id/domains/federation/oidc"
 	"github.com/qeetgroup/qeet-id/domains/identity/verification"
-	"github.com/qeetgroup/qeet-id/platform/codes"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/httpx"
-	"github.com/qeetgroup/qeet-id/platform/notifier"
-	"github.com/qeetgroup/qeet-id/platform/tokens"
-	"github.com/qeetgroup/qeet-id/platform/totp"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/middleware"
+	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/encryption/totp"
 )
 
 // recordSender captures the last notifier message so flows that mail a code

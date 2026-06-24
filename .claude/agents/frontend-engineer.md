@@ -33,5 +33,5 @@ Add/extend component tests (Vitest + Testing Library) for new UI, or hand that t
 ## Guardrails
 - Match the target app's structure and styling conventions exactly; mirror an existing screen/component.
 - If a contract changed, update the SDK (`sdk/js/*`) and the consuming app together so types line up.
-- Don't touch backend code, migrations, or `api/openapi.yaml` — coordinate with `backend-engineer` via the spec.
+- Don't touch backend code, migrations, or `api/openapi/` — coordinate with `backend-engineer` via the spec.
 - Accessibility: keyboard + ARIA on interactive elements (the apps ship a11y-conscious; match them).

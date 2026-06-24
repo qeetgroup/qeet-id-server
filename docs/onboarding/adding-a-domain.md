@@ -158,11 +158,11 @@ func (h *Handler) Mount(r chi.Router) {
 }
 ```
 
-## Step 6: Add routes to `api/openapi.yaml`
+## Step 6: Add routes to `api/openapi/`
 
 **This is mandatory.** CI (`platform/http/openapi_coverage_test.go`) will fail if any mounted route is missing from the spec.
 
-Add path entries to `api/openapi.yaml`:
+Add path entries to `api/openapi/`:
 
 ```yaml
 paths:
@@ -211,7 +211,7 @@ make test-integration
 - [ ] Cross-domain interfaces declared in the consumer package
 - [ ] Service wired in `cmd/server/main.go:buildDeps()`
 - [ ] Handler mounted in `platform/http/router.go`
-- [ ] Routes added to `api/openapi.yaml`
+- [ ] Routes added to `api/openapi/`
 - [ ] OpenAPI coverage test passes
 - [ ] Integration test written
 - [ ] Architecture tests pass (`make test`)

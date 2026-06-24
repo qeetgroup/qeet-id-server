@@ -32,10 +32,10 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/operations/analytics"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/errs"
-	"github.com/qeetgroup/qeet-id/platform/notifier"
-	"github.com/qeetgroup/qeet-id/platform/tokens"
-	"github.com/qeetgroup/qeet-id/platform/totp"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/encryption/totp"
 )
 
 // mustIssuer builds an ES256 token issuer over a freshly-generated key for the

@@ -28,9 +28,9 @@ Bearer JWT and API key can be used interchangeably on most endpoints. RBAC enfor
 
 ## OpenAPI contract
 
-The complete API contract lives at [`api/openapi.yaml`](../../api/openapi.yaml) (OpenAPI 3.1.0, ~222 KB). A Postman collection is at [`api/postman/`](../../api/postman/).
+The complete API contract lives under [`api/openapi/`](../../api/openapi/) — five self-contained, bounded-context OpenAPI 3.1 documents (`auth`, `management`, `federation`, `developer`, `operations`). A Postman collection is at [`api/postman/`](../../api/postman/). Tools that want one document merge them with `go run ./tools/openapi-split merge`.
 
-**Enforcement:** [`platform/http/openapi_coverage_test.go`](../../platform/http/openapi_coverage_test.go) runs in `go test ./...` and fails if any mounted route is absent from `openapi.yaml`. Adding a new route **requires** updating the spec in the same change or CI will block the PR.
+**Enforcement:** [`platform/api/rest/openapi_coverage_test.go`](../../platform/api/rest/openapi_coverage_test.go) runs in `go test ./...` and fails if any mounted route is absent from the specs (it reads the **union** of all five files). Adding a new route **requires** documenting it in the matching file in the same change or CI will block the PR.
 
 ```bash
 make test-api FOLDER=Auth   # run Postman/Newman against a live backend, scoped by folder

@@ -120,7 +120,7 @@ Steps to add a module:
 3. Add domain types, repository, service, and HTTP handlers.
 4. Mount the routes in [platform/http/router.go](./platform/http/router.go).
 5. Add tests next to the code (`*_test.go`).
-6. Update [api/openapi.yaml](./api/openapi.yaml).
+6. Update [api/openapi/](./api/openapi/).
 
 ---
 
@@ -153,7 +153,7 @@ If your change affects:
 
 | Change | Update |
 |---|---|
-| Backend API | [api/openapi.yaml](./api/openapi.yaml) |
+| Backend API | [api/openapi/](./api/openapi/) |
 | Architecture / conventions | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
 | Security posture | [SECURITY.md](./SECURITY.md) |
 | End-user docs | standalone `qeet-docs` repo (docs.qeet.in) |
