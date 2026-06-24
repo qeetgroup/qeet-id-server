@@ -80,7 +80,7 @@ Do not use `http.Error()` for API responses — it emits plain text and breaks t
 
 ## Middleware chain
 
-Request processing order (see [`platform/http/router.go`](../../platform/http/router.go)):
+Request processing order (see [`platform/api/rest/router.go`](../../platform/api/rest/router.go)):
 
 ```
 RequestID → RealIP → Recoverer → InFlight → SecurityHeaders
@@ -109,7 +109,7 @@ Rate limiting is token-bucket (in-process or Redis-backed). Exceeds return `429 
 
 ## Pagination
 
-List endpoints use **opaque keyset cursors** via [`platform/paging`](../../platform/paging/).
+List endpoints use **opaque keyset cursors** via [`platform/api/rest/paging`](../../platform/api/rest/paging/).
 
 **Request:**
 ```

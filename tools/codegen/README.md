@@ -7,7 +7,7 @@ Code generation scripts and configurations for Qeet ID.
 | Tool | How to run | Output |
 |---|---|---|
 | OpenAPI client | `tools/codegen/openapi-gen.sh` | `sdk/js/sdk/src/generated/` |
-| Protobuf / gRPC | `tools/codegen/proto-gen.sh` | `platform/api/grpc/` (planned) |
+| Protobuf / gRPC | _planned_ | see [ROADMAP.md](../../ROADMAP.md) |
 
 > Data access is **hand-written SQL via pgx** — there is no sqlc/ORM codegen step (see [ADR-0003](../../docs/adr/0003-postgresql-hand-written-sql.md)).
 

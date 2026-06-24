@@ -1,6 +1,6 @@
 # Pagination
 
-All list endpoints in Qeet ID use **keyset (cursor-based) pagination** via [`platform/paging`](../../platform/paging/). This provides stable, consistent results even when items are added or removed between pages.
+All list endpoints in Qeet ID use **keyset (cursor-based) pagination** via [`platform/api/rest/paging`](../../platform/api/rest/paging/). This provides stable, consistent results even when items are added or removed between pages.
 
 ## Request parameters
 

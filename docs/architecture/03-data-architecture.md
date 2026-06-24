@@ -26,11 +26,11 @@ WHERE tenant_id = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC;
 ```
 
-The `tenant_id` is extracted from the authenticated principal in `platform/httpx` and flows via `context.Context` through service → repository layers. Repositories **must not** run unscoped queries on tenant-owned tables.
+The `tenant_id` is extracted from the authenticated principal in `platform/api/rest/middleware` and flows via `context.Context` through service → repository layers. Repositories **must not** run unscoped queries on tenant-owned tables.
 
 ## Migration strategy
 
-Migrations live in [`migrations/`](../../migrations/) as golang-migrate SQL pairs (`NNNN_name.up.sql` / `NNNN_name.down.sql`).
+Migrations live in [`platform/database/migrations/`](../../platform/database/migrations/) as golang-migrate SQL pairs (`NNNN_name.up.sql` / `NNNN_name.down.sql`).
 
 **Rules:**
 - Never edit an applied migration. Add a new pair instead.
@@ -53,7 +53,7 @@ Each domain follows the triplet pattern:
 - `repository.go` — `*pgxpool.Pool`-backed persistence
 - `http.go` — HTTP handler and route mounting
 
-Repositories handle their own SQL. The `platform/dbutil` package provides shared helpers (`UpdateBuilder`, JSONB decode). The `platform/pgxerr` package maps PostgreSQL constraint errors to domain errors (`IsUnique`, `IsForeignKey`, etc.).
+Repositories handle their own SQL. The `platform/database/postgres/dbutil` package provides shared helpers (`UpdateBuilder`, JSONB decode). The `platform/database/postgres/pgxerr` package maps PostgreSQL constraint errors to domain errors (`IsUnique`, `IsForeignKey`, etc.).
 
 **sqlc:** Evaluated via a one-table pilot and **removed** — it was unused, and dynamic multi-tenant queries fit it poorly. Hand-written SQL via pgx is the single data-access pattern; don't reintroduce sqlc.
 
@@ -97,8 +97,8 @@ Users and several other entities use soft deletes (`deleted_at IS NULL` filter).
 
 ## JSONB usage
 
-Some columns store structured data as PostgreSQL JSONB (e.g., tenant branding config, auth policy rules, OIDC client metadata). The `platform/dbutil` package provides a shared `DecodeJSONB` helper used across repositories.
+Some columns store structured data as PostgreSQL JSONB (e.g., tenant branding config, auth policy rules, OIDC client metadata). The `platform/database/postgres/dbutil` package provides a shared `DecodeJSONB` helper used across repositories.
 
 ## Connection pool
 
-`platform/db` wraps a `pgxpool.Pool`. Configuration (max connections, idle timeout) comes from environment variables via `platform/config`. The `/readyz` probe issues a `pool.Ping()` to verify database connectivity before reporting healthy.
+`platform/database/postgres` wraps a `pgxpool.Pool`. Configuration (max connections, idle timeout) comes from environment variables via `platform/config`. The `/readyz` probe issues a `pool.Ping()` to verify database connectivity before reporting healthy.

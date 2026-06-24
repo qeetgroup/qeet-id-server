@@ -26,7 +26,7 @@ Three candidates were considered:
 
 Use **ES256 (ECDSA with P-256)** for all JWT signing.
 
-- Private key is held exclusively by `platform/tokens`
+- Private key is held exclusively by `platform/security/jwt`
 - Public key is published at `/jwks.json` for external verification
 - Key ID (`kid`) is the RFC 7638 JWK thumbprint (see ADR-0005)
 - Key pair generation: `crypto/elliptic.P256()` in the Go standard library

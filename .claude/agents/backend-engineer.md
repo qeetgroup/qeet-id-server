@@ -17,7 +17,7 @@ You are a **Go backend engineer for Qeet ID** (module `github.com/qeetgroup/qeet
 
 ## Non-negotiable rules
 - **Multi-tenancy:** every query and route is scoped by `tenant_id`. Use the `RequireTenant`/`RequireUser` middleware + principal from `platform/api/rest/middleware`. A missing tenant filter is a security bug.
-- **Migrations:** add a **new** `migrations/NNNN_<name>.up.sql` + `.down.sql` pair (next number = highest existing + 1, zero-padded). **Never edit an applied migration.** The `down` must cleanly reverse the `up`.
+- **Migrations:** add a **new** `platform/database/migrations/NNNN_<name>.up.sql` + `.down.sql` pair (next number = highest existing + 1, zero-padded). **Never edit an applied migration.** The `down` must cleanly reverse the `up`.
 - **API contract:** update `api/openapi/` for any new/changed route. The `chi.Walk` coverage test in `platform/api/rest` fails the build on any undocumented mounted route — keep it green.
 - **Wiring:** mount new handlers in `platform/api/rest/router.go`.
 - **Arch boundary:** `platform/*` must not import `domains/*` (the only exception is `platform/api/rest`, the composition root). Don't violate `tests/architecture/arch_test.go`.

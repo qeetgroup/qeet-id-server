@@ -40,7 +40,7 @@ Qeet ID is a passkeys-first, multi-tenant identity platform — a self-hostable 
 │                            │ REST / JSON              │                 │
 │  ┌─────────────────────────▼──────────────────────────▼──────────────┐  │
 │  │               Go API  (cmd/server, chi v5, :4001)                 │  │
-│  │   platform/http/router.go — mounts all domain handlers            │  │
+│  │   platform/api/rest/router.go — mounts all domain handlers            │  │
 │  │                                                                    │  │
 │  │  ┌──────────┐  ┌────────┐  ┌───────────┐  ┌──────────────────┐  │  │
 │  │  │ identity │  │ access │  │ federation│  │    developer     │  │  │

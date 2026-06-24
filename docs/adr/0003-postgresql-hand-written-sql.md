@@ -26,9 +26,9 @@ Three persistence approaches were evaluated:
 **Hand-written SQL over pgx v5** is the canonical persistence path.
 
 - Each domain's `repository.go` owns its queries as string constants
-- `platform/db` provides the connection pool (`*pgxpool.Pool`)
-- `platform/pgxerr` maps PostgreSQL constraint errors to domain errors
-- `platform/dbutil` provides shared helpers: `UpdateBuilder` (dynamic SET clauses), `DecodeJSONB`
+- `platform/database/postgres` provides the connection pool (`*pgxpool.Pool`)
+- `platform/database/postgres/pgxerr` maps PostgreSQL constraint errors to domain errors
+- `platform/database/postgres/dbutil` provides shared helpers: `UpdateBuilder` (dynamic SET clauses), `DecodeJSONB`
 
 **sqlc:** Evaluated via a one-table pilot, then **removed** — nothing imported it, and the platform's many dynamic, multi-tenant queries (optional filters, conditional `WHERE`, keyset pagination) fit sqlc's static-query model poorly. Hand-written SQL via pgx is the single, project-wide data-access pattern; do not reintroduce a sqlc/hand-written split within a domain.
 
@@ -47,4 +47,4 @@ Three persistence approaches were evaluated:
 - Dynamic queries (e.g., filter-by-optional-fields) require careful `UpdateBuilder` patterns to avoid SQL injection
 - Row-scanning is hand-written, so adding a column means updating the SQL, the struct, and the scan together
 
-**Security note:** All queries use parameterized placeholders (`$1`, `$2`). String concatenation into SQL is never used. Dynamic query construction (for UPDATE SET clauses) goes through `platform/dbutil.UpdateBuilder` which only appends safe column names, never raw user input.
+**Security note:** All queries use parameterized placeholders (`$1`, `$2`). String concatenation into SQL is never used. Dynamic query construction (for UPDATE SET clauses) goes through `platform/database/postgres/dbutil.UpdateBuilder` which only appends safe column names, never raw user input.

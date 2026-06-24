@@ -8,7 +8,7 @@
 
 ## Context
 
-Qeet ID uses a token-bucket rate limiter (`platform/ratelimit`) that optionally uses Redis as the shared state store. The choice of Redis makes the rate limiter a dependency that can fail.
+Qeet ID uses a token-bucket rate limiter (`platform/cache/redis`) that optionally uses Redis as the shared state store. The choice of Redis makes the rate limiter a dependency that can fail.
 
 Two failure modes were considered:
 
@@ -20,7 +20,7 @@ Two failure modes were considered:
 The rate limiter **fails open** on store errors:
 
 ```go
-// platform/ratelimit/limiter.go
+// platform/cache/redis/limiter.go
 func (l *Limiter) Allow(key string) bool {
     ok, err := l.store.Allow(key, l.rate, l.capacity)
     if err != nil {

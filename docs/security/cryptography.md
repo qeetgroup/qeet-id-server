@@ -3,7 +3,7 @@
 ## JWT signing
 
 **Algorithm:** ES256 (ECDSA with NIST P-256)  
-**Implementation:** `platform/tokens/jwt.go`
+**Implementation:** `platform/security/jwt/jwt.go`
 
 - Private key loaded from `JWT_SIGNING_KEY` environment variable (PEM or base64-encoded DER)
 - Public key published at `/jwks.json`
@@ -15,7 +15,7 @@
 ## Password hashing
 
 **Algorithm:** bcrypt  
-**Implementation:** `platform/password`
+**Implementation:** `platform/security/encryption`
 
 - Default cost factor: 12 (tuned to ~300ms on target hardware)
 - Maximum input length: 72 bytes (bcrypt limitation; passwords longer than 72 bytes are silently truncated — validated and documented)
@@ -25,7 +25,7 @@ Bcrypt is chosen for its adaptive cost factor (can be increased as hardware impr
 
 ## CSRF token generation
 
-**Implementation:** `platform/httpx/csrf.go`
+**Implementation:** `platform/api/rest/middleware/csrf.go`
 
 Token construction:
 ```

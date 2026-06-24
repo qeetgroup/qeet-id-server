@@ -63,7 +63,7 @@ POST /v1/users/:id/force-password-reset
 
 ```bash
 # 1. IMMEDIATELY: Generate a new signing key
-# New key must be EC P-256 (see platform/tokens for key generation)
+# New key must be EC P-256 (see platform/security/jwt for key generation)
 
 # 2. Deploy with the new JWT_SIGNING_KEY environment variable
 # Both old and new keys serve in JWKS during the grace window
@@ -119,7 +119,7 @@ GET /v1/audit?action=user.updated&from=<suspected_time>
 # 3. Check if qe_csrf cookie is being set on all GET responses
 curl -v https://api.id.qeet.in/v1/users -H "Authorization: Bearer <token>" 2>&1 | grep qe_csrf
 
-# 4. Review CSRF exempt path list in platform/httpx/csrf.go
+# 4. Review CSRF exempt path list in platform/api/rest/middleware/csrf.go
 # Verify no new paths were inadvertently added to exemptions
 ```
 

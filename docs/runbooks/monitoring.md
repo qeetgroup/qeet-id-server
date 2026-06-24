@@ -74,7 +74,7 @@ Traces are propagated via W3C Trace Context headers (`traceparent`, `tracestate`
 
 ## Structured logs
 
-All logs are JSON-structured via `platform/logger` (wraps `slog`). Format:
+All logs are JSON-structured via `platform/observability/logging` (wraps `slog`). Format:
 ```json
 {
   "level": "INFO",

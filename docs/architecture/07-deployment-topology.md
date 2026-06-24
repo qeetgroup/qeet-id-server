@@ -97,7 +97,7 @@ The Docker build context is the **repo root** (single Go module). The API image 
 docker build -t go-qeet-id:<tag> .
 ```
 
-Build metadata (version, commit SHA, Go version) is stamped via `-ldflags` into `platform/buildinfo` at build time and surfaced on `/healthz` and the `build_info` Prometheus metric.
+Build metadata (version, commit SHA, Go version) is stamped via `-ldflags` into `platform/observability/buildinfo` at build time and surfaced on `/healthz` and the `build_info` Prometheus metric.
 
 The migration image is built from `Dockerfile.migrate` (copies only `migrations/`).
 

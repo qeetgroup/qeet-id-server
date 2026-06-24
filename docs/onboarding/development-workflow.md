@@ -34,8 +34,8 @@ make install       # ensure deps are current: go mod tidy + pnpm install
 
 ```bash
 # Create new files
-touch migrations/0063_my_change.up.sql
-touch migrations/0063_my_change.down.sql
+touch platform/database/platform/database/migrations/0063_my_change.up.sql
+touch platform/database/platform/database/migrations/0063_my_change.down.sql
 
 # Apply
 make migrate-up
@@ -78,7 +78,7 @@ Follow [adding-a-domain.md](adding-a-domain.md) for a full new domain. For addin
 1. Add the handler method to `http.go`
 2. Register it in `Mount()`
 3. Add to `api/openapi/` (CI enforces this)
-4. Run `go test ./platform/http/... -run TestOpenAPICoverage` to verify
+4. Run `go test ./platform/api/rest/... -run TestOpenAPICoverage` to verify
 
 ## Testing
 

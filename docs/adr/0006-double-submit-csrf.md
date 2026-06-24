@@ -27,7 +27,7 @@ Use **HMAC-keyed double-submit cookie** (`qe_csrf`):
 - Server verifies header matches cookie using constant-time comparison
 - Additionally: Origin header check (or Referer fallback) against the `ALLOWED_ORIGINS` whitelist
 
-Implementation: `platform/httpx/csrf.go`
+Implementation: `platform/api/rest/middleware/csrf.go`
 
 **Exempt paths** (where CSRF protection does not apply):
 - Bearer-token authenticated requests (no cookie; M2M cannot be CSRF'd)

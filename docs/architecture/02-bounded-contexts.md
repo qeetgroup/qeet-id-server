@@ -6,8 +6,8 @@ Qeet ID's backend is a **modular monolith** partitioned into five bounded contex
 
 Architecture rules are verified automatically by [`tests/architecture/arch_test.go`](../../tests/architecture/arch_test.go). CI fails if they are violated:
 
-- **R1** — `platform/*` must **not** import `domains/*` or `cmd/*`. The single exception is `platform/http`, the composition root that mounts every domain handler (imported only by `cmd/server`).
-- **R2** — `domains/*` must **not** import `cmd/*` or the `platform/http` router. Importing `platform/httpx` and other `platform/*` utilities is expected and fine.
+- **R1** — `platform/*` must **not** import `domains/*` or `cmd/*`. The single exception is `platform/api/rest`, the composition root that mounts every domain handler (imported only by `cmd/server`).
+- **R2** — `domains/*` must **not** import `cmd/*` or the `platform/api/rest` router. Importing `platform/api/rest/middleware` and other `platform/*` utilities is expected and fine.
 
 Cross-domain calls (e.g., `authentication` calling `audit.Record()`) go through **interfaces declared by the caller**, not by importing the callee's concrete service.
 
@@ -37,7 +37,7 @@ type auditLogger interface {
 | `verification` | `domains/identity/verification` | Email and phone verification tokens |
 | `domains` | `domains/identity/domains` | DNS domain ownership verification for tenants |
 
-**External integrations:** SMTP (email dispatch via `platform/notifier`)
+**External integrations:** SMTP (email dispatch via `platform/messaging/notifier`)
 
 ---
 

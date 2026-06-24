@@ -11,8 +11,7 @@ platform/      Shared infrastructure
 apps/          3 React frontend apps
 packages/      Shared JS config (tsconfig, eslint)
 sdk/           Client SDKs (JS, Go, Python)
-migrations/    SQL pairs (0001–0062)
-api/           OpenAPI spec + Postman collection
+api/           OpenAPI specs (5 domain files) + Postman collection
 tests/         Go integration + architecture tests
 deploy/        Helm, Docker Compose, observability
 docs/          You are here
@@ -42,10 +41,10 @@ Start at `domain.go` (or the domain-named file) to understand types and interfac
 
 ## How to find a route
 
-All routes are wired in `platform/http/router.go`. Each domain handler exposes a `Mount(r chi.Router)` method:
+All routes are wired in `platform/api/rest/router.go`. Each domain handler exposes a `Mount(r chi.Router)` method:
 
 ```go
-// platform/http/router.go
+// platform/api/rest/router.go
 func New(deps Deps) http.Handler {
     r := chi.NewRouter()
     // ...middleware...
@@ -63,9 +62,9 @@ To find which handler serves a route: search `router.go` for the path prefix, th
 ## How to find a migration
 
 ```bash
-ls migrations/ | grep <keyword>
+ls platform/database/migrations/ | grep <keyword>
 # e.g.:
-ls migrations/ | grep agent
+ls platform/database/migrations/ | grep agent
 # → 0061_agents.up.sql, 0061_agents.down.sql
 ```
 
@@ -78,18 +77,18 @@ Migrations are named `NNNN_<name>.{up,down}.sql`. Read the `.up.sql` for the sch
 | Package | What it does |
 |---|---|
 | `platform/config` | All env-based configuration; `Config.Validate()` is the prod safety gate |
-| `platform/db` | pgx v5 connection pool |
-| `platform/tokens` | JWT sign/verify; JWKS; key rotation |
-| `platform/httpx` | `RequireAuth`, `Principal`, CSRF middleware, security headers |
-| `platform/http` | chi v5 router composition root; mounts all handlers |
-| `platform/errs` | Error vocabulary (`ErrNotFound`, `ErrForbidden`, etc.) |
-| `platform/logger` | Structured `slog` with PII redaction |
-| `platform/ratelimit` | Token-bucket rate limiter |
-| `platform/outbox` | Transactional outbox dispatcher + DLQ |
-| `platform/notifier` | Email and SMS dispatch (SMTP, Twilio) |
-| `platform/worker` | Background worker supervisor |
-| `platform/paging` | Keyset cursor pagination |
-| `platform/hibp` | Have I Been Pwned k-anonymity breach check |
+| `platform/database/postgres` | pgx v5 connection pool |
+| `platform/security/jwt` | JWT sign/verify; JWKS; key rotation |
+| `platform/api/rest/middleware` | `RequireAuth`, `Principal`, CSRF middleware, security headers |
+| `platform/api/rest` | chi v5 router composition root; mounts all handlers |
+| `platform/api/rest/errs` | Error vocabulary (`ErrNotFound`, `ErrForbidden`, etc.) |
+| `platform/observability/logging` | Structured `slog` with PII redaction |
+| `platform/cache/redis` | Token-bucket rate limiter |
+| `platform/events/outbox` | Transactional outbox dispatcher + DLQ |
+| `platform/messaging/notifier` | Email and SMS dispatch (SMTP, Twilio) |
+| `platform/workers` | Background worker supervisor |
+| `platform/api/rest/paging` | Keyset cursor pagination |
+| `platform/security/hibp` | Have I Been Pwned k-anonymity breach check |
 
 ## Dependency injection
 
@@ -127,14 +126,6 @@ go test -tags integration ./tests/integration/... -v
 
 `tests/architecture/arch_test.go` enforces:
 - R1: `platform/*` doesn't import `domains/*`
-- R2: `domains/*` doesn't import `cmd/*` or `platform/http`
+- R2: `domains/*` doesn't import `cmd/*` or `platform/api/rest`
 
 These run as part of `make test`. If you add an import that violates a rule, this test fails.
-
-## Known pre-existing test failures
-
-Two tests in `platform/httpx/` have pre-existing failures unrelated to any recent changes:
-- `TestCSRF_RefererFallback`
-- `TestCSRF_NormaliseOriginsTrimsSlashAndCases`
-
-These are fixture inconsistencies, not functional bugs. Don't panic when you see them — they've been there since before the enterprise restructure.

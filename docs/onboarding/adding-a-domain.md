@@ -35,7 +35,7 @@ package <name>
 
 import (
     "context"
-    "github.com/qeetgroup/qeet-id/platform/errs"
+    "github.com/qeetgroup/qeet-id/platform/api/rest/errs"
     "github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -79,8 +79,8 @@ func (s *Service) Create(ctx context.Context, tenantID string, in CreateInput) (
 
 ```bash
 # Create migration files
-touch migrations/0063_widgets.up.sql
-touch migrations/0063_widgets.down.sql
+touch platform/database/platform/database/migrations/0063_widgets.up.sql
+touch platform/database/platform/database/migrations/0063_widgets.down.sql
 ```
 
 **`0063_widgets.up.sql`:**
@@ -135,11 +135,11 @@ func buildDeps(cfg *config.Config, pool *pgxpool.Pool, ...) Deps {
 }
 ```
 
-Also add the handler to the `Deps` struct (usually in `platform/http/router.go` or a local `deps.go`).
+Also add the handler to the `Deps` struct (usually in `platform/api/rest/router.go` or a local `deps.go`).
 
 ## Step 5: Mount the handler in the router
 
-In `platform/http/router.go`:
+In `platform/api/rest/router.go`:
 
 ```go
 r.Route("/v1", func(r chi.Router) {
@@ -160,7 +160,7 @@ func (h *Handler) Mount(r chi.Router) {
 
 ## Step 6: Add routes to `api/openapi/`
 
-**This is mandatory.** CI (`platform/http/openapi_coverage_test.go`) will fail if any mounted route is missing from the spec.
+**This is mandatory.** CI (`platform/api/rest/openapi_coverage_test.go`) will fail if any mounted route is missing from the spec.
 
 Add path entries to `api/openapi/`:
 
@@ -180,7 +180,7 @@ paths:
 
 Run the coverage test to verify:
 ```bash
-go test ./platform/http/... -run TestOpenAPICoverage
+go test ./platform/api/rest/... -run TestOpenAPICoverage
 ```
 
 ## Step 7: Write an integration test
@@ -210,7 +210,7 @@ make test-integration
 - [ ] Migration pair written and applied (`make migrate-up`)
 - [ ] Cross-domain interfaces declared in the consumer package
 - [ ] Service wired in `cmd/server/main.go:buildDeps()`
-- [ ] Handler mounted in `platform/http/router.go`
+- [ ] Handler mounted in `platform/api/rest/router.go`
 - [ ] Routes added to `api/openapi/`
 - [ ] OpenAPI coverage test passes
 - [ ] Integration test written

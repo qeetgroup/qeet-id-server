@@ -129,7 +129,7 @@ Supported providers: Google, GitHub, and any OAuth 2.0-compatible provider. Prov
 POST /v1/recovery/forgot-password
 { email }
   → Generate short-lived OTP (6 digits) or magic-link token
-  → Send via SMTP (platform/notifier)
+  → Send via SMTP (platform/messaging/notifier)
   → 202 Accepted (always — no user enumeration)
 
 POST /v1/recovery/reset

@@ -24,15 +24,15 @@ Use the **transactional outbox pattern**:
 
 1. Within the same `pgx.Tx` as the business row, write an event to `platform.outbox`
 2. The transaction commits atomically — the business row and the outbox row are either both committed or neither
-3. A background dispatcher (`platform/outbox.Dispatcher`) reads undelivered outbox rows and delivers them
+3. A background dispatcher (`platform/events/outbox.Dispatcher`) reads undelivered outbox rows and delivers them
 4. On delivery failure, events enter `platform.outbox_dlq` (Dead Letter Queue) after N retries
 5. The DLQ can be retried manually or automatically with backoff
 
 **Key property:** The outbox row is written by the same transaction that performs the business mutation. An event can only be in the outbox if the corresponding business action succeeded.
 
 Implementation:
-- `platform/outbox` — dispatcher + DLQ
-- `platform/worker.Supervisor` — manages the dispatcher goroutine lifecycle
+- `platform/events/outbox` — dispatcher + DLQ
+- `platform/workers.Supervisor` — manages the dispatcher goroutine lifecycle
 - `migrations/0002_platform_outbox.up.sql`, `migrations/0025_outbox_dlq.up.sql`
 
 ## Consequences

@@ -2,7 +2,7 @@
 
 ## CSRF protection
 
-Cross-Site Request Forgery (CSRF) protection applies to all browser-cookie-authenticated mutation requests (POST, PUT, PATCH, DELETE). Implementation: `platform/httpx/csrf.go`.
+Cross-Site Request Forgery (CSRF) protection applies to all browser-cookie-authenticated mutation requests (POST, PUT, PATCH, DELETE). Implementation: `platform/api/rest/middleware/csrf.go`.
 
 ### Mechanism: HMAC-keyed double-submit cookie
 
@@ -63,7 +63,7 @@ The `CSRF_KEY` can be rotated without immediate invalidation of existing cookies
 
 ## CORS
 
-Cross-Origin Resource Sharing (CORS) is configured in `platform/http/router.go`.
+Cross-Origin Resource Sharing (CORS) is configured in `platform/api/rest/router.go`.
 
 ### Policy
 

@@ -55,8 +55,8 @@ make migrate-up
 
 ```bash
 # Create migration files
-touch migrations/0063_my_change.up.sql
-touch migrations/0063_my_change.down.sql
+touch platform/database/platform/database/migrations/0063_my_change.up.sql
+touch platform/database/platform/database/migrations/0063_my_change.down.sql
 ```
 
 **Rules:**
