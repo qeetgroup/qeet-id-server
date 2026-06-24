@@ -31,14 +31,5 @@
   },
   "engines": {
     "node": ">=24"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "lightningcss",
-      "msw",
-      "sharp",
-      "unrs-resolver"
-    ]
   }
 }

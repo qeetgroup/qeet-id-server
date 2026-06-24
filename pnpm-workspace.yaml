@@ -4,9 +4,10 @@ packages:
   - "sdk/js/*"
   - "examples/*"
 
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
+onlyBuiltDependencies:
+  - esbuild
+  - lightningcss
+  - msw
 
 catalog:
   # React
