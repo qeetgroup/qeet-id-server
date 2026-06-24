@@ -22,29 +22,32 @@ Reuse the existing `/code-review`, `/verify`, `/simplify` skills + `code-archite
 
 > **👉 New here? Read [HOW-TO-RUN.md](HOW-TO-RUN.md) — plain-English steps (incl. a double-click launcher).**
 
-An on-demand agent that researches the live IAM/CIAM market, compares Qeet ID against
-competitors, and writes deduped, prioritized feature proposals into the PRD hub. You run
-it **manually whenever you want** (no schedule).
+An on-demand agent that maps the **entire internet** of identity/auth/authz/IAM/CIAM/PAM/IGA
+platforms — actively discovering players/tools/standards beyond any fixed list — inventories
+**every** capability the market offers, and writes a comprehensive feature catalog + prioritized
+proposals into the PRD hub so Qeet ID can support every feature worth having. You run it
+**manually whenever you want** (no schedule).
 
 | File | Role |
 |---|---|
-| [`agents/product-manager.md`](agents/product-manager.md) | The agent: persona, competitor set, 8-dim comparison framework, focus rotation, methodology, output contract. Invoke on-demand with the `product-manager` subagent, or via the scheduler below. |
+| [`agents/product-manager.md`](agents/product-manager.md) | The agent: persona, landscape (seed list + active discovery), 10-dim capability taxonomy, full-sweep vs scoped run modes, methodology, output contract. Invoke on-demand with the `product-manager` subagent, or via the scheduler below. |
 | [`scripts/run-product-manager.sh`](scripts/run-product-manager.sh) | Headless runner (`claude -p`) the scheduler calls. Also usable for a manual dry-run. |
 | [`scheduling/com.qeet.product-manager.plist`](scheduling/com.qeet.product-manager.plist) | launchd job — 09:00 / 13:00 / 20:00 **local (IST)**. |
 | [`settings.json`](settings.json) | Tool allowlist (WebSearch/WebFetch/etc.) so interactive on-demand runs aren't prompt-heavy. |
 
 **Outputs** (in the non-git PRD hub, not this repo):
+- `../../qeet-files/qeet-id/FEATURE-CATALOG.md` — **master capability inventory** (every feature the landscape offers × who ships it × Qeet ID has/lacks). Grows toward complete coverage.
+- `../../qeet-files/qeet-id/FEATURE-PROPOSALS.md` — deduped, prioritized backlog (the gaps).
 - `../../qeet-files/qeet-id/COMPETITIVE-INTEL.md` — dated rolling research log.
-- `../../qeet-files/qeet-id/FEATURE-PROPOSALS.md` — deduped, prioritized backlog.
 - `../../qeet-files/qeet-id/QEET-ID-STATUS.md` is the **read-only golden source** the agent dedupes against.
 
 ### Run it manually (this is how it's used — no schedule)
-Run whenever you want, optionally scoping to one focus area:
+Default is a **comprehensive full sweep** of the whole landscape; you can scope to one focus to save time/cost:
 ```bash
-# full pass across all three focus areas (default)
+# comprehensive full sweep across the entire landscape (default)
 bash qeet-id/.claude/scripts/run-product-manager.sh
 
-# scope to one focus: auth | enterprise | agent
+# scope to one focus: auth | enterprise | agent | pam | decentralized
 bash qeet-id/.claude/scripts/run-product-manager.sh agent
 
 # deeper run on a stronger model
@@ -52,7 +55,7 @@ PM_MODEL=opus bash qeet-id/.claude/scripts/run-product-manager.sh enterprise
 
 # watch it / read results
 tail -f qeet-id/.claude/logs/run-*.log
-open ../../qeet-files/qeet-id/COMPETITIVE-INTEL.md
+open ../../qeet-files/qeet-id/FEATURE-CATALOG.md
 ```
 It runs to completion in the foreground (a sweep takes a few minutes) and writes to `qeet-files/qeet-id/`. Requires the Full Disk Access grant below (the binaries already have it).
 
