@@ -3,7 +3,7 @@
 ## JWT signing
 
 **Algorithm:** ES256 (ECDSA with NIST P-256)  
-**Implementation:** `platform/security/jwt/jwt.go`
+**Implementation:** `platform/security/tokens/jwt.go`
 
 - Private key loaded from `JWT_SIGNING_KEY` environment variable (PEM or base64-encoded DER)
 - Public key published at `/jwks.json`
@@ -25,7 +25,7 @@ Bcrypt is chosen for its adaptive cost factor (can be increased as hardware impr
 
 ## CSRF token generation
 
-**Implementation:** `platform/api/rest/middleware/csrf.go`
+**Implementation:** `platform/api/rest/httpx/csrf.go`
 
 Token construction:
 ```

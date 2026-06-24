@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/platform/config"
-	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 func main() {

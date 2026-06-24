@@ -2,7 +2,7 @@
 
 ## JWT structure
 
-Qeet ID issues **ES256 JWTs** (ECDSA P-256, asymmetric). All tokens are signed with the private key held in `platform/security/jwt`; the corresponding public key is published at `/jwks.json` for external verification (e.g., OIDC relying parties).
+Qeet ID issues **ES256 JWTs** (ECDSA P-256, asymmetric). All tokens are signed with the private key held in `platform/security/tokens`; the corresponding public key is published at `/jwks.json` for external verification (e.g., OIDC relying parties).
 
 ### Standard claims
 
@@ -52,7 +52,7 @@ The `kid` JWT header field is the **RFC 7638 JWK thumbprint** of the signing key
 ## Key rotation
 
 1. Generate new EC P-256 signing keypair.
-2. Add it to the active key set in `platform/security/jwt`.
+2. Add it to the active key set in `platform/security/tokens`.
 3. The new key appears in `/jwks.json` alongside the old key.
 4. New tokens are signed with the new key.
 5. Old tokens (signed with the retired key) continue to verify during the **grace window** — the old key stays in JWKS for the duration of the longest-lived access token (15 minutes by default).

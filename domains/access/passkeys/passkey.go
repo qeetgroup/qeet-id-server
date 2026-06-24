@@ -20,7 +20,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/middleware"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
 )
 

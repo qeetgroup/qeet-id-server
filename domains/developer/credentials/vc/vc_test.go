@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	tokens "github.com/qeetgroup/qeet-id/platform/security/jwt"
+	tokens "github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 // Issue's input validation runs before any DB/issuer use, and Verify rejects

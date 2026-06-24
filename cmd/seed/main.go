@@ -35,7 +35,7 @@ import (
 	"github.com/qeetgroup/qeet-id/platform/config"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id/platform/security/encryption"
-	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 const seedPassword = "Password123!"

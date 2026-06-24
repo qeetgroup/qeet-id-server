@@ -2,7 +2,7 @@
 
 ## Overview
 
-Rate limiting is implemented in `platform/cache/redis` using a **token-bucket algorithm**. Limits are applied per key type with different parameters for different principal types and endpoints.
+Rate limiting is implemented in `platform/cache/ratelimit` using a **token-bucket algorithm**. Limits are applied per key type with different parameters for different principal types and endpoints.
 
 The limiter can use either:
 - **In-process store (`memStore`)** — per-replica, no shared state (default, always available)

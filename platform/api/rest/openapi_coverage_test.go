@@ -42,7 +42,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
 	"github.com/qeetgroup/qeet-id/platform/observability/health"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/middleware"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/events/outbox"
 )
 

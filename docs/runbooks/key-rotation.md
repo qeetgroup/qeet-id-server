@@ -21,7 +21,7 @@ base64 -i jwt-signing-key-new.pem | tr -d '\n' > jwt-signing-key-new.b64
 
 **Step 2: Deploy new key alongside old key**
 
-In `platform/security/jwt`, the key rotation design allows multiple active keys. Add the new key to the configuration:
+In `platform/security/tokens`, the key rotation design allows multiple active keys. Add the new key to the configuration:
 
 ```bash
 # Kubernetes: update the secret
@@ -81,7 +81,7 @@ Update `CSRF_KEY` environment variable and redeploy.
 
 **Impact:** Existing `qe_csrf` cookies are immediately invalid. On the first POST request after the deploy, users will receive a 403 CSRF failure. Their browser will receive a new `qe_csrf` cookie on the next GET, and subsequent mutations will succeed.
 
-To minimize user disruption: deploy during low-traffic hours, or implement a rolling key (primary + previous key both accepted) — this requires a minor code change to `platform/api/rest/middleware/csrf.go`.
+To minimize user disruption: deploy during low-traffic hours, or implement a rolling key (primary + previous key both accepted) — this requires a minor code change to `platform/api/rest/httpx/csrf.go`.
 
 ---
 

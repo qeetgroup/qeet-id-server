@@ -78,12 +78,12 @@ Migrations are named `NNNN_<name>.{up,down}.sql`. Read the `.up.sql` for the sch
 |---|---|
 | `platform/config` | All env-based configuration; `Config.Validate()` is the prod safety gate |
 | `platform/database/postgres` | pgx v5 connection pool |
-| `platform/security/jwt` | JWT sign/verify; JWKS; key rotation |
-| `platform/api/rest/middleware` | `RequireAuth`, `Principal`, CSRF middleware, security headers |
+| `platform/security/tokens` | JWT sign/verify; JWKS; key rotation |
+| `platform/api/rest/httpx` | `RequireAuth`, `Principal`, CSRF middleware, security headers |
 | `platform/api/rest` | chi v5 router composition root; mounts all handlers |
 | `platform/api/rest/errs` | Error vocabulary (`ErrNotFound`, `ErrForbidden`, etc.) |
 | `platform/observability/logging` | Structured `slog` with PII redaction |
-| `platform/cache/redis` | Token-bucket rate limiter |
+| `platform/cache/ratelimit` | Token-bucket rate limiter |
 | `platform/events/outbox` | Transactional outbox dispatcher + DLQ |
 | `platform/messaging/notifier` | Email and SMS dispatch (SMTP, Twilio) |
 | `platform/workers` | Background worker supervisor |

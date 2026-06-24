@@ -2,7 +2,7 @@
 
 ## CSRF protection
 
-Cross-Site Request Forgery (CSRF) protection applies to all browser-cookie-authenticated mutation requests (POST, PUT, PATCH, DELETE). Implementation: `platform/api/rest/middleware/csrf.go`.
+Cross-Site Request Forgery (CSRF) protection applies to all browser-cookie-authenticated mutation requests (POST, PUT, PATCH, DELETE). Implementation: `platform/api/rest/httpx/csrf.go`.
 
 ### Mechanism: HMAC-keyed double-submit cookie
 

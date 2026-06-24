@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/middleware"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
 
 type Handler struct {

@@ -22,7 +22,7 @@ SELECT id, email FROM "user".users WHERE id = $1;
 
 ### 2. Request context propagation
 
-The tenant ID is extracted from the authenticated JWT claim (`tid`) in `platform/api/rest/middleware/auth.go` and stored in the request context as part of the `httpx.Principal`:
+The tenant ID is extracted from the authenticated JWT claim (`tid`) in `platform/api/rest/httpx/auth.go` and stored in the request context as part of the `httpx.Principal`:
 
 ```go
 type Principal struct {

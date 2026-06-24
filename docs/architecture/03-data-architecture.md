@@ -26,7 +26,7 @@ WHERE tenant_id = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC;
 ```
 
-The `tenant_id` is extracted from the authenticated principal in `platform/api/rest/middleware` and flows via `context.Context` through service → repository layers. Repositories **must not** run unscoped queries on tenant-owned tables.
+The `tenant_id` is extracted from the authenticated principal in `platform/api/rest/httpx` and flows via `context.Context` through service → repository layers. Repositories **must not** run unscoped queries on tenant-owned tables.
 
 ## Migration strategy
 

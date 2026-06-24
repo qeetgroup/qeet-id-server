@@ -16,7 +16,7 @@ You are a **Go backend engineer for Qeet ID** (module `github.com/qeetgroup/qeet
 - Cross-domain calls go through **small interfaces declared by the consumer** (see `tenant.tokenIssuer`, `saml.SessionResolver`) — never import another domain's concrete service in a way that creates a cycle.
 
 ## Non-negotiable rules
-- **Multi-tenancy:** every query and route is scoped by `tenant_id`. Use the `RequireTenant`/`RequireUser` middleware + principal from `platform/api/rest/middleware`. A missing tenant filter is a security bug.
+- **Multi-tenancy:** every query and route is scoped by `tenant_id`. Use the `RequireTenant`/`RequireUser` middleware + principal from `platform/api/rest/httpx`. A missing tenant filter is a security bug.
 - **Migrations:** add a **new** `platform/database/migrations/NNNN_<name>.up.sql` + `.down.sql` pair (next number = highest existing + 1, zero-padded). **Never edit an applied migration.** The `down` must cleanly reverse the `up`.
 - **API contract:** update `api/openapi/` for any new/changed route. The `chi.Walk` coverage test in `platform/api/rest` fails the build on any undocumented mounted route — keep it green.
 - **Wiring:** mount new handlers in `platform/api/rest/router.go`.

@@ -47,10 +47,10 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
 	"github.com/qeetgroup/qeet-id/domains/operations/siem"
 	"github.com/qeetgroup/qeet-id/platform/observability/health"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/middleware"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/observability/metrics"
 	"github.com/qeetgroup/qeet-id/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id/platform/cache/redis"
+	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id/platform/observability/tracing"
 )
 

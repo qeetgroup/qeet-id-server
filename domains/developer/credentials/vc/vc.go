@@ -19,8 +19,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/middleware"
-	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 const vcContext = "https://www.w3.org/ns/credentials/v2"

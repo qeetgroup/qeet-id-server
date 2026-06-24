@@ -21,7 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id/platform/security/encryption"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
-	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 type Service struct {

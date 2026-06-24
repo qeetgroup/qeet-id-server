@@ -15,7 +15,7 @@ By default review the working diff: `git diff` (unstaged) + `git diff --staged`,
 - **Tenant isolation (highest priority):** every new query/route filters by `tenant_id`; no path lets one tenant read/write/enumerate another's data (IDOR across tenants). Check repository methods, list endpoints, and any `WHERE` missing a tenant scope.
 - **Authorization / access control:** routes use `RequireTenant`/`RequireUser` and the right role/permission (RBAC) or relationship (ReBAC) check; no missing-authz or confused-deputy; default-deny.
 - **AuthN / tokens / sessions:** JWT signing/verification (alg confusion, `aud`/`iss`/`exp` checks), session fixation/rotation, OAuth/OIDC param validation (`state`, PKCE, `redirect_uri` allow-listing, RFC 8707 `resource`), token scope/downscoping, refresh-token theft handling.
-- **Crypto & secrets:** no secrets in code/logs/responses; correct use of `platform/security/jwt`/`password`/hashing; constant-time compares for tokens; no `*.pem`/keys committed.
+- **Crypto & secrets:** no secrets in code/logs/responses; correct use of `platform/security/tokens`/`password`/hashing; constant-time compares for tokens; no `*.pem`/keys committed.
 - **CSRF:** state-changing browser routes go through the CSRF middleware (or are correctly exempted, e.g. SAML ACS).
 - **Audit & traceability:** sensitive actions emit hash-chained audit events; no PII over-logging.
 - **Injection / input:** parameterized SQL only; validated/escaped inputs; safe redirects (open-redirect on `return_to`/`redirect_uri`).

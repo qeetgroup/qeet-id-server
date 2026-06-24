@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 // LoginSessionCookie is the browser SSO cookie for the hosted login/consent

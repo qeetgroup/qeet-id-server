@@ -20,7 +20,7 @@ Use the **RFC 7638 JWK Thumbprint** as the `kid` for all issued JWTs.
 
 For a P-256 key, the thumbprint input is the canonical JSON of `{"crv":"P-256","kty":"EC","x":"<base64>","y":"<base64>"}` (keys sorted, no extra whitespace), SHA-256 hashed and base64url-encoded.
 
-Implementation: `platform/security/jwt/jwt.go` — the `kid` is computed once at key load time and embedded in the signing header.
+Implementation: `platform/security/tokens/jwt.go` — the `kid` is computed once at key load time and embedded in the signing header.
 
 ## Consequences
 
@@ -36,7 +36,7 @@ Implementation: `platform/security/jwt/jwt.go` — the `kid` is computed once at
 
 **Key rotation flow:**
 1. Generate new keypair → compute new thumbprint → new `kid`
-2. Add new key to active set in `platform/security/jwt`
+2. Add new key to active set in `platform/security/tokens`
 3. JWKS publishes both old and new keys
 4. New tokens use new `kid`; old tokens with old `kid` verify against the old key still in JWKS
 5. After grace window (≥ max access token TTL = 15 min), remove old key from JWKS

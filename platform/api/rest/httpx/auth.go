@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/security/jwt"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
 // AuthVerifier resolves a bearer token to a Principal.
