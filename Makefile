@@ -1,10 +1,10 @@
 .PHONY: help env install tidy dev run dev-backend dev-worker dev-scheduler dev-frontend dev-admin dev-web dev-login dev-example dev-example-react \
         build build-backend build-worker build-scheduler build-migrate build-frontend \
-        test test-backend test-frontend test-integration test-api test-api-ci \
+        test test-backend test-frontend test-integration test-api test-api-ci cover cover-html \
         seed seed-reset \
         migrate-up migrate-down migrate-force migrate-down-all \
         db-up db-down db-reset db-wipe db-psql \
-        lint typecheck format \
+        lint lint-go typecheck format \
         kill kill-backend kill-frontend kill-admin kill-web kill-login \
         clean
 
@@ -116,6 +116,19 @@ test-backend:               ## Run backend tests
 test-integration:
 	$(GO) test -tags=integration ./tests/integration/... -timeout 300s
 
+# Unit coverage + regression floor (same gate as CI). Floor is intentionally a
+# regression guard, not a target — ratchet COVERAGE_FLOOR up as unit tests grow.
+COVERAGE_FLOOR ?= 11.0
+cover:                      ## Run unit tests with coverage and enforce the floor
+	$(GO) test -count=1 -coverprofile=coverage.out ./...
+	@total=$$(go tool cover -func=coverage.out | awk '/^total:/ {print $$3}' | tr -d '%'); \
+	echo "total unit coverage: $${total}% (floor: $(COVERAGE_FLOOR)%)"; \
+	awk -v t="$$total" -v f="$(COVERAGE_FLOOR)" 'BEGIN { if (t+0 < f+0) { exit 1 } }' \
+	  || { echo "coverage $${total}% is below the $(COVERAGE_FLOOR)% floor"; exit 1; }
+
+cover-html: cover           ## Open the HTML coverage report
+	$(GO) tool cover -html=coverage.out
+
 test-frontend:              ## Run frontend tests
 	$(PNPM) test
 
@@ -205,9 +218,19 @@ kill-login:                 ## Stop hosted login (:3004)
 	$(call kill_port,3004,login)
 
 # ── Quality ─────────────────────────────────────────────────────────────────
-lint:                       ## Lint everything
-	$(GO) vet ./...
+lint: lint-go               ## Lint everything (Go + frontend)
 	$(PNPM) lint
+
+# Go linting. Uses golangci-lint (config: .golangci.yml) when installed —
+# same linters as CI — and always runs `go vet`. Install:
+#   go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
+lint-go:                    ## Lint Go (golangci-lint if present, else go vet)
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed — running 'go vet' only (CI runs the full set)"; \
+		$(GO) vet ./...; \
+	fi
 
 typecheck:                  ## Type-check the frontend
 	$(PNPM) typecheck
