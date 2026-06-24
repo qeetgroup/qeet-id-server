@@ -1,9 +1,5 @@
 # Deployment Runbook
 
-Full step-by-step deployment guide: **[deploy/prod/deploy.md](../../deploy/prod/deploy.md)**
-
-This file is a quick-reference summary; the authoritative guide with RDS setup, security group config, and first-deploy walkthrough is in `deploy/prod/deploy.md`.
-
 ---
 
 ## Stack

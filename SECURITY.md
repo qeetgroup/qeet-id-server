@@ -76,7 +76,7 @@ If you are deploying Qeet ID yourself, please also:
 - Rotate the JWT signing key set every 90 days
 - Keep dependencies current — `go.mod` and `pnpm-lock.yaml` are version-pinned for reproducibility, not because they should stay stale
 - Enable WAF / DDoS protection at the edge (Cloudflare, AWS Shield)
-- Follow the [deploy runbook](./deploy/prod/deploy.md) and [secrets runbook](./deploy/prod/secrets.md) before going to production
+- Follow a deploy runbook and secrets generation guide before going to production
 
 ---
 
