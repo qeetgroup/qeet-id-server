@@ -2,7 +2,8 @@
 
 There are **two stages**, run by two sets of agents:
 
-1. **Find feature ideas** — the **product-manager** agent researches competitors and writes
+1. **Find feature ideas** — the **product-manager** agent researches the *whole* identity/auth
+   market (every site it can find, not just a fixed list) and writes a feature catalog +
    proposals into your PRD hub. → **Part 1** (a script you run).
 2. **Build a feature** — a 6-agent **delivery pipeline** turns one of those proposals into
    tested, security-reviewed code. → **Part 2** (you chat with Claude).
@@ -11,12 +12,15 @@ There are **two stages**, run by two sets of agents:
 
 # Part 1 — Find feature ideas (product-manager)
 
-This agent researches the IAM/auth market, compares Qeet ID to competitors, and writes
-new feature ideas into your PRD hub. You run it **whenever you want** — there's no schedule.
+This agent researches the **entire internet** of identity/auth/IAM/CIAM platforms — discovering
+new players and features beyond any fixed list — and writes a master feature catalog + ranked
+ideas into your PRD hub, so Qeet ID can support every feature worth having. You run it
+**whenever you want** — there's no schedule.
 
 It writes to:
+- `~/Desktop/QG/qeet-files/qeet-id/FEATURE-CATALOG.md` — master capability inventory (every feature × who ships it × Qeet ID has/lacks)
+- `~/Desktop/QG/qeet-files/qeet-id/FEATURE-PROPOSALS.md` — prioritized feature backlog (the gaps)
 - `~/Desktop/QG/qeet-files/qeet-id/COMPETITIVE-INTEL.md` — dated research log
-- `~/Desktop/QG/qeet-files/qeet-id/FEATURE-PROPOSALS.md` — prioritized feature backlog
 
 ---
 
@@ -44,7 +48,7 @@ It writes to:
 3. Wait a few minutes. It prints a summary when done.
 4. Read the findings:
    ```bash
-   open ~/Desktop/QG/qeet-files/qeet-id/COMPETITIVE-INTEL.md
+   open ~/Desktop/QG/qeet-files/qeet-id/FEATURE-CATALOG.md
    open ~/Desktop/QG/qeet-files/qeet-id/FEATURE-PROPOSALS.md
    ```
 

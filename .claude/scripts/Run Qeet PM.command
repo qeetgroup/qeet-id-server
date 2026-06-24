@@ -7,16 +7,20 @@ echo "   Qeet ID — Product Manager competitive sweep"
 echo "════════════════════════════════════════════════"
 echo
 echo "What should it research?"
-echo "   1) Everything  (all areas)          [default]"
+echo "   1) Everything  (full sweep of the whole landscape)   [default, recommended]"
 echo "   2) Auth & end-user                  (passkeys, MFA, passwordless, social/SSO)"
 echo "   3) Enterprise & authorization       (SSO, SCIM, orgs, RBAC/ReBAC, compliance)"
 echo "   4) AI-agent identity & developer    (agents, MCP, token exchange, SDKs, pricing)"
+echo "   5) Privileged access & governance   (PAM, IGA: JIT access, approvals, reviews)"
+echo "   6) Decentralized identity           (verifiable credentials, DIDs, wallets)"
 echo
-read -r -p "Type 1-4 then Enter (or just press Enter for 1): " choice
+read -r -p "Type 1-6 then Enter (or just press Enter for 1): " choice
 case "$choice" in
   2) FOCUS=auth ;;
   3) FOCUS=enterprise ;;
   4) FOCUS=agent ;;
+  5) FOCUS=pam ;;
+  6) FOCUS=decentralized ;;
   *) FOCUS=all ;;
 esac
 echo
