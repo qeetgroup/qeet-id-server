@@ -4,7 +4,7 @@ kind: Kustomization
 namespace: qeet-id
 
 resources:
-  - ../../base
+  - ../../../base/kubernetes/base
   - ingress.yaml
 
 patches:

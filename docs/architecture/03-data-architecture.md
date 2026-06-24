@@ -35,7 +35,7 @@ Migrations live in [`platform/database/migrations/`](../../platform/database/mig
 **Rules:**
 - Never edit an applied migration. Add a new pair instead.
 - Migrations are sequential (0001–0062 as of pre-1.0).
-- The production migration image is [`Dockerfile.migrate`](../../Dockerfile.migrate) — it copies the `migrations/` directory and runs `golang-migrate up` as a Kubernetes Job (see [`deploy/helm/qeet-id/templates/migration-job.yaml`](../../deploy/helm/qeet-id/templates/migration-job.yaml)).
+- The production migration image is [`Dockerfile.migrate`](../../deploy/base/docker/Dockerfile.migrate) — it copies `platform/database/migrations/` and runs `golang-migrate up` as a Kubernetes Job (see [`deploy/base/helm/qeet-id/templates/migration-job.yaml`](../../deploy/base/helm/qeet-id/templates/migration-job.yaml)).
 
 Apply locally:
 ```bash

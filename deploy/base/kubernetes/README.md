@@ -30,19 +30,19 @@ kubernetes/
 ### Deploy to staging
 
 ```bash
-kubectl apply -k deploy/kubernetes/overlays/staging/
+kubectl apply -k deploy/environments/stage/kubernetes/
 ```
 
 ### Deploy to production
 
 ```bash
-kubectl apply -k deploy/kubernetes/overlays/prod/
+kubectl apply -k deploy/environments/prod/kubernetes/
 ```
 
 ### Diff before applying
 
 ```bash
-kubectl diff -k deploy/kubernetes/overlays/prod/
+kubectl diff -k deploy/environments/prod/kubernetes/
 ```
 
 ## Secrets
@@ -66,11 +66,11 @@ Migrations run as a Kubernetes Job before the Deployment:
 
 ```bash
 # Apply migration job manually
-kubectl apply -f deploy/kubernetes/base/migration-job.yaml -n qeet-id
+kubectl apply -f deploy/base/kubernetes/base/migration-job.yaml -n qeet-id
 
 # Wait for completion
 kubectl wait --for=condition=complete job/qeet-id-migrate -n qeet-id --timeout=120s
 
 # Then apply the deployment
-kubectl apply -k deploy/kubernetes/overlays/prod/
+kubectl apply -k deploy/environments/prod/kubernetes/
 ```

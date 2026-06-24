@@ -1,28 +1,31 @@
 # Docker Build
 
-Dockerfiles live at the **repository root** — the build context must be the repo root because the Go module and `migrations/` directory are both needed during build.
+The image definitions live **here** (`deploy/base/docker/`), but the **build
+context must be the repository root** — the build needs the whole Go module and
+`platform/database/migrations/`, which live at the root. So you always build from
+the root with `-f deploy/base/docker/Dockerfile`.
 
 | File | Image | Purpose |
 |---|---|---|
-| `../../Dockerfile` | `ghcr.io/qeetgroup/qeet-id` | Distroless API server |
-| `../../Dockerfile.migrate` | `ghcr.io/qeetgroup/qeet-id-migrate` | One-shot migration runner |
-| `../../.dockerignore` | — | Excludes JS workspace from build context |
+| `Dockerfile` | `ghcr.io/qeetgroup/qeet-id` | Distroless API server |
+| `Dockerfile.migrate` | `ghcr.io/qeetgroup/qeet-id-migrate` | One-shot migration runner |
+| `../../../.dockerignore` | — | At the repo root (Docker reads it only from the context root) |
 
 ## Build images locally
 
 ```bash
-# API server
-docker build -t qeet-id:dev .
+# API server (context = repo root)
+docker build -f deploy/base/docker/Dockerfile -t qeet-id:dev .
 
 # Migration runner
-docker build -f Dockerfile.migrate -t qeet-id-migrate:dev .
+docker build -f deploy/base/docker/Dockerfile.migrate -t qeet-id-migrate:dev .
 ```
 
 Or use the helper script:
 
 ```bash
-./deploy/docker/build.sh dev        # builds both images tagged :dev
-./deploy/docker/build.sh v1.2.3     # builds both images tagged :v1.2.3
+./deploy/base/docker/build.sh dev        # builds both images tagged :dev
+./deploy/base/docker/build.sh v1.2.3     # builds both images tagged :v1.2.3
 ```
 
 ## Image architecture
@@ -35,7 +38,7 @@ Or use the helper script:
 
 **Migration image (`Dockerfile.migrate`):**
 - Based on `migrate/migrate` official image
-- Copies only `migrations/` directory
+- Copies only `platform/database/migrations/`
 - Entrypoint: `migrate -source file:///migrations -database $DB_URL`
 
 ## CI/CD
@@ -66,4 +69,4 @@ All configuration is provided via environment variables at runtime. See `platfor
 - `ALLOWED_ORIGINS` — Comma-separated allowed CORS origins
 - `CSRF_KEY` — 32-byte CSRF HMAC key
 
-See [`../runbooks/secrets.md`](../runbooks/secrets.md) for secret generation commands.
+See [`../../runbooks/secrets.md`](../../runbooks/secrets.md) for secret generation commands.

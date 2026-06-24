@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Build both qeet-id Docker images from the repo root.
-# Usage: ./deploy/docker/build.sh <tag>
-# Example: ./deploy/docker/build.sh dev
-#          ./deploy/docker/build.sh v1.2.3
+# Build both qeet-id Docker images. The build context is the repo ROOT (the Go
+# module + platform/database/migrations are needed at build time); the
+# Dockerfiles live under deploy/base/docker/.
+# Usage: ./deploy/base/docker/build.sh <tag>
+# Example: ./deploy/base/docker/build.sh dev
+#          ./deploy/base/docker/build.sh v1.2.3
 
 set -euo pipefail
 
 TAG=${1:?Usage: $0 <tag>}
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# script is at deploy/base/docker/ → repo root is three levels up.
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+DOCKERDIR="${REPO_ROOT}/deploy/base/docker"
 
 echo "Building qeet-id:${TAG} from ${REPO_ROOT}"
 docker build \
-  --file "${REPO_ROOT}/Dockerfile" \
+  --file "${DOCKERDIR}/Dockerfile" \
   --tag "ghcr.io/qeetgroup/qeet-id:${TAG}" \
   --build-arg VERSION="${TAG}" \
   --build-arg COMMIT="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo none)" \
@@ -20,7 +24,7 @@ docker build \
 
 echo "Building qeet-id-migrate:${TAG} from ${REPO_ROOT}"
 docker build \
-  --file "${REPO_ROOT}/Dockerfile.migrate" \
+  --file "${DOCKERDIR}/Dockerfile.migrate" \
   --tag "ghcr.io/qeetgroup/qeet-id-migrate:${TAG}" \
   "${REPO_ROOT}"
 

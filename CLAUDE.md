@@ -15,7 +15,7 @@ apps/       frontend apps: console (admin), login, website (+ docs/, status/ pla
 packages/   shared JS config (qeetid-tsconfig, qeetid-eslint)
 sdk/        SDKs: js/{sdk,react,nextjs}, go, python
             platform/database/migrations golang-migrate SQL pairs   api/ openapi/ (5 split specs) + Postman
-tests/      Go integration tests        deploy/ Helm + compose + observability        tools/ codegen + scripts + benchmarks
+tests/      Go integration tests        deploy/ base/ + environments/{dev,test,stage,prod} + runbooks        tools/ codegen + scripts + benchmarks
 ```
 
 ## Commands (`cd qeet-id`, run from the root)
@@ -61,6 +61,6 @@ Single HTTP entrypoint [cmd/server/main.go](cmd/server/main.go) (worker/schedule
 
 - **Single Go module at root** — import paths are `github.com/qeetgroup/qeet-id/{domains,platform,cmd}/...` (no more `internal/`). Folder name ≠ package clause is sometimes intentional and legal. The previously-confusing infra leaves were **aligned** so path basename == package clause: `platform/security/tokens` (`package tokens`), `platform/api/rest/httpx` (`package httpx`), `platform/cache/ratelimit` (`package ratelimit`). A few divergences remain by design — e.g. [platform/database/postgres/](platform/database/postgres/) declares `package db`, [platform/observability/logging/](platform/observability/logging/) declares `package logger`, [domains/access/authentication/](domains/access/authentication/) declares `package auth`, [domains/identity/organizations/](domains/identity/organizations/) declares `package tenant`; hyphenated folders (`api-keys`→`apikey`, `service-accounts`→`principal`) can't match a Go identifier at all.
 - **Migrations:** golang-migrate pairs **0001–0062** in [platform/database/migrations/](platform/database/migrations/) (latest `0062_credentials.*`; go **1.25.0**). Never edit an applied migration — add a new pair. Path is centralised as `MIGRATIONS_DIR` in the [Makefile](Makefile); the [migrate CLI](cmd/migrate/) + [tools/migration-tools/](tools/migration-tools/) point at the same dir.
-- **Docker build context is the repo root** (single Go module). The root [.dockerignore](.dockerignore) excludes the JS workspace; `platform/database/migrations` stays in-context (the shared [Dockerfile.migrate](Dockerfile.migrate) copies it).
+- **Docker build context is the repo root** (single Go module), though the Dockerfiles live under [deploy/base/docker/](deploy/base/docker/) — build with `-f deploy/base/docker/Dockerfile .`. The root [.dockerignore](.dockerignore) excludes the JS workspace + `deploy/`; `platform/database/migrations` stays in-context (the shared [Dockerfile.migrate](deploy/base/docker/Dockerfile.migrate) copies it).
 - Frontend pins **pnpm@9.15.4** (qeetrix uses 10.32.1) — Corepack handles this from `packageManager`.
 - **[apps/website/](apps/website/) has its own `CLAUDE.md`** → `@AGENTS.md`, which warns this Next.js version has breaking changes from training data; read `node_modules/next/dist/docs/` before writing any Next.js code there.

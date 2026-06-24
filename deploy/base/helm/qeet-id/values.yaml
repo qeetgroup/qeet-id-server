@@ -1,5 +1,5 @@
 # Default values for qeet-id. Override per environment with
-# values-staging.yaml / values-prod.yaml.
+# environments/stage/values.yaml / environments/prod/values.yaml.
 
 replicaCount: 2
 

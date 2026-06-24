@@ -1,21 +1,79 @@
 # Qeet ID — Identity Platform
 
-> **Authenticate Everything.** A developer-first, enterprise-ready alternative to Auth0 / Okta — open source, affordable, and built around passkeys-first authentication.
+> **Authenticate Everything.** A developer-first, enterprise-ready alternative to Auth0 / Okta — open source, affordable, and built passkeys-first.
 
+[![CI](https://github.com/qeetgroup/qeet-id/actions/workflows/ci.yml/badge.svg)](./.github/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](./go.mod)
+[![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./api/openapi/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-This monorepo contains the full Qeet ID identity platform: a Go modular-monolith backend and three frontend apps (admin dashboard, marketing site, hosted login). UI primitives come from the shared `@qeetrix/*` design system. (End-user docs now live in the standalone multi-product `qeet-docs` site, no longer in this repo.)
+Qeet ID is a single Go **modular monolith** backend plus three React frontends (admin console, marketing site, hosted login) and five first-party SDKs — the complete identity stack: authentication, enterprise SSO/SCIM, fine-grained authorization, machine & AI-agent identity, audit, and compliance. UI primitives come from the shared `@qeetrix/*` design system; end-user docs live in the standalone `qeet-docs` site (docs.qeet.in).
 
-> **Status:** pre-1.0, **feature-complete for the v1 / July 2026 GA** — every capability below is implemented and working, with **no stubbed endpoints**.
+> **Status — pre-1.0, feature-complete for the v1 / July 2026 GA.** Every capability in [Feature status](#feature-status) is implemented and working, with **no stubbed endpoints**. Remaining work is external ops hardening (KMS BYOK, OpenID conformance, deliverability, RDS PITR, external pentest) plus i18n / a11y polish.
 >
 > | Surface | State |
 > | --- | --- |
-> | Backend API — **~40 domain modules, 62 migrations, no stubbed endpoints** | ✅ complete |
-> | Admin console — **~80 feature screens wired to live backend APIs** | ✅ complete |
-> | Marketing site (`qeetid-web`) | ✅ complete |
-> | Hosted login (`qeetid-login`) | ✅ complete |
->
-> Remaining work is **external ops hardening** (AWS KMS BYOK setup, OpenID conformance run, email/SMS deliverability, RDS PITR, external pentest), plus a few prebuilt SDK components and **i18n / a11y** polish. Full breakdown in [Feature status](#feature-status).
+> | Backend API — ~40 domain modules, 62 migrations, no stubbed endpoints | ✅ complete |
+> | Admin console — ~80 feature screens wired to live APIs | ✅ complete |
+> | Marketing site · Hosted login | ✅ complete |
+> | TypeScript · React · Next.js · Go · Python SDKs | ✅ shipped |
+
+---
+
+## Table of contents
+
+- [Architecture at a glance](#architecture-at-a-glance)
+- [Repository layout](#repository-layout)
+- [Quickstart](#quickstart)
+- [Deployment](#deployment)
+- [Testing & quality gates](#testing--quality-gates)
+- [Feature status](#feature-status)
+- [Tech stack](#tech-stack)
+- [Documentation](#documentation)
+- [Contributing · Security · License](#contributing)
+
+---
+
+## Architecture at a glance
+
+A **single deployable** Go module organised into **five bounded contexts**, with shared infrastructure grouped by concern under `platform/`. Boundaries are enforced by build-time fitness tests, not convention alone.
+
+```
+            ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+ End users  │  login app  │   │   console   │   │   website   │   Browsers / IdPs / SDKs
+ Admins     │  (Next.js)  │   │   (Vite)    │   │  (Next.js)  │   service accounts · AI agents
+            └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+                   └─────────────────┼─────────────────┘
+                                     ▼
+        ┌──────────────────────────────────────────────────────────┐
+        │  Go API (chi v5)  — cmd/server                            │
+        │  middleware: RequestID→RealIP→Recoverer→SecurityHeaders   │
+        │              →AccessLog→Tracing→Metrics→CSRF→CORS→authz   │
+        │                                                            │
+        │  domains/  identity · access · federation · developer ·   │
+        │            operations        (interface-mediated calls)   │
+        │  platform/ api · database · cache · messaging · events ·  │
+        │            observability · security · config              │
+        └───────┬───────────────────────────┬──────────────────────┘
+                ▼                            ▼
+        PostgreSQL (pgx v5)          egress: SMTP · webhooks · SIEM · HIBP
+        6 schemas, multi-tenant      (transactional outbox, at-least-once)
+        by tenant_id
+```
+
+**Engineering invariants** (the things that make it enterprise-grade):
+
+| Invariant | How it's enforced |
+| --- | --- |
+| Modular-monolith boundaries — `platform/*` never imports `domains/*`; `domains/*` never imports the router/`cmd` | `tests/architecture/arch_test.go` (rules **R1/R2**) fails the build on violation |
+| 100% API documentation | `chi.Walk` coverage test fails CI if any mounted route is missing from `api/openapi/` |
+| Multi-tenant isolation | every table carries `tenant_id`; 6 PostgreSQL schemas; no cross-schema joins |
+| Tamper-evident audit | SHA-256 hash-chained, append-only log with `/verify` integrity walk |
+| Reliable eventing | transactional outbox (business row + audit + event in one tx) + DLQ |
+| No insecure prod boot | `config.Validate()` refuses to start outside dev with insecure defaults |
+| Asymmetric tokens | ES256 / ECDSA P-256, JWKS-published, `kid` = RFC 7638 thumbprint, rotation grace window |
+
+Deep dives live in [`docs/architecture/`](./docs/architecture/) and the decision records in [`docs/adr/`](./docs/adr/).
 
 ---
 
@@ -25,7 +83,7 @@ Single Go module + pnpm/Turbo workspace, both rooted at the repo root.
 
 ```
 qeet-id/
-├── cmd/                    Go entrypoints (server, seed)
+├── cmd/                    Go entrypoints: server, worker, scheduler, migrate, seed
 ├── domains/                business logic by bounded context:
 │   ├── identity/           users, organizations(+branding), groups, invitations, verification, domains
 │   ├── access/             authentication, authorization/{rbac,rebac,policy,authpolicy}, mfa, passkeys,
@@ -33,16 +91,27 @@ qeet-id/
 │   ├── federation/         oidc, saml, scim, ldap, social
 │   ├── developer/          api-keys, service-accounts, credentials/{secrets,vc}, auth-hooks, webhooks, agents
 │   └── operations/         audit, analytics, notifications, email-templates, retention, compliance, billing, siem
-├── platform/               shared infra by concern: api/ database/ (incl. migrations) cache/ messaging/ events/ observability/ security/ config/
-├── apps/                   frontend: console (admin, Vite), website (Next.js), login (Next.js) [+ docs/, status/]
+├── platform/               shared infra by concern:
+│   ├── api/                rest (chi router, middleware, paging, errs, codes) · grpc · openapi
+│   ├── database/           postgres (pool, dbutil, pgxerr) · migrations (golang-migrate SQL pairs)
+│   ├── security/           tokens (ES256/JWKS) · encryption · hibp
+│   ├── observability/      logging · metrics · tracing · health · buildinfo
+│   ├── events/             outbox (+ DLQ)      cache/  ratelimit
+│   └── messaging/ config/  notifier · …
+├── apps/                   frontend: console (admin, Vite), website (Next.js), login (Next.js)
 ├── packages/               shared JS config (qeetid-tsconfig, qeetid-eslint)
-├── sdk/                    SDKs: js/{sdk,nextjs,react}, go, python
-├── api/                    openapi/ (5 split OpenAPI 3.1 specs) + postman/ (Newman runner)
-├── tests/                  Go integration tests (testcontainers)
-├── deploy/                 Compose (prod), Helm chart, observability, RUNBOOK
-├── Dockerfile(.migrate)    Distroless app image + migration runner (build context = repo root)
-└── Makefile                Root targets for the Go module + pnpm workspace
+├── sdk/                     SDKs: js/{sdk,nextjs,react}, go, python
+├── api/                    openapi/ (5 bounded-context OpenAPI 3.1 specs) + postman/ (Newman runner)
+├── tests/                  architecture (fitness) · integration (testcontainers) · e2e · performance · security · fixtures
+├── deploy/                 base/ (docker incl. Dockerfiles, helm, kubernetes, terraform, observability)
+│                           + environments/{dev,test,stage,prod} + runbooks
+├── tools/                  codegen · migration-tools · benchmarks · scripts · openapi-split
+├── docs/                   architecture · adr · api · security · compliance · onboarding · runbooks
+├── Makefile                root targets for the Go module + pnpm workspace
+└── ROADMAP.md              planned (not-yet-built) packages & surfaces
 ```
+
+Folders are organised by domain/concern; some Go **package clauses** differ from the folder name by design — see the table in [CLAUDE.md](./CLAUDE.md#gotchas).
 
 ---
 
@@ -51,218 +120,157 @@ qeet-id/
 ### Prerequisites
 
 - **Go** ≥ 1.25
-- **Node.js** ≥ 20 with `pnpm` ≥ 9.15.4
-- **Docker** & **Docker Compose** (for PostgreSQL)
+- **Node.js** ≥ 20.9 with **pnpm** ≥ 9.15.4
+- **Docker** & Docker Compose (for PostgreSQL)
 - **golang-migrate** CLI ([install](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate))
 
-### 1. Install dependencies
+### 1 · Install
 
 ```bash
 make install              # go mod tidy + pnpm install
 ```
 
-### 2. Bring up the database
+### 2 · Database
 
 ```bash
 cp .env.example .env       # adjust if needed
-make db-up                 # Postgres on :5001 (Docker)
-make migrate-up            # apply all migrations
-make seed-reset            # (optional) fill the DB with demo data to click around
+make db-up                 # Postgres on :5001 (deploy/environments/dev/docker-compose.yml)
+make migrate-up            # apply all migrations (platform/database/migrations)
+make seed-reset            # (optional) demo workspaces + users to click around
 ```
 
-`make seed-reset` creates two demo workspaces with users, roles, groups, API
-keys, webhooks, SSO providers and audit history. Log in with `owner@acme.test`
-(password `Password123!`); see [docs/BACKEND.md](./docs/BACKEND.md#seed-demo-data) for all accounts.
+`make seed-reset` creates two demo workspaces with users, roles, groups, API keys, webhooks, SSO providers and audit history. Log in with **`owner@acme.test`** (password **`Password123!`**); see [docs/onboarding/quickstart.md](./docs/onboarding/quickstart.md) for all accounts.
 
-### 3. Run the stack
+### 3 · Run the stack
 
 ```bash
 make dev                  # backend (:4001) + all 3 frontend apps in parallel
 ```
 
-Or run pieces individually:
+| Target | Runs | URL |
+| --- | --- | --- |
+| `make dev-backend` | Go API | <http://localhost:4001> |
+| `make dev-admin` | Admin console (Vite + TanStack) | <http://localhost:3002> |
+| `make dev-web` | Marketing site (Next.js) | <http://localhost:3001> |
+| `make dev-login` | Hosted login (Next.js) | <http://localhost:3004> |
 
-| Target              | What it runs                          | URL                                            |
-| ------------------- | ------------------------------------- | ---------------------------------------------- |
-| `make dev-backend`  | Go API                                | <http://localhost:4001>                        |
-| `make dev-admin`    | Admin dashboard (Vite + TanStack)     | <http://localhost:3002>                        |
-| `make dev-web`      | Marketing site (Next.js)              | <http://localhost:3001>                        |
-| `make dev-login`    | Hosted login (Next.js)                | <http://localhost:3004>                        |
-
-Sanity check the API: `curl http://localhost:4001/healthz`.
-
-### Containerised paths
-
-```bash
-make db-up     # docker-compose.yml — Postgres only (dev)
-```
-
-For a production-shaped stack (backend + Postgres + Redis + TLS proxy + migration
-one-shot) use the Compose file under [deploy/compose/](./deploy/compose/); the Helm
-chart in [deploy/helm/qeet-id/](./deploy/helm/qeet-id/) is the Kubernetes target. See
-[deploy/RUNBOOK.md](./deploy/RUNBOOK.md).
-
-See the full target list with `make help` or in [Makefile](./Makefile).
+Sanity check: `curl http://localhost:4001/healthz`. Full target list: `make help`.
 
 ---
 
-## Tests and quality
+## Deployment
+
+The backend ships as a **distroless** container ([Dockerfile](./deploy/base/docker/Dockerfile)); migrations ship as a separate one-shot image ([Dockerfile.migrate](./deploy/base/docker/Dockerfile.migrate)). Both build with the **repo root as context** (`docker build -f deploy/base/docker/Dockerfile .`). Pick the path that fits your target:
+
+| Path | Directory | Use |
+| --- | --- | --- |
+| **Local dev** | [deploy/environments/dev/](./deploy/environments/dev/) | Postgres-only Compose (what `make db-up` uses) |
+| **Test** | [deploy/environments/test/](./deploy/environments/test/) | Test-DB Compose (CI is the authoritative test env) |
+| **Single host (prod-shaped)** | [deploy/environments/prod/compose/](./deploy/environments/prod/compose/) | Hardened Compose: Caddy TLS + Postgres + Redis + migration one-shot |
+| **Kubernetes (kustomize)** | [base/kubernetes/base/](./deploy/base/kubernetes/base/) + [environments/{stage,prod}/kubernetes/](./deploy/environments/) | Shared base + per-env overlays |
+| **Kubernetes (Helm)** | [base/helm/qeet-id/](./deploy/base/helm/qeet-id/) + [environments/{stage,prod}/values.yaml](./deploy/environments/) | Chart in base/; values per env. Deployment/Service/Ingress/HPA/PDB + migration Job, External Secrets, ServiceMonitor |
+| **AWS infrastructure** | [base/terraform/](./deploy/base/terraform/) + [environments/{stage,prod}/terraform.tfvars](./deploy/environments/) | RDS, ECR, KMS CMK, Secrets Manager; modules in base/, tfvars per env |
+| **Observability** | [deploy/base/observability/](./deploy/base/observability/) | Prometheus scrape + alerts, Grafana dashboard, OTel Collector |
+| **Runbooks** | [deploy/runbooks/](./deploy/runbooks/) | Operations, secrets generation/rotation, scaling, disaster recovery |
+
+Images are published by CI (cosign-signed, with SBOM + provenance): `ghcr.io/qeetgroup/qeet-id` and `ghcr.io/qeetgroup/qeet-id-migrate`. Start with [deploy/runbooks/operations.md](./deploy/runbooks/operations.md).
+
+---
+
+## Testing & quality gates
+
+Every push and PR runs the full gate set in [CI](./.github/workflows/ci.yml); all are reproducible locally.
+
+| Gate | Local command | Enforces |
+| --- | --- | --- |
+| Unit + race | `make test-backend` → `go test -race ./...` | Correctness, data races |
+| **Architecture fitness** | (part of `go test`) | R1/R2 dependency-direction rules |
+| **OpenAPI coverage** | (part of `go test`) | Every mounted route documented in `api/openapi/` |
+| **Coverage floor** | `make cover` | Unit coverage can't regress below the floor |
+| Go lint | `make lint-go` | `golangci-lint` ([.golangci.yml](./.golangci.yml)) + `go vet` |
+| Vulnerabilities | `govulncheck ./...` (CI) | Known CVEs in Go deps |
+| Secret scan | `gitleaks` (CI) | No committed credentials |
+| OpenAPI lint | `spectral` (CI) | Spec hygiene across the 5 specs |
+| Integration | `make test-integration` | Real Postgres via testcontainers (needs Docker) |
+| API contract | `make test-api [FOLDER=Auth]` | Postman/Newman against a running backend |
+| Frontend | `make test-frontend` · `make typecheck` · `make lint` | Turbo tests, `tsc --noEmit`, ESLint |
 
 ```bash
-make test                 # backend (go test ./...) + frontend (Turbo)
-make test-backend         # Go only
-make test-frontend        # JS/TS only
-make test-api             # Postman collection via Newman — backend must be up
-make test-api FOLDER=Auth # scope to one Postman folder
-
-make lint                 # go vet + frontend eslint
-make typecheck            # frontend tsc --noEmit
-make format               # frontend prettier
+make test          # backend (go test ./...) + frontend (Turbo)
+make cover         # unit coverage + enforce floor   ·   make cover-html for the report
+make lint          # Go (golangci-lint) + frontend ESLint
 ```
-
-CI-style API run with JUnit + HTML reports: `make test-api-ci` (artifacts land under [api/postman/reports/](./api/postman/)).
 
 ---
 
 ## Feature status
 
-**The full v1 product surface is built and working** — every backend endpoint below is implemented (no stubs), and every ✅ admin screen is wired to a live API. The marketing site and hosted login are complete.
+**The full v1 product surface is built and working** — every backend endpoint is implemented (no stubs), every ✅ admin screen is wired to a live API, and the marketing site and hosted login are complete.
 
-### ✅ Available now
+<details open>
+<summary><b>✅ Available now</b></summary>
 
-**Authentication**
+**Authentication** — email+password (sessions, refresh rotation) · magic links · email/phone OTP · Passkeys/WebAuthn · social (Google, GitHub, Microsoft, Apple) · MFA (TOTP, recovery codes, email/SMS OTP) · password & passwordless policy.
 
-- [x] Email + password, sessions, refresh-token rotation
-- [x] Magic links — passwordless email links + tenant config (enable, link lifetime)
-- [x] Email & phone OTP verification
-- [x] Passkeys / WebAuthn — full register + login ceremony
-- [x] Social login — Google, GitHub, Microsoft, Apple
-- [x] MFA — TOTP, recovery codes, Email/SMS one-time-passcode factors
-- [x] Password & passwordless policy — complexity rules (enforced on password change) + method toggles
+**Enterprise SSO & provisioning** — OIDC/OAuth 2.0 (discovery, JWKS, authorize/token/userinfo, client registration, Device grant RFC 8628) · Token Exchange RFC 8693 (downscope + delegation) · SAML 2.0 SP **and** IdP modes · SCIM 2.0 (users + groups) · LDAP / Active Directory.
 
-**Enterprise SSO & provisioning**
+**Identity & access** — multi-tenant tenants & members · users (CRUD, bulk import, sessions, recycle bin) · groups · RBAC + ABAC policies · **ReBAC** (Zanzibar-style relation tuples, recursive `/check`) · invitations · API keys & machine identities (`client_credentials`) · secrets vault (AES-256-GCM, audited, scoped `vault:<name>` reads) · OAuth grant administration.
 
-- [x] OIDC / OAuth 2.0 — discovery, JWKS, `/authorize`, `/token`, userinfo, client registration, Device grant (RFC 8628)
-- [x] Token Exchange (RFC 8693) — token downscope + delegation (`actor_token` / `act` claim)
-- [x] SAML 2.0 (SP) — connection management, SP metadata, AuthnRequest, signature-validated ACS, JIT provisioning, `/sso/callback`
-- [x] SCIM 2.0 — per-tenant bearer token + `/scim/v2/Users` (create / filter / patch-active / delete)
-- [x] LDAP / Active Directory — service-bind, user search, password verification, JIT provisioning
+**Security & compliance** — session management · rate limiting (per IP/tenant/user/API-key) · IP allow/deny (CIDR) · hash-chained audit log (`/verify`) · threat protection (bot + anomaly detection, adaptive limits) · GDPR erasure + grace-period purge · data retention auto-purge · SOC 2 / ISO 27001 / GDPR evidence reporting.
 
-**Identity & access**
+**Developer & platform** — HMAC-signed webhooks (backoff retry + DLQ) · transactional outbox · Auth Hooks/Actions (post-login gate) · SIEM log streaming · **AI-agent identity** (ephemeral scoped revocable tokens + `act` delegation + MCP introspection) · **Verifiable Credentials** (W3C JWT-VC issue/verify/revoke) · five first-party SDKs · analytics.
 
-- [x] Multi-tenant tenants & members
-- [x] Users — CRUD, bulk import, sessions, recycle bin (restore / permanent purge)
-- [x] Groups
-- [x] RBAC roles & permissions, ABAC policies, resource catalogue
-- [x] ReBAC — relationship-based, Zanzibar-style fine-grained authz (relation tuples, recursive userset `/check`)
-- [x] Invitations
-- [x] API keys & machine identities (OAuth `client_credentials`)
-- [x] Secrets vault — named integration secrets, AES-256-GCM encrypted at rest, audited reveal; scoped vault reads (`vault:<name>`) for delegated agents
-- [x] OAuth grant administration — list / revoke active OIDC refresh-token grants
+**Workspace & billing** — branding · custom domains · per-tenant email templates · **multi-currency** billing (any ISO-4217) with card payments via Stripe (international) + Razorpay (India), signature-verified webhooks (env-gated) · account (profile, security, sessions, data export).
 
-**Security & compliance**
-
-- [x] Session management
-- [x] Rate limiting — per-IP / per-tenant / per-user / per-API-key
-- [x] IP allow / deny rules — CIDR, deny-wins, evaluation endpoint
-- [x] Audit log — hash-chained, append-only, `/verify` integrity check
-- [x] Threat protection — bot detection, anomaly detection, adaptive rate-limit tuning, IP-allowlist dashboards
-- [x] GDPR erasure requests + grace-period purge sweeper
-- [x] Data retention — opt-in auto-purge of soft-deleted users (+ preview / run-now)
-- [x] Compliance evidence — SOC 2, ISO 27001, GDPR & retention reporting pages
-
-**Developer & platform**
-
-- [x] Webhooks — HMAC-signed, exponential-backoff retry, DLQ
-- [x] Transactional outbox + dispatcher
-- [x] Auth Hooks / Actions — post-login allow/deny gate (safe-by-default, fail-open)
-- [x] SIEM / log streaming — push audit & security events to external log sinks
-- [x] AI-agent identity — ephemeral, scoped, revocable agent tokens + delegation (`act` claim) + MCP introspection enforcement
-- [x] Verifiable Credentials — W3C JWT-VC issue / verify / revoke + public verification endpoint
-- [x] SDKs — first-party TypeScript, React, Next.js, Go and Python clients
-- [x] Analytics overview
-
-**Workspace & billing**
-
-- [x] Branding
-- [x] Workspace settings + custom domains
-- [x] Transactional email templates — per-tenant overrides + preview
-- [x] Billing — **internal, multi-currency** plans / subscriptions / invoices (any ISO-4217 currency); **card payments** via Stripe (international) + Razorpay (India) — one-time-per-period checkout, signature-verified webhooks (env-gated, off until keys set)
-- [x] Account — profile, security, sessions, data export
-
-**Apps**
-
-- [x] Admin dashboard (Vite + TanStack Router)
-- [x] Marketing site (Next.js)
-- [x] Hosted login (Next.js)
-
-> End-user docs moved to the standalone multi-product `qeet-docs` site (docs.qeet.in).
-
-Also shipped since this list was first written: **SAML IdP mode** (alongside SP),
-**SCIM Groups**, **MFA WebAuthn/step-up**, **OAuth Device grant**, and **crypto
-hardening** — Argon2id hashing + ES256/JWKS signing with key rotation. Real SMTP/Twilio
-delivery is wired (log-only fallback when unconfigured).
+</details>
 
 ### 🔜 Planned / remaining
 
-- [ ] **CIBA** grant (Client-Initiated Backchannel Auth) — Token Exchange and Device grant already shipped
+- [ ] **CIBA** grant (Client-Initiated Backchannel Auth)
 - [ ] Prebuilt **`<SignIn/>` / `<OrgSwitcher/>`** SDK components (`<UserButton/>` already ships in `@qeetid/react`)
-- [ ] **i18n** — retrofit remaining screens, locale-aware emails, non-English catalogs
+- [ ] **i18n** — remaining screens, locale-aware emails, non-English catalogs
 - [ ] **WCAG 2.2 AA** — expand the accessibility audit across all screens
-- [ ] Managed-cloud **infrastructure management** — regions, nodes, scaling
-- [ ] **Ops hardening** (not code) — AWS KMS BYOK key setup, OpenID conformance run, email/SMS deliverability (SPF/DKIM/DMARC), RDS automated backups / PITR, external pentest
+- [ ] Managed-cloud infrastructure management (regions, nodes, scaling)
+- [ ] **Ops hardening** (not code) — AWS KMS BYOK, OpenID conformance run, deliverability (SPF/DKIM/DMARC), RDS PITR, external pentest
+
+Further planned packages/surfaces are tracked in [ROADMAP.md](./ROADMAP.md).
 
 ---
 
 ## Tech stack
 
-**Backend**
+**Backend** — Go 1.25 · `chi/v5` router · `pgx/v5` Postgres driver · `golang-jwt/jwt/v5` (ES256 + JWKS, key rotation) · `golang.org/x/crypto` (Argon2id) · in-house TOTP (RFC 6238)/HMAC · transactional outbox + webhook dispatcher with DLQ · secrets vault (AES-256-GCM via a `KeyProvider` abstraction; AWS KMS for BYOK). Data access is **hand-written SQL over pgx** (see [ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) — no ORM.
 
-- Go 1.25, `chi/v5` router, `pgx/v5` PostgreSQL driver
-- `golang-jwt/jwt/v5` (ES256 + JWKS, key rotation), `golang.org/x/crypto` (Argon2id, bcrypt-verify fallback)
-- In-house TOTP (RFC 6238), HMAC, token codes
-- Transactional outbox for event publishing, with DLQ + webhook dispatcher
-- Secrets vault — AES-256-GCM at rest via a `KeyProvider` abstraction; AWS KMS (`SECRETS_PROVIDER=aws-kms`) for BYOK
+**Frontend** — React 19 everywhere · admin on Vite + TanStack (Router/Query/Form/Table) · web + login on Next.js 16 · Tailwind 4 + the shared `@qeetrix/*` design system · pnpm 9.15 + Turborepo workspace.
 
-**Frontend**
+**SDKs** — TypeScript (`@qeetid/sdk`), React (`@qeetid/react`), Next.js (`@qeetid/nextjs`), Go (`sdk/go`), Python (`sdk/python`) — all authenticate via `Authorization: ApiKey` + ES256/JWKS verification.
 
-- React 19 across all apps
-- Admin: Vite + TanStack Router + TanStack Query + TanStack Form + TanStack Table
-- Web + Login: Next.js 16
-- Tailwind 4 + the shared `@qeetrix/*` design system (Base UI / shadcn-style)
-- Workspace: pnpm 9.15 + Turborepo 2.9
-
-**SDKs**
-
-- Five first-party SDKs — TypeScript (`@qeetid/sdk`), React (`@qeetid/react`), Next.js (`@qeetid/nextjs`), Go (`sdk/go`), Python (`sdk/python`); all authenticate via `Authorization: ApiKey` + ES256 JWKS verification
-
-**Infrastructure**
-
-- PostgreSQL (Aurora-compatible) — 30+ tables across `tenant`, `user`, `auth`, `rbac`, `audit`, `platform` schemas, all multi-tenant by `tenant_id`
-- **Redis** — optional, for distributed (cross-replica) rate limiting; falls back to in-process limits when unset
-- Kafka, S3 — planned per [Phase 2 High-Level Architecture](https://github.com/qeetgroup/qeetify/tree/main/qeetify-reqs/phase-2)
+**Infrastructure** — PostgreSQL (Aurora-compatible), 30+ tables across `tenant`/`user`/`auth`/`rbac`/`audit`/`platform` schemas, all multi-tenant by `tenant_id` · optional **Redis** for cross-replica rate limiting (in-process fallback) · Kafka / NATS / object storage planned ([ROADMAP.md](./ROADMAP.md)).
 
 ---
 
 ## Documentation
 
-- **Implementation status** — [Feature status](#feature-status)
-- **Example apps** — [examples/](./examples/) — runnable integrations: a [Next.js app](./examples/nextjs-app) (server-side flow) and a [React SPA](./examples/react-app) (browser-side PKCE)
-- **Backend module guide** — [docs/BACKEND.md](./docs/BACKEND.md)
-- **Architecture & conventions** — [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
-- **Deploy & operations** — [deploy/RUNBOOK.md](./deploy/RUNBOOK.md)
-- **End-user docs** — standalone `qeet-docs` site (docs.qeet.in)
-- **API spec** — [api/openapi/](./api/openapi/) — 100% route coverage, guarded in CI (a `chi.Walk` test fails the build on any undocumented route)
-- **Postman collection** — [api/postman/qeet-id.postman_collection.json](./api/postman/qeet-id.postman_collection.json)
+| Topic | Where |
+| --- | --- |
+| Architecture deep-dives (7 docs) | [docs/architecture/](./docs/architecture/) |
+| Architecture Decision Records (15) | [docs/adr/](./docs/adr/) |
+| Security model & cryptography | [docs/security/](./docs/security/) |
+| Compliance (GDPR, data isolation, VC) | [docs/compliance/](./docs/compliance/) |
+| Onboarding & contributor guides | [docs/onboarding/](./docs/onboarding/) |
+| Operational runbooks | [docs/runbooks/](./docs/runbooks/) · [deploy/runbooks/](./deploy/runbooks/) |
+| Codebase tour (new contributors) | [docs/onboarding/codebase-tour.md](./docs/onboarding/codebase-tour.md) |
+| Conventions & dev workflow new code must follow | [docs/onboarding/development-workflow.md](./docs/onboarding/development-workflow.md) |
+| API spec (OpenAPI 3.1, 5 specs) | [api/openapi/](./api/openapi/) — merge with `go run ./tools/openapi-split merge` |
+| Postman collection | [api/postman/](./api/postman/) |
+| Runnable example integrations | [examples/](./examples/) — Next.js (server flow) + React SPA (browser PKCE) |
+| End-user docs | standalone `qeet-docs` site (docs.qeet.in) |
 
 ---
 
 ## For AI assistants
 
-- [CLAUDE.md](./CLAUDE.md) — top-level brief for any AI assistant working in this codebase.
-- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — backend conventions new code must follow.
-
-Read [CLAUDE.md](./CLAUDE.md) before making changes if you're a model. Humans see [CONTRIBUTING.md](./CONTRIBUTING.md).
+Read [CLAUDE.md](./CLAUDE.md) before making changes — it's the top-level brief, with the layout map, commands, and gotchas. New backend code must follow the conventions in [docs/onboarding/development-workflow.md](./docs/onboarding/development-workflow.md) and the deep-dives in [docs/architecture/](./docs/architecture/).
 
 ---
 
@@ -272,7 +280,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). Bug reports and feature requests go th
 
 ## Security
 
-Found a vulnerability? **Please do not open a public issue.** Follow the disclosure process in [SECURITY.md](./SECURITY.md).
+Found a vulnerability? **Please do not open a public issue.** Follow the coordinated-disclosure process in [SECURITY.md](./SECURITY.md). Live secrets and `*.pem` keys must never be committed — CI runs `gitleaks` on every push.
 
 ## License
 

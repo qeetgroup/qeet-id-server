@@ -1,5 +1,5 @@
-# Production overrides. Apply with: helm upgrade --install qeet-id ./deploy/helm/qeet-id \
-#   -n qeet-id -f deploy/helm/qeet-id/values-prod.yaml
+# Production overrides. Apply with: helm upgrade --install qeet-id ./deploy/base/helm/qeet-id \
+#   -n qeet-id -f deploy/environments/prod/values.yaml
 replicaCount: 3
 
 autoscaling:

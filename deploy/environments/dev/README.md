@@ -17,9 +17,9 @@ make db-wipe     # migrate down-all + migrate up
 Or directly with Compose:
 
 ```bash
-docker compose -f deploy/local/docker-compose.yml up -d
-docker compose -f deploy/local/docker-compose.yml down
-docker compose -f deploy/local/docker-compose.yml logs postgres
+docker compose -f deploy/environments/dev/docker-compose.yml up -d
+docker compose -f deploy/environments/dev/docker-compose.yml down
+docker compose -f deploy/environments/dev/docker-compose.yml logs postgres
 ```
 
 ## Services

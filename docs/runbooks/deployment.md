@@ -38,8 +38,8 @@ Both paths run database migrations automatically before the new API server versi
 ### Deploy / upgrade
 
 ```bash
-helm upgrade --install qeet-id deploy/helm/qeet-id/ \
-  -f deploy/helm/qeet-id/values-prod.yaml \
+helm upgrade --install qeet-id deploy/base/helm/qeet-id/ \
+  -f deploy/environments/prod/values.yaml \
   --set image.tag=<git-sha> \
   --namespace qeet-id \
   --create-namespace \
@@ -94,7 +94,7 @@ Note: Rolling back the Helm chart does **not** roll back the database migration.
 ### Setup
 
 ```bash
-cd deploy/compose
+cd deploy/environments/prod/compose
 
 # Copy and fill in env values
 cp .env.prod.example .env.prod

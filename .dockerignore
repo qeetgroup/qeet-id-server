@@ -61,9 +61,8 @@ Thumbs.db
 README.md
 CHANGELOG.md
 Makefile
-docker-compose.yml
-Dockerfile
-Dockerfile.migrate
+# (Dockerfiles live under deploy/, already excluded above; they're read via
+#  `-f`, not copied from the context, so no separate ignore is needed.)
 
 # CI
 .github/

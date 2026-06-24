@@ -30,7 +30,7 @@ terraform/
 State is stored in S3 with DynamoDB locking. Initialize once:
 
 ```bash
-cd deploy/terraform
+cd deploy/base/terraform
 terraform init \
   -backend-config="bucket=qeet-id-tfstate-<env>" \
   -backend-config="key=qeet-id/terraform.tfstate" \
