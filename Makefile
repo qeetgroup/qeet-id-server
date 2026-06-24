@@ -18,16 +18,6 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-# Version metadata stamped into the binary via -ldflags. Overridable in CI
-# (e.g. VERSION from a git tag). buildinfo.Get() falls back to embedded VCS info.
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
-DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-BUILDINFO = github.com/qeetgroup/qeet-id/platform/observability/buildinfo
-LDFLAGS ?= -s -w \
-	-X $(BUILDINFO).Version=$(VERSION) \
-	-X $(BUILDINFO).Commit=$(COMMIT) \
-	-X $(BUILDINFO).Date=$(DATE)
 
 # POSTGRES_* come from .env; no password default here. DB_URL is derived from them.
 POSTGRES_USER ?= postgres
@@ -91,16 +81,16 @@ dev-example-react:          ## Run the React SPA example only (:3020, see exampl
 build: build-backend        ## Build the backend binary
 
 build-backend:              ## Build the backend binary
-	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id ./cmd/server
+	$(GO) build -o bin/qeet-id ./cmd/server
 
 build-worker:               ## Build the worker binary
-	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id-worker ./cmd/worker
+	$(GO) build -o bin/qeet-id-worker ./cmd/worker
 
 build-scheduler:            ## Build the scheduler binary
-	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id-scheduler ./cmd/scheduler
+	$(GO) build -o bin/qeet-id-scheduler ./cmd/scheduler
 
 build-migrate:              ## Build the migration runner binary
-	$(GO) build -ldflags "$(LDFLAGS)" -o bin/qeet-id-migrate ./cmd/migrate
+	$(GO) build -o bin/qeet-id-migrate ./cmd/migrate
 
 build-frontend:             ## Build the 3 frontend apps (admin, login, web) — excludes examples
 	$(PNPM) turbo build --filter=@qeetid/admin --filter=@qeetid/login --filter=@qeetid/web
