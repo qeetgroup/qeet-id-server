@@ -1,6 +1,6 @@
 <div align="center">
 
-# Qeet ID
+# 🔐 Qeet ID
 
 ### Passkeys-first identity platform — the open-source Auth0 / Okta alternative
 
@@ -12,67 +12,64 @@
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](./go.mod)
 [![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./api/openapi/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Security: gitleaks](https://img.shields.io/badge/Security-gitleaks-red)](./github/workflows/ci.yml)
-[![Arch tests](https://img.shields.io/badge/Architecture-fitness%20tests-blueviolet)](./.github/workflows/ci.yml)
+
+**[🚀 Quickstart](#-quickstart)** · **[🏗 Architecture](#-architecture)** · **[🧩 Features](#-features)** · **[📦 SDKs](#-sdks)** · **[🚢 Deploy](#-deployment)** · **[📚 Docs](#-documentation)**
+
+</div>
+
+---
+
+<div align="center">
+
+| 🏗 Single deployable | 🔌 ~190 API routes | 🖥 3 React frontends | 📦 5 SDKs | 🗄 62 migrations |
+|:---:|:---:|:---:|:---:|:---:|
+| Go modular monolith | 5 OpenAPI 3.1 specs | Admin · Login · Website | TS · React · Next · Go · Py | 6 Postgres schemas |
+
+</div>
+
+> **Status — pre-1.0, feature-complete for the July 2026 GA.** Every capability below has working Go code (no stubs). Remaining work is external-ops hardening (KMS BYOK, conformance, deliverability, pentest) + i18n/a11y polish.
+
+---
+
+## ✨ Why Qeet ID
+
+|  |  |
+|:--|:--|
+| 🔑 **Passkeys-first** | Native WebAuthn — passwordless, magic links, OTP, social |
+| 🏢 **Enterprise SSO** | SAML 2.0 **SP *and* IdP**, SCIM 2.0, LDAP / Active Directory |
+| 🛡️ **Fine-grained authz** | RBAC + ABAC + **ReBAC** (Zanzibar-style `/check`) |
+| 🤖 **AI-agent identity** | MCP introspection, token exchange (RFC 8693), W3C Verifiable Credentials |
+| 📜 **Tamper-evident audit** | SHA-256 hash-chained log with a `/verify` integrity walk |
+| 💳 **Billing built-in** | Multi-currency, Stripe (global) + Razorpay (India) |
+| 🌍 **Open & self-hostable** | MIT-licensed, single Go binary — no vendor lock-in |
+| 🧰 **Batteries included** | 3 frontends + 5 first-party SDKs + hosted login |
+
+<details>
+<summary><b>📊 Full comparison vs Auth0 · Okta · Clerk · Supabase · better-auth</b></summary>
 
 <br>
 
-**[Quickstart](#quickstart)** · **[Architecture](#architecture-at-a-glance)** · **[Features](#feature-status)** · **[SDKs](#sdks)** · **[Deploy](#deployment)** · **[Docs](#documentation)**
-
-</div>
-
----
-
-<div align="center">
-
-| &nbsp;&nbsp;&nbsp;🏗 Single deployable&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;🔌 ~190 API routes&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;🖥 3 React frontends&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;📦 5 first-party SDKs&nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp;🗄 62 migrations&nbsp;&nbsp;&nbsp; |
-|:---:|:---:|:---:|:---:|:---:|
-| Go modular monolith | 5 OpenAPI 3.1 specs | Admin · Login · Website | TS · React · Next.js · Go · Python | 6 PostgreSQL schemas |
-
-</div>
-
----
-
-Qeet ID is a **complete identity stack** in a single Go binary — authentication, enterprise SSO & SCIM, fine-grained authorization, machine & AI-agent identity, billing, audit, and compliance. Three React frontends (admin console, hosted login, marketing site) and five first-party SDKs ship alongside the API. UI primitives come from the shared [`@qeetrix/*`](../qeetrix/) design system; end-user docs live at [docs.qeet.in](https://docs.qeet.in).
-
-> **Status: pre-1.0 · feature-complete for the July 2026 GA.** Every capability listed below has working Go code — no stubbed endpoints, no mock handlers. Remaining work is external-ops hardening (KMS BYOK, conformance, deliverability, penetration test) and UX polish (i18n/a11y for ~70 older admin screens, CIBA grant, prebuilt SDK components).
-
----
-
-## Why Qeet ID?
-
-<div align="center">
-
-| Capability | **Qeet ID** | Auth0 | Okta | Clerk | Supabase Auth | better-auth |
+| Capability | **Qeet ID** | Auth0 | Okta | Clerk | Supabase | better-auth |
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Open source (MIT) | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
 | Fully self-hostable | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
-| Backend language | Go | Managed | Managed | Node.js | Managed | Node.js/TS |
 | Passkeys / WebAuthn | ✅ Native | 🟡 Add-on | 🟡 Add-on | ✅ | ✅ | ✅ |
-| SAML 2.0 SP **and** IdP | ✅ Both | ✅ SP only | ✅ | 🟡 Enterprise | ❌ | ❌ |
+| SAML 2.0 SP **and** IdP | ✅ Both | 🟡 SP only | ✅ | 🟡 Ent. | ❌ | ❌ |
 | SCIM 2.0 provisioning | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| LDAP / Active Directory | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| OIDC provider (issue tokens) | ✅ | ✅ | ✅ | ❌ | 🟡 Plugin | 🟡 Plugin |
-| ReBAC (Zanzibar-style) | ✅ Built-in | ❌ | ✅ (OPA) | ❌ | ❌ | ❌ |
-| AI-agent identity (MCP) | ✅ Full stack | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Verifiable Credentials (W3C VC) | ✅ JWT-VC | ❌ | ❌ | ❌ | ❌ | ❌ |
-| India payments (Razorpay) | ✅ Built-in | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Hash-chained audit log | ✅ `/verify` | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Refresh-token theft detection | ✅ | 🟡 | ✅ | ✅ | ❌ | ❌ |
-| Breach-password detection (HIBP) | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
-| SIEM streaming (Splunk / Datadog) | ✅ Built-in | 🟡 Export | ✅ | ❌ | ❌ | ❌ |
-| Multi-currency billing | ✅ ISO-4217 | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Prebuilt UI components | ⏳ Planned | ✅ | ✅ | ✅ Best-in-class | ❌ | ❌ |
-| GDPR erasure + data export | ✅ | ✅ | ✅ | 🟡 | 🟡 | ❌ |
-| Production config boot-gate | ✅ | n/a | n/a | n/a | ❌ | ❌ |
+| ReBAC (Zanzibar-style) | ✅ | ❌ | 🟡 OPA | ❌ | ❌ | ❌ |
+| AI-agent identity (MCP) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Verifiable Credentials | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Hash-chained audit | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| SIEM streaming | ✅ | 🟡 Export | ✅ | ❌ | ❌ | ❌ |
+| Multi-currency billing | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
-</div>
+</details>
 
 ---
 
-## Architecture at a glance
+## 🏗 Architecture
 
-A **single deployable** Go module with five bounded contexts and shared infrastructure under `platform/`. Boundaries are enforced by build-time fitness tests — not convention.
+A **single deployable** Go module — five bounded contexts over shared infrastructure, with boundaries enforced by build-time fitness tests, not convention.
 
 ```mermaid
 flowchart TB
@@ -93,14 +90,14 @@ flowchart TB
             access["access<br/>auth · mfa<br/>rbac · rebac"]
             federation["federation<br/>oidc · saml<br/>scim · ldap"]
             developer["developer<br/>api-keys<br/>agents · vc"]
-            operations["operations<br/>audit · billing · compliance<br/>siem · analytics · retention"]
+            operations["operations<br/>audit · billing<br/>siem · analytics"]
         end
         platform["platform/ — api · database · security · cache · events<br/>observability · messaging · config"]
         mw --> domains --> platform
     end
 
-    pg[("PostgreSQL 16 · pgx v5<br/>6 schemas · 30+ tables<br/>multi-tenant by tenant_id<br/>optional Redis rate-limit")]
-    egress["Egress services<br/>SMTP · HIBP · Webhooks<br/>SIEM stream · Payments<br/>(transactional outbox)"]
+    pg[("PostgreSQL 16 · pgx v5<br/>6 schemas · multi-tenant by tenant_id<br/>optional Redis rate-limit")]
+    egress["Egress · SMTP · HIBP · Webhooks<br/>SIEM stream · Payments<br/>(transactional outbox)"]
 
     clients --> login & console & website
     login --> mw
@@ -110,237 +107,112 @@ flowchart TB
     platform --> egress
 ```
 
-### Engineering invariants
+**Engineering invariants** — the things that make it enterprise-grade:
 
-| Invariant | How it's enforced |
-|:---|:---|
-| **Modular-monolith boundaries** — `platform/*` never imports `domains/*`; `domains/*` never imports `cmd` or the router | `tests/architecture/arch_test.go` rules **R1** and **R2** — break a boundary and CI fails |
-| **100% API documentation** | `chi.Walk` coverage test compares every mounted route against the 5 OpenAPI specs — undocumented route = CI failure |
-| **Multi-tenant isolation** | Every mutable table carries `tenant_id`; 6 PostgreSQL schemas; no cross-schema JOINs — service calls only |
-| **Tamper-evident audit** | SHA-256 hash-chained, append-only log; `GET /audit/verify` walks the chain and reports the first broken link |
-| **Reliable eventing** | Transactional outbox: business row + audit row + event row commit in a single `pgx.Tx` |
-| **No insecure prod boot** | `config.Validate()` refuses to start outside `SERVICE_ENV=dev` with weak/default keys |
-| **Asymmetric JWT tokens** | ES256 / ECDSA P-256, JWKS-published, `kid` = RFC 7638 thumbprint, rotation grace window for live key roll |
+- 🧱 **Modular-monolith boundaries** — `platform/*` never imports `domains/*` (arch test rules R1/R2 fail CI)
+- 📘 **100% API documentation** — `chi.Walk` coverage gate; an undocumented route fails CI
+- 🏘️ **Multi-tenant isolation** — every table carries `tenant_id`; 6 schemas, no cross-schema joins
+- 📤 **Reliable eventing** — transactional outbox (business + audit + event in one tx) + DLQ
+- 🔏 **Asymmetric tokens** — ES256 / ECDSA P-256, JWKS-published, `kid` = RFC 7638 thumbprint
 
 Deep dives: [`docs/architecture/`](./docs/architecture/) · Decision records: [`docs/adr/`](./docs/adr/)
 
 ---
 
-## Feature status
+## 🧩 Features
 
-<details open>
-<summary><b>🟢 Authentication &amp; sessions</b></summary>
+> **The full v1 surface is built and working** — every endpoint implemented (no stubs), every ✅ admin screen wired to a live API, marketing site + hosted login complete.
 
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| Email + password (Argon2id, OWASP params) | ✅ | Per-account lockout, secure enumeration-safe flows |
-| Passkeys / WebAuthn (registration + auth) | ✅ | FIDO2, resident credentials, cross-device |
-| Magic links | ✅ | Time-limited, single-use |
-| Email OTP / SMS OTP | ✅ | SMTP + Twilio wired |
-| TOTP (RFC 6238) + recovery codes | ✅ | QR-code enrollment, 8 recovery codes |
-| MFA step-up | ✅ | Per-operation elevation, WebAuthn as 2nd factor |
-| Session management | ✅ | Refresh rotation + theft detection + silent revocation |
-| Breach-password detection | ✅ | HIBP k-anonymity; env-gated (off in dev/CI) |
-| Password & passwordless policy | ✅ | Per-tenant config |
-| Password reset | ✅ | Enumeration-safe, time-limited tokens |
+- 🔑 **Authentication** — email+password (Argon2id), passkeys/WebAuthn, magic links, email/SMS OTP, social, MFA (TOTP + recovery codes), HIBP breach check
+- 🏢 **Enterprise SSO** — OIDC/OAuth 2.0 provider, Device grant (RFC 8628), Token Exchange (RFC 8693), SAML SP+IdP, SCIM 2.0, LDAP/AD
+- 🛡️ **Authorization** — RBAC, ABAC policies, ReBAC (Zanzibar relation tuples + recursive `/check`), IP allow/deny, Auth Hooks
+- 🤖 **Developer & AI-agent** — scoped API keys, M2M service accounts, secrets vault (AES-256-GCM), HMAC webhooks, AI-agent identity, MCP introspection, W3C Verifiable Credentials
+- 👥 **Identity & workspace** — multi-tenant orgs, users/groups/invitations, domain verification, per-tenant branding + email templates
+- 📜 **Compliance & billing** — hash-chained audit, GDPR erasure + export, data retention, SIEM streaming, multi-currency billing (Stripe + Razorpay)
+
+<details>
+<summary><b>📋 See every feature, with status & notes</b></summary>
+
+<br>
+
+**🔑 Authentication & sessions** — email+password (Argon2id, lockout, enumeration-safe) · passkeys/WebAuthn (FIDO2, cross-device) · magic links · email/SMS OTP · TOTP + 8 recovery codes · MFA step-up · session mgmt (refresh rotation + theft detection) · HIBP breach detection · password reset.
+
+**🏢 Enterprise SSO & provisioning** — OIDC/OAuth 2.0 provider (discovery, JWKS, PKCE, `/userinfo`, refresh, revoke, introspect, logout) · Device Authorization Grant (RFC 8628) · Token Exchange (RFC 8693, downscope + delegation) · SAML 2.0 SP **and** IdP · SCIM 2.0 (users + groups + PatchOp) · LDAP/AD · social login · account linking · SSO test-connection.
+
+**🛡️ Authorization** — RBAC · ABAC policy engine (explainable) · **ReBAC** (`relation_tuples`, recursive `/check` with cycle guard, grant-path trace) · IP allow/deny (CIDR) · Auth Hooks/Actions (post-login allow/deny + custom claims).
+
+**🤖 Developer & AI-agent platform** — scoped API keys (`qk_`, hashed, audited) · service accounts (`client_credentials`) · secrets vault (AES-256-GCM, scoped `vault:<name>`) · HMAC webhooks (backoff + DLQ) · **AI-agent identity** (ephemeral scoped revocable tokens, `actor_type=agent`) · **MCP introspection** · **token delegation** (RFC 8693 `act` claim) · **W3C JWT-VC** (issue/verify/revoke) · analytics · SIEM streaming.
+
+**👥 Identity & workspace** — multi-tenant orgs (isolated, branded, custom domains) · users (CRUD, bulk import, sessions, recycle bin) · nested groups (SCIM sync) · invitations · domain verification (DNS TXT) · per-tenant email templates · org switcher + branding preview.
+
+**📜 Compliance & billing** — SHA-256 hash-chained audit (`/verify`) · GDPR erasure + grace-period purge · data export · retention auto-purge · SOC 2 / ISO 27001 / GDPR evidence · multi-currency billing (ISO-4217) · card payments via Stripe (global) + Razorpay (India), webhook-verified (env-gated).
 
 </details>
 
 <details>
-<summary><b>🟢 Enterprise SSO &amp; provisioning</b></summary>
+<summary><b>⏳ Planned / remaining</b></summary>
 
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| OIDC / OAuth 2.0 provider | ✅ | Discovery, JWKS, Auth Code + PKCE, `/userinfo`, refresh, revoke, introspect, logout |
-| Device Authorization Grant (RFC 8628) | ✅ | TV / CLI headless flows |
-| Token Exchange (RFC 8693) | ✅ | Downscope + act-delegation + `act` claim |
-| SAML 2.0 SP mode | ✅ | Consume external IdPs (Entra ID, Google, Okta) |
-| SAML 2.0 IdP mode | ✅ | Issue assertions — Qeet ID as the SSO source |
-| SCIM 2.0 (Users + Groups + PatchOp) | ✅ | Bi-directional provisioning |
-| LDAP / Active Directory | ✅ | Bind-login, connection CRUD + test-bind |
-| Social login (generic OIDC per tenant) | ✅ | Google, GitHub, Microsoft, Apple, custom |
-| Account linking | ✅ | Multiple providers per user |
-| SSO test-connection | ✅ | Validate config before enabling |
+<br>
 
-</details>
+**🛠 Product roadmap**
+- CIBA grant · prebuilt `<SignIn/>` / `<OrgSwitcher/>` SDK components (`<UserButton/>` already ships)
+- i18n catalogs + WCAG 2.2 AA across remaining legacy screens
+- Ops hardening (not code): AWS KMS BYOK, OpenID conformance run, deliverability (SPF/DKIM/DMARC), RDS PITR, external pentest
 
-<details>
-<summary><b>🟢 Authorization</b></summary>
+**🤖 AI-agent identity & governance** *(surfaced by the competitive-research `product-manager` agent — 🟠 high · 🟡 medium · 🟢 later)*
+- 🟠 **Token Vault** — per-tenant encrypted store for third-party OAuth tokens (agent outbound calls)
+- 🟠 **MCP AS compliance** — RFC 9728 Protected Resource Metadata + RFC 8707 Resource Indicators
+- 🟠 **Agent lifecycle + kill switch** — suspend/decommission state machine with instant authz denial
+- 🟡 **Agent-as-Principal** — first-class non-human OIDC principal (`sub_type=agent`)
+- 🟡 **Shadow-AI discovery** — flag unmanaged OAuth clients holding live grants · 🟡 **Agent sponsor model** — named owner + auto-transfer on offboarding
+- 🟡 **AuthZEN PDP/PEP** — OpenID-standard `/evaluation` endpoint + COAZ MCP profile · 🟡 **SSF/CAEP** — real-time revocation signals to downstream gateways
+- 🟢 **Device-bound agent credentials** — TPM/enclave-attested keys (RFC 8705 mTLS)
 
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| RBAC | ✅ | Roles, permissions, user_roles, role_permissions |
-| ABAC policies | ✅ | Attribute-based policy engine with explainable results |
-| **ReBAC (Zanzibar-style)** | ✅ | `relation_tuples`, recursive userset `/check` with cycle guard |
-| Single `/check` call | ✅ | Returns grant-path trace for auditability |
-| IP allow / deny (CIDR) | ✅ | Per-tenant, per-IP CIDR rules |
-| Auth Hooks / Actions | ✅ | Post-login gate — allow/deny + custom claims |
+**🧰 Developer experience**
+- 🟡 `qeetid` management CLI (`--json` for CI/agents) · 🟡 FGA Permissions Index (low-latency RAG authz) · 🟢 Rust SDK
 
-</details>
-
-<details>
-<summary><b>🟢 Developer &amp; AI-agent platform</b></summary>
-
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| Scoped API keys | ✅ | `qk_` prefix, expirable, hashed, audited |
-| Service accounts (`client_credentials`) | ✅ | Machine-to-machine M2M grant |
-| Secrets vault (AES-256-GCM) | ✅ | Per-tenant, scoped `vault:<name>` reads, audited |
-| Webhooks (HMAC-SHA256) | ✅ | Signed, exponential backoff retry, DLQ |
-| Auth Hooks | ✅ | Post-login allow/deny gate (Developer → Auth Hooks) |
-| **AI-agent identity** | ✅ | Ephemeral scoped revocable tokens, `actor_type=agent` |
-| **MCP introspection** | ✅ | `actor_type`, `agent_id`, `act` on `/oauth/introspect` |
-| **Token delegation (RFC 8693)** | ✅ | `act` claim, `IssueAccessActor` |
-| **Verifiable Credentials (W3C JWT-VC)** | ✅ | Issue / verify / revoke, public `/v1/credentials/verify` |
-| Analytics | ✅ | MAU/DAU, login methods, MFA adoption, failed attempts |
-| SIEM streaming | ✅ | Outbox → Splunk / Datadog via log sinks |
-
-</details>
-
-<details>
-<summary><b>🟢 Identity &amp; workspace management</b></summary>
-
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| Multi-tenant organisations | ✅ | Isolated schemas, per-tenant branding, custom domains |
-| User management | ✅ | CRUD, bulk import, sessions, recycle bin |
-| Groups | ✅ | Nested membership, SCIM sync |
-| Invitations | ✅ | Email-gated, expirable, role-pre-assign |
-| Domain verification | ✅ | DNS TXT record check, org lockdown |
-| Per-tenant email templates | ✅ | Transactional, i18n scaffold |
-| Org switcher / branding preview | ✅ | Live in admin console |
-
-</details>
-
-<details>
-<summary><b>🟢 Compliance &amp; billing</b></summary>
-
-| Feature | Status | Notes |
-|:---|:---:|:---|
-| Hash-chained audit log | ✅ | SHA-256 chain, append-only, `/verify` integrity walk |
-| GDPR erasure + grace-period purge | ✅ | Right-to-erasure, configurable retention |
-| Data export | ✅ | Per-user export bundle |
-| Data retention auto-purge | ✅ | Background worker, tenant-configured period |
-| SOC 2 / ISO 27001 / GDPR evidence | ✅ | Admin → Compliance dashboard |
-| Multi-currency billing (ISO-4217) | ✅ | Any currency code |
-| Card payments — Stripe (international) | ✅ | One-time-per-period checkout, webhook-verified |
-| Card payments — Razorpay (India) | ✅ | INR flows, webhook-verified (env-gated) |
-
-</details>
-
-<details>
-<summary><b>🟡 Pending (code done; external work remains)</b></summary>
-
-| Item | Status | What's left |
-|:---|:---:|:---|
-| AWS KMS BYOK | 🟡 | `KeyProvider` interface ready — needs a real KMS key |
-| OpenID conformance | 🟡 | Run the official test suite against a deployed instance |
-| Email deliverability | 🟡 | SMTP wired — production needs SPF/DKIM/DMARC + bounce handling |
-| RDS PITR / backups | 🟡 | Documented in runbook — enable in AWS console |
-| i18n remaining screens | 🟡 | Scaffold + new screens + login done; ~70 older admin screens pending |
-| WCAG 2.2 AA remaining | 🟡 | New screens + lint gate done; expanding to ~70 older screens |
-| External penetration test | 🟡 | Scheduled before GA |
-| Billing go-live | 🟡 | Internal model done — Stripe/Razorpay env keys needed |
-
-</details>
-
-<details>
-<summary><b>⏳ Planned (not yet built)</b></summary>
-
-| Item | Notes |
-|:---|:---|
-| CIBA grant (RFC 9449) | Client-Initiated Backchannel Auth for push-based flows |
-| `<SignIn/>` / `<OrgSwitcher/>` SDK components | `<UserButton/>` already ships in `@qeetid/react` |
-| Non-English locale catalogs | Scaffold and key flows done; catalogs TBD |
-| Adaptive / risk-based MFA | Threat-scoring exists; adaptive rule engine pending |
-| Managed-cloud infrastructure | Multi-region nodes, auto-scaling, managed offering |
-| Kafka / NATS event streaming | Outbox exists; full streaming adapters planned |
-| gRPC service definitions | REST-first today; `platform/api/grpc` planned |
-| Quantum-ready signing | Hybrid PQC (ML-DSA) as NIST codepoints stabilise |
-
-All planned packages and surfaces are tracked in [ROADMAP.md](./ROADMAP.md).
+All planned packages/surfaces are tracked in [ROADMAP.md](./ROADMAP.md).
 
 </details>
 
 ---
 
-## Quickstart
-
-### Prerequisites
-
-| Tool | Version | Purpose |
-|:---|:---|:---|
-| Go | ≥ 1.25 | Backend binary |
-| Node.js | ≥ 20.9 | Frontend build (`nvm use v22.20.0`) |
-| pnpm | ≥ 9.15.4 | JS workspace |
-| Docker + Compose | any | PostgreSQL (via `make db-up`) |
-| golang-migrate CLI | any | Standalone migration runs |
-
-### 1 · Install
+## 🚀 Quickstart
 
 ```bash
 make install              # go mod tidy + pnpm install
-```
-
-### 2 · Configure & start the database
-
-```bash
 cp .env.example .env      # review DB_URL, JWT_SECRET, etc.
-make db-up                # Postgres on :5001  (deploy/environments/dev/docker-compose.yml)
-make migrate-up           # apply all 62 migrations
-make seed-reset           # (optional) demo workspaces + users + audit history
+make db-up migrate-up     # Postgres :5001 + apply migrations
+make seed-reset           # (optional) demo workspaces + users
+make dev                  # backend + all 3 frontends in parallel
 ```
 
-`make seed-reset` creates two demo workspaces pre-loaded with users, roles, groups, API keys, webhooks, SSO providers, and audit history. Sign in with **`owner@acme.test`** / **`Password123!`** — see [docs/onboarding/quickstart.md](./docs/onboarding/quickstart.md) for the full account list.
-
-### 3 · Run
-
-```bash
-make dev                  # backend + all 3 frontend apps in parallel
-```
-
-| Make target | App | URL |
+| Target | App | URL |
 |:---|:---|:---|
-| `make dev-backend` | Go API | http://localhost:4001 |
-| `make dev-admin` | Admin console (Vite + TanStack) | http://localhost:3002 |
-| `make dev-login` | Hosted login (Next.js) | http://localhost:3004 |
-| `make dev-web` | Marketing site (Next.js) | http://localhost:3001 |
+| `make dev-backend` | Go API | <http://localhost:4001> |
+| `make dev-admin` | Admin console | <http://localhost:3002> |
+| `make dev-login` | Hosted login | <http://localhost:3004> |
+| `make dev-web` | Marketing site | <http://localhost:3001> |
 
-```bash
-curl http://localhost:4001/healthz   # → {"status":"ok"}
-make help                            # full target list
-```
+Demo login: **`owner@acme.test`** / **`Password123!`** · sanity: `curl localhost:4001/healthz` · all targets: `make help`
+
+> **Prerequisites:** Go ≥ 1.25 · Node ≥ 20.9 + pnpm ≥ 9.15.4 · Docker · golang-migrate CLI
 
 ---
 
-## SDKs
+## 📦 SDKs
 
-Five first-party SDKs authenticate via `Authorization: ApiKey` + ES256/JWKS verification. Pick your platform:
+Five first-party SDKs authenticate via `Authorization: ApiKey` + ES256/JWKS verification.
 
-<details open>
-<summary><b>TypeScript / React / Next.js</b></summary>
-
-```bash
-# Core SDK
-npm install @qeetid/sdk
-
-# React hooks + <UserButton/>
-npm install @qeetid/react
-
-# Next.js (HttpOnly sealed-cookie sessions + silent refresh)
-npm install @qeetid/nextjs
-```
+| SDK | Install |
+|:---|:---|
+| TypeScript | `npm install @qeetid/sdk` |
+| React (`<UserButton/>` + hooks) | `npm install @qeetid/react` |
+| Next.js (sealed-cookie sessions) | `npm install @qeetid/nextjs` |
+| Go | `go get github.com/qeetgroup/qeet-id/sdk/go` |
+| Python | `pip install qeetid` |
 
 ```ts
-// Verify a JWT from your own backend
-import { QeetIDClient } from '@qeetid/sdk';
-
-const client = new QeetIDClient({ baseUrl: 'https://id.qeet.in' });
-const user = await client.auth.verifyToken(accessToken);
-```
-
-```tsx
-// React — protect a route with a single hook
 import { useSession, UserButton } from '@qeetid/react';
 
 export function Navbar() {
@@ -349,236 +221,61 @@ export function Navbar() {
 }
 ```
 
-</details>
+---
 
-<details>
-<summary><b>Go SDK</b></summary>
+## 🚢 Deployment
 
-```bash
-go get github.com/qeetgroup/qeet-id/sdk/go
-```
+Ships as a **distroless** container ([Dockerfile](./deploy/base/docker/Dockerfile)); migrations are a separate one-shot image that runs **before** the app. Both build with the repo root as context.
 
-```go
-import qeetid "github.com/qeetgroup/qeet-id/sdk/go"
+| Path | Best for |
+|:---|:---|
+| 🐳 [Compose (prod-shaped)](./deploy/environments/prod/compose/) | VPS / bare-metal — Caddy TLS + Postgres + Redis |
+| ☸️ [Kubernetes + Helm](./deploy/base/helm/qeet-id/) | Deployment/Service/Ingress/HPA/PDB + migration Job + ExternalSecrets |
+| ☁️ [AWS Terraform](./deploy/base/terraform/) | RDS · ECR · KMS CMK · Secrets Manager |
+| 📈 [Observability](./deploy/base/observability/) | Prometheus · Grafana · OTel Collector |
 
-client := qeetid.New(qeetid.Config{BaseURL: "https://id.qeet.in"})
-user, err := client.Auth.VerifyToken(ctx, token)
-```
-
-</details>
-
-<details>
-<summary><b>Python SDK</b></summary>
-
-```bash
-pip install qeetid
-```
-
-```python
-from qeetid import QeetIDClient
-
-client = QeetIDClient(base_url="https://id.qeet.in")
-user = client.auth.verify_token(access_token)
-```
-
-</details>
-
-<details>
-<summary><b>Machine identities &amp; AI agents</b></summary>
-
-```bash
-# M2M — client_credentials grant
-curl -X POST https://id.qeet.in/oauth/token \
-  -d "grant_type=client_credentials&client_id=...&client_secret=...&scope=api:read"
-
-# AI agent — request an ephemeral scoped token
-curl -X POST https://id.qeet.in/v1/agents/token \
-  -H "Authorization: Bearer $SERVICE_TOKEN" \
-  -d '{"agent_id":"agent_01","scopes":["data:read"],"ttl":"15m"}'
-
-# MCP introspection — get actor_type / agent_id / act claim
-curl -X POST https://id.qeet.in/oauth/introspect \
-  -H "Authorization: Bearer $TOKEN"
-# → { "actor_type": "agent", "agent_id": "agent_01", "act": { "sub": "..." } }
-```
-
-</details>
+Release images are cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id` (+ `-migrate`). Start with [runbooks/operations.md](./deploy/runbooks/operations.md).
 
 ---
 
-## Deployment
+## 🧪 Testing & quality
 
-The backend ships as a **distroless nonroot** container; migrations ship as a **separate one-shot image** that runs before the app on every deploy.
-
-```bash
-# Build both images (context = repo root)
-docker build -f deploy/base/docker/Dockerfile          -t qeet-id:dev .
-docker build -f deploy/base/docker/Dockerfile.migrate  -t qeet-id-migrate:dev .
-
-# Or use the helper
-./deploy/base/docker/build.sh dev
-```
-
-| Path | Directory | Best for |
-|:---|:---|:---|
-| **Local dev** — Postgres only | [deploy/environments/dev/](./deploy/environments/dev/) | `make db-up` |
-| **Test** — isolated test DB (:5002) | [deploy/environments/test/](./deploy/environments/test/) | CI / testcontainers |
-| **Single host (prod-shaped)** | [deploy/environments/prod/compose/](./deploy/environments/prod/compose/) | VPS · bare-metal · Caddy TLS + Redis |
-| **Kubernetes + kustomize** | [deploy/base/kubernetes/base/](./deploy/base/kubernetes/base/) + overlays | GitOps, low overhead |
-| **Kubernetes + Helm** | [deploy/base/helm/qeet-id/](./deploy/base/helm/qeet-id/) + per-env `values.yaml` | Full Deployment/Service/Ingress/HPA/PDB + migration Job + ExternalSecrets |
-| **AWS infrastructure** | [deploy/base/terraform/](./deploy/base/terraform/) + per-env `terraform.tfvars` | RDS · ECR · KMS CMK · Secrets Manager |
-| **Observability stack** | [deploy/base/observability/](./deploy/base/observability/) | Prometheus · Grafana · OTel Collector |
-
-Release images are cosign-signed with SBOM + provenance attestations:
-`ghcr.io/qeetgroup/qeet-id` and `ghcr.io/qeetgroup/qeet-id-migrate`
-
-Start with [deploy/runbooks/operations.md](./deploy/runbooks/operations.md).
-
----
-
-## Testing & quality gates
-
-Every push and PR runs the full gate in [CI](./.github/workflows/ci.yml); all gates are reproducible locally.
-
-| Gate | Local command | What it enforces |
-|:---|:---|:---|
-| Unit tests + data-race detector | `make test-backend` | Correctness, no concurrent map writes |
-| **Architecture fitness (R1/R2)** | _(part of go test)_ | Dependency-direction rules between bounded contexts |
-| **OpenAPI 100% coverage** | _(part of go test)_ | Every mounted chi route exists in `api/openapi/` |
-| **Coverage floor** | `make cover` | Unit coverage can't regress below the floor |
-| Go lint | `make lint-go` | `golangci-lint` ([.golangci.yml](./.golangci.yml)) + `go vet` |
-| Vulnerability scan | `govulncheck ./...` (CI) | Known CVEs in Go module graph |
-| Secret scan | `gitleaks` (CI) | No committed credentials |
-| OpenAPI spec lint | `spectral` (CI) | Spec hygiene across all 5 specs |
-| Integration tests | `make test-integration` | Real Postgres via testcontainers (needs Docker) |
-| API contract tests | `make test-api [FOLDER=Auth]` | Postman / Newman against a live backend |
-| Frontend | `make test` · `make typecheck` · `make lint` | Turbo tests · `tsc --noEmit` · ESLint |
+Every push runs the full gate in [CI](./.github/workflows/ci.yml); all are reproducible locally.
 
 ```bash
 make test                # backend (go test ./...) + frontend (Turbo)
 make cover               # unit coverage + enforce the regression floor
-make cover-html          # open the HTML coverage report
 make lint                # Go (golangci-lint) + frontend ESLint
-make test-integration    # real Postgres, needs Docker
+make test-integration    # real Postgres via testcontainers (needs Docker)
 ```
+
+Gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, a coverage floor, `govulncheck`, `gitleaks`, Spectral spec-lint, and Postman/Newman contract tests.
 
 ---
 
-## Tech stack
+## 🛠 Tech stack
 
-<details open>
-<summary><b>Backend</b></summary>
-
-| Layer | Technology | Notes |
-|:---|:---|:---|
-| Language | Go 1.25 | Single module at repo root |
-| Router | chi v5 | Composable middleware, clean `r.Route` nesting |
-| Database driver | pgx v5 | Direct PostgreSQL; no ORM — hand-written SQL ([ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) |
-| JWT signing | golang-jwt/jwt v5 | ES256, ECDSA P-256, JWKS, `kid` = RFC 7638 thumbprint, rotation grace window |
-| Password hashing | golang.org/x/crypto | Argon2id, OWASP-recommended params |
-| OTP / TOTP | in-house | RFC 6238, RFC 4226; HMAC-SHA1 |
-| Secrets vault | AES-256-GCM | KeyProvider abstraction; AWS KMS for BYOK |
-| Events | transactional outbox + DLQ | Business + audit + event in one `pgx.Tx` |
-| Rate limiting | Redis (optional) | In-process shard-local fallback when `REDIS_URL` unset |
-| Payments | Stripe + Razorpay | INR → Razorpay / else → Stripe; webhook signature-verified |
-| Observability | Prometheus + OTel | `/metrics`, `/readyz`, `/healthz`, OTLP/HTTP tracing |
-
-</details>
-
-<details>
-<summary><b>Frontend</b></summary>
-
-| App | Framework | Key deps |
-|:---|:---|:---|
-| Admin console (`@qeetid/admin`) | Vite + React 19 | TanStack Router / Query / Form / Table, `@qeetrix/*` |
-| Hosted login (`@qeetid/login`) | Next.js 16 + React 19 | i18next, `@qeetrix/*`, WCAG 2.2 AA |
-| Website (`@qeetid/web`) | Next.js 16 + React 19 | MDX, `@qeetrix/*` |
-| Design system | `@qeetrix/*` | Tailwind v4 + Base UI, Cal Sans + Geist Mono, brand orange `#F26D0E` |
-| Workspace | pnpm 9.15.4 + Turborepo | Hoisted to repo root — no `backend/`/`frontend/` wrappers |
-
-</details>
-
-<details>
-<summary><b>Database</b></summary>
-
-| Schema | Owner context | Key tables |
-|:---|:---|:---|
-| `tenant` | identity/organizations | `tenants`, `tenant_branding`, `tenant_domains` |
-| `user` | identity/users | `users`, `groups`, `group_members`, `invitations` |
-| `auth` | access, federation | `credentials`, `passkey_credentials`, `webauthn_sessions`, `mfa_secrets`, `sessions`, `oidc_clients`, `saml_connections`, `api_keys`, `service_principals` |
-| `rbac` | access/authorization | `roles`, `permissions`, `user_roles`, `role_permissions`, `relation_tuples` |
-| `audit` | operations/audit | `audit_events` (SHA-256 hash-chained), `log_sinks` |
-| `platform` | operations, developer | `outbox`, `outbox_dlq`, `notifications`, `billing_*`, `agents`, `vc_credentials`, `secrets` |
-
-62 migration pairs (0001–0062) in [`platform/database/migrations/`](./platform/database/migrations/). Never edit an applied migration — always add a new pair.
-
-</details>
+- **Backend** — Go 1.25 · chi v5 · pgx v5 (hand-written SQL, no ORM — [ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) · ES256 JWTs + JWKS rotation · Argon2id · AES-256-GCM vault · transactional outbox + DLQ
+- **Frontend** — React 19 · admin on Vite + TanStack · web/login on Next.js 16 · Tailwind 4 + the shared [`@qeetrix/*`](../qeetrix/) design system · pnpm + Turborepo
+- **Data** — PostgreSQL (`tenant`/`user`/`auth`/`rbac`/`audit`/`platform` schemas), multi-tenant by `tenant_id` · optional Redis for cross-replica rate limiting
 
 ---
 
-## Repository layout
+## 📚 Documentation
 
-```
-qeet-id/
-├── cmd/                    Go entrypoints: server · worker · scheduler · migrate · seed
-├── domains/                business logic by bounded context
-│   ├── identity/           users · organizations (+branding) · groups · invitations · verification · domains
-│   ├── access/             authentication · authorization/{rbac,rebac,policy,authpolicy} · mfa · passkeys
-│   │                       recovery · risk/ipallow · threat-detection/{threat,bot}
-│   ├── federation/         oidc · saml · scim · ldap · social
-│   ├── developer/          api-keys · service-accounts · credentials/{secrets,vc} · auth-hooks · webhooks · agents
-│   └── operations/         audit · analytics · notifications · email-templates · retention · compliance · billing · siem
-├── platform/               shared infra by concern
-│   ├── api/                rest (chi router · httpx · errs · paging) · openapi
-│   ├── database/           postgres (pool · dbutil · pgxerr) · migrations (62 SQL pairs)
-│   ├── security/           tokens (ES256/JWKS) · encryption · hibp
-│   ├── observability/      logging · metrics · tracing · health · buildinfo
-│   ├── events/             outbox (+ DLQ)
-│   └── cache/ config/ messaging/
-├── apps/                   console (admin · Vite) · website (Next.js) · login (Next.js)
-├── packages/               shared JS config (qeetid-tsconfig · qeetid-eslint)
-├── sdk/                    js/{sdk,nextjs,react} · go · python
-├── api/                    openapi/ (5 bounded-context specs) · postman/ (Newman runner)
-├── tests/                  architecture · integration · e2e · performance · security · fixtures
-├── deploy/                 base/{docker,helm,kubernetes,terraform,observability}
-│                           + environments/{dev,test,stage,prod} + runbooks
-├── tools/                  codegen · migration-tools · openapi-split · benchmarks · scripts
-├── docs/                   architecture (7) · adr (15) · api · security · compliance · onboarding
-├── Makefile                root targets — Go module + pnpm/Turbo workspace
-└── ROADMAP.md              planned packages & surfaces (not empty stubs)
-```
-
----
-
-## Documentation
-
-| Topic | Location |
+| Topic | Where |
 |:---|:---|
-| Architecture deep-dives (7 docs) | [docs/architecture/](./docs/architecture/) |
-| Architecture Decision Records (15) | [docs/adr/](./docs/adr/) |
-| Security model & cryptography | [docs/security/](./docs/security/) |
-| Compliance (GDPR, data isolation, VC) | [docs/compliance/](./docs/compliance/) |
-| Quickstart & onboarding guide | [docs/onboarding/quickstart.md](./docs/onboarding/quickstart.md) |
-| Adding a new domain — contributor walkthrough | [docs/onboarding/adding-a-domain.md](./docs/onboarding/adding-a-domain.md) |
-| Conventions & dev workflow | [docs/onboarding/development-workflow.md](./docs/onboarding/development-workflow.md) |
-| Operational runbooks | [deploy/runbooks/](./deploy/runbooks/) — operations · secrets · scaling · DR |
-| API spec (OpenAPI 3.1, 5 specs) | [api/openapi/](./api/openapi/) · merge: `go run ./tools/openapi-split merge` |
-| Postman collection (Newman) | [api/postman/](./api/postman/) |
-| Runnable example integrations | [examples/](./examples/) — Next.js server flow · React SPA PKCE |
-| End-user product docs | [docs.qeet.in](https://docs.qeet.in) (standalone `qeet-docs` site) |
-| For AI assistants | [CLAUDE.md](./CLAUDE.md) — layout map, commands, gotchas |
-| Planned work | [ROADMAP.md](./ROADMAP.md) |
+| 🏗 Architecture deep-dives + ADRs | [docs/architecture/](./docs/architecture/) · [docs/adr/](./docs/adr/) |
+| 🔒 Security & compliance | [docs/security/](./docs/security/) · [docs/compliance/](./docs/compliance/) |
+| 🚀 Onboarding & dev workflow | [docs/onboarding/](./docs/onboarding/) |
+| 🔌 API spec + Postman | [api/openapi/](./api/openapi/) · [api/postman/](./api/postman/) |
+| 🤖 For AI assistants | [CLAUDE.md](./CLAUDE.md) — layout, commands, gotchas |
+| 📖 End-user docs | [docs.qeet.in](https://docs.qeet.in) |
 
 ---
 
-## Contributing
+## 🤝 Contributing · 🔒 Security · 📄 License
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). Bug reports and feature requests use the templates in [.github/ISSUE_TEMPLATE/](./.github/ISSUE_TEMPLATE/). New backend code must follow the conventions in [docs/onboarding/development-workflow.md](./docs/onboarding/development-workflow.md) and the bounded-context patterns in [docs/architecture/](./docs/architecture/).
-
-## Security
-
-Found a vulnerability? **Do not open a public issue.** Follow the coordinated-disclosure process in [SECURITY.md](./SECURITY.md). Live secrets and `*.pem` keys must never be committed — CI runs `gitleaks` on every push.
-
-## License
-
-[MIT](./LICENSE) © Qeet Group.
+Contributions welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) and the issue templates in [.github/](./.github/ISSUE_TEMPLATE/).
+Found a vulnerability? **Don't open a public issue** — follow [SECURITY.md](./SECURITY.md). CI runs `gitleaks` on every push.
+Licensed under [MIT](./LICENSE).
