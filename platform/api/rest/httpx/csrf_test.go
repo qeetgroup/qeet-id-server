@@ -139,7 +139,7 @@ func TestCSRF_NormaliseOriginsTrimsSlashAndCases(t *testing.T) {
 		"*",
 		"",
 	})
-	wantKeys := []string{"https://id.qeet.in", "https://web.id.qeet.in"}
+	wantKeys := []string{"https://api.id.qeet.in", "https://web.id.qeet.in"}
 	for _, k := range wantKeys {
 		if _, ok := got[k]; !ok {
 			t.Errorf("expected key %q in normalised set, got %v", k, got)
