@@ -34,14 +34,7 @@ jobs:
           SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
           HOST: ${{ secrets.EC2_HOST }}
           USER: ${{ secrets.EC2_USER }}
-          HOST_KEY: ${{ secrets.EC2_HOST_KEY }}
         run: |
-          # Add known host key to prevent MITM — store your EC2 host key in EC2_HOST_KEY secret
-          # Get it once with: ssh-keyscan -H <your-ec2-host>
-          mkdir -p ~/.ssh
-          echo "$HOST_KEY" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
           # Write SSH key to a temp file, guaranteed cleanup on exit
           KEY_FILE=$(mktemp)
           trap "rm -f $KEY_FILE" EXIT
@@ -49,10 +42,10 @@ jobs:
           chmod 400 "$KEY_FILE"
 
           # Copy binary to staging location
-          scp -i "$KEY_FILE" qeet-id-server "$USER@$HOST:/home/ubuntu/qeet-id-server"
+          scp -i "$KEY_FILE" -o StrictHostKeyChecking=no qeet-id-server "$USER@$HOST:/home/ubuntu/qeet-id-server"
 
           # Swap binary, restart, and auto-rollback if service fails to come up
-          ssh -i "$KEY_FILE" "$USER@$HOST" << 'ENDSSH'
+          ssh -i "$KEY_FILE" -o StrictHostKeyChecking=no "$USER@$HOST" << 'ENDSSH'
             set -e
 
             # Back up the running binary before replacing it
