@@ -1,68 +1,91 @@
-name: Deploy to EC2
+name: Deploy
+
+# Builds the server image, pushes it to GHCR, then deploys it onto the EC2 host
+# over SSH (docker compose). The host already holds /opt/qeet-id/.env and
+# jwt_signing_key.pem (created once during setup — see deploy/README.md).
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
-  group: deploy-production
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: Build & deploy
     runs-on: ubuntu-latest
+    env:
+      IMAGE_BASE: ghcr.io/${{ github.repository }} # qeetgroup/qeet-id (lowercase)
     steps:
       - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          # Deploy exactly the SHA that CI tested, not whatever is latest on main
-          ref: ${{ github.event.workflow_run.head_sha }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-go@v6
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
         with:
-          go-version-file: go.mod
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}:latest
+            ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Build
-        run: |
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-            go build -o qeet-id-server ./cmd/server
+      - name: Copy compose files to host
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "deploy/docker-compose.yml,deploy/Caddyfile"
+          target: /opt/qeet-id
+          strip_components: 1 # drop the leading deploy/ path
 
-      - name: Deploy
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
         env:
-          SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          HOST: ${{ secrets.EC2_HOST }}
-          USER: ${{ secrets.EC2_USER }}
-        run: |
-          # Write SSH key to a temp file, guaranteed cleanup on exit
-          KEY_FILE=$(mktemp)
-          trap "rm -f $KEY_FILE" EXIT
-          echo "$SSH_KEY" > "$KEY_FILE"
-          chmod 400 "$KEY_FILE"
-
-          # Copy binary to staging location
-          scp -i "$KEY_FILE" -o StrictHostKeyChecking=no qeet-id-server "$USER@$HOST:/home/ubuntu/qeet-id-server"
-
-          # Swap binary, restart, and auto-rollback if service fails to come up
-          ssh -i "$KEY_FILE" -o StrictHostKeyChecking=no "$USER@$HOST" << 'ENDSSH'
-            set -e
-
-            # Back up the running binary before replacing it
-            sudo cp /opt/qeet-id/qeet-id-server /opt/qeet-id/qeet-id-server.bak 2>/dev/null || true
-
-            sudo mv /home/ubuntu/qeet-id-server /opt/qeet-id/qeet-id-server
-            sudo chmod +x /opt/qeet-id/qeet-id-server
-            sudo systemctl restart qeet-id
-            sleep 5
-
-            if ! sudo systemctl is-active --quiet qeet-id; then
-              echo "Service failed to start — rolling back to previous binary"
-              sudo cp /opt/qeet-id/qeet-id-server.bak /opt/qeet-id/qeet-id-server
-              sudo systemctl restart qeet-id
-              sudo systemctl status qeet-id --no-pager
+          IMAGE: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE,GHCR_TOKEN,ACTOR
+          script: |
+            set -euo pipefail
+            cd /opt/qeet-id
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+            export IMAGE                                  # pin to this commit's image
+            export JWT_SIGNING_KEY="$(cat jwt_signing_key.pem)"
+            docker compose pull
+            docker compose up -d --remove-orphans
+            ok=0
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:4001/readyz >/dev/null 2>&1; then ok=1; break; fi
+              sleep 2
+            done
+            if [ "$ok" != "1" ]; then
+              echo "app did not become ready; recent logs:" >&2
+              docker compose logs --tail=80 app >&2
               exit 1
             fi
-
-            sudo systemctl status qeet-id --no-pager
-          ENDSSH
+            docker image prune -f >/dev/null 2>&1 || true
+            echo "deployed $IMAGE"
