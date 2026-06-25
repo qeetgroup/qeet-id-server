@@ -1,5 +1,5 @@
 {
   "outputDirectory": "dist",
-  "buildCommand": "cd ../.. && pnpm turbo build --filter=@qeetid/admin",
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile"
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "npx vite build"
 }
