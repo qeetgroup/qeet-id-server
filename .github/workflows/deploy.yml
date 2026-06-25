@@ -75,6 +75,8 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
             export IMAGE                                  # pin to this commit's image
             export JWT_SIGNING_KEY="$(cat jwt_signing_key.pem)"
+            export SAML_IDP_KEY="$(cat saml_idp_key.pem)"
+            export SAML_IDP_CERT="$(cat saml_idp_cert.pem)"
             docker compose pull
             docker compose up -d --remove-orphans
             ok=0

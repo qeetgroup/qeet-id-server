@@ -55,9 +55,14 @@ cd /opt/qeet-id
 #   - SECRETS_KEY  = openssl rand -base64 32
 nano .env
 
-# EC P-256 signing key (multi-line PEM, kept out of .env):
+# EC P-256 JWT signing key (multi-line PEM, kept out of .env):
 openssl ecparam -name prime256v1 -genkey -noout > jwt_signing_key.pem
-chmod 600 .env jwt_signing_key.pem
+
+# SAML IdP signing identity (RSA key + self-signed X.509 cert) — required in prod:
+openssl req -x509 -newkey rsa:2048 -keyout saml_idp_key.pem \
+  -out saml_idp_cert.pem -days 3650 -nodes -subj "/CN=Qeet ID SAML IdP"
+
+chmod 600 .env jwt_signing_key.pem saml_idp_key.pem saml_idp_cert.pem
 ```
 `.env` and `jwt_signing_key.pem` live **only on the host** — never commit them.
 

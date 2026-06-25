@@ -16,7 +16,11 @@ services:
     env_file:
       - .env
     environment:
+      # Multi-line PEMs — injected from the host shell by the deploy step
+      # (env_file can't hold newlines).
       JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-}
+      SAML_IDP_KEY: ${SAML_IDP_KEY:-}
+      SAML_IDP_CERT: ${SAML_IDP_CERT:-}
     expose:
       - "4001"
     ports:
