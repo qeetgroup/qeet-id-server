@@ -1,5 +1,0 @@
-{
-  "outputDirectory": "dist",
-  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "npx vite build"
-}
