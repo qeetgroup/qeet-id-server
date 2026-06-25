@@ -1,4 +1,4 @@
-.PHONY: dev build test lint migrate-up migrate-down db-up db-down db-reset seed kill
+.PHONY: dev build test lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
 
 ifneq (,$(wildcard .env))
     include .env
@@ -41,6 +41,9 @@ migrate-down:
 
 seed:
 	go run ./cmd/seed
+
+seed-reset:
+	go run ./cmd/seed -reset
 
 kill:
 	@pids=$$(lsof -nP -iTCP:4001 -sTCP:LISTEN -t 2>/dev/null); \

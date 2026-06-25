@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -20,20 +22,36 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/rebac"
+	"github.com/qeetgroup/qeet-id/domains/access/risk/ipallow"
+	"github.com/qeetgroup/qeet-id/domains/developer/agents"
 	"github.com/qeetgroup/qeet-id/domains/developer/api-keys"
+	"github.com/qeetgroup/qeet-id/domains/developer/auth-hooks"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/vc"
+	"github.com/qeetgroup/qeet-id/domains/developer/service-accounts"
 	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
+	"github.com/qeetgroup/qeet-id/domains/federation/ldap"
 	"github.com/qeetgroup/qeet-id/domains/federation/scim"
 	"github.com/qeetgroup/qeet-id/domains/federation/social"
+	"github.com/qeetgroup/qeet-id/domains/identity/domains"
 	"github.com/qeetgroup/qeet-id/domains/identity/groups"
+	"github.com/qeetgroup/qeet-id/domains/identity/invitations"
 	"github.com/qeetgroup/qeet-id/domains/identity/organizations"
 	"github.com/qeetgroup/qeet-id/domains/identity/organizations/branding"
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id/domains/operations/billing"
+	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
+	"github.com/qeetgroup/qeet-id/domains/operations/notifications"
+	"github.com/qeetgroup/qeet-id/domains/operations/retention"
+	"github.com/qeetgroup/qeet-id/domains/operations/siem"
 	"github.com/qeetgroup/qeet-id/platform/config"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id/platform/security/encryption"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
@@ -91,6 +109,29 @@ func main() {
 	socialSvc := social.NewService(pool, authSvc, cfg.AppBaseURL)
 	brandingRepo := branding.NewRepository(pool)
 	policyRepo := policy.NewRepository(pool)
+
+	// Platform-wide billing plan catalog (free/starter/pro/enterprise + prices).
+	// Idempotent; must exist before any tenant subscription is created.
+	billingSvc := billing.NewService(pool)
+	must(billingSvc.SeedBuiltins(ctx), "seed billing plans")
+
+	// Services for the full-configuration coverage below. principal/agent/vc
+	// reuse the issuer; ldap reuses authSvc; the secrets vault needs a data key.
+	principalSvc := principal.NewService(pool, issuer)
+	agentSvc := agent.NewService(pool, issuer)
+	vcSvc := vc.NewService(pool, issuer)
+	authhookSvc := authhook.NewService(pool)
+	inviteSvc := invite.NewService(pool, notifier.LogSender{}, 14*24*time.Hour, cfg.AppBaseURL)
+	domainSvc := domainverify.NewService(pool)
+	emailTplSvc := emailtemplate.NewService(pool)
+	retentionSvc := retention.NewService(pool)
+	siemSvc := siem.NewService(pool)
+	ipallowSvc := ipallow.NewService(pool)
+	authPolicySvc := authpolicy.NewService(pool)
+	notifySvc := notification.NewService(pool)
+	ldapSvc := ldap.NewService(pool, authSvc)
+	secretSvc, err := secret.NewService(ctx, pool, secretsKeyProvider(cfg))
+	must(err, "init secrets vault")
 
 	pwHash, err := password.Hash(seedPassword)
 	must(err, "hash password")
@@ -283,6 +324,129 @@ func main() {
 		})
 	})
 
+	// ════════════════════════════════════════════════════════════════════════
+	//  Full configuration coverage on Acme — one realistic example per admin
+	//  screen so nothing has to be set up by hand. All values are fake/dev-only.
+	// ════════════════════════════════════════════════════════════════════════
+
+	// ---- Auth policy (login methods + password rules) ----
+	inTx("auth policy", func(tx pgx.Tx) error {
+		_, e := authPolicySvc.Update(ctx, tx, acme.ID, authpolicy.Policy{
+			PasswordEnabled:          true,
+			PasswordMinLength:        10,
+			PasswordRequireUppercase: true,
+			PasswordRequireNumber:    true,
+			MagicLinkEnabled:         true,
+			MagicLinkTTLMinutes:      30,
+			PasskeyEnabled:           true,
+			OTPEmailEnabled:          true,
+		})
+		return e
+	})
+
+	// ---- IP allow/deny rules ----
+	inTx("ip rules", func(tx pgx.Tx) error {
+		if _, e := ipallowSvc.AddRule(ctx, tx, acme.ID, "203.0.113.0/24", "Office network", "allow"); e != nil {
+			return e
+		}
+		_, e := ipallowSvc.AddRule(ctx, tx, acme.ID, "198.51.100.7/32", "Known bad actor", "deny")
+		return e
+	})
+
+	// ---- Billing subscription (Acme → Pro). Catalog seeded above. ----
+	inTx("acme subscription", func(tx pgx.Tx) error {
+		_, e := billingSvc.ChangePlan(ctx, tx, acme.ID, "pro", "USD")
+		return e
+	})
+
+	// ---- Service account (M2M) — secret shown once. ----
+	var saSecret string
+	inTx("service account", func(tx pgx.Tx) error {
+		_, sec, e := principalSvc.Create(ctx, tx, principal.CreateInput{
+			TenantID: acme.ID, Name: "Backend API", Description: "Server-to-server access",
+			Scopes: []string{"users:read", "audit:read"},
+		})
+		saSecret = sec
+		return e
+	})
+	fmt.Printf("  • service acct  %-14q %s\n", "Backend API", saSecret)
+
+	// ---- Secrets vault ----
+	_, err = secretSvc.Create(ctx, acme.ID, "STRIPE_API_KEY", "billing", "sk_test_demo_0123456789abcdef")
+	must(err, "vault STRIPE_API_KEY")
+	_, err = secretSvc.Create(ctx, acme.ID, "SENDGRID_API_KEY", "email", "SG.demo.0123456789abcdef")
+	must(err, "vault SENDGRID_API_KEY")
+	fmt.Println("  • vault secrets STRIPE_API_KEY, SENDGRID_API_KEY")
+
+	// ---- Auth hook (post-login policy webhook) ----
+	_, err = authhookSvc.Create(ctx, acme.ID, "https://hooks.acme.test/auth", "whsec_demo_authhook", true)
+	must(err, "auth hook")
+
+	// ---- AI agent (ephemeral scoped tokens) ----
+	_, err = agentSvc.Create(ctx, acme.ID, "Support Copilot", []string{"users:read"}, 3600)
+	must(err, "ai agent")
+
+	// ---- Verifiable credential issued to the owner ----
+	_, err = vcSvc.Issue(ctx, acme.ID, "user:"+owner.ID.String(), "EmployeeCredential",
+		map[string]any{"name": "Olivia Owner", "title": "Founder", "tenant": "Acme Inc"}, 365*24*3600)
+	must(err, "verifiable credential")
+
+	// ---- Pending invitation ----
+	_, inviteToken, err := inviteSvc.Create(ctx, invite.CreateInput{TenantID: acme.ID, Email: "frank@acme.test", RoleID: &memberRole.ID}, &owner.ID)
+	must(err, "invitation")
+	fmt.Printf("  • invitation    frank@acme.test (token: %s)\n", inviteToken)
+
+	// ---- Domain verification (pending DNS TXT) ----
+	_, err = domainSvc.Add(ctx, acme.ID, "acme.test")
+	must(err, "domain verification")
+
+	// ---- Email template override ----
+	inTx("email template", func(tx pgx.Tx) error {
+		_, e := emailTplSvc.Upsert(ctx, tx, acme.ID, "verify_email",
+			"Verify your Acme account", "Welcome to Acme! Your verification code is {{code}} (expires in {{ttl}}).")
+		return e
+	})
+
+	// ---- Data-retention policy (purge soft-deleted users after 30 days) ----
+	inTx("retention policy", func(tx pgx.Tx) error {
+		_, e := retentionSvc.Update(ctx, tx, acme.ID, retention.Policy{DeletedUsersEnabled: true, DeletedUsersDays: 30})
+		return e
+	})
+
+	// ---- SIEM log sink ----
+	_, err = siemSvc.Create(ctx, acme.ID, "datadog", "https://http-intake.logs.datadoghq.com/api/v2/logs", "dd-demo-token")
+	must(err, "siem sink")
+
+	// ---- In-app notifications for the owner ----
+	must(notifySvc.Notify(ctx, acme.ID, owner.ID, "info", "Welcome to Qeet ID", "Your workspace is ready. Invite your team to get started.", "/users"), "notify welcome")
+	must(notifySvc.Notify(ctx, acme.ID, owner.ID, "alert", "New sign-in", "A new sign-in to your account was detected from 203.0.113.10.", "/security"), "notify signin")
+
+	// ---- LDAP / Active Directory connection (draft) ----
+	inTx("ldap connection", func(tx pgx.Tx) error {
+		_, e := ldapSvc.Create(ctx, tx, acme.ID, ldap.CreateInput{
+			Name: "Acme AD (demo)", ServerURL: "ldaps://ad.acme.test:636", StartTLS: false,
+			BindDN: "CN=svc-qeet,OU=Service,DC=acme,DC=test", BindPassword: "demo-bind-password",
+			BaseDN: "OU=Users,DC=acme,DC=test", UserFilter: "(sAMAccountName=%s)",
+			EmailAttribute: "mail", NameAttribute: "displayName", Status: "draft",
+		})
+		return e
+	})
+
+	// ---- SAML IdP-side service provider (Qeet as IdP, draft). Inserted directly
+	// to avoid building an IdP signer just for a display row (see cmd/server). ----
+	_, err = pool.Exec(ctx, `
+		INSERT INTO tenant.saml_service_providers
+			(tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status)
+		SELECT $1, 'Acme Internal Wiki (demo)', 'https://wiki.acme.test/saml/metadata',
+			'https://wiki.acme.test/saml/acs', 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+			'email', '', 'draft'
+		WHERE NOT EXISTS (
+			SELECT 1 FROM tenant.saml_service_providers WHERE tenant_id = $1 AND entity_id = 'https://wiki.acme.test/saml/metadata'
+		)
+	`, acme.ID)
+	must(err, "saml service provider")
+	fmt.Println("  • saml SP       \"Acme Internal Wiki (demo)\" (draft, IdP-side) on Acme")
+
 	// ---- Second tenant (Globex) so the workspace switcher shows more than one ----
 	globex, err := tenantRepo.CreateWithOwner(ctx, tenant.CreateInput{Slug: "globex", Name: "Globex Corp", Plan: "free", Region: "eu-west-1"}, owner.ID)
 	must(err, "create tenant globex")
@@ -296,6 +460,10 @@ func main() {
 	erin, err := userRepo.CreateWithCredential(ctx, user.CreateInput{TenantID: globex.ID, Email: "erin@globex.test", DisplayName: "Erin Globex"}, pwHash)
 	must(err, "create globex user")
 	must(rbacSvc.AssignRole(ctx, erin.ID, globex.ID, gMember.ID, &owner.ID, actor), "assign globex member")
+	inTx("globex subscription", func(tx pgx.Tx) error {
+		_, e := billingSvc.ChangePlan(ctx, tx, globex.ID, "free", "USD")
+		return e
+	})
 
 	// ---- A little login activity (sessions + login audit -> sessions page + analytics) ----
 	for _, email := range []string{"owner@acme.test", "alice@acme.test", "bob@acme.test", "carol@acme.test", "dave@acme.test"} {
@@ -309,8 +477,11 @@ func main() {
 	fmt.Printf("   owner   owner@acme.test   %s   (owner of Acme + Globex)\n", seedPassword)
 	fmt.Printf("   admin   alice@acme.test   %s\n", seedPassword)
 	fmt.Printf("   member  bob@acme.test     %s\n", seedPassword)
-	fmt.Println("   Tenants: Acme Inc (acme), Globex Corp (globex)")
+	fmt.Println("   Tenants: Acme Inc (acme, Pro), Globex Corp (globex, Free)")
 	fmt.Printf("   Example OAuth clients: %s (Next.js), qci_example_spa (React SPA) — see frontend/examples/\n", exampleClientID)
+	fmt.Println("   Acme is fully configured: billing, service accounts, secrets vault, auth hooks,")
+	fmt.Println("   AI agents, verifiable credentials, invitations, domains, email templates, retention,")
+	fmt.Println("   SIEM, IP rules, auth policy, notifications, LDAP & SAML — every screen has data.")
 }
 
 func must(err error, what string) {
@@ -320,3 +491,18 @@ func must(err error, what string) {
 }
 
 func ptr(s string) *string { return &s }
+
+// secretsKeyProvider mirrors cmd/server: decode SECRETS_KEY (base64) for the
+// vault's AES data key, or generate an ephemeral key in dev when it's unset
+// (stored secrets then won't survive a restart — fine for seed data).
+func secretsKeyProvider(cfg *config.Config) secret.KeyProvider {
+	if cfg.SecretsKey != "" {
+		key, err := base64.StdEncoding.DecodeString(cfg.SecretsKey)
+		must(err, "decode SECRETS_KEY")
+		return secret.StaticKeyProvider{Key: key}
+	}
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	must(err, "generate ephemeral secrets key")
+	return secret.StaticKeyProvider{Key: key}
+}

@@ -179,24 +179,41 @@ All planned packages/surfaces are tracked in [ROADMAP.md](./ROADMAP.md).
 
 ## 🚀 Quickstart
 
+**Prerequisites:** Go ≥ 1.25 · Node ≥ 24 (via nvm) · pnpm ≥ 9.15.4 · Docker · [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate)
+
 ```bash
-make install              # go mod tidy + pnpm install
-cp .env.example .env      # review DB_URL, JWT_SECRET, etc.
-make db-up migrate-up     # Postgres :5001 + apply migrations
-make seed-reset           # (optional) demo workspaces + users
-make dev                  # backend + all 3 frontends in parallel
+# 1. Clone
+git clone https://github.com/qeetgroup/qeet-id && cd qeet-id
+
+# 2. Install dependencies
+go mod download
+nvm use 24 && pnpm install
+
+# 3. Copy env files
+cp .env.example .env                                      # backend — set POSTGRES_PASSWORD at minimum
+cp apps/console/.env.example apps/console/.env            # admin frontend
+cp apps/login/.env.example apps/login/.env.local          # hosted login
+cp apps/website/.env.example apps/website/.env.local      # marketing site
+
+# 4. Start Postgres + apply migrations
+make db-up migrate-up
+
+# 5. Seed demo data (optional)
+make seed
+
+# 6. Start the backend
+make dev
 ```
 
-| Target | App | URL |
+**Frontend apps — each in its own terminal:**
+
+| Command | App | URL |
 |:---|:---|:---|
-| `make dev-backend` | Go API | <http://localhost:4001> |
-| `make dev-admin` | Admin console | <http://localhost:3002> |
-| `make dev-login` | Hosted login | <http://localhost:3004> |
-| `make dev-web` | Marketing site | <http://localhost:3001> |
+| `pnpm --filter @qeetid/admin dev` | Admin console | <http://localhost:3002> |
+| `pnpm --filter @qeetid/login dev` | Hosted login | <http://localhost:3004> |
+| `pnpm --filter @qeetid/web dev` | Marketing site | <http://localhost:3001> |
 
-Demo login: **`owner@acme.test`** / **`Password123!`** · sanity: `curl localhost:4001/healthz` · all targets: `make help`
-
-> **Prerequisites:** Go ≥ 1.25 · Node ≥ 20.9 + pnpm ≥ 9.15.4 · Docker · golang-migrate CLI
+Sanity check: `curl localhost:4001/healthz` · Demo login: **`owner@acme.test`** / **`Password123!`**
 
 ---
 
