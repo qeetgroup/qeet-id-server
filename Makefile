@@ -1,4 +1,4 @@
-.PHONY: dev build test lint migrate-up migrate-down db-up db-down seed kill
+.PHONY: dev build test lint migrate-up migrate-down db-up db-down db-reset seed kill
 
 ifneq (,$(wildcard .env))
     include .env
@@ -28,6 +28,10 @@ db-up:
 
 db-down:
 	docker compose down
+
+db-reset:
+	docker compose down -v
+	docker compose up -d
 
 migrate-up:
 	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" up
