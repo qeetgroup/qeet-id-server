@@ -250,6 +250,111 @@
     {
       "key": "emailTemplateKey",
       "value": "verify_email"
+    },
+    {
+      "key": "agentId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "agentSecret",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "agentAccessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "credentialId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "vcJwt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "relationTupleId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "logSinkId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "authHookId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "domainId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "anomalyId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "samlSpId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "scimUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "scimGroupId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "deliveryId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "secretName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "deviceCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "authRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "oidcClientRowId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "deviceAuthId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "exchangedToken",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -292,6 +397,26 @@
                 "readyz"
               ]
             }
+          }
+        },
+        {
+          "name": "Metrics (Prometheus) \u2014 GET /metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/metrics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Prometheus exposition format. Public, root-level (no /v1)."
           }
         }
       ]
@@ -664,6 +789,135 @@
                 "switch-tenant"
               ]
             }
+          }
+        },
+        {
+          "name": "Register (hosted, B2C) \u2014 POST /v1/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"email\": \"b2c+{{$timestamp}}@example.com\",\n  \"password\": \"Password123!\",\n  \"display_name\": \"B2C User\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Hosted-login end-user self-registration into an existing tenant (B2C)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));",
+                  "const b = pm.response.json();",
+                  "if (b.access_token) pm.collectionVariables.set('accessToken', b.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create SSO session \u2014 POST /v1/auth/session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{signupEmail}}\",\n  \"password\": \"{{signupPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "session"
+              ]
+            },
+            "description": "Hosted-login: verifies credentials and sets the HttpOnly SSO cookie (qe_ls). Postman stores the cookie in its jar for subsequent /v1/oauth/authorize calls."
+          }
+        },
+        {
+          "name": "Complete SSO session MFA \u2014 POST /v1/auth/session/mfa",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mfa_token\": \"{{mfaToken}}\",\n  \"code\": \"123456\",\n  \"remember\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/session/mfa",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "session",
+                "mfa"
+              ]
+            },
+            "description": "Hosted-login: finish a two-step login and set the SSO cookie."
+          }
+        },
+        {
+          "name": "Destroy SSO session (logout) \u2014 DELETE /v1/auth/session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/auth/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "auth",
+                "session"
+              ]
+            },
+            "description": "Hosted-login logout: revoke the SSO session and clear the qe_ls cookie."
           }
         }
       ]
@@ -1505,6 +1759,71 @@
                   "key": "permission",
                   "value": "user.read"
                 }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List group roles \u2014 GET /v1/tenants/{tenantID}/groups/{groupID}/roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups/{{groupId}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "groups",
+                "{{groupId}}",
+                "roles"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Grant role to group \u2014 POST .../groups/{groupID}/roles/{roleID}",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups/{{groupId}}/roles/{{roleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "groups",
+                "{{groupId}}",
+                "roles",
+                "{{roleId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Revoke role from group \u2014 DELETE .../groups/{groupID}/roles/{roleID}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups/{{groupId}}/roles/{{roleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "groups",
+                "{{groupId}}",
+                "roles",
+                "{{roleId}}"
               ]
             }
           }
@@ -2813,6 +3132,37 @@
               ]
             }
           }
+        },
+        {
+          "name": "Exchange social code \u2014 POST /v1/social/exchange",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"google\",\n  \"code\": \"<oauth-authorization-code>\",\n  \"redirect_uri\": \"http://localhost:3000/callback\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/social/exchange",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "social",
+                "exchange"
+              ]
+            },
+            "description": "Exchange a social provider's authorization code for a qeet-id token pair."
+          }
         }
       ]
     },
@@ -2929,6 +3279,77 @@
                 "webhooks",
                 "{{webhookId}}",
                 "test"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get webhook \u2014 GET /v1/webhooks/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhooks",
+                "{{webhookId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List deliveries \u2014 GET /v1/webhooks/{id}/deliveries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}/deliveries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhooks",
+                "{{webhookId}}",
+                "deliveries"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('deliveryId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry delivery \u2014 POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}/deliveries/{{deliveryId}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "webhooks",
+                "{{webhookId}}",
+                "deliveries",
+                "{{deliveryId}}",
+                "retry"
               ]
             }
           }
@@ -3607,7 +4028,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
+                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));",
+                  "// chain: remember the created SCIM user id",
+                  "try { const b = pm.response.json(); if (b.id) pm.collectionVariables.set('scimUserId', b.id); } catch (e) {}"
                 ]
               }
             }
@@ -3646,7 +4069,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
+                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));",
+                  "try { const r = pm.response.json(); const a = r.Resources || []; if (a.length) pm.collectionVariables.set('scimUserId', a[0].id); } catch (e) {}"
                 ]
               }
             }
@@ -3682,6 +4106,418 @@
               }
             }
           ]
+        },
+        {
+          "name": "[scim] ResourceTypes \u2014 GET /scim/v2/ResourceTypes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/ResourceTypes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "ResourceTypes"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Schemas \u2014 GET /scim/v2/Schemas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Schemas",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Schemas"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Get user \u2014 GET /scim/v2/Users/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Users",
+                "{{scimUserId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Replace user \u2014 PUT /scim/v2/Users/{id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/scim+json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:User\"\n  ],\n  \"userName\": \"alice+{{$timestamp}}@example.com\",\n  \"displayName\": \"Alice Adams\",\n  \"active\": true,\n  \"name\": {\n    \"givenName\": \"Alice\",\n    \"familyName\": \"Adams\"\n  },\n  \"emails\": [\n    {\n      \"value\": \"alice+{{$timestamp}}@example.com\",\n      \"primary\": true\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Users",
+                "{{scimUserId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Patch user (deprovision) \u2014 PATCH /scim/v2/Users/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/scim+json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:api:messages:2.0:PatchOp\"\n  ],\n  \"Operations\": [\n    {\n      \"op\": \"replace\",\n      \"path\": \"active\",\n      \"value\": false\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Users",
+                "{{scimUserId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Delete user \u2014 DELETE /scim/v2/Users/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Users",
+                "{{scimUserId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] List groups \u2014 GET /scim/v2/Groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Groups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Groups"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try { const r = pm.response.json(); const a = r.Resources || []; if (a.length) pm.collectionVariables.set('scimGroupId', a[0].id); } catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[scim] Create group \u2014 POST /scim/v2/Groups",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/scim+json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"Engineering {{$timestamp}}\",\n  \"members\": []\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Groups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Groups"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id !== undefined) pm.collectionVariables.set('scimGroupId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[scim] Get group \u2014 GET /scim/v2/Groups/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Groups",
+                "{{scimGroupId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Replace group \u2014 PUT /scim/v2/Groups/{id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/scim+json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:schemas:core:2.0:Group\"\n  ],\n  \"displayName\": \"Engineering {{$timestamp}}\",\n  \"members\": []\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Groups",
+                "{{scimGroupId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Patch group \u2014 PATCH /scim/v2/Groups/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/scim+json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"schemas\": [\n    \"urn:ietf:params:scim:api:messages:2.0:PatchOp\"\n  ],\n  \"Operations\": [\n    {\n      \"op\": \"replace\",\n      \"path\": \"displayName\",\n      \"value\": \"Engineering Renamed\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Groups",
+                "{{scimGroupId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[scim] Delete group \u2014 DELETE /scim/v2/Groups/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{scimToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "scim",
+                "v2",
+                "Groups",
+                "{{scimGroupId}}"
+              ]
+            }
+          }
         }
       ]
     },
@@ -3964,6 +4800,293 @@
               }
             }
           ]
+        },
+        {
+          "name": "Test SAML connection \u2014 POST /v1/tenants/{tenantID}/saml/{id}/test",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml/{{samlConnId}}/test",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "saml",
+                "{{samlConnId}}",
+                "test"
+              ]
+            },
+            "description": "Preflight-validate an inbound SAML IdP connection before rollout."
+          }
+        },
+        {
+          "name": "List SAML SPs (IdP side) \u2014 GET /v1/tenants/{tenantID}/saml-providers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "saml-providers"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Register SAML SP (IdP side) \u2014 POST /v1/tenants/{tenantID}/saml-providers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Downstream SP {{$timestamp}}\",\n  \"entity_id\": \"https://sp.example.com/saml/metadata\",\n  \"acs_url\": \"https://sp.example.com/saml/acs\",\n  \"name_id_format\": \"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress\",\n  \"name_id_attribute\": \"email\",\n  \"certificate\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "saml-providers"
+              ]
+            },
+            "description": "Register a downstream service provider that trusts Qeet as its SAML IdP."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id !== undefined) pm.collectionVariables.set('samlSpId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get SAML SP \u2014 GET /v1/tenants/{tenantID}/saml-providers/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers/{{samlSpId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "saml-providers",
+                "{{samlSpId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update SAML SP \u2014 PATCH /v1/tenants/{tenantID}/saml-providers/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Downstream SP {{$timestamp}}\",\n  \"entity_id\": \"https://sp.example.com/saml/metadata\",\n  \"acs_url\": \"https://sp.example.com/saml/acs\",\n  \"name_id_format\": \"urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress\",\n  \"name_id_attribute\": \"email\",\n  \"certificate\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers/{{samlSpId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "saml-providers",
+                "{{samlSpId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete SAML SP \u2014 DELETE /v1/tenants/{tenantID}/saml-providers/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers/{{samlSpId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "saml-providers",
+                "{{samlSpId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "[acs] Assertion Consumer Service \u2014 POST /saml/acs/{id}",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "SAMLResponse",
+                  "value": "<base64-saml-response>",
+                  "type": "text"
+                },
+                {
+                  "key": "RelayState",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saml/acs/{{samlConnId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saml",
+                "acs",
+                "{{samlConnId}}"
+              ]
+            },
+            "description": "SP-side ACS (CSRF-exempt, signature-validated). The IdP POSTs the assertion here."
+          }
+        },
+        {
+          "name": "[idp] IdP metadata \u2014 GET /saml/idp/metadata",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saml/idp/metadata",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saml",
+                "idp",
+                "metadata"
+              ]
+            },
+            "description": "Qeet-as-IdP metadata XML (public)."
+          }
+        },
+        {
+          "name": "[idp] IdP SSO (redirect binding) \u2014 GET /saml/idp/sso",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saml/idp/sso?SAMLRequest=<deflated-base64>&RelayState=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saml",
+                "idp",
+                "sso"
+              ],
+              "query": [
+                {
+                  "key": "SAMLRequest",
+                  "value": "<deflated-base64>"
+                },
+                {
+                  "key": "RelayState",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[idp] IdP SSO (POST binding) \u2014 POST /saml/idp/sso",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "SAMLRequest",
+                  "value": "<base64-saml-request>",
+                  "type": "text"
+                },
+                {
+                  "key": "RelayState",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/saml/idp/sso",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "saml",
+                "idp",
+                "sso"
+              ]
+            }
+          }
         }
       ]
     },
@@ -4211,284 +5334,6 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "MFA \u2014 Recovery Codes & OTP",
-      "item": [
-        {
-          "name": "Recovery-code status \u2014 GET /v1/mfa/recovery-codes",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/recovery-codes",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "recovery-codes"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Regenerate recovery codes \u2014 POST /v1/mfa/recovery-codes/regenerate",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/recovery-codes/regenerate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "recovery-codes",
-                "regenerate"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('endpoint reachable', () => pm.expect(pm.response.code).to.be.below(500));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "List OTP factors \u2014 GET /v1/mfa/otp/factors",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/otp/factors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Enroll OTP factor \u2014 POST /v1/mfa/otp/factors",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"channel\": \"email\",\n  \"destination\": \"alice@example.com\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/otp/factors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));",
-                  "const b = pm.response.json();",
-                  "if (b.factor_id) pm.collectionVariables.set('otpFactorId', b.factor_id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Confirm OTP factor \u2014 POST /v1/mfa/otp/factors/{id}/confirm",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"code\": \"123456\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/otp/factors/{{otpFactorId}}/confirm",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors",
-                "{{otpFactorId}}",
-                "confirm"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('endpoint reachable', () => pm.expect(pm.response.code).to.be.below(500));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Challenge OTP factor \u2014 POST /v1/mfa/otp/factors/{id}/challenge",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/otp/factors/{{otpFactorId}}/challenge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors",
-                "{{otpFactorId}}",
-                "challenge"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('endpoint reachable', () => pm.expect(pm.response.code).to.be.below(500));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Verify OTP \u2014 POST /v1/mfa/otp/verify",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"code\": \"123456\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/otp/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "verify"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('endpoint reachable', () => pm.expect(pm.response.code).to.be.below(500));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Remove OTP factor \u2014 DELETE /v1/mfa/otp/factors/{id}",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/mfa/otp/factors/{{otpFactorId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors",
-                "{{otpFactorId}}"
-              ]
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('endpoint reachable', () => pm.expect(pm.response.code).to.be.below(500));"
                 ]
               }
             }
@@ -5111,6 +5956,35 @@
               }
             }
           ]
+        },
+        {
+          "name": "Vault read by name \u2014 GET /v1/vault/{name}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{agentAccessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/vault/{{secretName}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "vault",
+                "{{secretName}}"
+              ]
+            },
+            "description": "Token vaulting: fetch a secret by name with a scoped principal (e.g. an AI agent). Requires scope vault:<name> or vault:read \u2014 uses {{agentAccessToken}}. Set {{secretName}} to a secret created in this folder."
+          }
         }
       ]
     },
@@ -5415,6 +6289,68 @@
               }
             }
           ]
+        },
+        {
+          "name": "Start checkout \u2014 POST /v1/tenants/{tenantID}/billing/checkout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan_code\": \"pro\",\n  \"currency\": \"USD\",\n  \"success_url\": \"http://localhost:3000/billing/success\",\n  \"cancel_url\": \"http://localhost:3000/billing/cancel\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/billing/checkout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "billing",
+                "checkout"
+              ]
+            },
+            "description": "Begin a paid plan change via hosted Stripe/Razorpay checkout. Requires the provider env keys to be configured server-side."
+          }
+        },
+        {
+          "name": "Payment webhook \u2014 POST /v1/billing/webhooks/stripe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"evt_test\",\n  \"type\": \"checkout.session.completed\",\n  \"data\": {\n    \"object\": {}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/billing/webhooks/stripe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "billing",
+                "webhooks",
+                "stripe"
+              ]
+            },
+            "description": "Provider webhook (path is the provider: stripe | razorpay). Signature-verified server-side \u2014 Postman calls will be rejected without a valid provider signature."
+          }
         }
       ]
     },
@@ -5577,6 +6513,1722 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "OAuth 2.0 & OIDC Flows",
+      "item": [
+        {
+          "name": "Login context \u2014 GET /v1/oauth/login-context",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/login-context?request_id={{authRequestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "login-context"
+              ],
+              "query": [
+                {
+                  "key": "request_id",
+                  "value": "{{authRequestId}}"
+                }
+              ]
+            },
+            "description": "Hosted-login UI context for an in-flight authorize request (client name, providers)."
+          }
+        },
+        {
+          "name": "Authorize decision (consent) \u2014 POST /v1/oauth/authorize/decision",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{authRequestId}}\",\n  \"decision\": \"allow\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/authorize/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "authorize",
+                "decision"
+              ]
+            },
+            "description": "Record the user's consent decision; returns the authorization code redirect."
+          }
+        },
+        {
+          "name": "Device authorization \u2014 POST /v1/oauth/device_authorization",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "client_id",
+                  "value": "{{oidcClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{oidcClientSecret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "openid profile",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/device_authorization",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "device_authorization"
+              ]
+            },
+            "description": "RFC 8628 \u00a73.1 device flow initiation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.device_code) pm.collectionVariables.set('deviceCode', b.device_code);",
+                  "if (b.user_code) pm.collectionVariables.set('userCode', b.user_code);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Device verification context \u2014 GET /v1/oauth/device",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/device?user_code={{userCode}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "device"
+              ],
+              "query": [
+                {
+                  "key": "user_code",
+                  "value": "{{userCode}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Device decision (approve) \u2014 POST /v1/oauth/device/decision",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_code\": \"{{userCode}}\",\n  \"approve\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/device/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "device",
+                "decision"
+              ]
+            }
+          }
+        },
+        {
+          "name": "RP-initiated logout \u2014 GET /v1/oauth/logout",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/logout?post_logout_redirect_uri=http://localhost:3000/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "logout"
+              ],
+              "query": [
+                {
+                  "key": "post_logout_redirect_uri",
+                  "value": "http://localhost:3000/"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "RP-initiated logout \u2014 POST /v1/oauth/logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token_hint\": \"\",\n  \"post_logout_redirect_uri\": \"http://localhost:3000/\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "logout"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Token revoke (RFC 7009) \u2014 POST /oauth/revoke",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "token",
+                  "value": "{{refreshToken}}",
+                  "type": "text"
+                },
+                {
+                  "key": "token_type_hint",
+                  "value": "refresh_token",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{oidcClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{oidcClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth/revoke",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "revoke"
+              ]
+            },
+            "description": "Root-level (no /v1). Client-authenticated. Always returns 200 per the RFC."
+          }
+        },
+        {
+          "name": "Token introspect (RFC 7662) \u2014 POST /oauth/introspect",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{oidcClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{oidcClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth/introspect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "introspect"
+              ]
+            },
+            "description": "Root-level (no /v1). Client-authenticated. Returns {active, scope, actor_type, ...}."
+          }
+        },
+        {
+          "name": "Signing keys metadata \u2014 GET /v1/oidc/signing-keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/oidc/signing-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oidc",
+                "signing-keys"
+              ]
+            },
+            "description": "Issuer signing-key metadata (no private key material)."
+          }
+        },
+        {
+          "name": "Token exchange (RFC 8693) \u2014 POST /v1/oauth/token-code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:token-exchange",
+                  "type": "text"
+                },
+                {
+                  "key": "subject_token",
+                  "value": "{{accessToken}}",
+                  "type": "text"
+                },
+                {
+                  "key": "subject_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:access_token",
+                  "type": "text"
+                },
+                {
+                  "key": "requested_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:access_token",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "user.read",
+                  "type": "text"
+                },
+                {
+                  "key": "actor_token",
+                  "value": "{{agentAccessToken}}",
+                  "type": "text"
+                },
+                {
+                  "key": "actor_token_type",
+                  "value": "urn:ietf:params:oauth:token-type:access_token",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{oidcClientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{oidcClientSecret}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/token-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "token-code"
+              ]
+            },
+            "description": "RFC 8693 token exchange via the shared /v1/oauth/token-code endpoint. Downscope-only (never escalates). Drop actor_token for plain downscoping; include it for delegation (records an `act` claim). Requires the client to be permitted the token-exchange grant."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.access_token) pm.collectionVariables.set('exchangedToken', b.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Device token poll \u2014 POST /v1/oauth/token-code",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "urn:ietf:params:oauth:grant-type:device_code",
+                  "type": "text"
+                },
+                {
+                  "key": "device_code",
+                  "value": "{{deviceCode}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{oidcClientId}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/oauth/token-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "token-code"
+              ]
+            },
+            "description": "RFC 8628 \u00a73.4 device-code polling against the shared /v1/oauth/token-code endpoint. Poll after Device authorization + Device decision (approve)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "OIDC Client Management",
+      "item": [
+        {
+          "name": "List OIDC clients \u2014 GET /v1/tenants/{tenantID}/oidc/clients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oidc",
+                "clients"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json(); const a = r.items || [];",
+                  "if (a.length) { pm.collectionVariables.set('oidcClientRowId', a[0].id);",
+                  "  if (a[0].client_id) pm.collectionVariables.set('oidcClientId', a[0].client_id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create OIDC client \u2014 POST /v1/tenants/{tenantID}/oidc/clients",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenantId}}\",\n  \"name\": \"My SPA {{$timestamp}}\",\n  \"type\": \"confidential\",\n  \"redirect_uris\": [\n    \"http://localhost:3000/callback\"\n  ],\n  \"post_logout_uris\": [\n    \"http://localhost:3000/\"\n  ],\n  \"grant_types\": [\n    \"authorization_code\",\n    \"refresh_token\"\n  ],\n  \"scopes\": [\n    \"openid\",\n    \"profile\",\n    \"email\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oidc",
+                "clients"
+              ]
+            },
+            "description": "Register a confidential OIDC client under the tenant. Returns the row id (used by PATCH/DELETE/rotate) plus the public client_id and one-time client_secret."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json(); const cl = b.client || b;",
+                  "if (cl.id) pm.collectionVariables.set('oidcClientRowId', cl.id);",
+                  "if (cl.client_id) pm.collectionVariables.set('oidcClientId', cl.client_id);",
+                  "if (b.client_secret) pm.collectionVariables.set('oidcClientSecret', b.client_secret);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get OIDC client \u2014 GET /v1/tenants/{tenantID}/oidc/clients/{id}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oidc",
+                "clients",
+                "{{oidcClientRowId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update OIDC client \u2014 PATCH /v1/tenants/{tenantID}/oidc/clients/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Renamed SPA\",\n  \"redirect_uris\": [\n    \"http://localhost:3000/callback\"\n  ],\n  \"scopes\": [\n    \"openid\",\n    \"profile\",\n    \"email\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oidc",
+                "clients",
+                "{{oidcClientRowId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rotate client secret \u2014 POST .../oidc/clients/{id}/rotate-secret",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}/rotate-secret",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oidc",
+                "clients",
+                "{{oidcClientRowId}}",
+                "rotate-secret"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.client_secret) pm.collectionVariables.set('oidcClientSecret', b.client_secret);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete OIDC client \u2014 DELETE /v1/tenants/{tenantID}/oidc/clients/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oidc",
+                "clients",
+                "{{oidcClientRowId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete OIDC client (by scope) \u2014 DELETE /v1/oidc/clients/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/oidc/clients/{{oidcClientRowId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "oidc",
+                "clients",
+                "{{oidcClientRowId}}"
+              ]
+            },
+            "description": "Tenant-scoped by the caller's token; takes the client row id."
+          }
+        },
+        {
+          "name": "List device authorizations \u2014 GET /v1/tenants/{tenantID}/oauth/devices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oauth/devices",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oauth",
+                "devices"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('deviceAuthId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke device authorization \u2014 DELETE .../oauth/devices/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oauth/devices/{{deviceAuthId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "oauth",
+                "devices",
+                "{{deviceAuthId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ReBAC (Relationships)",
+      "item": [
+        {
+          "name": "List relation tuples \u2014 GET /v1/tenants/{tenantID}/relation-tuples",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples?object=document:readme",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "relation-tuples"
+              ],
+              "query": [
+                {
+                  "key": "object",
+                  "value": "document:readme"
+                }
+              ]
+            },
+            "description": "Fine-grained authz tuples on an object. The 'object' query param is required."
+          }
+        },
+        {
+          "name": "Write relation tuple \u2014 POST /v1/tenants/{tenantID}/relation-tuples",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"document:readme\",\n  \"relation\": \"owner\",\n  \"subject\": \"user:{{userId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "relation-tuples"
+              ]
+            },
+            "description": "subject may be 'user:<id>' or a userset like 'team:eng#member'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id !== undefined) pm.collectionVariables.set('relationTupleId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check relation \u2014 POST /v1/tenants/{tenantID}/relation-tuples/check",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"document:readme\",\n  \"relation\": \"owner\",\n  \"user_id\": \"{{userId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples/check",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "relation-tuples",
+                "check"
+              ]
+            },
+            "description": "Recursive userset check (with cycle guard). Returns {allowed: bool}."
+          }
+        },
+        {
+          "name": "Delete relation tuple \u2014 DELETE /v1/tenants/{tenantID}/relation-tuples/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples/{{relationTupleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "relation-tuples",
+                "{{relationTupleId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Security & Threat Detection",
+      "item": [
+        {
+          "name": "List anomalies \u2014 GET /v1/tenants/{tenantID}/security/anomalies",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/anomalies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "security",
+                "anomalies"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('anomalyId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Anomaly summary \u2014 GET /v1/tenants/{tenantID}/security/anomalies/summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/anomalies/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "security",
+                "anomalies",
+                "summary"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Resolve anomaly \u2014 POST .../security/anomalies/{id}/resolve",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/anomalies/{{anomalyId}}/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "security",
+                "anomalies",
+                "{{anomalyId}}",
+                "resolve"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Bot telemetry \u2014 GET /v1/tenants/{tenantID}/security/bots",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/bots",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "security",
+                "bots"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get bot settings \u2014 GET /v1/tenants/{tenantID}/security/bots/settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/bots/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "security",
+                "bots",
+                "settings"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update bot settings \u2014 PUT /v1/tenants/{tenantID}/security/bots/settings",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ua_check\": true,\n  \"honeypot\": true,\n  \"captcha\": false,\n  \"signature\": true,\n  \"score_threshold\": 0.5\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/bots/settings",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "security",
+                "bots",
+                "settings"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI Agents",
+      "item": [
+        {
+          "name": "List agents \u2014 GET /v1/tenants/{tenantID}/agents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "agents"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('agentId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create agent \u2014 POST /v1/tenants/{tenantID}/agents",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ci-agent-{{$timestamp}}\",\n  \"scopes\": [\n    \"user.read\",\n    \"audit:read\"\n  ],\n  \"token_ttl_seconds\": 300\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "agents"
+              ]
+            },
+            "description": "Registers an AI-agent identity. The plaintext secret is returned ONCE on create."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id) pm.collectionVariables.set('agentId', b.id);",
+                  "if (b.secret) pm.collectionVariables.set('agentSecret', b.secret);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete agent \u2014 DELETE /v1/tenants/{tenantID}/agents/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents/{{agentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "agents",
+                "{{agentId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Mint agent token \u2014 POST /v1/agents/token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_id\": \"{{agentId}}\",\n  \"secret\": \"{{agentSecret}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/agents/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "agents",
+                "token"
+              ]
+            },
+            "description": "Exchange agent credentials for a short-lived, downscoped actor_type=agent token. Use {{agentAccessToken}} for the Vault read."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.access_token) pm.collectionVariables.set('agentAccessToken', b.access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Verifiable Credentials",
+      "item": [
+        {
+          "name": "List credentials \u2014 GET /v1/tenants/{tenantID}/credentials",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "credentials"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('credentialId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Issue credential \u2014 POST /v1/tenants/{tenantID}/credentials",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"{{userId}}\",\n  \"type\": \"EmployeeCredential\",\n  \"claims\": {\n    \"department\": \"engineering\"\n  },\n  \"ttl_seconds\": 3600\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "credentials"
+              ]
+            },
+            "description": "Issue a W3C JWT-VC. Returns {id, credential} \u2014 credential is the signed JWT-VC."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id) pm.collectionVariables.set('credentialId', b.id);",
+                  "if (b.credential) pm.collectionVariables.set('vcJwt', b.credential);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke credential \u2014 POST .../credentials/{id}/revoke",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/credentials/{{credentialId}}/revoke",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "credentials",
+                "{{credentialId}}",
+                "revoke"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Verify credential (public) \u2014 POST /v1/credentials/verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": \"{{vcJwt}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/credentials/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "credentials",
+                "verify"
+              ]
+            },
+            "description": "Public: any relying party can verify a presented JWT-VC. Returns validity + revocation."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth Hooks (Actions)",
+      "item": [
+        {
+          "name": "List auth hooks \u2014 GET /v1/tenants/{tenantID}/auth-hooks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "auth-hooks"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('authHookId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create auth hook \u2014 POST /v1/tenants/{tenantID}/auth-hooks",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/auth-hook\",\n  \"secret\": \"hook-signing-secret\",\n  \"fail_open\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "auth-hooks"
+              ]
+            },
+            "description": "Synchronous post-credential allow/deny gate. fail_open=true keeps logins working if the hook endpoint is unreachable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id !== undefined) pm.collectionVariables.set('authHookId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update auth hook \u2014 PATCH /v1/tenants/{tenantID}/auth-hooks/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false,\n  \"fail_open\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks/{{authHookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "auth-hooks",
+                "{{authHookId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete auth hook \u2014 DELETE /v1/tenants/{tenantID}/auth-hooks/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks/{{authHookId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "auth-hooks",
+                "{{authHookId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Domain Verification",
+      "item": [
+        {
+          "name": "List domains \u2014 GET /v1/tenants/{tenantID}/domains",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "domains"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('domainId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Claim domain \u2014 POST /v1/tenants/{tenantID}/domains",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"domain\": \"acme-{{$timestamp}}.example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "domains"
+              ]
+            },
+            "description": "Returns the DNS TXT record (name/type/value) to publish for verification."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id !== undefined) pm.collectionVariables.set('domainId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify domain \u2014 POST /v1/tenants/{tenantID}/domains/{id}/verify",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains/{{domainId}}/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "domains",
+                "{{domainId}}",
+                "verify"
+              ]
+            },
+            "description": "Performs the DNS TXT lookup and marks the domain verified if it matches."
+          }
+        },
+        {
+          "name": "Remove domain \u2014 DELETE /v1/tenants/{tenantID}/domains/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains/{{domainId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "domains",
+                "{{domainId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "SIEM / Log Sinks",
+      "item": [
+        {
+          "name": "List log sinks \u2014 GET /v1/tenants/{tenantID}/log-sinks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "log-sinks"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const r = pm.response.json();",
+                  "const arr = r.items || r.Resources || r;",
+                  "if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('logSinkId', arr[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create log sink \u2014 POST /v1/tenants/{tenantID}/log-sinks",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"splunk_hec\",\n  \"endpoint\": \"https://hec.splunk.example.com:8088/services/collector\",\n  \"token\": \"hec-token\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "log-sinks"
+              ]
+            },
+            "description": "Stream audit/security events to a SIEM. type \u2208 {splunk_hec, datadog, http}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "if (b.id !== undefined) pm.collectionVariables.set('logSinkId', b.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enable/disable sink \u2014 PATCH /v1/tenants/{tenantID}/log-sinks/{id}",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks/{{logSinkId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "log-sinks",
+                "{{logSinkId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete sink \u2014 DELETE /v1/tenants/{tenantID}/log-sinks/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks/{{logSinkId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "tenants",
+                "{{tenantId}}",
+                "log-sinks",
+                "{{logSinkId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "List notifications \u2014 GET /v1/notifications",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "Current principal's in-app inbox + unread count."
+          }
+        },
+        {
+          "name": "Mark all read \u2014 POST /v1/notifications/mark-all-read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/notifications/mark-all-read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "notifications",
+                "mark-all-read"
+              ]
+            }
+          }
         }
       ]
     }
