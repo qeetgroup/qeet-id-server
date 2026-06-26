@@ -2,7 +2,7 @@
 
 There are **two stages**, run by two sets of agents:
 
-1. **Find feature ideas** — the **product-manager** agent researches the *whole* identity/auth
+1. **Find feature ideas** — the **product-manager** agent researches the *whole* identity/auth/iam/ciam
    market (every site it can find, not just a fixed list) and writes a feature catalog +
    proposals into your PRD hub. → **Part 1** (a script you run).
 2. **Build a feature** — a 6-agent **delivery pipeline** turns one of those proposals into
