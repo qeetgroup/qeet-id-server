@@ -59,7 +59,7 @@ jobs:
           strip_components: 1 # drop the leading deploy/ path
 
       - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@v1.2.5
         env:
           IMAGE: ${{ env.IMAGE_BASE }}:${{ github.sha }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
