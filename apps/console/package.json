@@ -1,5 +1,5 @@
 {
-  "name": "@qeetid/admin",
+  "name": "@qeet-id/console",
   "private": true,
   "type": "module",
   "scripts": {

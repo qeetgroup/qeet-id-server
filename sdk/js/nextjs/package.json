@@ -1,6 +1,6 @@
 {
-  "name": "@qeetid/nextjs",
-  "version": "0.1.0",
+  "name": "@qeet-id/nextjs",
+  "version": "0.0.1",
   "description": "Next.js (App Router) integration for Qeet ID — middleware, auth()/currentUser(), and the hosted-login OAuth handlers.",
   "type": "module",
   "license": "MIT",

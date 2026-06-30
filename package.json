@@ -1,13 +1,13 @@
 {
-  "name": "@qeetid/frontend",
+  "name": "@qeet-id/root",
   "version": "0.0.0",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "turbo run dev --filter=./apps/*",
-    "dev:admin": "turbo run dev --filter=@qeetid/admin",
-    "dev:web": "turbo run dev --filter=@qeetid/web",
-    "dev:login": "turbo run dev --filter=@qeetid/login",
+    "dev:admin": "turbo run dev --filter=@qeet-id/console",
+    "dev:web": "turbo run dev --filter=@qeet-id/web",
+    "dev:login": "turbo run dev --filter=@qeet-id/login",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "format": "turbo run format",

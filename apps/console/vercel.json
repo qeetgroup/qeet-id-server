@@ -1,4 +1,4 @@
 {
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@qeetid/admin"
+  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@qeet-id/console"
 }
