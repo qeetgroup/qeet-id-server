@@ -20,7 +20,7 @@ export function CodeBlock({ children, filename, language, className }: CodeBlock
         className,
       )}
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-white/[0.02] px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-white/2 px-3 py-2">
         <div className="flex items-center gap-1.5">
           <span className="size-2.5 rounded-full bg-rose-400/70" />
           <span className="size-2.5 rounded-full bg-amber-400/70" />
@@ -31,7 +31,7 @@ export function CodeBlock({ children, filename, language, className }: CodeBlock
         </span>
         <span className="w-10" />
       </div>
-      <pre className="flex-1 overflow-x-auto p-4 font-mono [font-variant-ligatures:contextual] [font-feature-settings:'calt'_1,'ss01'_1,'ss02'_1,'ss03'_1]">
+      <pre className="flex-1 overflow-x-auto p-4 font-mono [font-variant-ligatures:contextual] font-features-['calt'_1,'ss01'_1,'ss02'_1,'ss03'_1]">
         <code>{children}</code>
       </pre>
     </div>

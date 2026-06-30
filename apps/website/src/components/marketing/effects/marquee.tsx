@@ -40,8 +40,8 @@ export function Marquee({
           className={cn(
             "flex shrink-0 justify-around",
             vertical ? "animate-marquee-vertical flex-col" : "animate-marquee flex-row",
-            reverse && "[animation-direction:reverse]",
-            pauseOnHover && "group-hover:[animation-play-state:paused]",
+            reverse && "direction-[reverse]",
+            pauseOnHover && "group-hover:paused",
           )}
           style={{ gap }}
           aria-hidden={i > 0}

@@ -174,7 +174,7 @@ export function ComparisonPage({ data }: { data: ComparisonData }) {
           <div className="relative overflow-hidden rounded-3xl border border-border/60 bg-card p-6 sm:p-10">
             <span
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[image:var(--brand-gradient)]"
+              className="pointer-events-none absolute inset-x-0 top-0 h-px bg-(image:--brand-gradient)"
             />
             <h2 className="font-display text-2xl font-semibold tracking-tight text-balance sm:text-3xl">
               {data.pitch.headline}
@@ -259,7 +259,7 @@ export function ComparisonPage({ data }: { data: ComparisonData }) {
       {data.cta && (
         <Section innerClassName="mx-auto max-w-5xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
           <Reveal>
-            <div className="relative overflow-hidden rounded-3xl bg-[image:var(--brand-gradient)] p-px shadow-2xl shadow-brand/20">
+            <div className="relative overflow-hidden rounded-3xl bg-(image:--brand-gradient) p-px shadow-2xl shadow-brand/20">
               <div className="relative flex flex-col items-center gap-5 rounded-[calc(1.5rem-1px)] bg-background/95 px-6 py-16 text-center backdrop-blur sm:px-12">
                 <p className="text-xs font-medium uppercase tracking-widest text-brand-text">
                   Migrate from {data.competitor}

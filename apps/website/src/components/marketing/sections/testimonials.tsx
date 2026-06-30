@@ -91,7 +91,7 @@ export function Testimonials() {
                     {q.featured && (
                       <span
                         aria-hidden
-                        className="pointer-events-none absolute -left-2 -top-4 font-display text-[9rem] leading-none text-foreground/[0.04] select-none"
+                        className="pointer-events-none absolute -left-2 -top-4 font-display text-[9rem] leading-none text-foreground/4 select-none"
                       >
                         "
                       </span>
@@ -119,7 +119,7 @@ export function Testimonials() {
         {/* Calm logo row — reinforces the wall of names without stealing focus. */}
         <Reveal
           delay={0.1}
-          className="relative mt-14 [mask-image:linear-gradient(to_right,transparent,black_12%,black_88%,transparent)]"
+          className="relative mt-14 mask-[linear-gradient(to_right,transparent,black_12%,black_88%,transparent)]"
         >
           <Marquee duration={55} gap="3rem" pauseOnHover>
             {logoRow.map((name) => (

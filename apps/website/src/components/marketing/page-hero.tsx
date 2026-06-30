@@ -51,7 +51,7 @@ export function PageHero({
     <section className="relative overflow-hidden border-b border-border/60">
       {/* Brand-tinted background — Aurora reads --aurora-* (warm); dots fade to edges. */}
       <Aurora className="opacity-80" />
-      <DotPattern className="opacity-20 [mask-image:radial-gradient(ellipse_at_top,black,transparent_75%)] dark:opacity-30" />
+      <DotPattern className="opacity-20 mask-[radial-gradient(ellipse_at_top,black,transparent_75%)] dark:opacity-30" />
 
       <div className="relative mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
         <div

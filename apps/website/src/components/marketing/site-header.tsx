@@ -34,7 +34,7 @@ function NavLink({ href, label, active }: { href: string; label: string; active:
         // Shared-layout underline that slides between the active items.
         <motion.span
           layoutId="nav-underline"
-          className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-[image:var(--brand-gradient)]"
+          className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-(image:--brand-gradient)"
           transition={{ type: "spring", stiffness: 380, damping: 30 }}
         />
       )}
@@ -62,8 +62,8 @@ export function SiteHeader() {
         // Reduced motion -> no height/elevation transition, only color/opacity snaps.
         reduce ? "" : "transition-[height,background-color,border-color,box-shadow] duration-300",
         scrolled
-          ? "border-border/70 bg-background/85 shadow-lg shadow-black/5 supports-[backdrop-filter]:bg-background/70"
-          : "border-transparent bg-background/40 supports-[backdrop-filter]:bg-background/30",
+          ? "border-border/70 bg-background/85 shadow-lg shadow-black/5 supports-backdrop-filter:bg-background/70"
+          : "border-transparent bg-background/40 supports-backdrop-filter:bg-background/30",
       )}
     >
       <div

@@ -137,14 +137,14 @@ export default function PricingPage() {
                     />
                     <span
                       aria-hidden
-                      className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[image:var(--brand-gradient)]"
+                      className="pointer-events-none absolute inset-x-0 top-0 h-px bg-(image:--brand-gradient)"
                     />
                   </>
                 )}
                 <div className="flex items-center justify-between">
                   <h3 className="font-display text-xl font-semibold tracking-tight">{t.name}</h3>
                   {t.featured && (
-                    <span className="rounded-full bg-[image:var(--brand-gradient)] px-2 py-0.5 text-xs font-medium text-brand-foreground">
+                    <span className="rounded-full bg-(image:--brand-gradient) px-2 py-0.5 text-xs font-medium text-brand-foreground">
                       Most popular
                     </span>
                   )}

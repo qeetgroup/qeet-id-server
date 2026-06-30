@@ -26,7 +26,7 @@ export function LogoCloud() {
 
         <Reveal
           delay={0.1}
-          className="relative mt-8 [mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]"
+          className="relative mt-8 mask-[linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]"
         >
           <Marquee duration={50} gap="3rem" pauseOnHover>
             {row1.map((name) => (
