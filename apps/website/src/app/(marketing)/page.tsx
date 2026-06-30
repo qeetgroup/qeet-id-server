@@ -1,3 +1,4 @@
+import { Architecture } from "@/components/marketing/sections/architecture";
 import { CTA } from "@/components/marketing/sections/cta";
 import { Features } from "@/components/marketing/sections/features";
 import { Hero } from "@/components/marketing/sections/hero";
@@ -17,6 +18,7 @@ export default function HomePage() {
       <Hero />
       <LogoCloud />
       <Features />
+      <Architecture />
       <HowItWorks />
       <Stats />
       <Integrations />

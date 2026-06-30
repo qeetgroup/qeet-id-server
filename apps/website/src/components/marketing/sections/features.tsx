@@ -1,5 +1,4 @@
 import {
-  IconApiKey,
   IconAuditLog,
   IconCrossDevice,
   IconMfaShield,
@@ -12,17 +11,28 @@ import {
 import { cn } from "@qeetrix/ui";
 import type { ComponentType } from "react";
 
+import { SpotlightCard } from "@/components/marketing/effects/spotlight-card";
 import { Reveal, Stagger, StaggerItem, Tilt, WordReveal } from "@/components/marketing/motion";
 
-type Accent = "brand" | "violet" | "cyan" | "emerald" | "amber" | "rose" | "indigo" | "teal";
+type Accent = "brand" | "violet" | "cyan" | "emerald" | "amber" | "rose" | "indigo";
 
 type FeatureCard = {
   icon: ComponentType<QeetIconProps>;
   title: string;
   body: string;
   accent: Accent;
-  /** Bento span: wide cells take two columns on large screens. */
-  span?: "wide";
+  /** Bento span: wide = 2 cols, full = 4 cols (hero bottom row). */
+  span?: "wide" | "full";
+};
+
+const spotlightColors: Record<Accent, string> = {
+  brand: "rgba(242,109,14,0.14)",
+  violet: "rgba(139,92,246,0.14)",
+  cyan: "rgba(6,182,212,0.14)",
+  emerald: "rgba(16,185,129,0.14)",
+  amber: "rgba(245,158,11,0.14)",
+  rose: "rgba(244,63,94,0.14)",
+  indigo: "rgba(99,102,241,0.14)",
 };
 
 const cards: FeatureCard[] = [
@@ -69,13 +79,6 @@ const cards: FeatureCard[] = [
     body: "30+ regions worldwide. Sub-50 ms p99 sign-in latency for every user.",
     accent: "indigo",
   },
-  {
-    icon: IconApiKey,
-    title: "Drop-in SDKs",
-    body: "TypeScript, Go, Python, Rust — first-class. React, Next.js, mobile included.",
-    accent: "teal",
-    span: "wide",
-  },
 ];
 
 const accent: Record<Accent, { icon: string; glow: string; ring: string }> = {
@@ -86,7 +89,6 @@ const accent: Record<Accent, { icon: string; glow: string; ring: string }> = {
   amber: { icon: "text-amber-500", glow: "from-amber-500/40", ring: "group-hover:ring-amber-500/40" },
   rose: { icon: "text-rose-500", glow: "from-rose-500/40", ring: "group-hover:ring-rose-500/40" },
   indigo: { icon: "text-indigo-500", glow: "from-indigo-500/40", ring: "group-hover:ring-indigo-500/40" },
-  teal: { icon: "text-teal-500", glow: "from-teal-500/40", ring: "group-hover:ring-teal-500/40" },
 };
 
 // Small live visual for the SSO hero cell: a stack of provider chips.
@@ -106,31 +108,23 @@ function SsoVisual() {
   );
 }
 
-// Small live visual for the SDK hero cell: an install command line.
-function SdkVisual() {
-  return (
-    <div
-      aria-hidden
-      className="mt-auto rounded-lg border border-border/60 bg-background/60 px-3 py-2 font-mono text-[11px] backdrop-blur transition-colors group-hover:border-brand/30"
-    >
-      <span className="text-emerald-500">$</span>{" "}
-      <span className="text-muted-foreground">pnpm add</span>{" "}
-      <span className="text-foreground">@qeetid/react</span>
-    </div>
-  );
-}
 
 function FeatureCardItem({ icon: Icon, title, body, accent: key, span }: FeatureCard) {
-  const wide = span === "wide";
+  const wide = span === "wide" || span === "full";
   return (
-    <Tilt max={4} perspective={1200} className="h-full">
-      <article
-        className={cn(
-          "group relative flex h-full flex-col gap-3 overflow-hidden rounded-2xl border border-border/60 p-6 ring-1 ring-transparent transition-[transform,border-color,box-shadow] duration-300 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-xl hover:shadow-black/5",
-          accent[key].ring,
-          wide ? "bg-card/60 backdrop-blur lg:p-8" : "bg-background",
-        )}
-      >
+    <SpotlightCard
+      className="h-full rounded-2xl"
+      spotlightColor={spotlightColors[key]}
+      spotlightSize={wide ? 480 : 320}
+    >
+      <Tilt max={wide ? 2 : 4} perspective={1200} className="h-full">
+        <article
+          className={cn(
+            "group relative flex h-full flex-col gap-3 overflow-hidden rounded-2xl border border-border/60 p-6 ring-1 ring-transparent transition-[transform,border-color,box-shadow] duration-300 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-xl hover:shadow-black/5",
+            accent[key].ring,
+            wide ? "bg-card/60 backdrop-blur lg:p-8" : "bg-background",
+          )}
+        >
         <span
           aria-hidden
           className={cn(
@@ -149,9 +143,9 @@ function FeatureCardItem({ icon: Icon, title, body, accent: key, span }: Feature
         <h3 className="relative font-display text-lg font-semibold tracking-tight">{title}</h3>
         <p className={cn("relative text-sm text-muted-foreground", wide && "max-w-md")}>{body}</p>
         {wide && title === "Single sign-on" && <SsoVisual />}
-        {wide && title === "Drop-in SDKs" && <SdkVisual />}
       </article>
     </Tilt>
+    </SpotlightCard>
   );
 }
 
@@ -161,13 +155,13 @@ export function Features() {
       <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
         <Reveal className="mx-auto max-w-2xl text-center">
           <p className="text-sm font-medium uppercase tracking-widest text-brand-text">Platform</p>
-          <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-balance sm:text-5xl">
-            <WordReveal text="Everything you need." className="block" />
-            <WordReveal
-              text="Nothing you don’t."
-              className="block text-muted-foreground"
-              initialDelay={0.28}
-            />
+          <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight sm:text-5xl">
+            <span className="relative block overflow-hidden">
+              <WordReveal text="Everything you need." />
+            </span>
+            <span className="relative block overflow-hidden text-muted-foreground">
+              <WordReveal text="Nothing you don’t." initialDelay={0.28} />
+            </span>
           </h2>
         </Reveal>
 
@@ -178,7 +172,11 @@ export function Features() {
           {cards.map((card) => (
             <StaggerItem
               key={card.title}
-              className={cn("h-full", card.span === "wide" && "lg:col-span-2")}
+              className={cn(
+                "h-full",
+                card.span === "wide" && "lg:col-span-2",
+                card.span === "full" && "lg:col-span-4",
+              )}
             >
               <FeatureCardItem {...card} />
             </StaggerItem>

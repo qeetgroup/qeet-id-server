@@ -19,6 +19,7 @@ import type { ComponentType, ReactNode } from "react";
 
 import { ButtonLink } from "@/components/marketing/button-link";
 import { Aurora } from "@/components/marketing/effects/aurora";
+import { BlurText } from "@/components/marketing/effects/blur-text";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { DotPattern } from "@/components/marketing/effects/dot-pattern";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
@@ -287,7 +288,8 @@ export function Hero() {
                 <SparklesIcon className="size-3" /> New
               </span>
               <span className="text-foreground/90">
-                Passkey-first auth is now generally available
+                Passkey-first auth is now{" "}
+                <span className="font-semibold text-foreground">generally available</span>
               </span>
               <ArrowRightIcon className="size-3 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </a>
@@ -308,9 +310,11 @@ export function Hero() {
           <Stagger staggerDelay={0.1} delayChildren={0.6} className="flex flex-col items-center gap-7 sm:items-start">
             <StaggerItem>
               <p className="max-w-xl text-base text-muted-foreground text-balance sm:text-lg">
-                Qeet ID is the auth platform engineers wish they&apos;d had. SSO, MFA, passkeys,
-                RBAC, and stateful sessions — backed by a single, audit-ready identity graph. Drop it
-                in. Ship in days.
+                <BlurText
+                  text="Qeet ID is the auth platform engineers wish they'd had. SSO, MFA, passkeys, RBAC, and stateful sessions — backed by a single, audit-ready identity graph. Drop it in. Ship in days."
+                  delay={0.65}
+                  wordDelay={0.025}
+                />
               </p>
             </StaggerItem>
 
