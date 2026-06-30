@@ -1,6 +1,6 @@
 {
-  "name": "@qeetid/sdk",
-  "version": "0.1.0",
+  "name": "@qeet-id/sdk",
+  "version": "0.0.1",
   "description": "Server-side TypeScript SDK for Qeet ID — users, tenants, authorization, and session/JWT verification.",
   "type": "module",
   "license": "MIT",
