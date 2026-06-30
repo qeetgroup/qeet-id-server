@@ -8,7 +8,7 @@ import {
   IconScimSync,
   IconTenant,
   type QeetIconProps,
-} from "@qeetrix/brand";
+} from "@qeetrix/ui/brand";
 import { cn } from "@qeetrix/ui";
 import type { ComponentType } from "react";
 

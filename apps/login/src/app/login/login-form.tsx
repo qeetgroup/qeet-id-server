@@ -1,6 +1,6 @@
 "use client";
 
-import { QeetLogo } from "@qeetrix/brand";
+import { QeetLogo } from "@qeetrix/ui/brand";
 import { Button, Card, CardContent, Input } from "@qeetrix/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";

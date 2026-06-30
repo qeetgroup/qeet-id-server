@@ -5,7 +5,7 @@ import {
   IconPasskey,
   IconSamlConnector,
   type QeetIconProps,
-} from "@qeetrix/brand";
+} from "@qeetrix/ui/brand";
 import { cn } from "@qeetrix/ui";
 import { SIGN_UP_URL } from "@/lib/links";
 import {

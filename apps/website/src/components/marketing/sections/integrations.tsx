@@ -1,4 +1,4 @@
-import { IconOidcConnector, IconSamlConnector, IconScimSync, type QeetIconProps } from "@qeetrix/brand";
+import { IconOidcConnector, IconSamlConnector, IconScimSync, type QeetIconProps } from "@qeetrix/ui/brand";
 import { ArrowRightIcon } from "lucide-react";
 import type { ComponentType } from "react";
 

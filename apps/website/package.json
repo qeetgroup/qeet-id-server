@@ -12,8 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@qeetrix/brand": "^0.0.1",
-    "@qeetrix/ui": "^0.1.0",
+    "@qeetrix/ui": "^0.4.0",
     "@thesvg/react": "catalog:",
     "lenis": "^1.3.23",
     "motion": "^12.40.0",

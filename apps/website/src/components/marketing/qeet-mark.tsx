@@ -1,4 +1,4 @@
-import { QeetLogoOnDark, QeetLogoOnLight } from "@qeetrix/brand";
+import { QeetLogoOnDark, QeetLogoOnLight } from "@qeetrix/ui/brand";
 import { cn } from "@qeetrix/ui";
 
 type QeetMarkProps = {

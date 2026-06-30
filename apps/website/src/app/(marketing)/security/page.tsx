@@ -6,7 +6,7 @@ import {
   IconScimSync,
   IconTenant,
   IconWebhook,
-} from "@qeetrix/brand";
+} from "@qeetrix/ui/brand";
 import { Badge } from "@qeetrix/ui";
 import type { Metadata } from "next";
 import {
