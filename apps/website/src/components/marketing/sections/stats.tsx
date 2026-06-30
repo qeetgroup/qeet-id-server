@@ -1,4 +1,5 @@
 import { NumberTicker } from "@/components/marketing/effects/number-ticker";
+import { Threads } from "@/components/marketing/effects/threads";
 import { Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
 
 const stats = [
@@ -11,16 +12,7 @@ const stats = [
 export function Stats() {
   return (
     <section className="relative overflow-hidden border-b border-border/60 bg-foreground text-background">
-      {/* Subtle panning grid */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(var(--color-background)/0.1_1px,transparent_1px),linear-gradient(90deg,var(--color-background)/0.1_1px,transparent_1px)] [background-size:60px_60px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]"
-      />
-      {/* Warm brand aurora behind the panel */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -top-1/3 left-1/2 size-[44rem] -translate-x-1/2 rounded-full bg-[radial-gradient(circle,var(--color-brand)_0%,transparent_60%)] opacity-20 blur-3xl animate-aurora"
-      />
+      <Threads color="rgba(242,109,14,0.09)" />
 
       <div className="relative mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-24">
         <Reveal className="mx-auto max-w-2xl text-center">

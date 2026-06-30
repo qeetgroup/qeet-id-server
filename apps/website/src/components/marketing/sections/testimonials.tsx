@@ -1,6 +1,7 @@
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
+import { GlowCard } from "@/components/marketing/effects/glow-card";
 import { Marquee } from "@/components/marketing/effects/marquee";
 import { Reveal, Stagger, StaggerItem, Tilt, WordReveal } from "@/components/marketing/motion";
 import { cn } from "@qeetrix/ui";
@@ -60,42 +61,57 @@ export function Testimonials() {
         <Stagger staggerDelay={0.12} className="mt-14 grid gap-6 lg:grid-cols-3">
           {quotes.map((q) => (
             <StaggerItem key={q.name} className="h-full">
-              <Tilt max={4} perspective={1200} className="h-full">
-                <figure
-                  className={cn(
-                    "relative flex h-full flex-col gap-6 overflow-hidden rounded-2xl border border-border/60 bg-card p-7 transition-[transform,border-color,box-shadow] duration-300 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-xl hover:shadow-black/5",
-                    q.featured && "lg:bg-card/80 lg:backdrop-blur",
-                  )}
-                >
-                  {q.featured && (
-                    <>
+              <GlowCard
+                className="h-full rounded-2xl"
+                glowColor="rgba(242,109,14,0.16)"
+                glowSize={360}
+              >
+                <Tilt max={4} perspective={1200} className="h-full">
+                  <figure
+                    className={cn(
+                      "relative flex h-full flex-col gap-6 overflow-hidden rounded-2xl border border-border/60 bg-card p-7 transition-[transform,border-color,box-shadow] duration-300 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-xl hover:shadow-black/5",
+                      q.featured && "lg:bg-card/80 lg:backdrop-blur",
+                    )}
+                  >
+                    {q.featured && (
+                      <>
+                        <span
+                          aria-hidden
+                          className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-linear-to-br from-brand/30 to-transparent opacity-60 blur-3xl"
+                        />
+                        <BorderBeam
+                          size={220}
+                          duration={10}
+                          colorFrom="var(--brand-500)"
+                          colorTo="var(--brand-300)"
+                        />
+                      </>
+                    )}
+                    {/* Decorative oversized quote mark for featured card */}
+                    {q.featured && (
                       <span
                         aria-hidden
-                        className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-linear-to-br from-brand/30 to-transparent opacity-60 blur-3xl"
-                      />
-                      <BorderBeam
-                        size={220}
-                        duration={10}
-                        colorFrom="var(--brand-500)"
-                        colorTo="var(--brand-300)"
-                      />
-                    </>
-                  )}
-                  <QuoteIcon aria-hidden className="relative size-7 text-brand/70" />
-                  <blockquote className="relative text-lg font-medium leading-relaxed text-foreground text-balance">
-                    {q.quote}
-                  </blockquote>
-                  <figcaption className="relative mt-auto flex items-center gap-3 border-t border-border/60 pt-5">
-                    <InitialsAvatar name={q.name} />
-                    <div className="flex flex-col">
-                      <span className="text-sm font-semibold text-foreground">{q.name}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {q.role} · {q.company}
+                        className="pointer-events-none absolute -left-2 -top-4 font-display text-[9rem] leading-none text-foreground/[0.04] select-none"
+                      >
+                        "
                       </span>
-                    </div>
-                  </figcaption>
-                </figure>
-              </Tilt>
+                    )}
+                    <QuoteIcon aria-hidden className="relative size-7 text-brand/70" />
+                    <blockquote className="relative text-lg font-medium leading-relaxed text-foreground text-balance">
+                      {q.quote}
+                    </blockquote>
+                    <figcaption className="relative mt-auto flex items-center gap-3 border-t border-border/60 pt-5">
+                      <InitialsAvatar name={q.name} />
+                      <div className="flex flex-col">
+                        <span className="text-sm font-semibold text-foreground">{q.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {q.role} · {q.company}
+                        </span>
+                      </div>
+                    </figcaption>
+                  </figure>
+                </Tilt>
+              </GlowCard>
             </StaggerItem>
           ))}
         </Stagger>

@@ -2,39 +2,332 @@
 
 import { cn } from "@qeetrix/ui";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import type { ReactNode } from "react";
 import { useId, useState } from "react";
 
-import { CodeBlock } from "@/components/marketing/effects/code-block";
+import { CodeBlock, Tok } from "@/components/marketing/effects/code-block";
 import { Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
 
-type Lang = "TypeScript" | "Go" | "Python" | "Rust";
-const langs: Lang[] = ["TypeScript", "Go", "Python", "Rust"];
+type Lang = "TypeScript" | "Next.js" | "Go" | "Python";
+const langs: Lang[] = ["TypeScript", "Next.js", "Go", "Python"];
 
 type Step = {
   n: string;
   title: string;
   body: string;
   filename: Record<Lang, string>;
-  code: Record<Lang, string>;
+  code: Record<Lang, ReactNode>;
 };
 
+// ─── Reusable terminal prompt line ───────────────────────────────────────────
+function Prompt({ pm, pkg }: { pm: string; pkg: string }) {
+  return (
+    <>
+      <Tok.t>$</Tok.t>
+      <Tok.c> {pm} </Tok.c>
+      <Tok.s>{pkg}</Tok.s>
+    </>
+  );
+}
+
+// ─── Step 01 — Install ───────────────────────────────────────────────────────
+const installCode: Record<Lang, ReactNode> = {
+  TypeScript: (
+    <>
+      <Prompt pm="pnpm add" pkg="@qeet-id/react" />
+      {"\n\n"}
+      <Tok.c>{"✓ Resolved 1 package\n"}</Tok.c>
+      <Tok.c>{"✓ Added "}</Tok.c>
+      <Tok.s>@qeet-id/react</Tok.s>
+      <Tok.c>@</Tok.c>
+      <Tok.n>1.4.0</Tok.n>
+      <Tok.c>{" in 1.2s"}</Tok.c>
+    </>
+  ),
+  "Next.js": (
+    <>
+      <Prompt pm="pnpm add" pkg="@qeet-id/nextjs" />
+      {"\n\n"}
+      <Tok.c>{"✓ Resolved 1 package\n"}</Tok.c>
+      <Tok.c>{"✓ Added "}</Tok.c>
+      <Tok.s>@qeet-id/nextjs</Tok.s>
+      <Tok.c>@</Tok.c>
+      <Tok.n>1.4.0</Tok.n>
+      <Tok.c>{" in 1.1s"}</Tok.c>
+    </>
+  ),
+  Go: (
+    <>
+      <Prompt pm="go get" pkg="github.com/qeetgroup/qeetid-go" />
+      {"\n\n"}
+      <Tok.c>{"go: added "}</Tok.c>
+      <Tok.s>github.com/qeetgroup/qeetid-go</Tok.s>
+      <Tok.c>{" v"}</Tok.c>
+      <Tok.n>1.4.0</Tok.n>
+    </>
+  ),
+  Python: (
+    <>
+      <Prompt pm="pip install" pkg="qeetid" />
+      {"\n\n"}
+      <Tok.c>{"Successfully installed "}</Tok.c>
+      <Tok.s>qeetid</Tok.s>
+      <Tok.c>-</Tok.c>
+      <Tok.n>1.4.0</Tok.n>
+    </>
+  ),
+};
+
+// ─── Step 02 — Configure ─────────────────────────────────────────────────────
+const configCode: Record<Lang, ReactNode> = {
+  TypeScript: (
+    <>
+      <Tok.k>import</Tok.k>
+      {" { "}
+      <Tok.f>QeetID</Tok.f>
+      {" } "}
+      <Tok.k>from</Tok.k>
+      {" "}
+      <Tok.s>"@qeet-id/sdk"</Tok.s>
+      {";\n\n"}
+      <Tok.k>const</Tok.k>
+      {" "}
+      <Tok.v>qg</Tok.v>
+      {" = "}
+      <Tok.k>new</Tok.k>
+      {" "}
+      <Tok.f>QeetID</Tok.f>
+      {"({\n"}
+      {"  "}
+      <Tok.p>tenant</Tok.p>
+      {": "}
+      <Tok.s>"acme"</Tok.s>
+      {",\n"}
+      {"  "}
+      <Tok.p>providers</Tok.p>
+      {": ["}
+      <Tok.s>"google"</Tok.s>
+      {", "}
+      <Tok.s>"passkey"</Tok.s>
+      {", "}
+      <Tok.s>"saml"</Tok.s>
+      {"],\n"}
+      {"});"}
+    </>
+  ),
+  "Next.js": (
+    <>
+      <Tok.k>import</Tok.k>
+      {" { "}
+      <Tok.f>qeetID</Tok.f>
+      {" } "}
+      <Tok.k>from</Tok.k>
+      {" "}
+      <Tok.s>"@qeet-id/nextjs"</Tok.s>
+      {";\n\n"}
+      <Tok.k>export const</Tok.k>
+      {" { "}
+      <Tok.v>auth</Tok.v>
+      {", "}
+      <Tok.v>signIn</Tok.v>
+      {", "}
+      <Tok.v>signOut</Tok.v>
+      {" } = "}
+      <Tok.f>qeetID</Tok.f>
+      {"({\n"}
+      {"  "}
+      <Tok.p>tenant</Tok.p>
+      {": "}
+      <Tok.s>"acme"</Tok.s>
+      {",\n"}
+      {"  "}
+      <Tok.p>providers</Tok.p>
+      {": ["}
+      <Tok.s>"google"</Tok.s>
+      {", "}
+      <Tok.s>"passkey"</Tok.s>
+      {", "}
+      <Tok.s>"saml"</Tok.s>
+      {"],\n"}
+      {"});"}
+    </>
+  ),
+  Go: (
+    <>
+      <Tok.v>client</Tok.v>
+      {" := "}
+      <Tok.f>qeetid.New</Tok.f>
+      {"("}
+      <Tok.t>qeetid.Config</Tok.t>
+      {"{\n"}
+      {"    "}
+      <Tok.p>Tenant</Tok.p>
+      {":    "}
+      <Tok.s>"acme"</Tok.s>
+      {",\n"}
+      {"    "}
+      <Tok.p>Providers</Tok.p>
+      {": []"}
+      <Tok.t>string</Tok.t>
+      {"{\n"}
+      {"        "}
+      <Tok.s>"google"</Tok.s>
+      {", "}
+      <Tok.s>"passkey"</Tok.s>
+      {", "}
+      <Tok.s>"saml"</Tok.s>
+      {",\n"}
+      {"    },\n"}
+      {"})"}
+    </>
+  ),
+  Python: (
+    <>
+      <Tok.k>from</Tok.k>
+      {" "}
+      <Tok.v>qeetid</Tok.v>
+      {" "}
+      <Tok.k>import</Tok.k>
+      {" "}
+      <Tok.f>QeetID</Tok.f>
+      {"\n\n"}
+      <Tok.v>qg</Tok.v>
+      {" = "}
+      <Tok.f>QeetID</Tok.f>
+      {"(\n"}
+      {"    "}
+      <Tok.p>tenant</Tok.p>
+      {"="}
+      <Tok.s>"acme"</Tok.s>
+      {",\n"}
+      {"    "}
+      <Tok.p>providers</Tok.p>
+      {"=["}
+      <Tok.s>"google"</Tok.s>
+      {", "}
+      <Tok.s>"passkey"</Tok.s>
+      {", "}
+      <Tok.s>"saml"</Tok.s>
+      {"],\n"}
+      {")"}
+    </>
+  ),
+};
+
+// ─── Step 03 — Ship ───────────────────────────────────────────────────────────
+const shipCode: Record<Lang, ReactNode> = {
+  TypeScript: (
+    <>
+      <Tok.k>import</Tok.k>
+      {" { "}
+      <Tok.t>SignIn</Tok.t>
+      {" } "}
+      <Tok.k>from</Tok.k>
+      {" "}
+      <Tok.s>"@qeet-id/react"</Tok.s>
+      {";\n\n"}
+      <Tok.k>export default function</Tok.k>
+      {" "}
+      <Tok.f>Page</Tok.f>
+      {"() {\n"}
+      {"  "}
+      <Tok.k>return</Tok.k>
+      {" <"}
+      <Tok.t>SignIn</Tok.t>
+      {" "}
+      <Tok.p>redirectTo</Tok.p>
+      {"="}
+      <Tok.s>"/dashboard"</Tok.s>
+      {" />;\n}"}
+    </>
+  ),
+  "Next.js": (
+    <>
+      <Tok.k>import</Tok.k>
+      {" { "}
+      <Tok.t>SignIn</Tok.t>
+      {" } "}
+      <Tok.k>from</Tok.k>
+      {" "}
+      <Tok.s>"@qeet-id/nextjs"</Tok.s>
+      {";\n\n"}
+      <Tok.k>export default function</Tok.k>
+      {" "}
+      <Tok.f>Page</Tok.f>
+      {"() {\n"}
+      {"  "}
+      <Tok.k>return</Tok.k>
+      {" <"}
+      <Tok.t>SignIn</Tok.t>
+      {" "}
+      <Tok.p>redirectTo</Tok.p>
+      {"="}
+      <Tok.s>"/dashboard"</Tok.s>
+      {" />;\n}"}
+    </>
+  ),
+  Go: (
+    <>
+      <Tok.v>http</Tok.v>
+      {"."}
+      <Tok.f>Handle</Tok.f>
+      {"("}
+      <Tok.s>"/signin"</Tok.s>
+      {",\n"}
+      {"    "}
+      <Tok.f>qeetid.SignInHandler</Tok.f>
+      {"("}
+      <Tok.t>qeetid.SignIn</Tok.t>
+      {"{\n"}
+      {"        "}
+      <Tok.p>RedirectTo</Tok.p>
+      {": "}
+      <Tok.s>"/dashboard"</Tok.s>
+      {",\n"}
+      {"    }),\n"}
+      {")"}
+    </>
+  ),
+  Python: (
+    <>
+      <Tok.v>@app</Tok.v>
+      {"."}
+      <Tok.f>get</Tok.f>
+      {"("}
+      <Tok.s>"/signin"</Tok.s>
+      {")\n"}
+      <Tok.k>def</Tok.k>
+      {" "}
+      <Tok.f>signin</Tok.f>
+      {"():\n"}
+      {"    "}
+      <Tok.k>return</Tok.k>
+      {" "}
+      <Tok.v>qg</Tok.v>
+      {"."}
+      <Tok.f>sign_in</Tok.f>
+      {"(\n        "}
+      <Tok.p>redirect_to</Tok.p>
+      {"="}
+      <Tok.s>"/dashboard"</Tok.s>
+      {"\n    )"}
+    </>
+  ),
+};
+
+// ─── Steps data ───────────────────────────────────────────────────────────────
 const steps: Step[] = [
   {
     n: "01",
     title: "Install the SDK",
-    body: "One line in your app. TypeScript, Go, Python, and Rust — all first-class.",
+    body: "One line in your app. TypeScript, Next.js, Go, and Python — all first-class.",
     filename: {
       TypeScript: "terminal",
+      "Next.js": "terminal",
       Go: "terminal",
       Python: "terminal",
-      Rust: "terminal",
     },
-    code: {
-      TypeScript: "$ pnpm add @qeetid/react\n\n✓ Resolved 1 package\n✓ Added @qeetid/sdk@1.4.0 in 1.2s",
-      Go: "$ go get github.com/qeetid/qeetid-go\n\ngo: added github.com/qeetid/qeetid-go v1.4.0",
-      Python: "$ pip install qeetid\n\nSuccessfully installed qeetid-1.4.0",
-      Rust: "$ cargo add qeetid\n\n      Adding qeetid v1.4.0 to dependencies",
-    },
+    code: installCode,
   },
   {
     n: "02",
@@ -42,18 +335,11 @@ const steps: Step[] = [
     body: "Toggle SAML, OIDC, social, passwords, and passkeys from the dashboard — no deploys.",
     filename: {
       TypeScript: "qeetid.ts",
+      "Next.js": "auth.ts",
       Go: "qeetid.go",
       Python: "qeetid.py",
-      Rust: "main.rs",
     },
-    code: {
-      TypeScript:
-        'import { QeetID } from "@qeetid/sdk";\n\nconst qg = new QeetID({\n  tenant: "acme",\n  providers: ["google", "passkey", "saml"],\n});',
-      Go: 'client := qeetid.New(qeetid.Config{\n  Tenant:    "acme",\n  Providers: []string{"google", "passkey", "saml"},\n})',
-      Python:
-        'from qeetid import QeetID\n\nqg = QeetID(\n  tenant="acme",\n  providers=["google", "passkey", "saml"],\n)',
-      Rust: 'let qg = QeetId::new(Config {\n  tenant: "acme".into(),\n  providers: vec!["google", "passkey", "saml"],\n});',
-    },
+    code: configCode,
   },
   {
     n: "03",
@@ -61,22 +347,15 @@ const steps: Step[] = [
     body: "Drop-in components handle sign-in, MFA enrollment, and account recovery.",
     filename: {
       TypeScript: "app/page.tsx",
+      "Next.js": "app/page.tsx",
       Go: "handler.go",
       Python: "app.py",
-      Rust: "routes.rs",
     },
-    code: {
-      TypeScript:
-        'import { SignIn } from "@qeetid/react";\n\nexport default function Page() {\n  return <SignIn redirectTo="/dashboard" />;\n}',
-      Go: 'http.Handle("/signin", qeetid.SignInHandler(\n  qeetid.SignIn{RedirectTo: "/dashboard"},\n))',
-      Python:
-        '@app.get("/signin")\ndef signin():\n    return qg.sign_in(redirect_to="/dashboard")',
-      Rust: 'async fn signin(qg: QeetId) -> impl IntoResponse {\n  qg.sign_in(SignIn::redirect("/dashboard")).await\n}',
-    },
+    code: shipCode,
   },
 ];
 
-/** Animated language tab bar — sliding brand indicator via shared `layoutId`. */
+// ─── Language tab bar ─────────────────────────────────────────────────────────
 function LangTabs({
   lang,
   onChange,
@@ -130,8 +409,8 @@ function LangTabs({
   );
 }
 
-/** Code surface that re-reveals when the active language changes. */
-function StepCode({ filename, code }: { filename: string; code: string }) {
+// ─── Per-step code surface ────────────────────────────────────────────────────
+function StepCode({ filename, code }: { filename: string; code: ReactNode }) {
   const reduce = useReducedMotion();
   if (reduce) {
     return (
@@ -144,7 +423,7 @@ function StepCode({ filename, code }: { filename: string; code: string }) {
     <div className="relative flex-1">
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
-          key={code}
+          key={filename}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
@@ -160,6 +439,7 @@ function StepCode({ filename, code }: { filename: string; code: string }) {
   );
 }
 
+// ─── Section ──────────────────────────────────────────────────────────────────
 export function HowItWorks() {
   const [lang, setLang] = useState<Lang>("TypeScript");
   const tablistId = useId();
@@ -192,7 +472,7 @@ export function HowItWorks() {
                   className="pointer-events-none absolute -left-10 -top-10 size-32 rounded-full bg-linear-to-br from-brand/25 to-transparent opacity-50 blur-3xl"
                 />
                 <div className="relative flex items-center gap-3">
-                  <span className="grid size-9 place-items-center rounded-lg bg-[image:var(--brand-gradient)] font-mono text-xs font-semibold text-brand-foreground shadow-sm shadow-brand/30">
+                  <span className="grid size-9 place-items-center rounded-lg bg-(image:--brand-gradient) font-mono text-xs font-semibold text-brand-foreground shadow-sm shadow-brand/30">
                     {s.n}
                   </span>
                   <h3 className="font-display text-xl font-semibold tracking-tight">{s.title}</h3>

@@ -1,48 +1,73 @@
+import {
+  Apple,
+  Auth0,
+  Facebook,
+  Github,
+  Gitlab,
+  Google,
+  Linkedin,
+  Microsoft,
+  Okta,
+  Onelogin,
+  Workday,
+  X,
+} from "@thesvg/react";
 import { IconOidcConnector, IconSamlConnector, IconScimSync, type QeetIconProps } from "@qeetrix/ui/brand";
-import { ArrowRightIcon } from "lucide-react";
-import type { ComponentType } from "react";
+import { ArrowRightIcon, CloudIcon, LeafIcon, NetworkIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
+import type { ComponentType, SVGProps } from "react";
 
 import { ButtonLink } from "../button-link";
 import { Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
 
+type ProviderItem = { name: string; icon: ComponentType<{ className?: string } & SVGProps<SVGSVGElement>> };
+
 type Group = {
   group: string;
   icon: ComponentType<QeetIconProps>;
-  items: string[];
+  items: ProviderItem[];
 };
 
 const providers: Group[] = [
   {
     group: "Social",
     icon: IconOidcConnector,
-    items: ["Google", "Microsoft", "Apple", "GitHub", "GitLab", "Facebook", "LinkedIn", "X"],
+    items: [
+      { name: "Google", icon: Google },
+      { name: "Microsoft", icon: Microsoft },
+      { name: "Apple", icon: Apple },
+      { name: "GitHub", icon: Github },
+      { name: "GitLab", icon: Gitlab },
+      { name: "Facebook", icon: Facebook },
+      { name: "LinkedIn", icon: Linkedin },
+      { name: "X", icon: X },
+    ],
   },
   {
     group: "Enterprise SSO",
     icon: IconSamlConnector,
     items: [
-      "Okta SAML",
-      "Azure AD",
-      "Auth0",
-      "OneLogin",
-      "PingIdentity",
-      "JumpCloud",
-      "Generic SAML",
-      "Generic OIDC",
+      { name: "Okta SAML", icon: Okta },
+      { name: "Azure AD", icon: Microsoft },
+      { name: "Auth0", icon: Auth0 },
+      { name: "OneLogin", icon: Onelogin },
+      { name: "PingIdentity", icon: ShieldIcon },
+      { name: "JumpCloud", icon: CloudIcon },
+      { name: "Generic SAML", icon: IconSamlConnector },
+      { name: "Generic OIDC", icon: IconOidcConnector },
     ],
   },
   {
     group: "Directory",
     icon: IconScimSync,
     items: [
-      "SCIM 2.0",
-      "LDAP",
-      "Active Directory",
-      "Workday",
-      "BambooHR",
-      "Rippling",
-      "Google Workspace",
-      "Okta",
+      { name: "SCIM 2.0", icon: IconScimSync },
+      { name: "LDAP", icon: NetworkIcon },
+      { name: "Active Directory", icon: Microsoft },
+      { name: "Workday", icon: Workday },
+      { name: "BambooHR", icon: LeafIcon },
+      { name: "Rippling", icon: RefreshCwIcon },
+      { name: "Google Workspace", icon: Google },
+      { name: "Okta", icon: Okta },
     ],
   },
 ];
@@ -81,9 +106,12 @@ export function Integrations() {
                   </h3>
                   <Stagger staggerDelay={0.04} className="flex flex-col gap-2">
                     {p.items.map((item) => (
-                      <StaggerItem key={item} distance={8}>
+                      <StaggerItem key={item.name} distance={8}>
                         <span className="group flex items-center justify-between rounded-md border border-border/60 bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-foreground">
-                          {item}
+                          <span className="flex min-w-0 items-center gap-2">
+                            <item.icon aria-hidden className="size-3.5 shrink-0 opacity-60" />
+                            <span className="truncate">{item.name}</span>
+                          </span>
                           <ArrowRightIcon
                             aria-hidden
                             className="size-3 -translate-x-1 text-brand opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100"
