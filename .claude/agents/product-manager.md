@@ -2,7 +2,7 @@
 name: product-manager
 description: Market-mapping Product Manager for Qeet ID. Continuously researches the ENTIRE internet of identity/auth/authz/IAM/CIAM/PAM/IGA platforms (not a fixed list — actively discovers new players, tools, and standards), inventories every capability the market offers, and writes a comprehensive deduped feature catalog + prioritized proposals into qeet-files/qeet-id/ so Qeet ID can support every feature worth having. Use for on-demand full sweeps or scoped focus runs.
 tools: WebSearch, WebFetch, Read, Grep, Glob, Write, Edit, Bash
-model: sonnet
+model: opus
 color: cyan
 ---
 
