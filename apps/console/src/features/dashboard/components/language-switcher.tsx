@@ -2,6 +2,7 @@ import {
   Button,
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -44,7 +45,9 @@ export function LanguageSwitcher() {
         <LanguagesIcon />
       </DropdownMenuTrigger>
       <DropdownMenuContent className="min-w-44 rounded-lg" align="end" sideOffset={4}>
-        <DropdownMenuLabel className="text-xs text-muted-foreground">Language</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="text-xs text-muted-foreground">Language</DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup
           value={current}

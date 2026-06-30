@@ -1,0 +1,76 @@
+{
+  "title": "Overview",
+  "subtitle": "Identity health for this workspace at a glance.",
+  "systemsOk": "All systems operational",
+  "range7d": "Last 7 days",
+  "range14d": "Last 14 days",
+  "vsLastWeek": "vs last week",
+  "error": "Couldn't load dashboard analytics",
+  "kpi": {
+    "mau": "Active Users (MAU)",
+    "loginsToday": "Logins Today",
+    "mfaAdoption": "MFA Adoption",
+    "failedLogins24h": "Failed Logins (24h)"
+  },
+  "stats": {
+    "totalUsers": "Total users",
+    "dailyActive": "Daily active",
+    "stickiness": "Stickiness (DAU/MAU)",
+    "avgSessions": "Avg sessions / user"
+  },
+  "quickActions": {
+    "heading": "Quick Actions",
+    "inviteLabel": "Invite user",
+    "inviteDesc": "Add a teammate to this workspace",
+    "apiKeyLabel": "Create API key",
+    "apiKeyDesc": "Issue credentials for an app",
+    "threatsLabel": "Review threats",
+    "threatsDesc": "Anomalies in the last 24 h",
+    "auditLabel": "Audit logs",
+    "auditDesc": "Search recent activity"
+  },
+  "charts": {
+    "viewAnalytics": "View analytics",
+    "viewLogs": "View logs",
+    "viewAll": "View all",
+    "authActivity": {
+      "title": "Authentication Activity",
+      "description": "Daily logins by method · last {{take}} days",
+      "emptyTitle": "No activity yet",
+      "emptyDescription": "No logins recorded in this window."
+    },
+    "loginMix": {
+      "title": "Login Methods Mix",
+      "description": "Last 30 days",
+      "emptyTitle": "No sign-ins yet",
+      "emptyDescription": "Login method data will appear once users sign in.",
+      "methodCount_one": "{{count}} method",
+      "methodCount_other": "{{count}} methods"
+    },
+    "mfa": {
+      "title": "MFA Methods Adoption",
+      "description": "Users by second factor",
+      "emptyTitle": "No MFA enrolled",
+      "emptyDescription": "No users have enrolled in a second factor yet."
+    },
+    "failedLogins": {
+      "title": "Failed Login Attempts",
+      "description": "Hourly · last 24h (threshold 250)",
+      "threshold": "Threshold",
+      "emptyTitle": "No failed attempts",
+      "emptyDescription": "No failed-login telemetry recorded yet."
+    }
+  },
+  "activity": {
+    "title": "Recent Activity",
+    "description": "Last 5 events in this workspace",
+    "viewAll": "View all",
+    "emptyTitle": "No activity yet",
+    "emptyDescription": "Events will appear here as users interact with your workspace."
+  },
+  "noWorkspace": {
+    "title": "Create your first workspace",
+    "description": "Your account isn't tied to a workspace yet. Create one to start managing users, configuring auth, and inviting teammates — you'll be its owner.",
+    "cta": "Create workspace"
+  }
+}

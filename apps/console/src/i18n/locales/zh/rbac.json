@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "访问测试器",
+    "description": "评估特定用户的权限，并确切了解为什么访问被授予或拒绝 — 包括哪个角色授予了它，以及它是直接授予还是通过群组授予的。",
+    "runTitle": "运行检查",
+    "runDescription": "权限使用 resource:action 格式，例如 users:read。",
+    "userIdLabel": "用户 ID",
+    "userIdHelp": "要评估的用户的 UUID。",
+    "permissionLabel": "权限",
+    "evaluate": "评估",
+    "evaluating": "评估中…",
+    "resultTitle": "结果",
+    "resultDescription": "授权引擎经过的决策和授权路径追踪。",
+    "resultPlaceholder": "运行检查以查看允许/拒绝决策及其原因。",
+    "allowed": "访问已允许",
+    "denied": "访问已拒绝",
+    "grantPathsTitle": "授权路径",
+    "grantPathsHint": "每个路径都是持有该权限的独立原因。",
+    "noGrantPath": "已允许，但未返回明确的授权路径。",
+    "directAssignment": "直接分配",
+    "viaGroup": "群组 · {{group}}",
+    "grantedBy": "授予者",
+    "roleShort": "角色 {{id}}…"
+  },
+  "groupRoles": {
+    "title": "角色",
+    "description": "此群组的成员继承这些角色的权限。",
+    "addPlaceholder": "添加角色…",
+    "loadingRoles": "加载角色中…",
+    "allGranted": "所有角色已全部授予",
+    "selectAriaLabel": "选择要授予的角色",
+    "addRole": "添加角色",
+    "emptyTitle": "此群组尚未被授予任何角色。",
+    "emptyDescription": "使用上方的选择器授予角色 — 每个成员都会继承其权限。",
+    "roleHeader": "角色",
+    "grantedHeader": "授予时间",
+    "actionsHeader": "操作",
+    "revokeTitle": "从群组中移除此角色？",
+    "revokeDescriptionNamed": "成员将失去 <strong>{{name}}</strong> 授予的权限，除非他们通过另一个群组或直接分配持有该权限。",
+    "revokeDescriptionFallback": "成员将失去此角色的权限。"
+  }
+}

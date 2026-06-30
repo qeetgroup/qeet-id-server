@@ -1,0 +1,71 @@
+{
+  "list": {
+    "description": "Qeet IDに認証を委任するOAuth 2.0 / OIDCアプリケーションです。機密アプリは登録時にクライアントシークレットを受け取り、パブリックアプリはPKCEを使用します。",
+    "register": "アプリケーションを登録",
+    "registeredTitle": "登録済みアプリケーション",
+    "appCount_one": "{{count}}個のアプリ",
+    "appCount_other": "{{count}}個のアプリ",
+    "emptyTitle": "登録済みのアプリケーションはありません。",
+    "emptyDescription": "アプリケーションを登録をクリックして最初のOAuth / OIDCクライアントを追加してください。"
+  },
+  "table": {
+    "name": "名前",
+    "clientId": "クライアントID",
+    "type": "タイプ",
+    "redirectUris": "リダイレクトURI",
+    "scopes": "スコープ",
+    "actions": "操作"
+  },
+  "credentials": {
+    "title": "{{name}}のクライアント認証情報",
+    "description": "シークレットを今すぐコピーしてください — その後サーバー側でbcryptハッシュ化され、再表示できなくなります。"
+  },
+  "delete": {
+    "title": "このアプリケーションを削除しますか？",
+    "descriptionNamed": "<strong>{{name}}</strong>のクライアントIDを使用しているアプリは直ちに認証できなくなります。この操作は元に戻せません。",
+    "descriptionFallback": "このクライアントIDを使用しているアプリは動作しなくなります。"
+  },
+  "create": {
+    "title": "OAuth / OIDCアプリケーションを登録",
+    "description": "OIDCクライアントを作成します。機密クライアントはワンタイムクライアントシークレットを受け取ります。",
+    "name": "名前",
+    "type": "タイプ",
+    "typePublic": "パブリック — SPA、モバイル（PKCE）",
+    "typeConfidential": "機密 — サーバーサイドアプリ（クライアントシークレット）",
+    "redirectUris": "リダイレクトURI",
+    "redirectUrisHelp": "1行に1つのURL。本番環境ではHTTPSが必要；開発環境ではlocalhostが許可されています。",
+    "postLogoutUris": "ログアウト後リダイレクトURI",
+    "postLogoutUrisHelp": "任意。1行に1つのURL。",
+    "scopes": "スコープ",
+    "scopesHelp": "スペース区切り。",
+    "submit": "登録",
+    "submitting": "登録中…"
+  },
+  "detail": {
+    "backToList": "すべてのアプリケーション",
+    "notFoundTitle": "このテナントにアプリケーション\"{{clientId}}\"は存在しません",
+    "notFoundDescription": "削除されたか、表示する権限がない可能性があります。上のリンクを使用してリストに戻ってください。",
+    "name": "名前",
+    "redirectUris": "リダイレクトURI",
+    "redirectUrisHelp": "1行に1つ（またはカンマ区切り）。",
+    "postLogoutUris": "ログアウト後リダイレクトURI",
+    "grantTypes": "グラントタイプ",
+    "grantTypesHelp": "スペースまたはカンマ区切り。",
+    "scopes": "スコープ",
+    "scopesHelp": "スペースまたはカンマ区切り。",
+    "metadataTitle": "メタデータ",
+    "createdLabel": "作成日",
+    "rowIdLabel": "行ID",
+    "tenantLabel": "テナント",
+    "grantTypesLabel": "グラントタイプ",
+    "secretTitle": "クライアントシークレット",
+    "secretDescription": "ローテーションすると現在のシークレットが直ちに無効になります。新しい値は1回だけ表示されます。",
+    "secretCopyHint": "今すぐコピーしてください — サーバー側でbcryptハッシュ化され、再表示できなくなります。",
+    "rotateSecret": "シークレットをローテーション",
+    "dangerZoneTitle": "危険ゾーン",
+    "dangerZoneDescription": "削除すると、このクライアントIDを使用するすべてのアプリが認証できなくなります。",
+    "deleteApplication": "アプリケーションを削除",
+    "deleteTitle": "このアプリケーションを削除しますか？",
+    "deleteDescription": "<strong>{{name}}</strong>のクライアントIDを使用しているアプリは直ちに認証できなくなります。この操作は元に戻せません。"
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "title": "概览",
+  "subtitle": "一目了然地查看此工作区的身份健康状况。",
+  "systemsOk": "所有系统正常运行",
+  "range7d": "过去 7 天",
+  "range14d": "过去 14 天",
+  "vsLastWeek": "与上周相比",
+  "error": "无法加载仪表盘分析数据",
+  "kpi": {
+    "mau": "活跃用户（MAU）",
+    "loginsToday": "今日登录数",
+    "mfaAdoption": "MFA 采用率",
+    "failedLogins24h": "登录失败（24小时）"
+  },
+  "stats": {
+    "totalUsers": "总用户数",
+    "dailyActive": "日活跃",
+    "stickiness": "粘性（DAU/MAU）",
+    "avgSessions": "平均会话数 / 用户"
+  },
+  "quickActions": {
+    "heading": "快速操作",
+    "inviteLabel": "邀请用户",
+    "inviteDesc": "将团队成员添加到此工作区",
+    "apiKeyLabel": "创建 API 密钥",
+    "apiKeyDesc": "为应用程序颁发凭据",
+    "threatsLabel": "查看威胁",
+    "threatsDesc": "过去 24 小时的异常",
+    "auditLabel": "审计日志",
+    "auditDesc": "搜索近期活动"
+  },
+  "charts": {
+    "viewAnalytics": "查看分析",
+    "viewLogs": "查看日志",
+    "viewAll": "查看全部",
+    "authActivity": {
+      "title": "身份验证活动",
+      "description": "按方法统计的每日登录 · 过去 {{take}} 天",
+      "emptyTitle": "暂无活动",
+      "emptyDescription": "此时间窗口内未记录任何登录。"
+    },
+    "loginMix": {
+      "title": "登录方式分布",
+      "description": "过去 30 天",
+      "emptyTitle": "暂无登录",
+      "emptyDescription": "用户登录后将显示登录方式数据。",
+      "methodCount_one": "{{count}} 种方式",
+      "methodCount_other": "{{count}} 种方式"
+    },
+    "mfa": {
+      "title": "MFA 方式采用情况",
+      "description": "按第二因素统计的用户数",
+      "emptyTitle": "未注册 MFA",
+      "emptyDescription": "目前还没有用户注册第二因素。"
+    },
+    "failedLogins": {
+      "title": "登录失败尝试",
+      "description": "按小时统计 · 过去 24 小时（阈值 250）",
+      "threshold": "阈值",
+      "emptyTitle": "无失败尝试",
+      "emptyDescription": "目前未记录任何登录失败遥测数据。"
+    }
+  },
+  "activity": {
+    "title": "近期活动",
+    "description": "此工作区最近 5 个事件",
+    "viewAll": "查看全部",
+    "emptyTitle": "暂无活动",
+    "emptyDescription": "用户与您的工作区交互后，事件将显示在此处。"
+  },
+  "noWorkspace": {
+    "title": "创建您的第一个工作区",
+    "description": "您的账户尚未与工作区关联。创建一个工作区以开始管理用户、配置身份验证并邀请团队成员 — 您将成为其所有者。",
+    "cta": "创建工作区"
+  }
+}

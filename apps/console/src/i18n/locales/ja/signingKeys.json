@@ -1,0 +1,19 @@
+{
+  "page": {
+    "title": "署名鍵",
+    "description": "リソースサーバーがQeet IDのアクセストークンとIDトークンを検証するためにJWKSに公開されたトークン署名キーセット。"
+  },
+  "notice": "鍵のローテーションはダッシュボードからではなく、運用的に実施されます（デプロイランブックを参照）。新しい鍵は<activeState>アクティブ</activeState>として導入され、廃止された鍵は進行中のトークンが期限切れになるまで<retiredState>廃止済み</retiredState>として公開されたままです。",
+  "list": {
+    "title": "公開済み鍵",
+    "count_one": "現在のJWKSに{{count}}個の鍵。",
+    "count_other": "現在のJWKSに{{count}}個の鍵。",
+    "emptyTitle": "署名鍵は公開されていません。"
+  },
+  "table": {
+    "kid": "鍵ID（kid）",
+    "algorithm": "アルゴリズム",
+    "use": "用途",
+    "status": "ステータス"
+  }
+}

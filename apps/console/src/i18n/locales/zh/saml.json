@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "SAML IdP — 服务提供商",
+    "description": "Qeet ID 在此充当 SAML 2.0 身份提供商。以下每个服务提供商信任此 IdP，并为其用户接收签名断言。",
+    "addProvider": "添加服务提供商"
+  },
+  "metadata": {
+    "title": "IdP 元数据",
+    "description": "服务提供商导入此单个元数据文档以将 Qeet ID 信任为其 IdP。将此 URL 提供给每个 SP 的 SAML 配置。",
+    "hint": "大多数 SP 直接接受元数据 URL；对于需要 XML 的 SP，将其指向同一端点 — 它提供签名的 IdP 描述符（实体 ID、SSO URL、签名证书）。"
+  },
+  "list": {
+    "title": "服务提供商",
+    "count_one": "{{count}} 个提供商信任此 IdP。",
+    "count_other": "{{count}} 个提供商信任此 IdP。",
+    "emptyTitle": "暂无服务提供商。",
+    "emptyDescription": "添加应接受来自此 IdP 的 SSO 的应用程序。"
+  },
+  "table": {
+    "name": "名称",
+    "entityId": "实体 ID",
+    "acsUrl": "ACS URL",
+    "status": "状态",
+    "lastLogin": "最后登录",
+    "actions": "操作"
+  },
+  "delete": {
+    "title": "移除此服务提供商？",
+    "descriptionNamed": "<strong>{{name}}</strong> 将不再接受来自此 IdP 的 SSO。此操作无法撤销。",
+    "descriptionFallback": "它将不再接受来自此 IdP 的 SSO。"
+  },
+  "form": {
+    "addTitle": "添加服务提供商",
+    "editTitle": "编辑服务提供商",
+    "description": "输入 SP 的 SAML 实体 ID 和断言消费者服务（ACS）URL — 两者均来自 SP 自己的元数据。",
+    "name": "名称",
+    "entityId": "实体 ID / 颁发者",
+    "acsUrl": "ACS URL",
+    "acsUrlHelp": "签名断言被 POST 回的地址。",
+    "nameIdFormat": "NameID 格式",
+    "nameIdFormatHelp": "可选。默认为电子邮件地址。",
+    "nameIdAttribute": "NameID 属性",
+    "nameIdAttributeHelp": "可选。哪个用户属性填充 NameID。",
+    "certificate": "SP 证书",
+    "certificateHelp": "可选。仅当 SP 对其请求签名时才需要。",
+    "addSubmit": "添加提供商",
+    "addSubmitting": "添加中…"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "page": {
+    "title": "Einwilligungserteilungen",
+    "description": "OAuth-Refresh-Token-Grants, denen ein Benutzer pro Anwendung zugestimmt hat. Das Widerrufen eines Grants macht die gesamte Refresh-Token-Rotationskette für dieses (App, Benutzer)-Paar ungültig."
+  },
+  "list": {
+    "title": "Aktive Grants",
+    "count_one": "{{count}} Grant über alle Anwendungen hinweg.",
+    "count_other": "{{count}} Grants über alle Anwendungen hinweg.",
+    "emptyTitle": "Keine aktiven Einwilligungserteilungen.",
+    "emptyDescription": "Grants erscheinen hier, sobald Benutzer eine OAuth / OIDC-Anwendung autorisieren."
+  },
+  "table": {
+    "application": "Anwendung",
+    "user": "Benutzer",
+    "scopes": "Bereiche",
+    "issued": "Ausgestellt",
+    "expires": "Läuft ab",
+    "actions": "Aktionen"
+  },
+  "revoke": {
+    "title": "Diesen Grant widerrufen?",
+    "descriptionNamed": "Damit wird die Refresh-Token-Kette für <strong>{{email}}</strong> in dieser Anwendung sofort ungültig gemacht. Beim nächsten Anmelden wird eine erneute Zustimmung angefordert.",
+    "descriptionFallback": "Damit wird die Refresh-Token-Kette für diesen Grant ungültig gemacht."
+  }
+}

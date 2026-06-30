@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "アクセステスター",
+    "description": "特定のユーザーの権限を評価し、アクセスが許可または拒否された理由を正確に確認します — どのロールが付与したか、直接付与されたのかグループ経由かも含めて確認できます。",
+    "runTitle": "チェックを実行",
+    "runDescription": "権限はresource:action形式を使用します（例：users:read）。",
+    "userIdLabel": "ユーザーID",
+    "userIdHelp": "評価するユーザーのUUID。",
+    "permissionLabel": "権限",
+    "evaluate": "評価",
+    "evaluating": "評価中…",
+    "resultTitle": "結果",
+    "resultDescription": "認可エンジンが辿った決定とグラントパスのトレース。",
+    "resultPlaceholder": "チェックを実行して許可/拒否の決定とその理由を確認してください。",
+    "allowed": "アクセス許可",
+    "denied": "アクセス拒否",
+    "grantPathsTitle": "グラントパス",
+    "grantPathsHint": "各パスは権限が保持されている独立した理由です。",
+    "noGrantPath": "許可されましたが、明示的なグラントパスは返されませんでした。",
+    "directAssignment": "直接割り当て",
+    "viaGroup": "グループ · {{group}}",
+    "grantedBy": "付与者",
+    "roleShort": "ロール {{id}}…"
+  },
+  "groupRoles": {
+    "title": "ロール",
+    "description": "このグループのメンバーはこれらのロールの権限を継承します。",
+    "addPlaceholder": "ロールを追加…",
+    "loadingRoles": "ロールを読み込み中…",
+    "allGranted": "すべてのロールがすでに付与されています",
+    "selectAriaLabel": "付与するロールを選択",
+    "addRole": "ロールを追加",
+    "emptyTitle": "このグループにはまだロールが付与されていません。",
+    "emptyDescription": "上のセレクターを使用してロールを付与してください — すべてのメンバーがその権限を継承します。",
+    "roleHeader": "ロール",
+    "grantedHeader": "付与日",
+    "actionsHeader": "操作",
+    "revokeTitle": "このロールをグループから削除しますか？",
+    "revokeDescriptionNamed": "メンバーは<strong>{{name}}</strong>によって付与された権限を失います（別のグループや直接割り当てで保持していない限り）。",
+    "revokeDescriptionFallback": "メンバーはこのロールの権限を失います。"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "Testeur d'accès",
+    "description": "Évaluez une permission pour un utilisateur spécifique et voyez exactement pourquoi l'accès est accordé ou refusé — y compris quel rôle l'a accordé et s'il provient directement ou via un groupe.",
+    "runTitle": "Exécuter une vérification",
+    "runDescription": "Les permissions utilisent la forme ressource:action, par ex. users:read.",
+    "userIdLabel": "ID utilisateur",
+    "userIdHelp": "L'UUID de l'utilisateur à évaluer.",
+    "permissionLabel": "Permission",
+    "evaluate": "Évaluer",
+    "evaluating": "Évaluation en cours…",
+    "resultTitle": "Résultat",
+    "resultDescription": "La décision et la trace du chemin d'octroi que le moteur d'autorisation a suivi.",
+    "resultPlaceholder": "Exécutez une vérification pour voir la décision d'autorisation/refus et comment elle a été atteinte.",
+    "allowed": "Accès autorisé",
+    "denied": "Accès refusé",
+    "grantPathsTitle": "Chemins d'octroi",
+    "grantPathsHint": "Chaque chemin est une raison indépendante pour laquelle la permission est détenue.",
+    "noGrantPath": "Autorisé, mais aucun chemin d'octroi explicite n'a été retourné.",
+    "directAssignment": "Attribution directe",
+    "viaGroup": "Groupe · {{group}}",
+    "grantedBy": "accordé par",
+    "roleShort": "rôle {{id}}…"
+  },
+  "groupRoles": {
+    "title": "Rôles",
+    "description": "Les membres de ce groupe héritent des permissions de ces rôles.",
+    "addPlaceholder": "Ajouter un rôle…",
+    "loadingRoles": "Chargement des rôles…",
+    "allGranted": "Tous les rôles déjà accordés",
+    "selectAriaLabel": "Sélectionner un rôle à accorder",
+    "addRole": "Ajouter un rôle",
+    "emptyTitle": "Aucun rôle accordé à ce groupe pour l'instant.",
+    "emptyDescription": "Utilisez le sélecteur ci-dessus pour accorder un rôle — chaque membre hérite de ses permissions.",
+    "roleHeader": "Rôle",
+    "grantedHeader": "Accordé",
+    "actionsHeader": "Actions",
+    "revokeTitle": "Supprimer ce rôle du groupe ?",
+    "revokeDescriptionNamed": "Les membres perdront les permissions accordées par <strong>{{name}}</strong> sauf s'ils le détiennent via un autre groupe ou une attribution directe.",
+    "revokeDescriptionFallback": "Les membres perdront les permissions de ce rôle."
+  }
+}

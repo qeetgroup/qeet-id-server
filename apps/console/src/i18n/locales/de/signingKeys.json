@@ -1,0 +1,19 @@
+{
+  "page": {
+    "title": "Signaturschlüssel",
+    "description": "Der im JWKS veröffentlichte Token-Signierschlüsselsatz, mit dem Ressourcenserver Qeet ID-Zugriffs- und ID-Token verifizieren."
+  },
+  "notice": "Die Schlüsselrotation wird betrieblich durchgeführt (siehe Deploy-Runbook), nicht über das Dashboard. Neue Schlüssel werden als <activeState>aktiv</activeState> eingeführt, während auslaufende Schlüssel als <retiredState>pensioniert</retiredState> veröffentlicht bleiben, bis In-flight-Token ablaufen.",
+  "list": {
+    "title": "Veröffentlichte Schlüssel",
+    "count_one": "{{count}} Schlüssel im aktuellen JWKS.",
+    "count_other": "{{count}} Schlüssel im aktuellen JWKS.",
+    "emptyTitle": "Keine Signaturschlüssel veröffentlicht."
+  },
+  "table": {
+    "kid": "Schlüssel-ID (kid)",
+    "algorithm": "Algorithmus",
+    "use": "Verwendung",
+    "status": "Status"
+  }
+}

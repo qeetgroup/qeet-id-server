@@ -1,0 +1,19 @@
+{
+  "page": {
+    "title": "Claves de firma",
+    "description": "El conjunto de claves de firma de tokens publicado en el JWKS que los servidores de recursos usan para verificar los tokens de acceso e identidad de Qeet ID."
+  },
+  "notice": "La rotación de claves se realiza operativamente (consulte el runbook de despliegue), no desde el panel. Las nuevas claves se introducen como <activeState>activas</activeState> mientras que las claves retiradas permanecen publicadas como <retiredState>retiradas</retiredState> hasta que los tokens en vuelo expiren.",
+  "list": {
+    "title": "Claves publicadas",
+    "count_one": "{{count}} clave en el JWKS actual.",
+    "count_other": "{{count}} claves en el JWKS actual.",
+    "emptyTitle": "No hay claves de firma publicadas."
+  },
+  "table": {
+    "kid": "ID de clave (kid)",
+    "algorithm": "Algoritmo",
+    "use": "Uso",
+    "status": "Estado"
+  }
+}

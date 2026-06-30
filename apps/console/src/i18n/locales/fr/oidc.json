@@ -1,0 +1,71 @@
+{
+  "list": {
+    "description": "Applications OAuth 2.0 / OIDC qui délèguent l'authentification à Qeet ID. Les applications confidentielles reçoivent un secret client lors de l'enregistrement ; les applications publiques utilisent PKCE.",
+    "register": "Enregistrer une application",
+    "registeredTitle": "Applications enregistrées",
+    "appCount_one": "{{count}} application",
+    "appCount_other": "{{count}} applications",
+    "emptyTitle": "Aucune application enregistrée.",
+    "emptyDescription": "Cliquez sur Enregistrer une application pour ajouter votre premier client OAuth / OIDC."
+  },
+  "table": {
+    "name": "Nom",
+    "clientId": "ID client",
+    "type": "Type",
+    "redirectUris": "URIs de redirection",
+    "scopes": "Portées",
+    "actions": "Actions"
+  },
+  "credentials": {
+    "title": "Identifiants client pour {{name}}",
+    "description": "Copiez le secret maintenant — il est haché bcrypt côté serveur après cela et ne peut plus être affiché."
+  },
+  "delete": {
+    "title": "Supprimer cette application ?",
+    "descriptionNamed": "Les applications utilisant l'ID client pour <strong>{{name}}</strong> cesseront immédiatement de pouvoir s'authentifier. Cette action est irréversible.",
+    "descriptionFallback": "Les applications utilisant cet ID client cesseront de fonctionner."
+  },
+  "create": {
+    "title": "Enregistrer une application OAuth / OIDC",
+    "description": "Crée un client OIDC. Les clients confidentiels reçoivent un secret client à usage unique.",
+    "name": "Nom",
+    "type": "Type",
+    "typePublic": "Public — SPA, mobile (PKCE)",
+    "typeConfidential": "Confidentiel — application côté serveur (secret client)",
+    "redirectUris": "URIs de redirection",
+    "redirectUrisHelp": "Une URL par ligne. Doit être HTTPS en production ; localhost est autorisé pour le développement.",
+    "postLogoutUris": "URIs de redirection post-déconnexion",
+    "postLogoutUrisHelp": "Optionnel. Une URL par ligne.",
+    "scopes": "Portées",
+    "scopesHelp": "Séparées par des espaces.",
+    "submit": "Enregistrer",
+    "submitting": "Enregistrement en cours…"
+  },
+  "detail": {
+    "backToList": "Toutes les applications",
+    "notFoundTitle": "Aucune application \"{{clientId}}\" dans ce locataire",
+    "notFoundDescription": "Elle peut avoir été supprimée, ou vous n'avez peut-être pas la permission de la voir. Utilisez le lien de retour ci-dessus pour revenir à la liste.",
+    "name": "Nom",
+    "redirectUris": "URIs de redirection",
+    "redirectUrisHelp": "Une par ligne (ou séparées par des virgules).",
+    "postLogoutUris": "URIs de redirection post-déconnexion",
+    "grantTypes": "Types d'octroi",
+    "grantTypesHelp": "Séparés par des espaces ou des virgules.",
+    "scopes": "Portées",
+    "scopesHelp": "Séparées par des espaces ou des virgules.",
+    "metadataTitle": "Métadonnées",
+    "createdLabel": "Créé",
+    "rowIdLabel": "ID de ligne",
+    "tenantLabel": "Locataire",
+    "grantTypesLabel": "Types d'octroi",
+    "secretTitle": "Secret client",
+    "secretDescription": "La rotation invalide le secret actuel immédiatement. La nouvelle valeur est affichée une fois.",
+    "secretCopyHint": "Copiez-le maintenant — il est haché bcrypt côté serveur et ne peut plus être affiché.",
+    "rotateSecret": "Faire pivoter le secret",
+    "dangerZoneTitle": "Zone de danger",
+    "dangerZoneDescription": "La suppression empêche toute application utilisant cet ID client de s'authentifier.",
+    "deleteApplication": "Supprimer l'application",
+    "deleteTitle": "Supprimer cette application ?",
+    "deleteDescription": "Les applications utilisant l'ID client pour <strong>{{name}}</strong> cesseront immédiatement de pouvoir s'authentifier. Cette action est irréversible."
+  }
+}

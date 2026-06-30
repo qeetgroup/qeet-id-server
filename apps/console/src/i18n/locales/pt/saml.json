@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "SAML IdP — Provedores de serviço",
+    "description": "O Qeet ID atua como Provedor de Identidade SAML 2.0 aqui. Cada Provedor de Serviço abaixo confia neste IdP e recebe asserções assinadas para seus usuários.",
+    "addProvider": "Adicionar provedor de serviço"
+  },
+  "metadata": {
+    "title": "Metadados do IdP",
+    "description": "Os provedores de serviço importam este único documento de metadados para confiar no Qeet ID como seu IdP. Forneça esta URL para a configuração SAML de cada SP.",
+    "hint": "A maioria dos SPs aceita uma URL de metadados diretamente; para os que precisam do XML, aponte-os para o mesmo endpoint — ele serve o descritor IdP assinado (ID de entidade, URL SSO, certificado de assinatura)."
+  },
+  "list": {
+    "title": "Provedores de serviço",
+    "count_one": "{{count}} provedor confiando neste IdP.",
+    "count_other": "{{count}} provedores confiando neste IdP.",
+    "emptyTitle": "Nenhum provedor de serviço ainda.",
+    "emptyDescription": "Adicione as apps que devem aceitar SSO deste IdP."
+  },
+  "table": {
+    "name": "Nome",
+    "entityId": "ID de entidade",
+    "acsUrl": "URL ACS",
+    "status": "Status",
+    "lastLogin": "Último login",
+    "actions": "Ações"
+  },
+  "delete": {
+    "title": "Remover este provedor de serviço?",
+    "descriptionNamed": "<strong>{{name}}</strong> não aceitará mais SSO deste IdP. Esta ação não pode ser desfeita.",
+    "descriptionFallback": "Ele não aceitará mais SSO deste IdP."
+  },
+  "form": {
+    "addTitle": "Adicionar provedor de serviço",
+    "editTitle": "Editar provedor de serviço",
+    "description": "Insira o ID de entidade SAML do SP e a URL do Assertion Consumer Service (ACS) — ambos vêm dos próprios metadados do SP.",
+    "name": "Nome",
+    "entityId": "ID de entidade / emissor",
+    "acsUrl": "URL ACS",
+    "acsUrlHelp": "Onde as asserções assinadas são enviadas via POST.",
+    "nameIdFormat": "Formato do NameID",
+    "nameIdFormatHelp": "Opcional. Padrão para endereço de e-mail.",
+    "nameIdAttribute": "Atributo NameID",
+    "nameIdAttributeHelp": "Opcional. Qual atributo do usuário preenche o NameID.",
+    "certificate": "Certificado do SP",
+    "certificateHelp": "Opcional. Necessário somente se o SP assina suas requisições.",
+    "addSubmit": "Adicionar provedor",
+    "addSubmitting": "Adicionando…"
+  }
+}

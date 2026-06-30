@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "Zugriffstester",
+    "description": "Bewerten Sie eine Berechtigung für einen bestimmten Benutzer und sehen Sie genau, warum der Zugriff gewährt oder verweigert wird — einschließlich welche Rolle ihn gewährt hat und ob er direkt oder über eine Gruppe kam.",
+    "runTitle": "Eine Prüfung ausführen",
+    "runDescription": "Berechtigungen verwenden die Form Ressource:Aktion, z.B. users:read.",
+    "userIdLabel": "Benutzer-ID",
+    "userIdHelp": "Die UUID des zu bewertenden Benutzers.",
+    "permissionLabel": "Berechtigung",
+    "evaluate": "Auswerten",
+    "evaluating": "Auswertung läuft…",
+    "resultTitle": "Ergebnis",
+    "resultDescription": "Die Entscheidung und die Grant-Pfad-Spur, die die Autorisierungs-Engine verfolgt hat.",
+    "resultPlaceholder": "Führen Sie eine Prüfung aus, um die Erlaubt/Abgelehnt-Entscheidung und wie sie getroffen wurde zu sehen.",
+    "allowed": "Zugriff erlaubt",
+    "denied": "Zugriff verweigert",
+    "grantPathsTitle": "Grant-Pfade",
+    "grantPathsHint": "Jeder Pfad ist ein unabhängiger Grund, warum die Berechtigung gehalten wird.",
+    "noGrantPath": "Erlaubt, aber kein expliziter Grant-Pfad wurde zurückgegeben.",
+    "directAssignment": "Direkte Zuweisung",
+    "viaGroup": "Gruppe · {{group}}",
+    "grantedBy": "gewährt durch",
+    "roleShort": "Rolle {{id}}…"
+  },
+  "groupRoles": {
+    "title": "Rollen",
+    "description": "Mitglieder dieser Gruppe erben die Berechtigungen dieser Rollen.",
+    "addPlaceholder": "Eine Rolle hinzufügen…",
+    "loadingRoles": "Rollen werden geladen…",
+    "allGranted": "Alle Rollen bereits gewährt",
+    "selectAriaLabel": "Eine Rolle zum Gewähren auswählen",
+    "addRole": "Rolle hinzufügen",
+    "emptyTitle": "Dieser Gruppe wurden noch keine Rollen gewährt.",
+    "emptyDescription": "Verwenden Sie den obigen Selektor, um eine Rolle zu gewähren — jedes Mitglied erbt deren Berechtigungen.",
+    "roleHeader": "Rolle",
+    "grantedHeader": "Gewährt",
+    "actionsHeader": "Aktionen",
+    "revokeTitle": "Diese Rolle aus der Gruppe entfernen?",
+    "revokeDescriptionNamed": "Mitglieder verlieren die von <strong>{{name}}</strong> gewährten Berechtigungen, es sei denn, sie halten sie über eine andere Gruppe oder eine direkte Zuweisung.",
+    "revokeDescriptionFallback": "Mitglieder verlieren die Berechtigungen dieser Rolle."
+  }
+}

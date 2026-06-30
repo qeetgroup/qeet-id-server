@@ -1,0 +1,19 @@
+{
+  "page": {
+    "title": "签名密钥",
+    "description": "发布在 JWKS 中的令牌签名密钥集，资源服务器使用它来验证 Qeet ID 访问令牌和 ID 令牌。"
+  },
+  "notice": "密钥轮换在运维层面进行（请参阅部署手册），而不是通过仪表盘。新密钥以<activeState>活跃</activeState>状态引入，而退役密钥保持以<retiredState>已退役</retiredState>状态发布，直到进行中的令牌过期。",
+  "list": {
+    "title": "已发布的密钥",
+    "count_one": "当前 JWKS 中有 {{count}} 个密钥。",
+    "count_other": "当前 JWKS 中有 {{count}} 个密钥。",
+    "emptyTitle": "没有已发布的签名密钥。"
+  },
+  "table": {
+    "kid": "密钥 ID (kid)",
+    "algorithm": "算法",
+    "use": "用途",
+    "status": "状态"
+  }
+}

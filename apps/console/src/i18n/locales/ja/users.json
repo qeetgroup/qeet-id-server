@@ -1,0 +1,95 @@
+{
+  "list": {
+    "description": "このワークスペースにアクセスできるすべてのユーザーです。ここから直接メンバーを招待または作成できます。",
+    "import": "インポート",
+    "newUser": "新規ユーザー",
+    "membersTitle": "メンバー",
+    "membersSubtitle": "このページに{{total}}人中{{shown}}人のユーザー",
+    "membersSubtitle_other": "このページに{{total}}人中{{shown}}人のユーザー",
+    "searchPlaceholder": "メール、名前、電話番号で検索…",
+    "emptyTitleFiltered": "フィルターに一致するユーザーがいません。",
+    "emptyTitle": "まだユーザーがいません。",
+    "emptyDescriptionFiltered": "上のフィルターを調整またはクリアしてください。",
+    "emptyDescription": "新規ユーザーをクリックして最初のユーザーを追加してください。",
+    "selectAll": "すべてのユーザーを選択",
+    "selectOne": "{{email}}を選択",
+    "you": "あなた",
+    "bulkDelete_one": "{{count}}人のユーザーを削除",
+    "bulkDelete_other": "{{count}}人のユーザーを削除"
+  },
+  "table": {
+    "email": "メール",
+    "name": "名前",
+    "role": "ロール",
+    "status": "ステータス",
+    "emailVerified": "メール確認済み",
+    "created": "作成日",
+    "actions": "操作",
+    "editUser": "ユーザーを編集",
+    "setPassword": "パスワードを設定",
+    "deleteUser": "ユーザーを削除",
+    "deleteSelf": "ここから自分のアカウントを削除することはできません"
+  },
+  "status": {
+    "active": "アクティブ",
+    "invited": "招待済み",
+    "suspended": "停止中",
+    "deleted": "削除済み"
+  },
+  "delete": {
+    "title": "このユーザーを削除しますか？",
+    "descriptionNamed": "これにより<strong>{{email}}</strong>がソフト削除されます。セッションとAPIキーは有効期限まで引き続き機能します — 即時無効化が必要な場合は別途取り消してください。",
+    "descriptionFallback": "これによりユーザーがソフト削除されます。"
+  },
+  "bulk": {
+    "confirm_one": "{{count}}人のユーザーを削除しますか？この操作は元に戻せません。",
+    "confirm_other": "{{count}}人のユーザーを削除しますか？この操作は元に戻せません。",
+    "deletedOk_one": "{{count}}人のユーザーを削除しました",
+    "deletedOk_other": "{{count}}人のユーザーを削除しました",
+    "deletedFail_one": "{{count}}件の削除がすべて失敗しました",
+    "deletedFail_other": "{{count}}件の削除がすべて失敗しました",
+    "deletedPartial": "{{ok}}件削除、{{failed}}件失敗"
+  },
+  "create": {
+    "title": "新規ユーザー",
+    "description": "現在のテナントにパスワード認証情報を持つユーザーを作成します。",
+    "email": "メール",
+    "displayName": "表示名",
+    "displayNameHelp": "任意。ユーザーリストと監査ログに表示されます。",
+    "phone": "電話番号",
+    "phoneHelp": "E.164形式。MFAが有効な場合はSMS OTPに使用されます。",
+    "password": "初期パスワード",
+    "passwordHelp": "最低8文字。ユーザーは後で変更できます。",
+    "submit": "ユーザーを作成",
+    "submitting": "作成中…"
+  },
+  "edit": {
+    "title": "ユーザーを編集",
+    "description": "メールは変更できません。パスワードを変更するにはパスワードを設定アクションを使用してください。",
+    "email": "メール",
+    "displayName": "表示名",
+    "phone": "電話番号",
+    "phoneHelp": "E.164形式。クリアするには空白のままにしてください。",
+    "status": "ステータス",
+    "statusActive": "アクティブ",
+    "statusSuspended": "停止中",
+    "statusSelfHelp": "この画面から自分のアカウントを停止することはできません。",
+    "statusHelp": "停止するとサインインできなくなりますが、アカウントは保持されます。"
+  },
+  "setPassword": {
+    "title": "新しいパスワードを設定",
+    "description": "<strong>{{email}}</strong>の新しいパスワードを設定します。ユーザーの既存セッションは有効期限まで有効なまま残ります — 即時サインアウトが必要な場合は<path>Security › Sessions</path>から取り消してください。",
+    "newPassword": "新しいパスワード",
+    "newPasswordHelp": "最低8文字。",
+    "confirmPassword": "新しいパスワードを確認",
+    "mismatch": "パスワードが一致しません",
+    "success": "パスワードを更新しました。",
+    "submit": "パスワードを更新"
+  },
+  "toast": {
+    "created": "ユーザーを作成しました",
+    "updated": "ユーザーを更新しました",
+    "deleted": "ユーザーを削除しました",
+    "passwordUpdated": "パスワードを更新しました"
+  }
+}

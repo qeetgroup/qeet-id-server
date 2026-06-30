@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "SAML IdP — सेवा प्रदाता",
+    "description": "Qeet ID यहाँ SAML 2.0 आइडेंटिटी प्रोवाइडर के रूप में कार्य करता है। नीचे प्रत्येक सेवा प्रदाता इस IdP पर भरोसा करता है और अपने उपयोगकर्ताओं के लिए हस्ताक्षरित assertion प्राप्त करता है।",
+    "addProvider": "सेवा प्रदाता जोड़ें"
+  },
+  "metadata": {
+    "title": "IdP मेटाडेटा",
+    "description": "सेवा प्रदाता Qeet ID को अपने IdP के रूप में विश्वास करने के लिए इस एकल मेटाडेटा दस्तावेज़ को आयात करते हैं। यह URL प्रत्येक SP की SAML कॉन्फ़िगरेशन को दें।",
+    "hint": "अधिकांश SP सीधे मेटाडेटा URL स्वीकार करते हैं; जिन्हें XML की आवश्यकता है, उन्हें उसी एंडपॉइंट पर इंगित करें — यह हस्ताक्षरित IdP डिस्क्रिप्टर (entity ID, SSO URL, signing certificate) प्रदान करता है।"
+  },
+  "list": {
+    "title": "सेवा प्रदाता",
+    "count_one": "{{count}} प्रदाता इस IdP पर भरोसा कर रहा है।",
+    "count_other": "{{count}} प्रदाता इस IdP पर भरोसा कर रहे हैं।",
+    "emptyTitle": "अभी तक कोई सेवा प्रदाता नहीं।",
+    "emptyDescription": "वे ऐप्स जोड़ें जिन्हें इस IdP से SSO स्वीकार करना चाहिए।"
+  },
+  "table": {
+    "name": "नाम",
+    "entityId": "Entity ID",
+    "acsUrl": "ACS URL",
+    "status": "स्थिति",
+    "lastLogin": "अंतिम लॉगिन",
+    "actions": "क्रियाएँ"
+  },
+  "delete": {
+    "title": "इस सेवा प्रदाता को हटाएँ?",
+    "descriptionNamed": "<strong>{{name}}</strong> अब इस IdP से SSO स्वीकार नहीं करेगा। इसे पूर्ववत नहीं किया जा सकता।",
+    "descriptionFallback": "यह अब इस IdP से SSO स्वीकार नहीं करेगा।"
+  },
+  "form": {
+    "addTitle": "सेवा प्रदाता जोड़ें",
+    "editTitle": "सेवा प्रदाता संपादित करें",
+    "description": "SP का SAML entity ID और Assertion Consumer Service (ACS) URL दर्ज करें — दोनों SP के अपने मेटाडेटा से आते हैं।",
+    "name": "नाम",
+    "entityId": "Entity ID / जारीकर्ता",
+    "acsUrl": "ACS URL",
+    "acsUrlHelp": "जहाँ हस्ताक्षरित assertion वापस POST की जाती हैं।",
+    "nameIdFormat": "NameID प्रारूप",
+    "nameIdFormatHelp": "वैकल्पिक। डिफ़ॉल्ट ईमेल पते पर।",
+    "nameIdAttribute": "NameID विशेषता",
+    "nameIdAttributeHelp": "वैकल्पिक। कौन सी उपयोगकर्ता विशेषता NameID को भरती है।",
+    "certificate": "SP प्रमाणपत्र",
+    "certificateHelp": "वैकल्पिक। केवल तभी आवश्यक जब SP अपने अनुरोधों पर हस्ताक्षर करता हो।",
+    "addSubmit": "प्रदाता जोड़ें",
+    "addSubmitting": "जोड़ा जा रहा है…"
+  }
+}

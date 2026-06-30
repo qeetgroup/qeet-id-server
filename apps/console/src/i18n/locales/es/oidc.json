@@ -1,0 +1,71 @@
+{
+  "list": {
+    "description": "Aplicaciones OAuth 2.0 / OIDC que delegan la autenticación a Qeet ID. Las aplicaciones confidenciales reciben un secreto de cliente al registrarse; las aplicaciones públicas usan PKCE.",
+    "register": "Registrar aplicación",
+    "registeredTitle": "Aplicaciones registradas",
+    "appCount_one": "{{count}} aplicación",
+    "appCount_other": "{{count}} aplicaciones",
+    "emptyTitle": "No hay aplicaciones registradas.",
+    "emptyDescription": "Haga clic en Registrar aplicación para agregar su primer cliente OAuth / OIDC."
+  },
+  "table": {
+    "name": "Nombre",
+    "clientId": "ID de cliente",
+    "type": "Tipo",
+    "redirectUris": "URIs de redirección",
+    "scopes": "Alcances",
+    "actions": "Acciones"
+  },
+  "credentials": {
+    "title": "Credenciales de cliente para {{name}}",
+    "description": "Copie el secreto ahora — se aplica hash bcrypt en el servidor después de esto y no puede mostrarse de nuevo."
+  },
+  "delete": {
+    "title": "¿Eliminar esta aplicación?",
+    "descriptionNamed": "Las aplicaciones que usan el ID de cliente para <strong>{{name}}</strong> dejarán de poder autenticarse inmediatamente. No se puede deshacer.",
+    "descriptionFallback": "Las aplicaciones que usan este ID de cliente dejarán de funcionar."
+  },
+  "create": {
+    "title": "Registrar aplicación OAuth / OIDC",
+    "description": "Crea un cliente OIDC. Los clientes confidenciales reciben un secreto de cliente de un solo uso.",
+    "name": "Nombre",
+    "type": "Tipo",
+    "typePublic": "Público — SPA, móvil (PKCE)",
+    "typeConfidential": "Confidencial — aplicación del lado del servidor (secreto de cliente)",
+    "redirectUris": "URIs de redirección",
+    "redirectUrisHelp": "Una URL por línea. Debe ser HTTPS en producción; localhost está permitido para desarrollo.",
+    "postLogoutUris": "URIs de redirección post-cierre de sesión",
+    "postLogoutUrisHelp": "Opcional. Una URL por línea.",
+    "scopes": "Alcances",
+    "scopesHelp": "Separados por espacios.",
+    "submit": "Registrar",
+    "submitting": "Registrando…"
+  },
+  "detail": {
+    "backToList": "Todas las aplicaciones",
+    "notFoundTitle": "No hay aplicación \"{{clientId}}\" en este inquilino",
+    "notFoundDescription": "Puede haber sido eliminada, o puede que no tenga permiso para verla. Use el enlace de retorno arriba para volver a la lista.",
+    "name": "Nombre",
+    "redirectUris": "URIs de redirección",
+    "redirectUrisHelp": "Una por línea (o separadas por comas).",
+    "postLogoutUris": "URIs de redirección post-cierre de sesión",
+    "grantTypes": "Tipos de concesión",
+    "grantTypesHelp": "Separados por espacios o comas.",
+    "scopes": "Alcances",
+    "scopesHelp": "Separados por espacios o comas.",
+    "metadataTitle": "Metadatos",
+    "createdLabel": "Creado",
+    "rowIdLabel": "ID de fila",
+    "tenantLabel": "Inquilino",
+    "grantTypesLabel": "Tipos de concesión",
+    "secretTitle": "Secreto de cliente",
+    "secretDescription": "Rotar invalida el secreto actual inmediatamente. El nuevo valor se muestra una vez.",
+    "secretCopyHint": "Cópielo ahora — se aplica hash bcrypt en el servidor y no puede mostrarse de nuevo.",
+    "rotateSecret": "Rotar secreto",
+    "dangerZoneTitle": "Zona de peligro",
+    "dangerZoneDescription": "Eliminar impide que cualquier aplicación que use este ID de cliente se autentique.",
+    "deleteApplication": "Eliminar aplicación",
+    "deleteTitle": "¿Eliminar esta aplicación?",
+    "deleteDescription": "Las aplicaciones que usan el ID de cliente para <strong>{{name}}</strong> dejarán de poder autenticarse inmediatamente. No se puede deshacer."
+  }
+}

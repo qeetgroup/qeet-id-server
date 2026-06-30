@@ -1,0 +1,76 @@
+{
+  "title": "Übersicht",
+  "subtitle": "Identitätszustand dieses Arbeitsbereichs auf einen Blick.",
+  "systemsOk": "Alle Systeme betriebsbereit",
+  "range7d": "Letzte 7 Tage",
+  "range14d": "Letzte 14 Tage",
+  "vsLastWeek": "vs. letzte Woche",
+  "error": "Dashboard-Analysen konnten nicht geladen werden",
+  "kpi": {
+    "mau": "Aktive Nutzer (MAU)",
+    "loginsToday": "Anmeldungen heute",
+    "mfaAdoption": "MFA-Nutzung",
+    "failedLogins24h": "Fehlgeschlagene Anmeldungen (24 h)"
+  },
+  "stats": {
+    "totalUsers": "Nutzer gesamt",
+    "dailyActive": "Täglich aktiv",
+    "stickiness": "Bindungsrate (DAU/MAU)",
+    "avgSessions": "Ø Sitzungen / Nutzer"
+  },
+  "quickActions": {
+    "heading": "Schnellaktionen",
+    "inviteLabel": "Nutzer einladen",
+    "inviteDesc": "Teammitglied zu diesem Arbeitsbereich hinzufügen",
+    "apiKeyLabel": "API-Schlüssel erstellen",
+    "apiKeyDesc": "Anmeldedaten für eine App ausstellen",
+    "threatsLabel": "Bedrohungen prüfen",
+    "threatsDesc": "Anomalien der letzten 24 h",
+    "auditLabel": "Audit-Protokolle",
+    "auditDesc": "Aktuelle Aktivitäten durchsuchen"
+  },
+  "charts": {
+    "viewAnalytics": "Analysen anzeigen",
+    "viewLogs": "Protokolle anzeigen",
+    "viewAll": "Alle anzeigen",
+    "authActivity": {
+      "title": "Authentifizierungsaktivität",
+      "description": "Tägliche Anmeldungen nach Methode · letzte {{take}} Tage",
+      "emptyTitle": "Noch keine Aktivität",
+      "emptyDescription": "In diesem Zeitraum wurden keine Anmeldungen aufgezeichnet."
+    },
+    "loginMix": {
+      "title": "Anmeldemethoden-Mix",
+      "description": "Letzte 30 Tage",
+      "emptyTitle": "Noch keine Anmeldungen",
+      "emptyDescription": "Daten zu Anmeldemethoden erscheinen, sobald sich Nutzer anmelden.",
+      "methodCount_one": "{{count}} Methode",
+      "methodCount_other": "{{count}} Methoden"
+    },
+    "mfa": {
+      "title": "MFA-Methoden-Nutzung",
+      "description": "Nutzer nach zweitem Faktor",
+      "emptyTitle": "Kein MFA registriert",
+      "emptyDescription": "Noch kein Nutzer hat sich für einen zweiten Faktor registriert."
+    },
+    "failedLogins": {
+      "title": "Fehlgeschlagene Anmeldeversuche",
+      "description": "Stündlich · letzte 24 h (Schwellenwert 250)",
+      "threshold": "Schwellenwert",
+      "emptyTitle": "Keine fehlgeschlagenen Versuche",
+      "emptyDescription": "Noch keine Telemetriedaten zu fehlgeschlagenen Anmeldungen aufgezeichnet."
+    }
+  },
+  "activity": {
+    "title": "Letzte Aktivitäten",
+    "description": "Letzte 5 Ereignisse in diesem Arbeitsbereich",
+    "viewAll": "Alle anzeigen",
+    "emptyTitle": "Noch keine Aktivität",
+    "emptyDescription": "Ereignisse erscheinen hier, sobald Nutzer mit Ihrem Arbeitsbereich interagieren."
+  },
+  "noWorkspace": {
+    "title": "Erstellen Sie Ihren ersten Arbeitsbereich",
+    "description": "Ihr Konto ist noch nicht mit einem Arbeitsbereich verknüpft. Erstellen Sie einen, um mit der Verwaltung von Nutzern, der Konfiguration der Authentifizierung und der Einladung von Teammitgliedern zu beginnen — Sie werden dessen Eigentümer.",
+    "cta": "Arbeitsbereich erstellen"
+  }
+}

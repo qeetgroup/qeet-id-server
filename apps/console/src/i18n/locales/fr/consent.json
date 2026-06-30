@@ -1,0 +1,26 @@
+{
+  "page": {
+    "title": "Autorisations de consentement",
+    "description": "Autorisations de jeton d'actualisation OAuth qu'un utilisateur a accordées par application. La révocation d'une autorisation invalide toute la chaîne de rotation de jeton d'actualisation pour cette paire (application, utilisateur)."
+  },
+  "list": {
+    "title": "Autorisations actives",
+    "count_one": "{{count}} autorisation sur toutes les applications.",
+    "count_other": "{{count}} autorisations sur toutes les applications.",
+    "emptyTitle": "Aucune autorisation de consentement active.",
+    "emptyDescription": "Les autorisations apparaissent ici une fois que les utilisateurs autorisent une application OAuth / OIDC."
+  },
+  "table": {
+    "application": "Application",
+    "user": "Utilisateur",
+    "scopes": "Portées",
+    "issued": "Émis",
+    "expires": "Expire",
+    "actions": "Actions"
+  },
+  "revoke": {
+    "title": "Révoquer cette autorisation ?",
+    "descriptionNamed": "Cela invalide immédiatement la chaîne de jeton d'actualisation pour <strong>{{email}}</strong> sur cette application. Il sera invité à re-consentir lors de la prochaine connexion.",
+    "descriptionFallback": "Cela invalide la chaîne de jeton d'actualisation pour cette autorisation."
+  }
+}

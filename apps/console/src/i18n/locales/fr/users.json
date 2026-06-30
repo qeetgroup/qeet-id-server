@@ -1,0 +1,95 @@
+{
+  "list": {
+    "description": "Toutes les personnes ayant accès à cet espace de travail. Invitez ou créez des membres directement ici.",
+    "import": "Importer",
+    "newUser": "Nouvel utilisateur",
+    "membersTitle": "Membres",
+    "membersSubtitle": "{{shown}} sur {{total}} utilisateur sur cette page",
+    "membersSubtitle_other": "{{shown}} sur {{total}} utilisateurs sur cette page",
+    "searchPlaceholder": "Rechercher email, nom, téléphone…",
+    "emptyTitleFiltered": "Aucun utilisateur ne correspond à vos filtres.",
+    "emptyTitle": "Aucun utilisateur pour l'instant.",
+    "emptyDescriptionFiltered": "Ajustez ou effacez les filtres ci-dessus.",
+    "emptyDescription": "Cliquez sur Nouvel utilisateur pour en ajouter un.",
+    "selectAll": "Sélectionner tous les utilisateurs",
+    "selectOne": "Sélectionner {{email}}",
+    "you": "Vous",
+    "bulkDelete_one": "Supprimer {{count}} utilisateur",
+    "bulkDelete_other": "Supprimer {{count}} utilisateurs"
+  },
+  "table": {
+    "email": "Email",
+    "name": "Nom",
+    "role": "Rôle",
+    "status": "Statut",
+    "emailVerified": "Email vérifié",
+    "created": "Créé",
+    "actions": "Actions",
+    "editUser": "Modifier l'utilisateur",
+    "setPassword": "Définir le mot de passe",
+    "deleteUser": "Supprimer l'utilisateur",
+    "deleteSelf": "Vous ne pouvez pas supprimer votre propre compte ici"
+  },
+  "status": {
+    "active": "Actif",
+    "invited": "Invité",
+    "suspended": "Suspendu",
+    "deleted": "Supprimé"
+  },
+  "delete": {
+    "title": "Supprimer cet utilisateur ?",
+    "descriptionNamed": "Ceci supprime doucement <strong>{{email}}</strong>. Leurs sessions et clés API continuent de fonctionner jusqu'à expiration — révoquez-les séparément si vous avez besoin d'une coupure immédiate.",
+    "descriptionFallback": "Ceci supprime doucement l'utilisateur."
+  },
+  "bulk": {
+    "confirm_one": "Supprimer {{count}} utilisateur ? Cette action est irréversible.",
+    "confirm_other": "Supprimer {{count}} utilisateurs ? Cette action est irréversible.",
+    "deletedOk_one": "{{count}} utilisateur supprimé",
+    "deletedOk_other": "{{count}} utilisateurs supprimés",
+    "deletedFail_one": "La suppression de {{count}} utilisateur a échoué",
+    "deletedFail_other": "Les {{count}} suppressions ont échoué",
+    "deletedPartial": "{{ok}} supprimés, {{failed}} échecs"
+  },
+  "create": {
+    "title": "Nouvel utilisateur",
+    "description": "Crée un utilisateur sous le locataire actuel avec un identifiant de mot de passe.",
+    "email": "Email",
+    "displayName": "Nom affiché",
+    "displayNameHelp": "Optionnel. Affiché dans la liste des utilisateurs et les journaux d'audit.",
+    "phone": "Téléphone",
+    "phoneHelp": "Format E.164. Utilisé pour OTP SMS si MFA est activé.",
+    "password": "Mot de passe initial",
+    "passwordHelp": "Au moins 8 caractères. L'utilisateur peut le changer plus tard.",
+    "submit": "Créer l'utilisateur",
+    "submitting": "Création en cours…"
+  },
+  "edit": {
+    "title": "Modifier l'utilisateur",
+    "description": "L'email est immuable. Pour changer un mot de passe, utilisez l'action Définir le mot de passe.",
+    "email": "Email",
+    "displayName": "Nom affiché",
+    "phone": "Téléphone",
+    "phoneHelp": "Format E.164. Laissez vide pour effacer.",
+    "status": "Statut",
+    "statusActive": "Actif",
+    "statusSuspended": "Suspendu",
+    "statusSelfHelp": "Vous ne pouvez pas suspendre votre propre compte depuis cet écran.",
+    "statusHelp": "La suspension empêche la connexion mais conserve le compte."
+  },
+  "setPassword": {
+    "title": "Définir un nouveau mot de passe",
+    "description": "Définit un nouveau mot de passe pour <strong>{{email}}</strong>. Les sessions existantes restent valides jusqu'à expiration — révoquez-les depuis <path>Sécurité › Sessions</path> si vous avez besoin d'une déconnexion immédiate.",
+    "newPassword": "Nouveau mot de passe",
+    "newPasswordHelp": "Minimum 8 caractères.",
+    "confirmPassword": "Confirmer le nouveau mot de passe",
+    "mismatch": "Les mots de passe ne correspondent pas",
+    "success": "Mot de passe mis à jour.",
+    "submit": "Mettre à jour le mot de passe"
+  },
+  "toast": {
+    "created": "Utilisateur créé",
+    "updated": "Utilisateur mis à jour",
+    "deleted": "Utilisateur supprimé",
+    "passwordUpdated": "Mot de passe mis à jour"
+  }
+}

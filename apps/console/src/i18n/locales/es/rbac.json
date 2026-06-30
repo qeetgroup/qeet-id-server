@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "Comprobador de acceso",
+    "description": "Evalúe un permiso para un usuario específico y vea exactamente por qué se concede o deniega el acceso, incluido qué rol lo concedió y si vino directamente o a través de un grupo.",
+    "runTitle": "Ejecutar una comprobación",
+    "runDescription": "Los permisos usan la forma recurso:acción, p. ej. users:read.",
+    "userIdLabel": "ID de usuario",
+    "userIdHelp": "El UUID del usuario a evaluar.",
+    "permissionLabel": "Permiso",
+    "evaluate": "Evaluar",
+    "evaluating": "Evaluando…",
+    "resultTitle": "Resultado",
+    "resultDescription": "La decisión y la traza de la ruta de concesión que siguió el motor de autorización.",
+    "resultPlaceholder": "Ejecute una comprobación para ver la decisión de permitir/denegar y cómo se alcanzó.",
+    "allowed": "Acceso permitido",
+    "denied": "Acceso denegado",
+    "grantPathsTitle": "Rutas de concesión",
+    "grantPathsHint": "Cada ruta es una razón independiente por la que se tiene el permiso.",
+    "noGrantPath": "Permitido, pero no se devolvió ninguna ruta de concesión explícita.",
+    "directAssignment": "Asignación directa",
+    "viaGroup": "Grupo · {{group}}",
+    "grantedBy": "concedido por",
+    "roleShort": "rol {{id}}…"
+  },
+  "groupRoles": {
+    "title": "Roles",
+    "description": "Los miembros de este grupo heredan los permisos de estos roles.",
+    "addPlaceholder": "Agregar un rol…",
+    "loadingRoles": "Cargando roles…",
+    "allGranted": "Todos los roles ya concedidos",
+    "selectAriaLabel": "Seleccionar un rol para conceder",
+    "addRole": "Agregar rol",
+    "emptyTitle": "Aún no se han concedido roles a este grupo.",
+    "emptyDescription": "Use el selector de arriba para conceder un rol — cada miembro hereda sus permisos.",
+    "roleHeader": "Rol",
+    "grantedHeader": "Concedido",
+    "actionsHeader": "Acciones",
+    "revokeTitle": "¿Quitar este rol del grupo?",
+    "revokeDescriptionNamed": "Los miembros perderán los permisos concedidos por <strong>{{name}}</strong> a menos que lo tengan a través de otro grupo o una asignación directa.",
+    "revokeDescriptionFallback": "Los miembros perderán los permisos de este rol."
+  }
+}

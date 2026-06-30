@@ -1,0 +1,28 @@
+{
+  "page": {
+    "title": "Geräteautorisierungen",
+    "description": "Laufende OAuth 2.0 Device Authorization Grant (RFC 8628)-Abläufe. Jeder Benutzercode ist das, was eine Person auf einem zweiten Bildschirm eingibt, um ein Gerät zu genehmigen. Widerrufen Sie jeden Ablauf, den Sie nicht erkennen, bevor er eingelöst wird."
+  },
+  "list": {
+    "title": "Aktive Abläufe",
+    "count_one": "{{count}} Autorisierung ausstehend oder genehmigt.",
+    "count_other": "{{count}} Autorisierungen ausstehend oder genehmigt.",
+    "emptyTitle": "Keine laufenden Geräteautorisierungen.",
+    "emptyDescription": "Geräteautorisierungsabläufe erscheinen hier, während sie auf Genehmigung oder Ablauf warten."
+  },
+  "table": {
+    "clientId": "Client-ID",
+    "userCode": "Benutzercode",
+    "status": "Status",
+    "user": "Benutzer",
+    "scopes": "Bereiche",
+    "created": "Erstellt",
+    "expires": "Läuft ab",
+    "actions": "Aktionen"
+  },
+  "revoke": {
+    "title": "Diese Geräteautorisierung widerrufen?",
+    "descriptionNamed": "Das Gerät, das mit dem Benutzercode <code>{{code}}</code> abfragt, wird abgelehnt und kann nicht mehr genehmigt werden. Dies kann nicht rückgängig gemacht werden.",
+    "descriptionFallback": "Der Geräteablauf wird abgelehnt und kann nicht mehr genehmigt werden."
+  }
+}

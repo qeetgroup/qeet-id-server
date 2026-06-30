@@ -24,7 +24,9 @@ function buildItems(): CommandPaletteItem[] {
             id: item.url,
             title: item.title,
             group: group.label,
-            icon: item.icon,
+            icon: item.icon ? (
+              <span className="[&_svg]:size-4 flex">{item.icon}</span>
+            ) : undefined,
             keywords: [item.title.toLowerCase()],
           });
         }
@@ -41,7 +43,9 @@ function buildItems(): CommandPaletteItem[] {
           id: item.url,
           title: item.title,
           group: group.label,
-          icon: item.icon,
+          icon: item.icon ? (
+            <span className="[&_svg]:size-4 flex">{item.icon}</span>
+          ) : undefined,
           keywords: [item.title.toLowerCase()],
         });
       }

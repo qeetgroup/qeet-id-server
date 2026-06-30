@@ -1,0 +1,76 @@
+{
+  "title": "Resumen",
+  "subtitle": "Estado de identidad de este espacio de trabajo de un vistazo.",
+  "systemsOk": "Todos los sistemas operativos",
+  "range7d": "Últimos 7 días",
+  "range14d": "Últimos 14 días",
+  "vsLastWeek": "vs la semana pasada",
+  "error": "No se pudieron cargar las analíticas del panel",
+  "kpi": {
+    "mau": "Usuarios activos (MAU)",
+    "loginsToday": "Inicios de sesión hoy",
+    "mfaAdoption": "Adopción de MFA",
+    "failedLogins24h": "Inicios fallidos (24h)"
+  },
+  "stats": {
+    "totalUsers": "Total de usuarios",
+    "dailyActive": "Activos diarios",
+    "stickiness": "Retención (DAU/MAU)",
+    "avgSessions": "Sesiones prom. / usuario"
+  },
+  "quickActions": {
+    "heading": "Acciones rápidas",
+    "inviteLabel": "Invitar usuario",
+    "inviteDesc": "Agregar un compañero a este espacio",
+    "apiKeyLabel": "Crear clave API",
+    "apiKeyDesc": "Emitir credenciales para una app",
+    "threatsLabel": "Revisar amenazas",
+    "threatsDesc": "Anomalías en las últimas 24 h",
+    "auditLabel": "Registros de auditoría",
+    "auditDesc": "Buscar actividad reciente"
+  },
+  "charts": {
+    "viewAnalytics": "Ver analíticas",
+    "viewLogs": "Ver registros",
+    "viewAll": "Ver todo",
+    "authActivity": {
+      "title": "Actividad de autenticación",
+      "description": "Inicios diarios por método · últimos {{take}} días",
+      "emptyTitle": "Sin actividad aún",
+      "emptyDescription": "No se registraron inicios de sesión en esta ventana."
+    },
+    "loginMix": {
+      "title": "Mezcla de métodos de inicio",
+      "description": "Últimos 30 días",
+      "emptyTitle": "Sin inicios de sesión aún",
+      "emptyDescription": "Los datos de métodos aparecerán una vez que los usuarios inicien sesión.",
+      "methodCount_one": "{{count}} método",
+      "methodCount_other": "{{count}} métodos"
+    },
+    "mfa": {
+      "title": "Adopción de métodos MFA",
+      "description": "Usuarios por segundo factor",
+      "emptyTitle": "Sin MFA inscrito",
+      "emptyDescription": "Ningún usuario se ha inscrito en un segundo factor aún."
+    },
+    "failedLogins": {
+      "title": "Intentos de inicio fallidos",
+      "description": "Por hora · últimas 24h (umbral 250)",
+      "threshold": "Umbral",
+      "emptyTitle": "Sin intentos fallidos",
+      "emptyDescription": "No se ha registrado telemetría de inicios fallidos aún."
+    }
+  },
+  "activity": {
+    "title": "Actividad reciente",
+    "description": "Últimos 5 eventos en este espacio de trabajo",
+    "viewAll": "Ver todo",
+    "emptyTitle": "Sin actividad aún",
+    "emptyDescription": "Los eventos aparecerán aquí a medida que los usuarios interactúen con su espacio de trabajo."
+  },
+  "noWorkspace": {
+    "title": "Crea tu primer espacio de trabajo",
+    "description": "Tu cuenta aún no está vinculada a un espacio de trabajo. Crea uno para empezar a gestionar usuarios, configurar la autenticación e invitar a compañeros — serás su propietario.",
+    "cta": "Crear espacio de trabajo"
+  }
+}

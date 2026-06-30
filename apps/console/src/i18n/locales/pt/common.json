@@ -1,0 +1,42 @@
+{
+  "actions": {
+    "save": "Salvar",
+    "saveChanges": "Salvar alterações",
+    "saving": "Salvando…",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "deleting": "Excluindo…",
+    "create": "Criar",
+    "creating": "Criando…",
+    "edit": "Editar",
+    "remove": "Remover",
+    "removing": "Removendo…",
+    "refresh": "Atualizar",
+    "revoke": "Revogar",
+    "revoking": "Revogando…",
+    "reset": "Redefinir",
+    "dismiss": "Dispensar",
+    "add": "Adicionar",
+    "search": "Pesquisar"
+  },
+  "labels": {
+    "status": "Status",
+    "name": "Nome",
+    "created": "Criado",
+    "actions": "Ações",
+    "user": "Usuário",
+    "email": "E-mail",
+    "scopes": "Escopos",
+    "expires": "Expira",
+    "issued": "Emitido",
+    "type": "Tipo",
+    "tenant": "Espaço de trabalho"
+  },
+  "states": {
+    "loading": "Carregando…",
+    "empty": "Nada para mostrar ainda."
+  },
+  "confirm": {
+    "cannotBeUndone": "Esta ação não pode ser desfeita."
+  }
+}

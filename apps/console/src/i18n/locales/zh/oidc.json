@@ -1,0 +1,71 @@
+{
+  "list": {
+    "description": "将身份验证委托给 Qeet ID 的 OAuth 2.0 / OIDC 应用程序。机密应用程序在注册时获得客户端密钥；公共应用程序使用 PKCE。",
+    "register": "注册应用程序",
+    "registeredTitle": "已注册的应用程序",
+    "appCount_one": "{{count}} 个应用",
+    "appCount_other": "{{count}} 个应用",
+    "emptyTitle": "没有已注册的应用程序。",
+    "emptyDescription": "点击注册应用程序来添加您的第一个 OAuth / OIDC 客户端。"
+  },
+  "table": {
+    "name": "名称",
+    "clientId": "客户端 ID",
+    "type": "类型",
+    "redirectUris": "重定向 URI",
+    "scopes": "范围",
+    "actions": "操作"
+  },
+  "credentials": {
+    "title": "{{name}} 的客户端凭证",
+    "description": "现在复制密钥 — 之后服务器端会进行 bcrypt 哈希处理，无法再次显示。"
+  },
+  "delete": {
+    "title": "删除此应用程序？",
+    "descriptionNamed": "使用 <strong>{{name}}</strong> 客户端 ID 的应用程序将立即无法进行身份验证。此操作无法撤销。",
+    "descriptionFallback": "使用此客户端 ID 的应用程序将停止工作。"
+  },
+  "create": {
+    "title": "注册 OAuth / OIDC 应用程序",
+    "description": "创建一个 OIDC 客户端。机密客户端会收到一次性客户端密钥。",
+    "name": "名称",
+    "type": "类型",
+    "typePublic": "公共 — SPA、移动端（PKCE）",
+    "typeConfidential": "机密 — 服务器端应用（客户端密钥）",
+    "redirectUris": "重定向 URI",
+    "redirectUrisHelp": "每行一个 URL。生产环境必须使用 HTTPS；开发环境允许 localhost。",
+    "postLogoutUris": "注销后重定向 URI",
+    "postLogoutUrisHelp": "可选。每行一个 URL。",
+    "scopes": "范围",
+    "scopesHelp": "空格分隔。",
+    "submit": "注册",
+    "submitting": "注册中…"
+  },
+  "detail": {
+    "backToList": "所有应用程序",
+    "notFoundTitle": "此租户中没有应用程序 \"{{clientId}}\"",
+    "notFoundDescription": "它可能已被删除，或者您可能没有查看它的权限。请使用上方的返回链接回到列表。",
+    "name": "名称",
+    "redirectUris": "重定向 URI",
+    "redirectUrisHelp": "每行一个（或逗号分隔）。",
+    "postLogoutUris": "注销后重定向 URI",
+    "grantTypes": "授权类型",
+    "grantTypesHelp": "空格或逗号分隔。",
+    "scopes": "范围",
+    "scopesHelp": "空格或逗号分隔。",
+    "metadataTitle": "元数据",
+    "createdLabel": "创建时间",
+    "rowIdLabel": "行 ID",
+    "tenantLabel": "租户",
+    "grantTypesLabel": "授权类型",
+    "secretTitle": "客户端密钥",
+    "secretDescription": "轮换将立即使当前密钥失效。新值只显示一次。",
+    "secretCopyHint": "现在复制 — 服务器端进行 bcrypt 哈希处理后无法再次显示。",
+    "rotateSecret": "轮换密钥",
+    "dangerZoneTitle": "危险区域",
+    "dangerZoneDescription": "删除将阻止所有使用此客户端 ID 的应用程序进行身份验证。",
+    "deleteApplication": "删除应用程序",
+    "deleteTitle": "删除此应用程序？",
+    "deleteDescription": "使用 <strong>{{name}}</strong> 客户端 ID 的应用程序将立即无法进行身份验证。此操作无法撤销。"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "page": {
+    "title": "设备授权",
+    "description": "进行中的 OAuth 2.0 设备授权许可（RFC 8628）流程。每个用户码是用户在第二块屏幕上输入以批准设备的内容。在兑换前撤销任何您不认识的流程。"
+  },
+  "list": {
+    "title": "活跃流程",
+    "count_one": "{{count}} 项授权待处理或已批准。",
+    "count_other": "{{count}} 项授权待处理或已批准。",
+    "emptyTitle": "没有进行中的设备授权。",
+    "emptyDescription": "设备流程授权在等待批准或过期时显示在此处。"
+  },
+  "table": {
+    "clientId": "客户端 ID",
+    "userCode": "用户码",
+    "status": "状态",
+    "user": "用户",
+    "scopes": "范围",
+    "created": "创建时间",
+    "expires": "过期时间",
+    "actions": "操作"
+  },
+  "revoke": {
+    "title": "撤销此设备授权？",
+    "descriptionNamed": "使用用户码 <code>{{code}}</code> 轮询的设备将被拒绝，且无法再被批准。此操作无法撤销。",
+    "descriptionFallback": "设备流程将被拒绝，且无法再被批准。"
+  }
+}

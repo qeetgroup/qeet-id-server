@@ -1,0 +1,95 @@
+{
+  "list": {
+    "description": "Todos los que tienen acceso a este espacio de trabajo. Invite o cree miembros directamente aquí.",
+    "import": "Importar",
+    "newUser": "Nuevo usuario",
+    "membersTitle": "Miembros",
+    "membersSubtitle": "{{shown}} de {{total}} usuario en esta página",
+    "membersSubtitle_other": "{{shown}} de {{total}} usuarios en esta página",
+    "searchPlaceholder": "Buscar email, nombre, teléfono…",
+    "emptyTitleFiltered": "Ningún usuario coincide con sus filtros.",
+    "emptyTitle": "Aún no hay usuarios.",
+    "emptyDescriptionFiltered": "Ajuste o borre los filtros anteriores.",
+    "emptyDescription": "Haga clic en Nuevo usuario para agregar el primero.",
+    "selectAll": "Seleccionar todos los usuarios",
+    "selectOne": "Seleccionar {{email}}",
+    "you": "Usted",
+    "bulkDelete_one": "Eliminar {{count}} usuario",
+    "bulkDelete_other": "Eliminar {{count}} usuarios"
+  },
+  "table": {
+    "email": "Email",
+    "name": "Nombre",
+    "role": "Rol",
+    "status": "Estado",
+    "emailVerified": "Email verificado",
+    "created": "Creado",
+    "actions": "Acciones",
+    "editUser": "Editar usuario",
+    "setPassword": "Establecer contraseña",
+    "deleteUser": "Eliminar usuario",
+    "deleteSelf": "No puede eliminar su propia cuenta aquí"
+  },
+  "status": {
+    "active": "Activo",
+    "invited": "Invitado",
+    "suspended": "Suspendido",
+    "deleted": "Eliminado"
+  },
+  "delete": {
+    "title": "¿Eliminar este usuario?",
+    "descriptionNamed": "Esto elimina suavemente a <strong>{{email}}</strong>. Sus sesiones y claves API seguirán funcionando hasta que expiren — revóquelas por separado si necesita un corte inmediato.",
+    "descriptionFallback": "Esto elimina suavemente al usuario."
+  },
+  "bulk": {
+    "confirm_one": "¿Eliminar {{count}} usuario? No se puede deshacer.",
+    "confirm_other": "¿Eliminar {{count}} usuarios? No se puede deshacer.",
+    "deletedOk_one": "{{count}} usuario eliminado",
+    "deletedOk_other": "{{count}} usuarios eliminados",
+    "deletedFail_one": "La eliminación de {{count}} usuario falló",
+    "deletedFail_other": "Todas las {{count}} eliminaciones fallaron",
+    "deletedPartial": "{{ok}} eliminados, {{failed}} fallidos"
+  },
+  "create": {
+    "title": "Nuevo usuario",
+    "description": "Crea un usuario bajo el inquilino actual con una credencial de contraseña.",
+    "email": "Email",
+    "displayName": "Nombre para mostrar",
+    "displayNameHelp": "Opcional. Se muestra en la lista de usuarios y en los registros de auditoría.",
+    "phone": "Teléfono",
+    "phoneHelp": "Formato E.164. Se usa para OTP por SMS si MFA está habilitado.",
+    "password": "Contraseña inicial",
+    "passwordHelp": "Al menos 8 caracteres. El usuario puede cambiarla después.",
+    "submit": "Crear usuario",
+    "submitting": "Creando…"
+  },
+  "edit": {
+    "title": "Editar usuario",
+    "description": "El email es inmutable. Para cambiar una contraseña, use la acción Establecer contraseña.",
+    "email": "Email",
+    "displayName": "Nombre para mostrar",
+    "phone": "Teléfono",
+    "phoneHelp": "Formato E.164. Deje en blanco para borrar.",
+    "status": "Estado",
+    "statusActive": "Activo",
+    "statusSuspended": "Suspendido",
+    "statusSelfHelp": "No puede suspender su propia cuenta desde esta pantalla.",
+    "statusHelp": "Suspender impide el inicio de sesión pero conserva la cuenta."
+  },
+  "setPassword": {
+    "title": "Establecer nueva contraseña",
+    "description": "Establece una nueva contraseña para <strong>{{email}}</strong>. Las sesiones existentes del usuario siguen siendo válidas hasta que expiren — revóquelas desde <path>Seguridad › Sesiones</path> si necesita un cierre de sesión inmediato.",
+    "newPassword": "Nueva contraseña",
+    "newPasswordHelp": "Mínimo 8 caracteres.",
+    "confirmPassword": "Confirmar nueva contraseña",
+    "mismatch": "Las contraseñas no coinciden",
+    "success": "Contraseña actualizada.",
+    "submit": "Actualizar contraseña"
+  },
+  "toast": {
+    "created": "Usuario creado",
+    "updated": "Usuario actualizado",
+    "deleted": "Usuario eliminado",
+    "passwordUpdated": "Contraseña actualizada"
+  }
+}

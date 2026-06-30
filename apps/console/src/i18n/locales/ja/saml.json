@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "SAML IdP — サービスプロバイダー",
+    "description": "Qeet IDはここでSAML 2.0 IDプロバイダーとして機能します。以下の各サービスプロバイダーはこのIdPを信頼し、ユーザーの署名付きアサーションを受け取ります。",
+    "addProvider": "サービスプロバイダーを追加"
+  },
+  "metadata": {
+    "title": "IdPメタデータ",
+    "description": "サービスプロバイダーはQeet IDをIdPとして信頼するためにこの単一のメタデータドキュメントをインポートします。各SPのSAML設定にこのURLを提供してください。",
+    "hint": "ほとんどのSPはメタデータURLを直接受け入れます。XMLが必要なものには同じエンドポイントを指定してください — 署名済みIdPディスクリプター（エンティティID、SSO URL、署名証明書）を提供します。"
+  },
+  "list": {
+    "title": "サービスプロバイダー",
+    "count_one": "このIdPを信頼する{{count}}件のプロバイダー。",
+    "count_other": "このIdPを信頼する{{count}}件のプロバイダー。",
+    "emptyTitle": "まだサービスプロバイダーがありません。",
+    "emptyDescription": "このIdPからSSOを受け入れるべきアプリを追加してください。"
+  },
+  "table": {
+    "name": "名前",
+    "entityId": "エンティティID",
+    "acsUrl": "ACS URL",
+    "status": "ステータス",
+    "lastLogin": "最終ログイン",
+    "actions": "操作"
+  },
+  "delete": {
+    "title": "このサービスプロバイダーを削除しますか？",
+    "descriptionNamed": "<strong>{{name}}</strong>はこのIdPからのSSOを受け入れなくなります。この操作は元に戻せません。",
+    "descriptionFallback": "このIdPからのSSOを受け入れなくなります。"
+  },
+  "form": {
+    "addTitle": "サービスプロバイダーを追加",
+    "editTitle": "サービスプロバイダーを編集",
+    "description": "SPのSAMLエンティティIDとアサーションコンシューマーサービス（ACS）URLを入力してください — 両方ともSP自身のメタデータから取得されます。",
+    "name": "名前",
+    "entityId": "エンティティID / 発行者",
+    "acsUrl": "ACS URL",
+    "acsUrlHelp": "署名済みアサーションがPOSTされる場所。",
+    "nameIdFormat": "NameID形式",
+    "nameIdFormatHelp": "任意。デフォルトはメールアドレス。",
+    "nameIdAttribute": "NameID属性",
+    "nameIdAttributeHelp": "任意。どのユーザー属性がNameIDに使用されるか。",
+    "certificate": "SP証明書",
+    "certificateHelp": "任意。SPがリクエストに署名する場合のみ必要。",
+    "addSubmit": "プロバイダーを追加",
+    "addSubmitting": "追加中…"
+  }
+}

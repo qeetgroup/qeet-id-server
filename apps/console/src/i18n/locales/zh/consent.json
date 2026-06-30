@@ -1,0 +1,26 @@
+{
+  "page": {
+    "title": "同意授权",
+    "description": "用户已针对每个应用程序同意的 OAuth 刷新令牌授权。撤销授权将使该（应用、用户）对的整个刷新令牌轮换链失效。"
+  },
+  "list": {
+    "title": "有效授权",
+    "count_one": "所有应用程序共 {{count}} 项授权。",
+    "count_other": "所有应用程序共 {{count}} 项授权。",
+    "emptyTitle": "没有有效的同意授权。",
+    "emptyDescription": "用户授权 OAuth / OIDC 应用程序后，授权将显示在此处。"
+  },
+  "table": {
+    "application": "应用程序",
+    "user": "用户",
+    "scopes": "范围",
+    "issued": "签发时间",
+    "expires": "过期时间",
+    "actions": "操作"
+  },
+  "revoke": {
+    "title": "撤销此授权？",
+    "descriptionNamed": "这将立即使此应用程序上 <strong>{{email}}</strong> 的刷新令牌链失效。他们在下次登录时将被要求重新授权。",
+    "descriptionFallback": "这将使此授权的刷新令牌链失效。"
+  }
+}

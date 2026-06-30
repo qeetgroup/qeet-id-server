@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "IdP SAML — Proveedores de servicios",
+    "description": "Qeet ID actúa como proveedor de identidad SAML 2.0 aquí. Cada proveedor de servicios a continuación confía en este IdP y recibe aserciones firmadas para sus usuarios.",
+    "addProvider": "Agregar proveedor de servicios"
+  },
+  "metadata": {
+    "title": "Metadatos del IdP",
+    "description": "Los proveedores de servicios importan este único documento de metadatos para confiar en Qeet ID como su IdP. Entregue esta URL a la configuración SAML de cada SP.",
+    "hint": "La mayoría de los SP aceptan directamente una URL de metadatos; para los que necesitan el XML, apúntelos al mismo punto final — sirve el descriptor IdP firmado (ID de entidad, URL de SSO, certificado de firma)."
+  },
+  "list": {
+    "title": "Proveedores de servicios",
+    "count_one": "{{count}} proveedor confiando en este IdP.",
+    "count_other": "{{count}} proveedores confiando en este IdP.",
+    "emptyTitle": "Aún no hay proveedores de servicios.",
+    "emptyDescription": "Agregue las aplicaciones que deben aceptar SSO de este IdP."
+  },
+  "table": {
+    "name": "Nombre",
+    "entityId": "ID de entidad",
+    "acsUrl": "URL de ACS",
+    "status": "Estado",
+    "lastLogin": "Último inicio de sesión",
+    "actions": "Acciones"
+  },
+  "delete": {
+    "title": "¿Eliminar este proveedor de servicios?",
+    "descriptionNamed": "<strong>{{name}}</strong> ya no aceptará SSO de este IdP. No se puede deshacer.",
+    "descriptionFallback": "Ya no aceptará SSO de este IdP."
+  },
+  "form": {
+    "addTitle": "Agregar proveedor de servicios",
+    "editTitle": "Editar proveedor de servicios",
+    "description": "Ingrese el ID de entidad SAML del SP y la URL del servicio consumidor de aserciones (ACS) — ambos provienen de los propios metadatos del SP.",
+    "name": "Nombre",
+    "entityId": "ID de entidad / emisor",
+    "acsUrl": "URL de ACS",
+    "acsUrlHelp": "Donde se envían las aserciones firmadas mediante POST.",
+    "nameIdFormat": "Formato NameID",
+    "nameIdFormatHelp": "Opcional. Por defecto: dirección de email.",
+    "nameIdAttribute": "Atributo NameID",
+    "nameIdAttributeHelp": "Opcional. Qué atributo de usuario rellena el NameID.",
+    "certificate": "Certificado SP",
+    "certificateHelp": "Opcional. Solo se requiere si el SP firma sus solicitudes.",
+    "addSubmit": "Agregar proveedor",
+    "addSubmitting": "Agregando…"
+  }
+}

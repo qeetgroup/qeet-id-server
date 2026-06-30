@@ -1,0 +1,26 @@
+{
+  "page": {
+    "title": "Concessões de consentimento",
+    "description": "Concessões de token de atualização OAuth que um usuário consentiu por aplicação. Revogar uma concessão invalida toda a cadeia de rotação de token de atualização para esse par (app, usuário)."
+  },
+  "list": {
+    "title": "Concessões ativas",
+    "count_one": "{{count}} concessão em todas as aplicações.",
+    "count_other": "{{count}} concessões em todas as aplicações.",
+    "emptyTitle": "Nenhuma concessão de consentimento ativa.",
+    "emptyDescription": "As concessões aparecem aqui assim que os usuários autorizam uma aplicação OAuth / OIDC."
+  },
+  "table": {
+    "application": "Aplicação",
+    "user": "Usuário",
+    "scopes": "Escopos",
+    "issued": "Emitido",
+    "expires": "Expira",
+    "actions": "Ações"
+  },
+  "revoke": {
+    "title": "Revogar esta concessão?",
+    "descriptionNamed": "Isso invalida imediatamente a cadeia de token de atualização para <strong>{{email}}</strong> nesta aplicação. Será solicitado que dê consentimento novamente no próximo login.",
+    "descriptionFallback": "Isso invalida a cadeia de token de atualização para esta concessão."
+  }
+}

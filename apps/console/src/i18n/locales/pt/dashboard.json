@@ -1,0 +1,76 @@
+{
+  "title": "Visão geral",
+  "subtitle": "Saúde de identidade deste espaço de trabalho em um relance.",
+  "systemsOk": "Todos os sistemas operacionais",
+  "range7d": "Últimos 7 dias",
+  "range14d": "Últimos 14 dias",
+  "vsLastWeek": "vs semana passada",
+  "error": "Não foi possível carregar as análises do painel",
+  "kpi": {
+    "mau": "Usuários ativos (MAU)",
+    "loginsToday": "Logins hoje",
+    "mfaAdoption": "Adoção de MFA",
+    "failedLogins24h": "Logins falhos (24h)"
+  },
+  "stats": {
+    "totalUsers": "Total de usuários",
+    "dailyActive": "Ativos diários",
+    "stickiness": "Retenção (DAU/MAU)",
+    "avgSessions": "Sessões méd. / usuário"
+  },
+  "quickActions": {
+    "heading": "Ações rápidas",
+    "inviteLabel": "Convidar usuário",
+    "inviteDesc": "Adicionar um colega a este espaço",
+    "apiKeyLabel": "Criar chave de API",
+    "apiKeyDesc": "Emitir credenciais para um app",
+    "threatsLabel": "Revisar ameaças",
+    "threatsDesc": "Anomalias nas últimas 24 h",
+    "auditLabel": "Logs de auditoria",
+    "auditDesc": "Pesquisar atividade recente"
+  },
+  "charts": {
+    "viewAnalytics": "Ver análises",
+    "viewLogs": "Ver logs",
+    "viewAll": "Ver tudo",
+    "authActivity": {
+      "title": "Atividade de autenticação",
+      "description": "Logins diários por método · últimos {{take}} dias",
+      "emptyTitle": "Nenhuma atividade ainda",
+      "emptyDescription": "Nenhum login registrado nesta janela."
+    },
+    "loginMix": {
+      "title": "Mix de métodos de login",
+      "description": "Últimos 30 dias",
+      "emptyTitle": "Nenhum login ainda",
+      "emptyDescription": "Os dados de métodos aparecerão após os usuários fazerem login.",
+      "methodCount_one": "{{count}} método",
+      "methodCount_other": "{{count}} métodos"
+    },
+    "mfa": {
+      "title": "Adoção de métodos MFA",
+      "description": "Usuários por segundo fator",
+      "emptyTitle": "Sem MFA inscrito",
+      "emptyDescription": "Nenhum usuário se inscreveu em um segundo fator ainda."
+    },
+    "failedLogins": {
+      "title": "Tentativas de login falhas",
+      "description": "Por hora · últimas 24h (limite 250)",
+      "threshold": "Limite",
+      "emptyTitle": "Sem tentativas falhas",
+      "emptyDescription": "Nenhuma telemetria de login falho registrada ainda."
+    }
+  },
+  "activity": {
+    "title": "Atividade recente",
+    "description": "Últimos 5 eventos neste espaço de trabalho",
+    "viewAll": "Ver tudo",
+    "emptyTitle": "Nenhuma atividade ainda",
+    "emptyDescription": "Os eventos aparecerão aqui à medida que os usuários interagirem com seu espaço de trabalho."
+  },
+  "noWorkspace": {
+    "title": "Crie seu primeiro espaço de trabalho",
+    "description": "Sua conta ainda não está vinculada a um espaço de trabalho. Crie um para começar a gerenciar usuários, configurar autenticação e convidar colegas — você será o proprietário.",
+    "cta": "Criar espaço de trabalho"
+  }
+}

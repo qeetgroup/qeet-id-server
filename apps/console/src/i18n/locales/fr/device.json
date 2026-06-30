@@ -1,0 +1,28 @@
+{
+  "page": {
+    "title": "Autorisations d'appareil",
+    "description": "Flux OAuth 2.0 d'autorisation d'appareil (RFC 8628) en cours. Chaque code utilisateur est ce qu'une personne saisit sur un deuxième écran pour approuver un appareil. Révoquez tout flux que vous ne reconnaissez pas avant qu'il soit utilisé."
+  },
+  "list": {
+    "title": "Flux actifs",
+    "count_one": "{{count}} autorisation en attente ou approuvée.",
+    "count_other": "{{count}} autorisations en attente ou approuvées.",
+    "emptyTitle": "Aucune autorisation d'appareil en cours.",
+    "emptyDescription": "Les autorisations de flux d'appareil apparaissent ici pendant qu'elles attendent l'approbation ou l'expiration."
+  },
+  "table": {
+    "clientId": "ID client",
+    "userCode": "Code utilisateur",
+    "status": "Statut",
+    "user": "Utilisateur",
+    "scopes": "Portées",
+    "created": "Créé",
+    "expires": "Expire",
+    "actions": "Actions"
+  },
+  "revoke": {
+    "title": "Révoquer cette autorisation d'appareil ?",
+    "descriptionNamed": "L'appareil interrogeant avec le code utilisateur <code>{{code}}</code> sera refusé et ne pourra plus être approuvé. Cette action est irréversible.",
+    "descriptionFallback": "Le flux d'appareil sera refusé et ne pourra plus être approuvé."
+  }
+}

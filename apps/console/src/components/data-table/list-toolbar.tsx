@@ -3,6 +3,7 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -133,7 +134,9 @@ export function ListToolbar({
               }
             />
             <DropdownMenuContent align="end" className="min-w-40">
-              <DropdownMenuLabel>Columns</DropdownMenuLabel>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Columns</DropdownMenuLabel>
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               {columns.map((c) => (
                 <DropdownMenuCheckboxItem

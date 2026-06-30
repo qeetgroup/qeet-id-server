@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "IdP SAML — Fournisseurs de services",
+    "description": "Qeet ID agit ici comme fournisseur d'identité SAML 2.0. Chaque fournisseur de services ci-dessous fait confiance à cet IdP et reçoit des assertions signées pour ses utilisateurs.",
+    "addProvider": "Ajouter un fournisseur de services"
+  },
+  "metadata": {
+    "title": "Métadonnées IdP",
+    "description": "Les fournisseurs de services importent ce document de métadonnées unique pour faire confiance à Qeet ID comme leur IdP. Transmettez cette URL à la configuration SAML de chaque SP.",
+    "hint": "La plupart des SP acceptent directement une URL de métadonnées ; pour ceux qui ont besoin du XML, pointez-les vers le même point de terminaison — il sert le descripteur IdP signé (ID d'entité, URL SSO, certificat de signature)."
+  },
+  "list": {
+    "title": "Fournisseurs de services",
+    "count_one": "{{count}} fournisseur faisant confiance à cet IdP.",
+    "count_other": "{{count}} fournisseurs faisant confiance à cet IdP.",
+    "emptyTitle": "Aucun fournisseur de services pour l'instant.",
+    "emptyDescription": "Ajoutez les applications qui doivent accepter le SSO de cet IdP."
+  },
+  "table": {
+    "name": "Nom",
+    "entityId": "ID d'entité",
+    "acsUrl": "URL ACS",
+    "status": "Statut",
+    "lastLogin": "Dernière connexion",
+    "actions": "Actions"
+  },
+  "delete": {
+    "title": "Supprimer ce fournisseur de services ?",
+    "descriptionNamed": "<strong>{{name}}</strong> n'acceptera plus le SSO de cet IdP. Cette action est irréversible.",
+    "descriptionFallback": "Il n'acceptera plus le SSO de cet IdP."
+  },
+  "form": {
+    "addTitle": "Ajouter un fournisseur de services",
+    "editTitle": "Modifier le fournisseur de services",
+    "description": "Entrez l'ID d'entité SAML du SP et l'URL du service consommateur d'assertions (ACS) — les deux proviennent des métadonnées propres du SP.",
+    "name": "Nom",
+    "entityId": "ID d'entité / émetteur",
+    "acsUrl": "URL ACS",
+    "acsUrlHelp": "Où les assertions signées sont envoyées en POST.",
+    "nameIdFormat": "Format NameID",
+    "nameIdFormatHelp": "Optionnel. Par défaut : adresse email.",
+    "nameIdAttribute": "Attribut NameID",
+    "nameIdAttributeHelp": "Optionnel. Quel attribut utilisateur remplit le NameID.",
+    "certificate": "Certificat SP",
+    "certificateHelp": "Optionnel. Requis uniquement si le SP signe ses requêtes.",
+    "addSubmit": "Ajouter le fournisseur",
+    "addSubmitting": "Ajout en cours…"
+  }
+}

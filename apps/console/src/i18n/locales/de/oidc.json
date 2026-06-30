@@ -1,0 +1,71 @@
+{
+  "list": {
+    "description": "OAuth 2.0 / OIDC-Anwendungen, die die Authentifizierung an Qeet ID delegieren. Vertrauliche Apps erhalten bei der Registrierung ein Client-Geheimnis; öffentliche Apps verwenden PKCE.",
+    "register": "Anwendung registrieren",
+    "registeredTitle": "Registrierte Anwendungen",
+    "appCount_one": "{{count}} App",
+    "appCount_other": "{{count}} Apps",
+    "emptyTitle": "Keine Anwendungen registriert.",
+    "emptyDescription": "Klicken Sie auf Anwendung registrieren, um Ihren ersten OAuth / OIDC-Client hinzuzufügen."
+  },
+  "table": {
+    "name": "Name",
+    "clientId": "Client-ID",
+    "type": "Typ",
+    "redirectUris": "Weiterleitungs-URIs",
+    "scopes": "Bereiche",
+    "actions": "Aktionen"
+  },
+  "credentials": {
+    "title": "Client-Anmeldedaten für {{name}}",
+    "description": "Kopieren Sie das Geheimnis jetzt — es wird danach server-seitig bcrypt-gehasht und kann nicht mehr angezeigt werden."
+  },
+  "delete": {
+    "title": "Diese Anwendung löschen?",
+    "descriptionNamed": "Apps, die die Client-ID für <strong>{{name}}</strong> verwenden, können sich sofort nicht mehr authentifizieren. Dies kann nicht rückgängig gemacht werden.",
+    "descriptionFallback": "Apps, die diese Client-ID verwenden, werden nicht mehr funktionieren."
+  },
+  "create": {
+    "title": "OAuth / OIDC-Anwendung registrieren",
+    "description": "Erstellt einen OIDC-Client. Vertrauliche Clients erhalten ein einmaliges Client-Geheimnis.",
+    "name": "Name",
+    "type": "Typ",
+    "typePublic": "Öffentlich — SPA, mobil (PKCE)",
+    "typeConfidential": "Vertraulich — server-seitige App (Client-Geheimnis)",
+    "redirectUris": "Weiterleitungs-URIs",
+    "redirectUrisHelp": "Eine URL pro Zeile. Muss HTTPS in der Produktion sein; localhost ist für die Entwicklung erlaubt.",
+    "postLogoutUris": "Post-Abmelde-Weiterleitungs-URIs",
+    "postLogoutUrisHelp": "Optional. Eine URL pro Zeile.",
+    "scopes": "Bereiche",
+    "scopesHelp": "Durch Leerzeichen getrennt.",
+    "submit": "Registrieren",
+    "submitting": "Registrierung läuft…"
+  },
+  "detail": {
+    "backToList": "Alle Anwendungen",
+    "notFoundTitle": "Keine Anwendung \"{{clientId}}\" in diesem Mandanten",
+    "notFoundDescription": "Sie wurde möglicherweise gelöscht, oder Sie haben keine Berechtigung, sie anzuzeigen. Verwenden Sie den obigen Zurück-Link, um zur Liste zurückzukehren.",
+    "name": "Name",
+    "redirectUris": "Weiterleitungs-URIs",
+    "redirectUrisHelp": "Eine pro Zeile (oder kommagetrennt).",
+    "postLogoutUris": "Post-Abmelde-Weiterleitungs-URIs",
+    "grantTypes": "Grant-Typen",
+    "grantTypesHelp": "Durch Leerzeichen oder Kommas getrennt.",
+    "scopes": "Bereiche",
+    "scopesHelp": "Durch Leerzeichen oder Kommas getrennt.",
+    "metadataTitle": "Metadaten",
+    "createdLabel": "Erstellt",
+    "rowIdLabel": "Zeilen-ID",
+    "tenantLabel": "Mandant",
+    "grantTypesLabel": "Grant-Typen",
+    "secretTitle": "Client-Geheimnis",
+    "secretDescription": "Die Rotation macht das aktuelle Geheimnis sofort ungültig. Der neue Wert wird einmal angezeigt.",
+    "secretCopyHint": "Kopieren Sie es jetzt — es wird server-seitig bcrypt-gehasht und kann nicht mehr angezeigt werden.",
+    "rotateSecret": "Geheimnis rotieren",
+    "dangerZoneTitle": "Gefahrenzone",
+    "dangerZoneDescription": "Das Löschen verhindert, dass jede App mit dieser Client-ID sich authentifizieren kann.",
+    "deleteApplication": "Anwendung löschen",
+    "deleteTitle": "Diese Anwendung löschen?",
+    "deleteDescription": "Apps, die die Client-ID für <strong>{{name}}</strong> verwenden, können sich sofort nicht mehr authentifizieren. Dies kann nicht rückgängig gemacht werden."
+  }
+}

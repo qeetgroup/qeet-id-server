@@ -1,0 +1,42 @@
+{
+  "check": {
+    "title": "Testador de acesso",
+    "description": "Avalie uma permissão para um usuário específico e veja exatamente por que o acesso é concedido ou negado — incluindo qual função o concedeu e se veio diretamente ou através de um grupo.",
+    "runTitle": "Executar uma verificação",
+    "runDescription": "As permissões usam o formato resource:action, ex. users:read.",
+    "userIdLabel": "ID do usuário",
+    "userIdHelp": "O UUID do usuário a ser avaliado.",
+    "permissionLabel": "Permissão",
+    "evaluate": "Avaliar",
+    "evaluating": "Avaliando…",
+    "resultTitle": "Resultado",
+    "resultDescription": "A decisão e o rastreamento do caminho de concessão que o motor de autorização percorreu.",
+    "resultPlaceholder": "Execute uma verificação para ver a decisão de permitir/negar e como ela foi alcançada.",
+    "allowed": "Acesso permitido",
+    "denied": "Acesso negado",
+    "grantPathsTitle": "Caminhos de concessão",
+    "grantPathsHint": "Cada caminho é uma razão independente pela qual a permissão é mantida.",
+    "noGrantPath": "Permitido, mas nenhum caminho de concessão explícito foi retornado.",
+    "directAssignment": "Atribuição direta",
+    "viaGroup": "Grupo · {{group}}",
+    "grantedBy": "concedido por",
+    "roleShort": "função {{id}}…"
+  },
+  "groupRoles": {
+    "title": "Funções",
+    "description": "Os membros deste grupo herdam as permissões dessas funções.",
+    "addPlaceholder": "Adicionar uma função…",
+    "loadingRoles": "Carregando funções…",
+    "allGranted": "Todas as funções já foram concedidas",
+    "selectAriaLabel": "Selecionar uma função para conceder",
+    "addRole": "Adicionar função",
+    "emptyTitle": "Nenhuma função concedida a este grupo ainda.",
+    "emptyDescription": "Use o seletor acima para conceder uma função — cada membro herda suas permissões.",
+    "roleHeader": "Função",
+    "grantedHeader": "Concedido",
+    "actionsHeader": "Ações",
+    "revokeTitle": "Remover esta função do grupo?",
+    "revokeDescriptionNamed": "Os membros perderão as permissões concedidas por <strong>{{name}}</strong>, a menos que a detenham através de outro grupo ou de uma atribuição direta.",
+    "revokeDescriptionFallback": "Os membros perderão as permissões desta função."
+  }
+}

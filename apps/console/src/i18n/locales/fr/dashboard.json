@@ -1,0 +1,76 @@
+{
+  "title": "Vue d'ensemble",
+  "subtitle": "L'état de santé de l'identité de cet espace de travail en un coup d'œil.",
+  "systemsOk": "Tous les systèmes opérationnels",
+  "range7d": "7 derniers jours",
+  "range14d": "14 derniers jours",
+  "vsLastWeek": "vs la semaine dernière",
+  "error": "Impossible de charger les analyses du tableau de bord",
+  "kpi": {
+    "mau": "Utilisateurs actifs (MAU)",
+    "loginsToday": "Connexions aujourd'hui",
+    "mfaAdoption": "Adoption MFA",
+    "failedLogins24h": "Connexions échouées (24h)"
+  },
+  "stats": {
+    "totalUsers": "Total des utilisateurs",
+    "dailyActive": "Actifs quotidiens",
+    "stickiness": "Rétention (DAU/MAU)",
+    "avgSessions": "Sessions moy. / utilisateur"
+  },
+  "quickActions": {
+    "heading": "Actions rapides",
+    "inviteLabel": "Inviter un utilisateur",
+    "inviteDesc": "Ajouter un coéquipier à cet espace",
+    "apiKeyLabel": "Créer une clé API",
+    "apiKeyDesc": "Émettre des identifiants pour une app",
+    "threatsLabel": "Examiner les menaces",
+    "threatsDesc": "Anomalies des dernières 24 h",
+    "auditLabel": "Journaux d'audit",
+    "auditDesc": "Rechercher l'activité récente"
+  },
+  "charts": {
+    "viewAnalytics": "Voir les analyses",
+    "viewLogs": "Voir les journaux",
+    "viewAll": "Tout voir",
+    "authActivity": {
+      "title": "Activité d'authentification",
+      "description": "Connexions quotidiennes par méthode · {{take}} derniers jours",
+      "emptyTitle": "Aucune activité pour l'instant",
+      "emptyDescription": "Aucune connexion enregistrée dans cette fenêtre."
+    },
+    "loginMix": {
+      "title": "Répartition des méthodes de connexion",
+      "description": "30 derniers jours",
+      "emptyTitle": "Aucune connexion pour l'instant",
+      "emptyDescription": "Les données sur les méthodes de connexion apparaîtront une fois que les utilisateurs se connecteront.",
+      "methodCount_one": "{{count}} méthode",
+      "methodCount_other": "{{count}} méthodes"
+    },
+    "mfa": {
+      "title": "Adoption des méthodes MFA",
+      "description": "Utilisateurs par second facteur",
+      "emptyTitle": "Aucun MFA inscrit",
+      "emptyDescription": "Aucun utilisateur n'a encore inscrit un second facteur."
+    },
+    "failedLogins": {
+      "title": "Tentatives de connexion échouées",
+      "description": "Toutes les heures · dernières 24h (seuil 250)",
+      "threshold": "Seuil",
+      "emptyTitle": "Aucune tentative échouée",
+      "emptyDescription": "Aucune télémétrie de connexion échouée enregistrée pour l'instant."
+    }
+  },
+  "activity": {
+    "title": "Activité récente",
+    "description": "5 derniers événements dans cet espace de travail",
+    "viewAll": "Tout voir",
+    "emptyTitle": "Aucune activité pour l'instant",
+    "emptyDescription": "Les événements apparaîtront ici au fur et à mesure que les utilisateurs interagissent avec votre espace de travail."
+  },
+  "noWorkspace": {
+    "title": "Créez votre premier espace de travail",
+    "description": "Votre compte n'est pas encore lié à un espace de travail. Créez-en un pour commencer à gérer les utilisateurs, configurer l'authentification et inviter des coéquipiers — vous en serez le propriétaire.",
+    "cta": "Créer un espace de travail"
+  }
+}

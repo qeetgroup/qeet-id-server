@@ -1,0 +1,49 @@
+{
+  "page": {
+    "title": "SAML-IdP — Service-Provider",
+    "description": "Qeet ID fungiert hier als SAML 2.0-Identitätsprovider. Jeder unten aufgeführte Service-Provider vertraut diesem IdP und erhält signierte Assertions für seine Benutzer.",
+    "addProvider": "Service-Provider hinzufügen"
+  },
+  "metadata": {
+    "title": "IdP-Metadaten",
+    "description": "Service-Provider importieren dieses einzelne Metadatendokument, um Qeet ID als ihren IdP zu vertrauen. Geben Sie diese URL an die SAML-Konfiguration jedes SP weiter.",
+    "hint": "Die meisten SPs akzeptieren direkt eine Metadaten-URL; für diejenigen, die das XML benötigen, verweisen Sie sie auf denselben Endpunkt — er liefert den signierten IdP-Deskriptor (Entitäts-ID, SSO-URL, Signierzertifikat)."
+  },
+  "list": {
+    "title": "Service-Provider",
+    "count_one": "{{count}} Provider vertraut diesem IdP.",
+    "count_other": "{{count}} Provider vertrauen diesem IdP.",
+    "emptyTitle": "Noch keine Service-Provider.",
+    "emptyDescription": "Fügen Sie die Apps hinzu, die SSO von diesem IdP akzeptieren sollen."
+  },
+  "table": {
+    "name": "Name",
+    "entityId": "Entitäts-ID",
+    "acsUrl": "ACS-URL",
+    "status": "Status",
+    "lastLogin": "Letzte Anmeldung",
+    "actions": "Aktionen"
+  },
+  "delete": {
+    "title": "Diesen Service-Provider entfernen?",
+    "descriptionNamed": "<strong>{{name}}</strong> wird SSO von diesem IdP nicht mehr akzeptieren. Dies kann nicht rückgängig gemacht werden.",
+    "descriptionFallback": "Er wird SSO von diesem IdP nicht mehr akzeptieren."
+  },
+  "form": {
+    "addTitle": "Service-Provider hinzufügen",
+    "editTitle": "Service-Provider bearbeiten",
+    "description": "Geben Sie die SAML-Entitäts-ID des SP und die URL des Assertion Consumer Service (ACS) ein — beide kommen aus den eigenen Metadaten des SP.",
+    "name": "Name",
+    "entityId": "Entitäts-ID / Aussteller",
+    "acsUrl": "ACS-URL",
+    "acsUrlHelp": "Wohin signierte Assertions per POST gesendet werden.",
+    "nameIdFormat": "NameID-Format",
+    "nameIdFormatHelp": "Optional. Standard: E-Mail-Adresse.",
+    "nameIdAttribute": "NameID-Attribut",
+    "nameIdAttributeHelp": "Optional. Welches Benutzerattribut die NameID ausfüllt.",
+    "certificate": "SP-Zertifikat",
+    "certificateHelp": "Optional. Nur erforderlich, wenn der SP seine Anfragen signiert.",
+    "addSubmit": "Provider hinzufügen",
+    "addSubmitting": "Wird hinzugefügt…"
+  }
+}

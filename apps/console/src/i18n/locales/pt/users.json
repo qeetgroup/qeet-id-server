@@ -1,0 +1,95 @@
+{
+  "list": {
+    "description": "Todos os que têm acesso a este espaço de trabalho. Convide ou crie membros diretamente aqui.",
+    "import": "Importar",
+    "newUser": "Novo usuário",
+    "membersTitle": "Membros",
+    "membersSubtitle": "{{shown}} de {{total}} usuário nesta página",
+    "membersSubtitle_other": "{{shown}} de {{total}} usuários nesta página",
+    "searchPlaceholder": "Pesquisar email, nome, telefone…",
+    "emptyTitleFiltered": "Nenhum usuário corresponde aos seus filtros.",
+    "emptyTitle": "Nenhum usuário ainda.",
+    "emptyDescriptionFiltered": "Ajuste ou limpe os filtros acima.",
+    "emptyDescription": "Clique em Novo usuário para adicionar o primeiro.",
+    "selectAll": "Selecionar todos os usuários",
+    "selectOne": "Selecionar {{email}}",
+    "you": "Você",
+    "bulkDelete_one": "Excluir {{count}} usuário",
+    "bulkDelete_other": "Excluir {{count}} usuários"
+  },
+  "table": {
+    "email": "Email",
+    "name": "Nome",
+    "role": "Função",
+    "status": "Status",
+    "emailVerified": "Email verificado",
+    "created": "Criado",
+    "actions": "Ações",
+    "editUser": "Editar usuário",
+    "setPassword": "Definir senha",
+    "deleteUser": "Excluir usuário",
+    "deleteSelf": "Você não pode excluir sua própria conta aqui"
+  },
+  "status": {
+    "active": "Ativo",
+    "invited": "Convidado",
+    "suspended": "Suspenso",
+    "deleted": "Excluído"
+  },
+  "delete": {
+    "title": "Excluir este usuário?",
+    "descriptionNamed": "Isso exclui suavemente <strong>{{email}}</strong>. As sessões e chaves de API continuam funcionando até expirarem — revogue-as separadamente se precisar de um corte imediato.",
+    "descriptionFallback": "Isso exclui suavemente o usuário."
+  },
+  "bulk": {
+    "confirm_one": "Excluir {{count}} usuário? Isso não pode ser desfeito.",
+    "confirm_other": "Excluir {{count}} usuários? Isso não pode ser desfeito.",
+    "deletedOk_one": "{{count}} usuário excluído",
+    "deletedOk_other": "{{count}} usuários excluídos",
+    "deletedFail_one": "A exclusão de {{count}} usuário falhou",
+    "deletedFail_other": "Todas as {{count}} exclusões falharam",
+    "deletedPartial": "{{ok}} excluídos, {{failed}} com falha"
+  },
+  "create": {
+    "title": "Novo usuário",
+    "description": "Cria um usuário sob o locatário atual com uma credencial de senha.",
+    "email": "Email",
+    "displayName": "Nome de exibição",
+    "displayNameHelp": "Opcional. Mostrado na lista de usuários e nos logs de auditoria.",
+    "phone": "Telefone",
+    "phoneHelp": "Formato E.164. Usado para OTP por SMS se MFA estiver habilitado.",
+    "password": "Senha inicial",
+    "passwordHelp": "Pelo menos 8 caracteres. O usuário pode alterá-la depois.",
+    "submit": "Criar usuário",
+    "submitting": "Criando…"
+  },
+  "edit": {
+    "title": "Editar usuário",
+    "description": "O email é imutável. Para alterar uma senha, use a ação Definir senha.",
+    "email": "Email",
+    "displayName": "Nome de exibição",
+    "phone": "Telefone",
+    "phoneHelp": "Formato E.164. Deixe em branco para limpar.",
+    "status": "Status",
+    "statusActive": "Ativo",
+    "statusSuspended": "Suspenso",
+    "statusSelfHelp": "Você não pode suspender sua própria conta nesta tela.",
+    "statusHelp": "Suspender impede o login, mas mantém a conta."
+  },
+  "setPassword": {
+    "title": "Definir nova senha",
+    "description": "Define uma nova senha para <strong>{{email}}</strong>. As sessões existentes do usuário permanecem válidas até expirarem — revogue-as em <path>Segurança › Sessões</path> se precisar de um logout imediato.",
+    "newPassword": "Nova senha",
+    "newPasswordHelp": "Mínimo de 8 caracteres.",
+    "confirmPassword": "Confirmar nova senha",
+    "mismatch": "As senhas não coincidem",
+    "success": "Senha atualizada.",
+    "submit": "Atualizar senha"
+  },
+  "toast": {
+    "created": "Usuário criado",
+    "updated": "Usuário atualizado",
+    "deleted": "Usuário excluído",
+    "passwordUpdated": "Senha atualizada"
+  }
+}

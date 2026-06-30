@@ -1,0 +1,42 @@
+{
+  "actions": {
+    "save": "Enregistrer",
+    "saveChanges": "Enregistrer les modifications",
+    "saving": "Enregistrement…",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "deleting": "Suppression…",
+    "create": "Créer",
+    "creating": "Création…",
+    "edit": "Modifier",
+    "remove": "Retirer",
+    "removing": "Retrait…",
+    "refresh": "Actualiser",
+    "revoke": "Révoquer",
+    "revoking": "Révocation…",
+    "reset": "Réinitialiser",
+    "dismiss": "Ignorer",
+    "add": "Ajouter",
+    "search": "Rechercher"
+  },
+  "labels": {
+    "status": "Statut",
+    "name": "Nom",
+    "created": "Créé",
+    "actions": "Actions",
+    "user": "Utilisateur",
+    "email": "E-mail",
+    "scopes": "Portées",
+    "expires": "Expire",
+    "issued": "Émis",
+    "type": "Type",
+    "tenant": "Espace de travail"
+  },
+  "states": {
+    "loading": "Chargement…",
+    "empty": "Rien à afficher pour l'instant."
+  },
+  "confirm": {
+    "cannotBeUndone": "Cette action est irréversible."
+  }
+}

@@ -20,7 +20,7 @@ export function SortHeader({ columnKey, sort, onToggle, children, className }: S
       <button
         type="button"
         onClick={() => onToggle(columnKey)}
-        className="-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 hover:text-foreground"
+        className="-mx-1 inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-medium uppercase tracking-wide hover:text-foreground"
       >
         {children}
         {active ? (

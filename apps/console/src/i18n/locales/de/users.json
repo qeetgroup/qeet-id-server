@@ -1,0 +1,95 @@
+{
+  "list": {
+    "description": "Alle Personen, die Zugang zu diesem Arbeitsbereich haben. Laden Sie Mitglieder hier direkt ein oder erstellen Sie sie.",
+    "import": "Importieren",
+    "newUser": "Neuer Benutzer",
+    "membersTitle": "Mitglieder",
+    "membersSubtitle": "{{shown}} von {{total}} Benutzer auf dieser Seite",
+    "membersSubtitle_other": "{{shown}} von {{total}} Benutzern auf dieser Seite",
+    "searchPlaceholder": "E-Mail, Name, Telefon suchen…",
+    "emptyTitleFiltered": "Keine Benutzer entsprechen Ihren Filtern.",
+    "emptyTitle": "Noch keine Benutzer.",
+    "emptyDescriptionFiltered": "Passen Sie die obigen Filter an oder löschen Sie sie.",
+    "emptyDescription": "Klicken Sie auf Neuer Benutzer, um den ersten hinzuzufügen.",
+    "selectAll": "Alle Benutzer auswählen",
+    "selectOne": "{{email}} auswählen",
+    "you": "Sie",
+    "bulkDelete_one": "{{count}} Benutzer löschen",
+    "bulkDelete_other": "{{count}} Benutzer löschen"
+  },
+  "table": {
+    "email": "E-Mail",
+    "name": "Name",
+    "role": "Rolle",
+    "status": "Status",
+    "emailVerified": "E-Mail verifiziert",
+    "created": "Erstellt",
+    "actions": "Aktionen",
+    "editUser": "Benutzer bearbeiten",
+    "setPassword": "Passwort festlegen",
+    "deleteUser": "Benutzer löschen",
+    "deleteSelf": "Sie können Ihr eigenes Konto hier nicht löschen"
+  },
+  "status": {
+    "active": "Aktiv",
+    "invited": "Eingeladen",
+    "suspended": "Gesperrt",
+    "deleted": "Gelöscht"
+  },
+  "delete": {
+    "title": "Diesen Benutzer löschen?",
+    "descriptionNamed": "Damit wird <strong>{{email}}</strong> weich gelöscht. Ihre Sitzungen und API-Schlüssel funktionieren bis zum Ablauf weiter — widerrufen Sie diese separat, wenn Sie einen sofortigen Abbruch benötigen.",
+    "descriptionFallback": "Damit wird der Benutzer weich gelöscht."
+  },
+  "bulk": {
+    "confirm_one": "{{count}} Benutzer löschen? Dies kann nicht rückgängig gemacht werden.",
+    "confirm_other": "{{count}} Benutzer löschen? Dies kann nicht rückgängig gemacht werden.",
+    "deletedOk_one": "{{count}} Benutzer gelöscht",
+    "deletedOk_other": "{{count}} Benutzer gelöscht",
+    "deletedFail_one": "Das Löschen von {{count}} Benutzer ist fehlgeschlagen",
+    "deletedFail_other": "Alle {{count}} Löschvorgänge sind fehlgeschlagen",
+    "deletedPartial": "{{ok}} gelöscht, {{failed}} fehlgeschlagen"
+  },
+  "create": {
+    "title": "Neuer Benutzer",
+    "description": "Erstellt einen Benutzer unter dem aktuellen Mandanten mit einem Passwort-Credential.",
+    "email": "E-Mail",
+    "displayName": "Anzeigename",
+    "displayNameHelp": "Optional. Wird in der Benutzerliste und in Audit-Protokollen angezeigt.",
+    "phone": "Telefon",
+    "phoneHelp": "E.164-Format. Wird für SMS-OTP verwendet, wenn MFA aktiviert ist.",
+    "password": "Erstkennwort",
+    "passwordHelp": "Mindestens 8 Zeichen. Der Benutzer kann es später ändern.",
+    "submit": "Benutzer erstellen",
+    "submitting": "Wird erstellt…"
+  },
+  "edit": {
+    "title": "Benutzer bearbeiten",
+    "description": "Die E-Mail ist unveränderlich. Um ein Passwort zu ändern, verwenden Sie die Aktion Passwort festlegen.",
+    "email": "E-Mail",
+    "displayName": "Anzeigename",
+    "phone": "Telefon",
+    "phoneHelp": "E.164-Format. Leer lassen zum Löschen.",
+    "status": "Status",
+    "statusActive": "Aktiv",
+    "statusSuspended": "Gesperrt",
+    "statusSelfHelp": "Sie können Ihr eigenes Konto von diesem Bildschirm nicht sperren.",
+    "statusHelp": "Sperren verhindert die Anmeldung, behält aber das Konto."
+  },
+  "setPassword": {
+    "title": "Neues Passwort festlegen",
+    "description": "Legt ein neues Passwort für <strong>{{email}}</strong> fest. Die vorhandenen Sitzungen des Benutzers bleiben bis zum Ablauf gültig — widerrufen Sie sie unter <path>Sicherheit › Sitzungen</path>, wenn Sie eine sofortige Abmeldung benötigen.",
+    "newPassword": "Neues Passwort",
+    "newPasswordHelp": "Mindestens 8 Zeichen.",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "mismatch": "Passwörter stimmen nicht überein",
+    "success": "Passwort aktualisiert.",
+    "submit": "Passwort aktualisieren"
+  },
+  "toast": {
+    "created": "Benutzer erstellt",
+    "updated": "Benutzer aktualisiert",
+    "deleted": "Benutzer gelöscht",
+    "passwordUpdated": "Passwort aktualisiert"
+  }
+}

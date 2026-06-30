@@ -1,0 +1,28 @@
+{
+  "page": {
+    "title": "Autorizações de dispositivo",
+    "description": "Fluxos OAuth 2.0 Device Authorization Grant (RFC 8628) em andamento. Cada código de usuário é o que uma pessoa digita em uma segunda tela para aprovar um dispositivo. Revogue qualquer fluxo que você não reconhecer antes que seja resgatado."
+  },
+  "list": {
+    "title": "Fluxos ativos",
+    "count_one": "{{count}} autorização pendente ou aprovada.",
+    "count_other": "{{count}} autorizações pendentes ou aprovadas.",
+    "emptyTitle": "Nenhuma autorização de dispositivo em andamento.",
+    "emptyDescription": "Autorizações de fluxo de dispositivo aparecem aqui enquanto aguardam aprovação ou expiração."
+  },
+  "table": {
+    "clientId": "ID do cliente",
+    "userCode": "Código do usuário",
+    "status": "Status",
+    "user": "Usuário",
+    "scopes": "Escopos",
+    "created": "Criado",
+    "expires": "Expira",
+    "actions": "Ações"
+  },
+  "revoke": {
+    "title": "Revogar esta autorização de dispositivo?",
+    "descriptionNamed": "O dispositivo que consulta com o código de usuário <code>{{code}}</code> será negado e não poderá mais ser aprovado. Esta ação não pode ser desfeita.",
+    "descriptionFallback": "O fluxo de dispositivo será negado e não poderá mais ser aprovado."
+  }
+}

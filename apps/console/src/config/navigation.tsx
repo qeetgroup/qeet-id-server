@@ -10,7 +10,6 @@ import {
   LayoutDashboardIcon,
   LockKeyholeIcon,
   LogInIcon,
-  MailIcon,
   MonitorSmartphoneIcon,
   NetworkIcon,
   PaletteIcon,
@@ -24,7 +23,6 @@ import {
   Settings2Icon,
   ShieldAlertIcon,
   ShieldCheckIcon,
-  ShieldIcon,
   UsersIcon,
   UsersRoundIcon,
   WebhookIcon,
@@ -63,7 +61,7 @@ export const navGroups: NavGroup[] = [
         icon: <UsersIcon />,
         items: [
           { title: "All Users", url: "/users" },
-          { title: "Invitations", url: "/users/invitations" },
+          { title: "Invitations", url: "/invitations" },
           { title: "Sessions", url: "/users/sessions" },
           { title: "Deleted", url: "/users/deleted" },
         ],
@@ -92,7 +90,6 @@ export const navGroups: NavGroup[] = [
         ],
       },
       { title: "Access Tester", url: "/access/check", icon: <ScanSearchIcon /> },
-      { title: "Invitations", url: "/invitations", icon: <MailIcon /> },
     ],
   },
   {
@@ -162,13 +159,12 @@ export const navGroups: NavGroup[] = [
           { title: "IP Allowlist", url: "/security/threats/ip-allowlist" },
         ],
       },
-      { title: "Sessions", url: "/security/sessions", icon: <ShieldIcon /> },
       {
         title: "Device Authorizations",
         url: "/security/device-authorizations",
         icon: <MonitorSmartphoneIcon />,
       },
-      { title: "Rate Limits", url: "/security/rate-limits", icon: <GaugeIcon /> },
+      { title: "Rate Limit Policies", url: "/security/rate-limits", icon: <GaugeIcon /> },
       { title: "Audit Logs", url: "/security/audit-logs", icon: <ScrollTextIcon /> },
       { title: "Log Streaming", url: "/security/log-streaming", icon: <RadioTowerIcon /> },
       {

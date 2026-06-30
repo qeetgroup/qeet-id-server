@@ -1,0 +1,19 @@
+{
+  "page": {
+    "title": "Chaves de assinatura",
+    "description": "O conjunto de chaves de assinatura de tokens publicado no JWKS que os servidores de recursos usam para verificar tokens de acesso e identidade do Qeet ID."
+  },
+  "notice": "A rotação de chaves é realizada operacionalmente (consulte o runbook de deploy), não pelo painel. Novas chaves são introduzidas como <activeState>ativas</activeState> enquanto as chaves aposentadas permanecem publicadas como <retiredState>aposentadas</retiredState> até que os tokens em trânsito expirem.",
+  "list": {
+    "title": "Chaves publicadas",
+    "count_one": "{{count}} chave no JWKS atual.",
+    "count_other": "{{count}} chaves no JWKS atual.",
+    "emptyTitle": "Nenhuma chave de assinatura publicada."
+  },
+  "table": {
+    "kid": "ID da chave (kid)",
+    "algorithm": "Algoritmo",
+    "use": "Uso",
+    "status": "Status"
+  }
+}

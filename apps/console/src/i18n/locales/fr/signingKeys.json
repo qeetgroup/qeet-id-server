@@ -1,0 +1,19 @@
+{
+  "page": {
+    "title": "Clés de signature",
+    "description": "Le jeu de clés de signature des jetons publié dans le JWKS que les serveurs de ressources utilisent pour vérifier les jetons d'accès et d'identité de Qeet ID."
+  },
+  "notice": "La rotation des clés est effectuée opérationnellement (voir le runbook de déploiement), pas depuis le tableau de bord. Les nouvelles clés sont introduites comme <activeState>actives</activeState> tandis que les clés retirées restent publiées comme <retiredState>retirées</retiredState> jusqu'à l'expiration des jetons en vol.",
+  "list": {
+    "title": "Clés publiées",
+    "count_one": "{{count}} clé dans le JWKS actuel.",
+    "count_other": "{{count}} clés dans le JWKS actuel.",
+    "emptyTitle": "Aucune clé de signature publiée."
+  },
+  "table": {
+    "kid": "ID de clé (kid)",
+    "algorithm": "Algorithme",
+    "use": "Utilisation",
+    "status": "Statut"
+  }
+}
