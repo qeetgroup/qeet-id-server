@@ -657,6 +657,13 @@ type DeviceTrustChecker interface {
 	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }
 
+// BrandingLister returns a tenant's hosted-login branding (logo + brand colors)
+// so the login page can render the tenant's brand on first paint. Returns empty
+// strings when unset. Satisfied by *branding.Repository (optional).
+type BrandingLister interface {
+	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor string)
+}
+
 type Handler struct {
 	Service *Service
 	// Sessions resolves the hosted-login SSO cookie for the authorize/consent
@@ -667,6 +674,7 @@ type Handler struct {
 	Providers    ProviderLister
 	Registration RegistrationChecker
 	DeviceTrust  DeviceTrustChecker
+	Branding     BrandingLister
 	LoginBaseURL string
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
 	// clearing it on logout; set from SERVICE_ENV != "dev".
@@ -753,12 +761,30 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			rememberDevice = enabled
 		}
 	}
+	// Per-tenant branding (logo + brand colors) so the hosted login can render
+	// the tenant's brand on first paint. Omitted entirely when nothing is set.
+	var brand map[string]any
+	if h.Branding != nil {
+		if logo, primary, secondary := h.Branding.LoginBranding(r.Context(), tenantID); logo != "" || primary != "" || secondary != "" {
+			brand = map[string]any{}
+			if logo != "" {
+				brand["logo_url"] = logo
+			}
+			if primary != "" {
+				brand["primary_color"] = primary
+			}
+			if secondary != "" {
+				brand["secondary_color"] = secondary
+			}
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"client_name":               name,
 		"tenant_id":                 tenantID,
 		"providers":                 providers,
 		"self_registration_enabled": selfRegistration,
 		"remember_device_enabled":   rememberDevice,
+		"branding":                  brand,
 	})
 }
 

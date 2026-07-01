@@ -1,17 +1,21 @@
 "use client";
 
-import { Button, Card, CardContent, Input } from "@qeetrix/ui";
+import { Button, Input, Spinner } from "@qeetrix/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthCard } from "@/components/auth-card";
+import { FormAlert } from "@/components/form-alert";
+import type { Branding } from "@/lib/branding";
 import { ApiError, apiPost } from "@/lib/api";
 
 type ForgotPasswordFormProps = {
   returnTo: string;
   tenantId: string;
+  branding?: Branding;
 };
 
-export function ForgotPasswordForm({ returnTo, tenantId }: ForgotPasswordFormProps) {
+export function ForgotPasswordForm({ returnTo, tenantId, branding }: ForgotPasswordFormProps) {
   const { t } = useTranslation("recovery");
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,56 +43,51 @@ export function ForgotPasswordForm({ returnTo, tenantId }: ForgotPasswordFormPro
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardContent className="space-y-6 pt-6">
-        <div className="space-y-1 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{t("forgot.title")}</h1>
-          <p className="text-muted-foreground text-sm">{t("forgot.subtitle")}</p>
-        </div>
+    <AuthCard branding={branding} title={t("forgot.title")} subtitle={t("forgot.subtitle")}>
+      {sent ? (
+        <p role="status" className="text-muted-foreground text-center text-sm">
+          {t("forgot.sent")}
+        </p>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="email" className="text-sm font-medium">
+              {t("forgot.label")}
+            </label>
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              autoFocus
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </div>
 
-        {sent ? (
-          <p role="status" className="text-muted-foreground text-center text-sm">
-            {t("forgot.sent")}
-          </p>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label htmlFor="email" className="text-sm font-medium">
-                {t("forgot.label")}
-              </label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                autoFocus
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </div>
+          <FormAlert>{error}</FormAlert>
 
-            {error && (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-              </p>
+          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+            {loading ? (
+              <>
+                <Spinner size="sm" className="mr-2" /> {t("forgot.submit.busy")}
+              </>
+            ) : (
+              t("forgot.submit.idle")
             )}
+          </Button>
+        </form>
+      )}
 
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? t("forgot.submit.busy") : t("forgot.submit.idle")}
-            </Button>
-          </form>
-        )}
-
-        <div className="text-center">
-          <a
-            href={loginHref}
-            className="text-muted-foreground hover:text-foreground text-sm underline"
-          >
-            {t("forgot.backToLogin")}
-          </a>
-        </div>
-      </CardContent>
-    </Card>
+      <div className="text-center">
+        <a
+          href={loginHref}
+          className="text-muted-foreground hover:text-foreground text-sm underline-offset-2 hover:underline"
+        >
+          {t("forgot.backToLogin")}
+        </a>
+      </div>
+    </AuthCard>
   );
 }

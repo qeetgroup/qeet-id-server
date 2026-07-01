@@ -1,4 +1,4 @@
-# @qeetid/react
+# @qeet-id/react
 
 React client components & hooks for [Qeet ID](https://id.qeet.in): the branded
 **"Sign in / Sign up / Continue with Qeet"** buttons, plus `<SignedIn>`,
@@ -10,11 +10,11 @@ like "Sign in with Google" — the button sends the browser to your login route,
 which redirects to Qeet's hosted login + consent.
 
 ```bash
-pnpm add @qeetid/react
+pnpm add @qeet-id/react
 ```
 
 Framework-agnostic React (no Next.js dependency). With Next.js, pair it with
-`@qeetid/nextjs` to compute the initial state on the server.
+`@qeet-id/nextjs` to compute the initial state on the server.
 
 > Zero runtime dependencies (only `react` as a peer). The buttons are
 > self-contained — the Qeet logo is inlined and styles ship inline, so they
@@ -27,8 +27,8 @@ paint and the HttpOnly session cookie is never read in the browser.
 
 ```tsx
 // app/layout.tsx (Server Component)
-import { auth, currentUser } from "@qeetid/nextjs";
-import { QeetidProvider } from "@qeetid/react";
+import { auth, currentUser } from "@qeet-id/nextjs";
+import { QeetIDProvider } from "@qeet-id/react";
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, userId, tenantId, sessionId } = await auth();
@@ -36,9 +36,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html>
       <body>
-        <QeetidProvider initialState={{ isAuthenticated, userId, tenantId, sessionId, user }}>
+        <QeetIDProvider initialState={{ isAuthenticated, userId, tenantId, sessionId, user }}>
           {children}
-        </QeetidProvider>
+        </QeetIDProvider>
       </body>
     </html>
   );
@@ -49,7 +49,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
 ```tsx
 "use client";
-import { SignInWithQeet, SignUpWithQeet, ContinueWithQeet } from "@qeetid/react";
+import { SignInWithQeet, SignUpWithQeet, ContinueWithQeet } from "@qeet-id/react";
 
 <SignInWithQeet />
 <SignUpWithQeet />
@@ -57,7 +57,7 @@ import { SignInWithQeet, SignUpWithQeet, ContinueWithQeet } from "@qeetid/react"
 ```
 
 `SignInWithQeet` / `ContinueWithQeet` send the browser to `loginUrl`;
-`SignUpWithQeet` sends it to `signUpUrl` (configure both on `<QeetidProvider>`).
+`SignUpWithQeet` sends it to `signUpUrl` (configure both on `<QeetIDProvider>`).
 
 Props (`QeetAuthButtonProps`):
 
@@ -74,7 +74,7 @@ Props (`QeetAuthButtonProps`):
 
 ```tsx
 "use client";
-import { SignedIn, SignedOut, SignInButton, SignOutButton, useUser } from "@qeetid/react";
+import { SignedIn, SignedOut, SignInButton, SignOutButton, useUser } from "@qeet-id/react";
 
 export function Header() {
   const { user } = useUser();
@@ -94,10 +94,10 @@ export function Header() {
 
 | Export | Description |
 | --- | --- |
-| `<QeetidProvider initialState loginUrl? signUpUrl? logoutUrl?>` | Supplies auth context. |
+| `<QeetIDProvider initialState loginUrl? signUpUrl? logoutUrl?>` | Supplies auth context. |
 | `<SignInWithQeet>` / `<SignUpWithQeet>` / `<ContinueWithQeet>` | Branded buttons with the Qeet logo. |
 | `<SignedIn>` / `<SignedOut>` | Conditionally render by auth state. |
-| `<SignInButton>` / `<SignOutButton>` | Unstyled redirect to the hosted login / logout. |
+| `<SignInButton>` / `<SignUpButton>` / `<SignOutButton>` | Unstyled redirect to the hosted login / sign-up / logout. |
 | `<UserButton>` | Avatar + account menu with a sign-out action. |
 | `useUser()` | `{ isLoaded, isAuthenticated, user }`. |
 | `useAuth()` | `{ isLoaded, isAuthenticated, userId, tenantId, sessionId }`. |

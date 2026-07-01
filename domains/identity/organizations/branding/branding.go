@@ -58,6 +58,28 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, er
 	return &b, nil
 }
 
+// LoginBranding returns the tenant's hosted-login branding (logo + brand colors)
+// as plain strings for the OIDC login-context endpoint, so the login app can
+// render the tenant's brand without a second round-trip. Missing/unset fields
+// come back empty. Satisfies oidc.BrandingLister (deps stay one-way: primitives
+// only, no branding types leak into federation).
+func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor string) {
+	b, err := r.Get(ctx, tenantID)
+	if err != nil || b == nil {
+		return "", "", ""
+	}
+	if b.LogoURL != nil {
+		logoURL = *b.LogoURL
+	}
+	if b.PrimaryColor != nil {
+		primaryColor = *b.PrimaryColor
+	}
+	if b.SecondaryColor != nil {
+		secondaryColor = *b.SecondaryColor
+	}
+	return logoURL, primaryColor, secondaryColor
+}
+
 func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	settings, _ := json.Marshal(b.Settings)
 	_, err := tx.Exec(ctx, `

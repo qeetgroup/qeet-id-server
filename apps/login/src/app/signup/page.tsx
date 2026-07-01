@@ -1,3 +1,6 @@
+import { AuthShell } from "@/components/auth-shell";
+import { type BrandingDTO, normalizeBranding } from "@/lib/branding";
+
 import { SignupForm } from "./signup-form";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
@@ -6,6 +9,7 @@ type LoginContext = {
   client_name?: string;
   tenant_id?: string;
   self_registration_enabled?: boolean;
+  branding?: BrandingDTO;
 };
 
 function clientIDFromReturnTo(returnTo: string): string {
@@ -43,12 +47,16 @@ export default async function SignupPage({
   const { return_to } = await searchParams;
   const returnTo = return_to ?? "";
   const ctx = await fetchContext(clientIDFromReturnTo(returnTo));
+  const branding = normalizeBranding(ctx.branding);
   return (
-    <SignupForm
-      returnTo={returnTo}
-      clientName={ctx.client_name ?? ""}
-      tenantId={ctx.tenant_id ?? ""}
-      selfRegistrationEnabled={ctx.self_registration_enabled ?? false}
-    />
+    <AuthShell branding={branding}>
+      <SignupForm
+        returnTo={returnTo}
+        clientName={ctx.client_name ?? ""}
+        tenantId={ctx.tenant_id ?? ""}
+        selfRegistrationEnabled={ctx.self_registration_enabled ?? false}
+        branding={branding}
+      />
+    </AuthShell>
   );
 }

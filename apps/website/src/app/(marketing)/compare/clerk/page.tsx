@@ -46,7 +46,7 @@ const data: ComparisonData = {
 
     // ---- Frontend ----
     { section: "Frontend", feature: "Hosted, brandable login + consent UI", qeetid: true, competitor: true, note: "Qeet ID ships a hosted login app (password + passkey + social + scope consent + device-grant)." },
-    { section: "Frontend", feature: "React SDK (sessions, silent refresh)", qeetid: true, competitor: true, note: "@qeetid/react + @qeetid/nextjs with HttpOnly sealed-cookie sessions." },
+    { section: "Frontend", feature: "React SDK (sessions, silent refresh)", qeetid: true, competitor: true, note: "@qeet-id/react + @qeet-id/nextjs with HttpOnly sealed-cookie sessions." },
     { section: "Frontend", feature: "Prebuilt drop-in `<SignIn />` components", qeetid: "partial", competitor: true, note: "Clerk's component kit is its signature strength; Qeet ID's prebuilt components are in progress." },
     { section: "Frontend", feature: "Native admin dashboard", qeetid: true, competitor: true },
 

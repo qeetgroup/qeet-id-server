@@ -1,6 +1,6 @@
 // Resolved Qeet ID configuration, read once from the environment.
 
-export interface QeetidConfig {
+export interface QeetIDConfig {
   /** OIDC client id registered in Qeet ID. */
   clientId: string;
   /** OIDC client secret (server-only). */
@@ -20,17 +20,17 @@ export const PKCE_COOKIE = "qeetid_pkce";
 
 function required(name: string): string {
   const v = process.env[name];
-  if (!v) throw new Error(`@qeetid/nextjs: ${name} is required`);
+  if (!v) throw new Error(`@qeet-id/nextjs: ${name} is required`);
   return v;
 }
 
-let cached: QeetidConfig | undefined;
+let cached: QeetIDConfig | undefined;
 
-export function getConfig(): QeetidConfig {
+export function getConfig(): QeetIDConfig {
   if (cached) return cached;
   const cookieSecret = required("QEETID_COOKIE_SECRET");
   if (cookieSecret.length < 32) {
-    throw new Error("@qeetid/nextjs: QEETID_COOKIE_SECRET must be at least 32 characters");
+    throw new Error("@qeet-id/nextjs: QEETID_COOKIE_SECRET must be at least 32 characters");
   }
   cached = {
     clientId: required("QEETID_CLIENT_ID"),
@@ -44,6 +44,6 @@ export function getConfig(): QeetidConfig {
 }
 
 /** The OAuth redirect URI this integration handles (must be registered on the client). */
-export function callbackUrl(cfg: QeetidConfig): string {
+export function callbackUrl(cfg: QeetIDConfig): string {
   return `${cfg.appUrl}/api/auth/callback`;
 }

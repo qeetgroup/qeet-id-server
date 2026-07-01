@@ -1,3 +1,6 @@
+import { AuthShell } from "@/components/auth-shell";
+import { type BrandingDTO, normalizeBranding } from "@/lib/branding";
+
 import { LoginForm } from "./login-form";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4001";
@@ -8,6 +11,7 @@ type LoginContext = {
   providers?: string[];
   self_registration_enabled?: boolean;
   remember_device_enabled?: boolean;
+  branding?: BrandingDTO;
 };
 
 function clientIDFromReturnTo(returnTo: string): string {
@@ -44,15 +48,19 @@ export default async function LoginPage({
   const { return_to, error } = await searchParams;
   const returnTo = return_to ?? "";
   const ctx = await fetchContext(clientIDFromReturnTo(returnTo));
+  const branding = normalizeBranding(ctx.branding);
   return (
-    <LoginForm
-      returnTo={returnTo}
-      clientName={ctx.client_name ?? ""}
-      tenantId={ctx.tenant_id ?? ""}
-      providers={ctx.providers ?? []}
-      selfRegistrationEnabled={ctx.self_registration_enabled ?? false}
-      rememberDeviceEnabled={ctx.remember_device_enabled ?? false}
-      errorCode={error ?? ""}
-    />
+    <AuthShell branding={branding}>
+      <LoginForm
+        returnTo={returnTo}
+        clientName={ctx.client_name ?? ""}
+        tenantId={ctx.tenant_id ?? ""}
+        providers={ctx.providers ?? []}
+        selfRegistrationEnabled={ctx.self_registration_enabled ?? false}
+        rememberDeviceEnabled={ctx.remember_device_enabled ?? false}
+        errorCode={error ?? ""}
+        branding={branding}
+      />
+    </AuthShell>
   );
 }

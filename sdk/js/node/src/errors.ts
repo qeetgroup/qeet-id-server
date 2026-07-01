@@ -1,14 +1,14 @@
-// Typed error hierarchy. Every failed API call throws a QeetidError (or a
+// Typed error hierarchy. Every failed API call throws a QeetIDError (or a
 // subclass), so callers can switch on `err.status` / `instanceof`.
 
-export class QeetidError extends Error {
+export class QeetIDError extends Error {
   readonly status: number;
   readonly code: string;
   readonly requestId?: string;
 
   constructor(status: number, code: string, message: string, requestId?: string) {
     super(message);
-    this.name = "QeetidError";
+    this.name = "QeetIDError";
     this.status = status;
     this.code = code;
     this.requestId = requestId;
@@ -16,7 +16,7 @@ export class QeetidError extends Error {
 }
 
 /** 401 — bad/expired API key or credentials. */
-export class InvalidCredentialsError extends QeetidError {
+export class InvalidCredentialsError extends QeetIDError {
   constructor(message: string, requestId?: string) {
     super(401, "unauthorized", message, requestId);
     this.name = "InvalidCredentialsError";
@@ -24,7 +24,7 @@ export class InvalidCredentialsError extends QeetidError {
 }
 
 /** 403 — authenticated but not permitted. */
-export class ForbiddenError extends QeetidError {
+export class ForbiddenError extends QeetIDError {
   constructor(message: string, requestId?: string) {
     super(403, "forbidden", message, requestId);
     this.name = "ForbiddenError";
@@ -32,7 +32,7 @@ export class ForbiddenError extends QeetidError {
 }
 
 /** 404 — resource not found. */
-export class NotFoundError extends QeetidError {
+export class NotFoundError extends QeetIDError {
   constructor(message: string, requestId?: string) {
     super(404, "not_found", message, requestId);
     this.name = "NotFoundError";
@@ -40,7 +40,7 @@ export class NotFoundError extends QeetidError {
 }
 
 /** 429 — rate limited. `retryAfterSeconds` is set when the server sent it. */
-export class RateLimitError extends QeetidError {
+export class RateLimitError extends QeetIDError {
   readonly retryAfterSeconds?: number;
   constructor(message: string, retryAfterSeconds?: number, requestId?: string) {
     super(429, "too_many_requests", message, requestId);
@@ -50,7 +50,7 @@ export class RateLimitError extends QeetidError {
 }
 
 /** SessionVerificationError — a token failed local JWKS verification. */
-export class SessionVerificationError extends QeetidError {
+export class SessionVerificationError extends QeetIDError {
   constructor(message: string) {
     super(401, "invalid_token", message);
     this.name = "SessionVerificationError";
@@ -67,7 +67,7 @@ export function errorFromResponse(
   body: unknown,
   requestId: string | undefined,
   retryAfterSeconds: number | undefined,
-): QeetidError {
+): QeetIDError {
   const err = (body as ErrorBody | null)?.error;
   const code = err?.code ?? `http_${status}`;
   const message = err?.message ?? `request failed with status ${status}`;
@@ -81,6 +81,6 @@ export function errorFromResponse(
     case 429:
       return new RateLimitError(message, retryAfterSeconds, requestId);
     default:
-      return new QeetidError(status, code, message, requestId);
+      return new QeetIDError(status, code, message, requestId);
   }
 }

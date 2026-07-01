@@ -49,7 +49,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@qeetid/tsconfig": "workspace:*",
+    "@qeet-id/tsconfig": "workspace:*",
     "@rolldown/plugin-babel": "^0.2.3",
     "@tanstack/devtools-vite": "^0.7.0",
     "@testing-library/dom": "^10.4.1",

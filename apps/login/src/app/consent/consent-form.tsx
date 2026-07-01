@@ -1,9 +1,13 @@
 "use client";
 
-import { Button, Card, CardContent } from "@qeetrix/ui";
+import { Button, Spinner } from "@qeetrix/ui";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthCard } from "@/components/auth-card";
+import { FormAlert } from "@/components/form-alert";
+import { ScopeList } from "@/components/scope-list";
+import type { Branding } from "@/lib/branding";
 import { ApiError, apiPost } from "@/lib/api";
 
 export type ConsentParams = {
@@ -16,11 +20,21 @@ export type ConsentParams = {
   code_challenge_method: string;
 };
 
-export function ConsentForm({ params }: { params: ConsentParams }) {
+export function ConsentForm({
+  params,
+  clientName,
+  branding,
+}: {
+  params: ConsentParams;
+  clientName?: string;
+  branding?: Branding;
+}) {
   const { t } = useTranslation("consent");
   const scopes = params.scope.split(/\s+/).filter(Boolean);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const appName = clientName || params.client_id || t("common:fallbacks.application");
 
   async function decide(approve: boolean) {
     setError(null);
@@ -38,45 +52,40 @@ export function ConsentForm({ params }: { params: ConsentParams }) {
   }
 
   return (
-    <Card className="w-full max-w-md">
-      <CardContent className="space-y-5 pt-6">
-        <div className="space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight">{t("title")}</h1>
-          <p className="text-muted-foreground text-sm">
-            <span className="text-foreground font-medium">
-              {params.client_id || t("common:fallbacks.application")}
-            </span>{" "}
-            {t("wantsPermission")}
-          </p>
-        </div>
+    <AuthCard
+      branding={branding}
+      className="max-w-md"
+      title={t("title")}
+      subtitle={
+        <>
+          <span className="text-foreground font-medium">{appName}</span> {t("wantsPermission")}
+        </>
+      }
+    >
+      <ScopeList scopes={scopes} />
 
-        <ul className="space-y-2 text-sm">
-          {scopes.length === 0 && (
-            <li className="text-muted-foreground">{t("common:fallbacks.signYouIn")}</li>
+      <FormAlert>{error}</FormAlert>
+
+      <div className="flex gap-3">
+        <Button
+          variant="outline"
+          size="lg"
+          className="flex-1"
+          disabled={loading}
+          onClick={() => decide(false)}
+        >
+          {t("actions.deny")}
+        </Button>
+        <Button size="lg" className="flex-1" disabled={loading} onClick={() => decide(true)}>
+          {loading ? (
+            <>
+              <Spinner size="sm" className="mr-2" /> {t("actions.allowing")}
+            </>
+          ) : (
+            t("actions.allow")
           )}
-          {scopes.map((s) => (
-            <li key={s} className="flex gap-2">
-              <span aria-hidden>•</span>
-              <span>{t(`common:scopes.${s}`, { defaultValue: s })}</span>
-            </li>
-          ))}
-        </ul>
-
-        {error && (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
-        )}
-
-        <div className="flex gap-3">
-          <Button variant="outline" className="flex-1" disabled={loading} onClick={() => decide(false)}>
-            {t("actions.deny")}
-          </Button>
-          <Button className="flex-1" disabled={loading} onClick={() => decide(true)}>
-            {loading ? t("actions.allowing") : t("actions.allow")}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </Button>
+      </div>
+    </AuthCard>
   );
 }

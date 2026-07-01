@@ -1,4 +1,4 @@
-import { HttpClient, type QeetidOptions } from "./client.js";
+import { HttpClient, type QeetIDOptions } from "./client.js";
 import { Sessions } from "./sessions.js";
 import { Tenants } from "./tenants.js";
 import { Users } from "./users.js";
@@ -16,23 +16,23 @@ export interface PermissionCheck {
 }
 
 /**
- * Qeetid is the server-side client. Construct it once with an API key and reuse
+ * QeetID is the server-side client. Construct it once with an API key and reuse
  * it. Authenticate to Qeet ID with your `qk_…` key — never ship it to a browser.
  *
  * @example
- * const qeetid = new Qeetid({ apiKey: process.env.QEETID_API_KEY! });
+ * const qeetid = new QeetID({ apiKey: process.env.QEETID_API_KEY! });
  * const claims = await qeetid.sessions.verify(accessToken);
  * if (await qeetid.can({ user: claims.userId, tenant: claims.tenantId!, permission: "billing:write" })) {
  *   await qeetid.users.create({ email: "new@acme.com" });
  * }
  */
-export class Qeetid {
+export class QeetID {
   readonly users: Users;
   readonly tenants: Tenants;
   readonly sessions: Sessions;
   private readonly http: HttpClient;
 
-  constructor(options: QeetidOptions) {
+  constructor(options: QeetIDOptions) {
     this.http = new HttpClient(options);
     this.users = new Users(this.http);
     this.tenants = new Tenants(this.http);
@@ -58,7 +58,7 @@ export class Qeetid {
 }
 
 export { HttpClient } from "./client.js";
-export type { QeetidOptions, FetchLike } from "./client.js";
+export type { QeetIDOptions, FetchLike } from "./client.js";
 export { Users } from "./users.js";
 export type { User, CreateUserInput, UpdateUserInput, ListParams, Page } from "./users.js";
 export { Tenants } from "./tenants.js";
@@ -66,7 +66,7 @@ export type { Tenant, CreateTenantInput, UpdateTenantInput } from "./tenants.js"
 export { Sessions } from "./sessions.js";
 export type { SessionClaims, VerifyOptions } from "./sessions.js";
 export {
-  QeetidError,
+  QeetIDError,
   InvalidCredentialsError,
   ForbiddenError,
   NotFoundError,

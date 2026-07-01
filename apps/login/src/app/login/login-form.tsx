@@ -1,11 +1,14 @@
 "use client";
 
-import { QeetLogo } from "@qeetrix/ui/brand";
-import { Button, Card, CardContent, Input } from "@qeetrix/ui";
+import { Button, Input, OTPInput, Separator, Spinner } from "@qeetrix/ui";
+import { IconPasskey } from "@qeetrix/ui/brand";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthCard } from "@/components/auth-card";
+import { FormAlert } from "@/components/form-alert";
 import { ProviderIcon } from "@/components/social-providers";
+import type { Branding } from "@/lib/branding";
 import { API_BASE_URL, ApiError, apiPost } from "@/lib/api";
 
 type LoginFormProps = {
@@ -20,6 +23,7 @@ type LoginFormProps = {
   // errorCode seeds the error banner from a redirect (e.g. a failed social
   // ceremony bounced back as ?error=social); empty when there's nothing to show.
   errorCode: string;
+  branding?: Branding;
 };
 
 // safeReturnTo guards against open redirects: we only ever bounce back to our
@@ -59,6 +63,7 @@ export function LoginForm({
   selfRegistrationEnabled,
   rememberDeviceEnabled,
   errorCode,
+  branding,
 }: LoginFormProps) {
   const { t } = useTranslation("login");
   const [email, setEmail] = useState("");
@@ -100,6 +105,7 @@ export function LoginForm({
       <MfaChallenge
         mfaToken={mfaToken}
         rememberDeviceEnabled={rememberDeviceEnabled}
+        branding={branding}
         onVerified={continueToApp}
         onBack={() => {
           setMfaToken(null);
@@ -156,112 +162,119 @@ export function LoginForm({
   const showSocial = providers.length > 0 && tenantId !== "" && returnTo !== "";
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardContent className="space-y-6 pt-6">
-        <div className="space-y-2 text-center">
-          <QeetLogo size={40} className="mx-auto" />
-          <h1 className="text-xl font-semibold tracking-tight">
-            {clientName ? t("titleTo", { client: clientName }) : t("title")}
-          </h1>
-          <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
+    <AuthCard
+      branding={branding}
+      title={clientName ? t("titleTo", { client: clientName }) : t("title")}
+      subtitle={t("subtitle")}
+    >
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <label htmlFor="email" className="text-sm font-medium">
+            {t("fields.email")}
+          </label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email webauthn"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+          />
         </div>
-
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="email" className="text-sm font-medium">
-              {t("fields.email")}
-            </label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email webauthn"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-            />
-          </div>
-          <div className="space-y-1.5">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
             <label htmlFor="password" className="text-sm font-medium">
               {t("fields.password")}
             </label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <div className="text-right">
-              <a
-                href={`/forgot-password${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ""}`}
-                className="text-muted-foreground hover:text-foreground text-xs underline"
-              >
-                {t("forgotPassword")}
-              </a>
-            </div>
-          </div>
-
-          {error && (
-            <p role="alert" className="text-destructive text-sm">
-              {error}
-            </p>
-          )}
-
-          <Button type="submit" className="w-full" disabled={busy}>
-            {loading ? t("submit.busy") : t("submit.idle")}
-          </Button>
-        </form>
-
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          disabled={busy}
-          onClick={passkeyLogin}
-        >
-          {passkeyBusy ? t("passkey.busy") : t("passkey.idle")}
-        </Button>
-
-        {showSocial && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <span className="bg-border h-px flex-1" />
-              <span className="text-muted-foreground text-xs">{t("social.divider")}</span>
-              <span className="bg-border h-px flex-1" />
-            </div>
-            <div className="grid gap-2">
-              {providers.map((p) => (
-                <Button
-                  key={p}
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-center gap-2"
-                  disabled={busy}
-                  onClick={() => socialStart(p)}
-                >
-                  <ProviderIcon provider={p} />
-                  {t(`common:providers.${p}`, { defaultValue: titleCase(p) })}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {selfRegistrationEnabled && (
-          <p className="text-muted-foreground text-center text-sm">
-            {t("noAccount")}{" "}
             <a
-              href={`/signup${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ""}`}
-              className="hover:text-foreground underline"
+              href={`/forgot-password${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ""}`}
+              className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
             >
-              {t("signUp")}
+              {t("forgotPassword")}
             </a>
-          </p>
+          </div>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+
+        <FormAlert>{error}</FormAlert>
+
+        <Button type="submit" size="lg" className="w-full" disabled={busy}>
+          {loading ? (
+            <>
+              <Spinner size="sm" className="mr-2" /> {t("submit.busy")}
+            </>
+          ) : (
+            t("submit.idle")
+          )}
+        </Button>
+      </form>
+
+      <Button
+        type="button"
+        variant="outline"
+        size="lg"
+        className="w-full"
+        disabled={busy}
+        onClick={passkeyLogin}
+      >
+        {passkeyBusy ? (
+          <>
+            <Spinner size="sm" className="mr-2" /> {t("passkey.busy")}
+          </>
+        ) : (
+          <>
+            <IconPasskey className="mr-2 size-4" /> {t("passkey.idle")}
+          </>
         )}
-      </CardContent>
-    </Card>
+      </Button>
+
+      {showSocial && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Separator className="flex-1" />
+            <span className="text-muted-foreground text-xs whitespace-nowrap">
+              {t("social.divider")}
+            </span>
+            <Separator className="flex-1" />
+          </div>
+          <div className="grid gap-2">
+            {providers.map((p) => (
+              <Button
+                key={p}
+                type="button"
+                variant="outline"
+                className="w-full justify-center gap-2"
+                disabled={busy}
+                onClick={() => socialStart(p)}
+              >
+                <ProviderIcon provider={p} />
+                {t(`common:providers.${p}`, { defaultValue: titleCase(p) })}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {selfRegistrationEnabled && (
+        <p className="text-muted-foreground text-center text-sm">
+          {t("noAccount")}{" "}
+          <a
+            href={`/signup${returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : ""}`}
+            className="text-foreground font-medium underline-offset-2 hover:underline"
+          >
+            {t("signUp")}
+          </a>
+        </p>
+      )}
+    </AuthCard>
   );
 }
 
@@ -271,26 +284,28 @@ export function LoginForm({
 function MfaChallenge({
   mfaToken,
   rememberDeviceEnabled,
+  branding,
   onVerified,
   onBack,
 }: {
   mfaToken: string;
   rememberDeviceEnabled: boolean;
+  branding?: Branding;
   onVerified: () => void;
   onBack: () => void;
 }) {
   const { t } = useTranslation("login");
   const [code, setCode] = useState("");
   const [remember, setRemember] = useState(false);
+  const [recovery, setRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function verify(value: string) {
     setError(null);
     setLoading(true);
     try {
-      await apiPost("/v1/auth/session/mfa", { mfa_token: mfaToken, code, remember });
+      await apiPost("/v1/auth/session/mfa", { mfa_token: mfaToken, code: value, remember });
       onVerified();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("common:errors.generic"));
@@ -298,65 +313,93 @@ function MfaChallenge({
     }
   }
 
-  return (
-    <Card className="w-full max-w-sm">
-      <CardContent className="space-y-6 pt-6">
-        <div className="space-y-1 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{t("mfa.title")}</h1>
-          <p className="text-muted-foreground text-sm">{t("mfa.subtitle")}</p>
-        </div>
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    void verify(code);
+  }
 
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor="mfa-code" className="text-sm font-medium">
-              {t("mfa.label")}
-            </label>
+  function toggleMode() {
+    setRecovery((r) => !r);
+    setCode("");
+    setError(null);
+  }
+
+  return (
+    <AuthCard
+      branding={branding}
+      title={t("mfa.title")}
+      subtitle={recovery ? t("mfa.subtitleRecovery") : t("mfa.subtitle")}
+    >
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <label htmlFor="mfa-code" className="text-sm font-medium">
+            {recovery ? t("mfa.recoveryLabel") : t("mfa.label")}
+          </label>
+          {recovery ? (
             <Input
               id="mfa-code"
               type="text"
-              inputMode="numeric"
               autoComplete="one-time-code"
               autoFocus
               required
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="123456"
+              placeholder={t("mfa.recoveryPlaceholder")}
             />
-          </div>
-
-          {rememberDeviceEnabled && (
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-              />
-              {t("mfa.remember")}
-            </label>
+          ) : (
+            <OTPInput
+              value={code}
+              onChange={setCode}
+              onComplete={(v) => void verify(v)}
+              autoFocus
+              disabled={loading}
+              aria-label={t("mfa.label")}
+            />
           )}
+        </div>
 
-          {error && (
-            <p role="alert" className="text-destructive text-sm">
-              {error}
-            </p>
+        {rememberDeviceEnabled && (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            {t("mfa.remember")}
+          </label>
+        )}
+
+        <FormAlert>{error}</FormAlert>
+
+        <Button type="submit" size="lg" className="w-full" disabled={loading || code.length === 0}>
+          {loading ? (
+            <>
+              <Spinner size="sm" className="mr-2" /> {t("mfa.submit.busy")}
+            </>
+          ) : (
+            t("mfa.submit.idle")
           )}
+        </Button>
+      </form>
 
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? t("mfa.submit.busy") : t("mfa.submit.idle")}
-          </Button>
-        </form>
-
-        <Button
+      <div className="flex flex-col gap-1 text-center">
+        <button
           type="button"
-          variant="ghost"
-          className="w-full"
+          className="text-muted-foreground hover:text-foreground text-sm underline-offset-2 hover:underline"
+          onClick={toggleMode}
+        >
+          {recovery ? t("mfa.useTotp") : t("mfa.useRecovery")}
+        </button>
+        <button
+          type="button"
+          className="text-muted-foreground hover:text-foreground text-sm underline-offset-2 hover:underline"
           disabled={loading}
           onClick={onBack}
         >
           {t("mfa.back")}
-        </Button>
-      </CardContent>
-    </Card>
+        </button>
+      </div>
+    </AuthCard>
   );
 }

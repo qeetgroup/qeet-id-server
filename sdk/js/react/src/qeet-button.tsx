@@ -144,21 +144,23 @@ function QeetAuthButton({
   );
 }
 
-/** "Sign in with Qeet" — redirects to the hosted Qeet login. */
+/** "Sign in with Qeet" — a branded button that redirects to the hosted Qeet
+ * login (Qeet-as-IdP). For your app's own sign-in button, use <SignInButton>. */
 export function SignInWithQeet(props: QeetAuthButtonProps) {
   const { loginUrl } = usePaths();
   const returnTo = props.returnTo ?? defaultReturnTo();
   return <QeetAuthButton {...props} label="Sign in with Qeet" onClick={() => navigate(loginUrl, returnTo)} />;
 }
 
-/** "Sign up with Qeet" — redirects to the hosted Qeet sign-up. */
+/** "Sign up with Qeet" — branded button that redirects to the hosted Qeet sign-up. */
 export function SignUpWithQeet(props: QeetAuthButtonProps) {
   const { signUpUrl } = usePaths();
   const returnTo = props.returnTo ?? defaultReturnTo();
   return <QeetAuthButton {...props} label="Sign up with Qeet" onClick={() => navigate(signUpUrl, returnTo)} />;
 }
 
-/** "Continue with Qeet" — neutral label covering both sign-in and sign-up. */
+/** "Continue with Qeet" — branded button with a neutral label covering both
+ * sign-in and sign-up. */
 export function ContinueWithQeet(props: QeetAuthButtonProps) {
   const { loginUrl } = usePaths();
   const returnTo = props.returnTo ?? defaultReturnTo();

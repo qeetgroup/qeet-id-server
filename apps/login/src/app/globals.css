@@ -1,1 +1,103 @@
 @import "@qeetrix/ui/styles.css";
+
+/* ---------------------------------------------------------------------------
+ * Hosted-login design language
+ * The @qeetrix/ui import above provides Tailwind v4, design tokens, and the
+ * Cal Sans / Fira Code @font-face declarations. Everything below is the
+ * premium split-screen shell's own layer: brand-panel artwork, entrance
+ * motion, and the tenant-brandable gradient anchors. Per-tenant colors flow in
+ * via --qeet-brand / --qeet-brand-2 (see lib/branding.ts); these are the
+ * default Qeet brand fallbacks.
+ * ------------------------------------------------------------------------- */
+:root {
+  --qeet-brand: #f26d0e;
+  --qeet-brand-2: #d85301;
+}
+
+/* Auth headings use the display face (Cal Sans Display) for a confident,
+ * branded feel; body/labels stay on the UI/text faces from the tokens. */
+.auth-title {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* Brand panel — the left column on ≥lg. A layered gradient built from the
+ * tenant (or default Qeet) brand colors, with a soft mesh highlight. */
+.auth-brand-panel {
+  background:
+    radial-gradient(
+      120% 120% at 12% 8%,
+      color-mix(in oklab, var(--qeet-brand) 78%, white) 0%,
+      transparent 52%
+    ),
+    radial-gradient(
+      130% 130% at 100% 100%,
+      color-mix(in oklab, var(--qeet-brand-2) 88%, black) 0%,
+      transparent 46%
+    ),
+    linear-gradient(135deg, var(--qeet-brand) 0%, var(--qeet-brand-2) 100%);
+  color: #fff;
+}
+
+/* Fine grid overlay for depth, masked to fade toward the edges. */
+.auth-brand-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(120% 90% at 30% 20%, #000 0%, transparent 75%);
+  mask-image: radial-gradient(120% 90% at 30% 20%, #000 0%, transparent 75%);
+  pointer-events: none;
+}
+
+/* Slow drifting highlight blob. */
+.auth-blob {
+  position: absolute;
+  width: 42rem;
+  height: 42rem;
+  right: -12rem;
+  top: -8rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.22) 0%, transparent 62%);
+  filter: blur(6px);
+  animation: auth-float 16s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes auth-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(-3rem, 2rem, 0) scale(1.08);
+  }
+}
+
+/* Content entrance — a subtle rise+fade for the card/form. */
+.auth-rise {
+  animation: auth-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes auth-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-rise {
+    animation: none;
+  }
+  .auth-blob {
+    animation: none;
+  }
+}

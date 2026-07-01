@@ -1,7 +1,7 @@
 {
   "name": "@qeet-id/react",
-  "version": "0.0.1",
-  "description": "React client components & hooks for Qeet ID — branded <SignInWithQeet>/<SignUpWithQeet> buttons, <SignedIn>, useUser, <UserButton>, and a provider for the hosted-login flow.",
+  "version": "0.2.0",
+  "description": "React client components & hooks for Qeet ID — <QeetIDProvider>, useAuth/useUser, <SignedIn>/<SignedOut>, <SignInButton>/<SignUpButton>/<SignOutButton>, branded <SignInWithQeet>/<SignUpWithQeet>/<ContinueWithQeet>, and <UserButton>.",
   "type": "module",
   "license": "MIT",
   "main": "./dist/index.js",
@@ -20,6 +20,9 @@
     "lint": "eslint . --ext .ts,.tsx",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\" --ignore-path ../../.prettierignore",
     "check": "eslint . --ext .ts,.tsx && prettier --check \"**/*.{ts,tsx,json,md}\" --ignore-path ../../.prettierignore"
+  },
+  "dependencies": {
+    "@qeet-id/client": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18"

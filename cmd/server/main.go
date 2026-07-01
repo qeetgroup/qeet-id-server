@@ -456,7 +456,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Billing:       &billing.Handler{Service: billingService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: cfg.ServiceEnv != "dev"},
 		Social:        &social.Handler{Service: socialService, CookieSecure: cfg.ServiceEnv != "dev", LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},

@@ -1,10 +1,11 @@
-# @qeetid/sdk
+# @qeet-id/node
 
 Server-side TypeScript SDK for [Qeet ID](https://id.qeet.in). Manage users and
 tenants, run authorization checks, and verify sessions — from your backend.
 
 > **Server-side only.** Authenticate with a secret API key (`qk_…`). Never ship
-> it to a browser. For the web app, use `@qeetid/nextjs` / `@qeetid/react`.
+> it to a browser. For the web app, use `@qeet-id/nextjs` / `@qeet-id/react`;
+> for browser auth flows use `@qeet-id/client`.
 
 Zero runtime dependencies — uses the built-in `fetch` and `node:crypto`
 (Node ≥ 18).
@@ -12,15 +13,15 @@ Zero runtime dependencies — uses the built-in `fetch` and `node:crypto`
 ## Install
 
 ```bash
-pnpm add @qeetid/sdk
+pnpm add @qeet-id/node
 ```
 
 ## Quick start
 
 ```ts
-import { Qeetid } from "@qeetid/sdk";
+import { QeetID } from "@qeet-id/node";
 
-const qeetid = new Qeetid({ apiKey: process.env.QEETID_API_KEY! });
+const qeetid = new QeetID({ apiKey: process.env.QEETID_API_KEY! });
 
 // Verify the caller's access token (local — checks the ES256 signature against
 // the published JWKS, then expiry/issuer/audience). No network call after the
@@ -51,11 +52,11 @@ for await (const u of qeetid.users.listAll({ tenant: "acme" })) {
 
 ## Errors
 
-Every failed call throws a `QeetidError` (or subclass) carrying `status`,
+Every failed call throws a `QeetIDError` (or subclass) carrying `status`,
 `code`, and `requestId`:
 
 ```ts
-import { RateLimitError, InvalidCredentialsError } from "@qeetid/sdk";
+import { RateLimitError, InvalidCredentialsError } from "@qeet-id/node";
 
 try {
   await qeetid.users.get("usr_missing");
@@ -72,7 +73,7 @@ honoring `Retry-After`.
 ## Configuration
 
 ```ts
-new Qeetid({
+new QeetID({
   apiKey: "qk_…",                 // required
   baseUrl: "https://api.id.qeet.in", // default
   timeoutMs: 10_000,
@@ -84,5 +85,5 @@ new Qeetid({
 ## Roadmap
 
 API keys, magic links, and audit-log resources; parity Go module
-(`github.com/qeetgroup/qeetid-go`); and the `@qeetid/nextjs` + `@qeetid/react`
+(`github.com/qeetgroup/qeetid-go`); and the `@qeet-id/nextjs` + `@qeet-id/react`
 integrations for the hosted-login flow.

@@ -1,7 +1,7 @@
 import Link from "next/link";
 
-import { currentUser, getToken } from "@qeetid/nextjs";
-import { SignOutButton } from "@qeetid/react";
+import { currentUser, getToken } from "@qeet-id/nextjs";
+import { SignOutButton } from "@qeet-id/react";
 
 // Reached only when signed in — qeetidMiddleware redirects anonymous visitors to
 // the hosted login before this server component runs.

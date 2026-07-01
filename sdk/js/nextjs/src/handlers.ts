@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import { Sessions } from "@qeetid/sdk";
+import { Sessions } from "@qeet-id/node";
 import { NextResponse, type NextRequest } from "next/server";
 
-import { callbackUrl, getConfig, PKCE_COOKIE, SESSION_COOKIE, type QeetidConfig } from "./config.js";
+import { callbackUrl, getConfig, PKCE_COOKIE, SESSION_COOKIE, type QeetIDConfig } from "./config.js";
 import { open, seal } from "./cookies.js";
 import type { SessionData } from "./types.js";
 
@@ -23,7 +23,7 @@ interface TokenResponse {
 /**
  * handleAuth returns the GET route handler for `app/api/auth/[...qeetid]/route.ts`:
  *
- *   import { handleAuth } from "@qeetid/nextjs";
+ *   import { handleAuth } from "@qeet-id/nextjs";
  *   export const GET = handleAuth();
  *
  * It serves /api/auth/login, /api/auth/callback, and /api/auth/logout.
@@ -52,7 +52,7 @@ function b64url(b: Buffer): string {
   return b.toString("base64url");
 }
 
-function isSecure(cfg: QeetidConfig): boolean {
+function isSecure(cfg: QeetIDConfig): boolean {
   return cfg.appUrl.startsWith("https");
 }
 
@@ -61,7 +61,7 @@ function safeReturn(raw: string | null): string {
   return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
 }
 
-async function startLogin(req: NextRequest, cfg: QeetidConfig): Promise<NextResponse> {
+async function startLogin(req: NextRequest, cfg: QeetIDConfig): Promise<NextResponse> {
   const verifier = b64url(randomBytes(32));
   const challenge = b64url(createHash("sha256").update(verifier).digest());
   const state = b64url(randomBytes(16));
@@ -88,7 +88,7 @@ async function startLogin(req: NextRequest, cfg: QeetidConfig): Promise<NextResp
   return res;
 }
 
-async function handleCallback(req: NextRequest, cfg: QeetidConfig): Promise<NextResponse> {
+async function handleCallback(req: NextRequest, cfg: QeetIDConfig): Promise<NextResponse> {
   const params = req.nextUrl.searchParams;
   const fail = (reason: string) =>
     NextResponse.redirect(new URL(`/?auth_error=${encodeURIComponent(reason)}`, cfg.appUrl));
@@ -145,7 +145,7 @@ async function handleCallback(req: NextRequest, cfg: QeetidConfig): Promise<Next
   return res;
 }
 
-function handleLogout(cfg: QeetidConfig): NextResponse {
+function handleLogout(cfg: QeetIDConfig): NextResponse {
   const logout = new URL(`${cfg.apiUrl}/v1/oauth/logout`);
   logout.searchParams.set("client_id", cfg.clientId);
   logout.searchParams.set("post_logout_redirect_uri", cfg.appUrl);

@@ -31,7 +31,7 @@ import {
 
 // Provider → brand-logo map for the hosted login's social buttons. Mirrors the
 // catalog in the admin app's auth/social.tsx (kept as a focused copy rather than
-// a shared package to keep this change small; extract to @qeetid/providers if it
+// a shared package to keep this change small; extract to @qeet-id/providers if it
 // drifts). iconClass handles dark-mode legibility (black-only marks invert in
 // dark, white-only marks invert in light); `fill` is set only for marks that
 // ship without a baked color.

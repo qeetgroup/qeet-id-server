@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { QeetidProvider, SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeetid/react";
+import { QeetIDProvider, SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeet-id/react";
 
 import {
   fetchUserInfo,
@@ -84,7 +84,7 @@ function Home() {
   const isAuthenticated = Boolean(token && user);
 
   return (
-    <QeetidProvider
+    <QeetIDProvider
       initialState={{
         isAuthenticated,
         userId: user?.sub,
@@ -105,7 +105,7 @@ function Home() {
         <h1>Qeet ID — React SPA Example</h1>
         <p className="muted">
           A Vite single-page app that signs in with Qeet ID using a client-side OAuth2 + PKCE flow
-          (public client) and <code>@qeetid/react</code> components.
+          (public client) and <code>@qeet-id/react</code> components.
         </p>
 
         <SignedOut>
@@ -129,7 +129,7 @@ function Home() {
           <pre className="code token">{token?.accessToken}</pre>
         </SignedIn>
       </main>
-    </QeetidProvider>
+    </QeetIDProvider>
   );
 }
 
