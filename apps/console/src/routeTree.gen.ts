@@ -62,6 +62,7 @@ import { Route as AppAccessCheckRouteImport } from './routes/_app/access/check'
 import { Route as AppSettingsWorkspaceGeneralRouteImport } from './routes/_app/settings/workspace/general'
 import { Route as AppSettingsWorkspaceEmailTemplatesRouteImport } from './routes/_app/settings/workspace/email-templates'
 import { Route as AppSettingsWorkspaceDomainsRouteImport } from './routes/_app/settings/workspace/domains'
+import { Route as AppSecurityThreatsRiskSettingsRouteImport } from './routes/_app/security/threats/risk-settings'
 import { Route as AppSecurityThreatsRateLimitsRouteImport } from './routes/_app/security/threats/rate-limits'
 import { Route as AppSecurityThreatsIpAllowlistRouteImport } from './routes/_app/security/threats/ip-allowlist'
 import { Route as AppSecurityThreatsBotsRouteImport } from './routes/_app/security/threats/bots'
@@ -360,6 +361,12 @@ const AppSettingsWorkspaceDomainsRoute =
     path: '/settings/workspace/domains',
     getParentRoute: () => AppRoute,
   } as any)
+const AppSecurityThreatsRiskSettingsRoute =
+  AppSecurityThreatsRiskSettingsRouteImport.update({
+    id: '/security/threats/risk-settings',
+    path: '/security/threats/risk-settings',
+    getParentRoute: () => AppRoute,
+  } as any)
 const AppSecurityThreatsRateLimitsRoute =
   AppSecurityThreatsRateLimitsRouteImport.update({
     id: '/security/threats/rate-limits',
@@ -597,6 +604,7 @@ export interface FileRoutesByFullPath {
   '/security/threats/bots': typeof AppSecurityThreatsBotsRoute
   '/security/threats/ip-allowlist': typeof AppSecurityThreatsIpAllowlistRoute
   '/security/threats/rate-limits': typeof AppSecurityThreatsRateLimitsRoute
+  '/security/threats/risk-settings': typeof AppSecurityThreatsRiskSettingsRoute
   '/settings/workspace/domains': typeof AppSettingsWorkspaceDomainsRoute
   '/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
@@ -679,6 +687,7 @@ export interface FileRoutesByTo {
   '/security/threats/bots': typeof AppSecurityThreatsBotsRoute
   '/security/threats/ip-allowlist': typeof AppSecurityThreatsIpAllowlistRoute
   '/security/threats/rate-limits': typeof AppSecurityThreatsRateLimitsRoute
+  '/security/threats/risk-settings': typeof AppSecurityThreatsRiskSettingsRoute
   '/settings/workspace/domains': typeof AppSettingsWorkspaceDomainsRoute
   '/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
@@ -764,6 +773,7 @@ export interface FileRoutesById {
   '/_app/security/threats/bots': typeof AppSecurityThreatsBotsRoute
   '/_app/security/threats/ip-allowlist': typeof AppSecurityThreatsIpAllowlistRoute
   '/_app/security/threats/rate-limits': typeof AppSecurityThreatsRateLimitsRoute
+  '/_app/security/threats/risk-settings': typeof AppSecurityThreatsRiskSettingsRoute
   '/_app/settings/workspace/domains': typeof AppSettingsWorkspaceDomainsRoute
   '/_app/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/_app/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
@@ -848,6 +858,7 @@ export interface FileRouteTypes {
     | '/security/threats/bots'
     | '/security/threats/ip-allowlist'
     | '/security/threats/rate-limits'
+    | '/security/threats/risk-settings'
     | '/settings/workspace/domains'
     | '/settings/workspace/email-templates'
     | '/settings/workspace/general'
@@ -930,6 +941,7 @@ export interface FileRouteTypes {
     | '/security/threats/bots'
     | '/security/threats/ip-allowlist'
     | '/security/threats/rate-limits'
+    | '/security/threats/risk-settings'
     | '/settings/workspace/domains'
     | '/settings/workspace/email-templates'
     | '/settings/workspace/general'
@@ -1014,6 +1026,7 @@ export interface FileRouteTypes {
     | '/_app/security/threats/bots'
     | '/_app/security/threats/ip-allowlist'
     | '/_app/security/threats/rate-limits'
+    | '/_app/security/threats/risk-settings'
     | '/_app/settings/workspace/domains'
     | '/_app/settings/workspace/email-templates'
     | '/_app/settings/workspace/general'
@@ -1399,6 +1412,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsWorkspaceDomainsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/security/threats/risk-settings': {
+      id: '/_app/security/threats/risk-settings'
+      path: '/security/threats/risk-settings'
+      fullPath: '/security/threats/risk-settings'
+      preLoaderRoute: typeof AppSecurityThreatsRiskSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/security/threats/rate-limits': {
       id: '/_app/security/threats/rate-limits'
       path: '/security/threats/rate-limits'
@@ -1717,6 +1737,7 @@ interface AppRouteChildren {
   AppSecurityThreatsBotsRoute: typeof AppSecurityThreatsBotsRoute
   AppSecurityThreatsIpAllowlistRoute: typeof AppSecurityThreatsIpAllowlistRoute
   AppSecurityThreatsRateLimitsRoute: typeof AppSecurityThreatsRateLimitsRoute
+  AppSecurityThreatsRiskSettingsRoute: typeof AppSecurityThreatsRiskSettingsRoute
   AppSettingsWorkspaceDomainsRoute: typeof AppSettingsWorkspaceDomainsRoute
   AppSettingsWorkspaceEmailTemplatesRoute: typeof AppSettingsWorkspaceEmailTemplatesRoute
   AppSettingsWorkspaceGeneralRoute: typeof AppSettingsWorkspaceGeneralRoute
@@ -1785,6 +1806,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSecurityThreatsBotsRoute: AppSecurityThreatsBotsRoute,
   AppSecurityThreatsIpAllowlistRoute: AppSecurityThreatsIpAllowlistRoute,
   AppSecurityThreatsRateLimitsRoute: AppSecurityThreatsRateLimitsRoute,
+  AppSecurityThreatsRiskSettingsRoute: AppSecurityThreatsRiskSettingsRoute,
   AppSettingsWorkspaceDomainsRoute: AppSettingsWorkspaceDomainsRoute,
   AppSettingsWorkspaceEmailTemplatesRoute:
     AppSettingsWorkspaceEmailTemplatesRoute,

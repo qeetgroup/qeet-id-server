@@ -54,6 +54,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OIDCDiscovery'
+  /.well-known/oauth-protected-resource:
+    get:
+      operationId: get_wellKnown_oauth_protected_resource
+      summary: OAuth 2.0 Protected Resource Metadata (RFC 9728)
+      description: >-
+        Protected-resource metadata for MCP authorization-server compliance.
+        Advertises the resource identifier, its authorization server(s), and the
+        supported bearer methods and token-signing algorithms.
+      tags:
+        - OIDC
+      security: []
+      responses:
+        '200':
+          description: Protected-resource metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resource:
+                    type: string
+                  authorization_servers:
+                    type: array
+                    items:
+                      type: string
+                  bearer_methods_supported:
+                    type: array
+                    items:
+                      type: string
+                  resource_signing_alg_values_supported:
+                    type: array
+                    items:
+                      type: string
+                  scopes_provided:
+                    type: array
+                    items:
+                      type: string
+                  resource_documentation:
+                    type: string
   /ldap/{id}/authenticate:
     post:
       operationId: post_ldap_ById_authenticate
@@ -1171,6 +1210,40 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SigningKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/oidc/signing-keys/rotate:
+    post:
+      operationId: post_v1_oidc_signing_keys_rotate
+      summary: Rotate the issuer signing key
+      description: >-
+        Generates a fresh EC P-256 signing key, makes it active, and retires the
+        previous key to verify-only. The new private key PEM is returned once in
+        the response — the operator must persist it as JWT_SIGNING_KEY before the
+        next restart. Existing tokens remain verifiable during the grace window.
+      tags:
+        - OIDC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Rotation complete (new private key shown once)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kid:
+                    type: string
+                  alg:
+                    type: string
+                  private_key_pem:
+                    type: string
+                  warning:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

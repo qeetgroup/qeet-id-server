@@ -133,6 +133,41 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 	return nil
 }
 
+// SetDisabled enables or disables a single agent by setting/clearing disabled_at.
+// Disabled agents are refused at token issuance; the record is preserved for audit.
+func (s *Service) SetDisabled(ctx context.Context, id, tenantID uuid.UUID, disabled bool) error {
+	var ct interface{ RowsAffected() int64 }
+	var err error
+	if disabled {
+		ct, err = s.pool.Exec(ctx,
+			`UPDATE auth.agents SET disabled_at = NOW() WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL`,
+			id, tenantID)
+	} else {
+		ct, err = s.pool.Exec(ctx,
+			`UPDATE auth.agents SET disabled_at = NULL WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID)
+	}
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
+// KillAll disables every active agent for a tenant in one atomic transaction.
+// Returns the number of agents suspended. Used for security incident response.
+func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE auth.agents SET disabled_at = NOW() WHERE tenant_id = $1 AND disabled_at IS NULL`,
+		tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return int(ct.RowsAffected()), nil
+}
+
 type TokenResponse struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
@@ -221,7 +256,10 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/agents", h.list)
 	r.Post("/tenants/{tenantID}/agents", h.create)
+	r.Post("/tenants/{tenantID}/agents/kill-all", h.killAll)
 	r.Delete("/tenants/{tenantID}/agents/{id}", h.del)
+	r.Patch("/tenants/{tenantID}/agents/{id}", h.patch)
+	r.Post("/tenants/{tenantID}/agents/{id}/suspend", h.suspend)
 }
 
 // MountPublic registers the agent token endpoint (agent-authenticated, no user
@@ -298,6 +336,63 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	var in struct {
+		Disabled bool `json:"disabled"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.SetDisabled(r.Context(), id, tenantID, in.Disabled); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) suspend(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	if err := h.Service.SetDisabled(r.Context(), id, tenantID, true); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) killAll(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	n, err := h.Service.KillAll(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suspended": n})
 }
 
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {

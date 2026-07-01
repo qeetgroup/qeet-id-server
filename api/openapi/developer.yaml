@@ -392,6 +392,109 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_agents_ById
+      summary: Enable or disable (suspend) an AI-agent identity
+      description: >-
+        Sets or clears the agent's disabled_at. A disabled agent can no longer
+        mint tokens; existing tokens remain valid until they expire.
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - disabled
+              properties:
+                disabled:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/agents/{id}/suspend:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_ById_suspend
+      summary: Suspend an AI-agent identity (shorthand for disable=true)
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Suspended
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/agents/kill-all:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_kill_all
+      summary: Emergency — suspend every AI-agent identity in the tenant
+      description: >-
+        Security incident-response control. Sets disabled_at on all of the
+        tenant's agents in a single transaction. Returns the number suspended.
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Agents suspended
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suspended:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/auth-hooks:
     get:
       operationId: get_v1_tenants_ByTenantID_auth_hooks

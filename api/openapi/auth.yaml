@@ -1625,6 +1625,85 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/security/risk-settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_risk_settings
+      summary: Get a tenant's adaptive-MFA risk thresholds
+      description: >-
+        Returns the medium/high risk-score thresholds and the level at which
+        step-up MFA is forced even for a trusted device.
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Risk settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  medium_threshold:
+                    type: number
+                  high_threshold:
+                    type: number
+                  force_mfa_at_level:
+                    type: string
+                    enum: [medium, high]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_security_risk_settings
+      summary: Update a tenant's adaptive-MFA risk thresholds
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                medium_threshold:
+                  type: number
+                high_threshold:
+                  type: number
+                force_mfa_at_level:
+                  type: string
+                  enum: [medium, high]
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/security/bots/settings:
     get:
       operationId: get_v1_tenants_ByTenantID_security_bots_settings

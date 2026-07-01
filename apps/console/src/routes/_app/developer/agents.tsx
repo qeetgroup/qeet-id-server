@@ -13,12 +13,19 @@ import {
   Input,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2Icon, SparklesIcon, Trash2Icon } from "lucide-react";
+import { Loader2Icon, PauseIcon, PlayIcon, SkullIcon, SparklesIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
-import { useAgents, useCreateAgent, useDeleteAgent, type Agent } from "@/lib/agents";
+import {
+  useAgents,
+  useCreateAgent,
+  useDeleteAgent,
+  useKillAllAgents,
+  useSetAgentDisabled,
+  type Agent,
+} from "@/lib/agents";
 
 export const Route = createFileRoute("/_app/developer/agents")({ component: AgentsPage });
 
@@ -26,6 +33,8 @@ function AgentsPage() {
   const agentsQ = useAgents();
   const createM = useCreateAgent();
   const deleteM = useDeleteAgent();
+  const disableM = useSetAgentDisabled();
+  const killAllM = useKillAllAgents();
 
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState("");
@@ -33,6 +42,7 @@ function AgentsPage() {
   const [created, setCreated] = useState<Agent | null>(null);
 
   const items = agentsQ.data?.items ?? [];
+  const activeCount = items.filter((a) => !a.disabled).length;
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -127,9 +137,34 @@ function AgentsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Agents</CardTitle>
-          <CardDescription>Active AI-agent identities in this tenant.</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <div>
+            <CardTitle className="text-base">Agents</CardTitle>
+            <CardDescription>AI-agent identities in this tenant.</CardDescription>
+          </div>
+          {activeCount > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={killAllM.isPending}
+              onClick={() => {
+                if (
+                  confirm(
+                    `Suspend all ${activeCount} active agent(s)? Their tokens will stop working immediately.`,
+                  )
+                ) {
+                  killAllM.mutate();
+                }
+              }}
+            >
+              {killAllM.isPending ? (
+                <Loader2Icon className="animate-spin" />
+              ) : (
+                <SkullIcon />
+              )}
+              Suspend All
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -144,33 +179,75 @@ function AgentsPage() {
           >
             <ul className="divide-y">
               {items.map((a) => (
-                <li key={a.id} className="flex items-center justify-between gap-4 px-6 py-3">
-                  <div className="min-w-0">
-                    <p className="flex items-center gap-2 text-sm font-medium">
-                      {a.name}
-                      {a.disabled && <Badge variant="outline">disabled</Badge>}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      <span className="font-mono">{a.id}</span> · {a.token_ttl_seconds}s ·{" "}
-                      {a.scopes.length ? a.scopes.join(" ") : "no scopes"}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={deleteM.isPending}
-                    onClick={() => {
-                      if (confirm(`Delete agent "${a.name}"?`)) deleteM.mutate(a.id);
-                    }}
-                  >
-                    <Trash2Icon /> Delete
-                  </Button>
-                </li>
+                <AgentRow
+                  key={a.id}
+                  agent={a}
+                  onToggle={() => disableM.mutate({ id: a.id, disabled: !a.disabled })}
+                  onDelete={() => {
+                    if (confirm(`Delete agent "${a.name}"?`)) deleteM.mutate(a.id);
+                  }}
+                  busy={disableM.isPending || deleteM.isPending}
+                />
               ))}
             </ul>
           </DataState>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function AgentRow({
+  agent: a,
+  onToggle,
+  onDelete,
+  busy,
+}: {
+  agent: Agent;
+  onToggle: () => void;
+  onDelete: () => void;
+  busy: boolean;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-4 px-6 py-3">
+      <div className="min-w-0">
+        <p className="flex items-center gap-2 text-sm font-medium">
+          {a.name}
+          {a.disabled ? (
+            <Badge variant="outline" className="text-amber-600 border-amber-400">
+              Suspended
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-green-600 border-green-400">
+              Active
+            </Badge>
+          )}
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          <span className="font-mono">{a.id}</span> · {a.token_ttl_seconds}s ·{" "}
+          {a.scopes.length ? a.scopes.join(" ") : "no scopes"}
+        </p>
+      </div>
+      <div className="flex items-center gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={onToggle}
+          title={a.disabled ? "Resume agent" : "Suspend agent"}
+        >
+          {a.disabled ? <PlayIcon /> : <PauseIcon />}
+          {a.disabled ? "Resume" : "Suspend"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={onDelete}
+        >
+          <Trash2Icon /> Delete
+        </Button>
+      </div>
+    </li>
   );
 }

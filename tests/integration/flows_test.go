@@ -66,7 +66,7 @@ func TestAuthSignupLoginRefreshReuse(t *testing.T) {
 	svc, _ := newAuth()
 	email := uniqueSlug("user") + "@example.com"
 
-	pair, u, brief, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"})
+	pair, u, brief, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("signup: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestAuthSignupLoginRefreshReuse(t *testing.T) {
 		t.Fatalf("signup should be tenant-less: tenantID=%v brief=%v pair.TenantID=%v", u.TenantID, brief, pair.TenantID)
 	}
 
-	lp, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	lp, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	svc.SetMFA(mfaSvc)
 
 	email := uniqueSlug("mfa") + "@example.com"
-	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("signup: %v", err)
 	}
 	var userID uuid.UUID
@@ -118,7 +118,7 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	}
 
 	// Before enrollment: login issues tokens directly.
-	res, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	res, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("login: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	}
 
 	// Now login must challenge for a second factor — no tokens yet.
-	res, err = svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	res, err = svc.Login(ctx, auth.LoginInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("login after enroll: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestAdminResetMFA(t *testing.T) {
 	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{})
 
 	email := uniqueSlug("reset") + "@example.com"
-	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("signup: %v", err)
 	}
 	var userID uuid.UUID
@@ -244,7 +244,7 @@ func TestHostedLoginSession(t *testing.T) {
 	svc, _ := newAuth()
 	email := uniqueSlug("sso") + "@example.com"
 
-	if _, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+	if _, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("signup: %v", err)
 	} else if u.ID == uuid.Nil {
 		t.Fatal("signup returned nil user id")
@@ -254,7 +254,7 @@ func TestHostedLoginSession(t *testing.T) {
 	if _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
 		t.Error("CheckPassword must reject a wrong password")
 	}
-	u, err := svc.CheckPassword(ctx, email, "password123")
+	u, err := svc.CheckPassword(ctx, email, "Kx7mQ2vLp9Wz")
 	if err != nil {
 		t.Fatalf("CheckPassword: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestLoginLockout(t *testing.T) {
 	svc, _ := newAuth()
 	email := uniqueSlug("lock") + "@example.com"
 
-	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("signup: %v", err)
 	}
 
@@ -298,7 +298,7 @@ func TestLoginLockout(t *testing.T) {
 			t.Fatal("wrong password should fail")
 		}
 	}
-	if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"}); err != nil {
+	if _, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("correct password before lockout should succeed: %v", err)
 	}
 
@@ -309,7 +309,7 @@ func TestLoginLockout(t *testing.T) {
 		}
 	}
 	// Locked: even the correct password is refused with 429.
-	_, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "password123"})
+	_, err := svc.Login(ctx, auth.LoginInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err == nil {
 		t.Fatal("account should be locked after repeated failures")
 	}
@@ -528,7 +528,7 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 	// from the client, not the user).
 	authSvc, _ := newAuth()
 	email := uniqueSlug("hosted") + "@example.com"
-	if _, _, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+	if _, _, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("signup: %v", err)
 	}
 
@@ -602,7 +602,7 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 	resp.Body.Close()
 
 	// 2) Establish the SSO session (Set-Cookie qe_ls lands in the jar).
-	resp = mustPostJSON("/v1/auth/session", map[string]string{"email": email, "password": "password123"})
+	resp = mustPostJSON("/v1/auth/session", map[string]string{"email": email, "password": "Kx7mQ2vLp9Wz"})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/v1/auth/session status %d", resp.StatusCode)
 	}
@@ -661,7 +661,7 @@ func TestEndSessionLogout(t *testing.T) {
 
 	authSvc, _ := newAuth()
 	email := uniqueSlug("logout") + "@example.com"
-	if _, _, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"}); err != nil {
+	if _, _, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {
 		t.Fatalf("signup: %v", err)
 	}
 
@@ -699,7 +699,7 @@ func TestEndSessionLogout(t *testing.T) {
 	hc := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 
 	// Establish the SSO session.
-	body, _ := json.Marshal(map[string]string{"email": email, "password": "password123"})
+	body, _ := json.Marshal(map[string]string{"email": email, "password": "Kx7mQ2vLp9Wz"})
 	resp, err := hc.Post(srv.URL+"/v1/auth/session", "application/json", bytes.NewReader(body))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("session: %v (status %v)", err, resp.StatusCode)
@@ -915,7 +915,7 @@ func TestTenantCreateWithOwner(t *testing.T) {
 	ctx := context.Background()
 	svc, users := newAuth()
 
-	_, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: uniqueSlug("owner") + "@example.com", Password: "password123"})
+	_, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: uniqueSlug("owner") + "@example.com", Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("signup: %v", err)
 	}

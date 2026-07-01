@@ -441,3 +441,42 @@ func (h *Handler) rotateClientSecret(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) signingKeys(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"keys": h.Service.issuer.KeyInfo()})
 }
+
+// rotateKey generates a new EC P-256 signing key and retires the current active
+// key to verify-only. The new private key PEM is returned once in the response
+// body — the operator must save it as JWT_SIGNING_KEY before the next restart.
+// This is a platform-level (non-tenant-scoped) operator action and is audited.
+func (h *Handler) rotateKey(w http.ResponseWriter, r *http.Request) {
+	privPEM, kid, err := h.Service.issuer.Rotate()
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	actorID, actorType := auditActor(r)
+	if err := audit.Record(ctx, tx, audit.Event{
+		ActorUserID: actorID, ActorType: actorType,
+		Action: "oidc.signing_key_rotated", ResourceType: "signing_key", ResourceID: nil,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		Metadata: map[string]any{"new_kid": kid},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"kid":             kid,
+		"alg":             "ES256",
+		"private_key_pem": privPEM,
+		"warning":         "Save this PEM as JWT_SIGNING_KEY immediately — it will not be shown again.",
+	})
+}

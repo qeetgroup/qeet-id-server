@@ -31,6 +31,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/access/recovery"
 	"github.com/qeetgroup/qeet-id/domains/access/risk/ipallow"
 	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/bot"
+	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/risk"
 	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/threat"
 	"github.com/qeetgroup/qeet-id/domains/developer/agents"
 	"github.com/qeetgroup/qeet-id/domains/developer/api-keys"
@@ -57,6 +58,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
 	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
 	"github.com/qeetgroup/qeet-id/domains/operations/notifications"
+	"github.com/qeetgroup/qeet-id/domains/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
 	"github.com/qeetgroup/qeet-id/domains/operations/siem"
 	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
@@ -336,6 +338,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	authService.SetAnomalyRecorder(threatService) // record credential-stuffing anomalies on lockout
 	notificationService := notification.NewService(pool)
 	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
+	riskService := risk.NewService(pool)
+	authService.SetRiskAssessor(riskService) // override trusted-device skip when risk is too high
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool)           // forwards audit events to configured log sinks
 	rebacService := rebac.NewService(pool)         // fine-grained (relationship) authorization
@@ -421,6 +425,29 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		slog.Info("rate limiting via Redis (shared across replicas)")
 	}
 
+	// Build tenant-aware limiters that allow per-tenant rate overrides stored in DB.
+	newTenantLim := func(defRate float64, defCap int, key string) *ratelimit.TenantLimiter {
+		var store ratelimit.Store
+		if rlStore != nil {
+			store = rlStore
+		} else {
+			store = ratelimit.NewMemStore()
+		}
+		lim := ratelimit.NewTenantLimiter(store, defRate, defCap, pool, key)
+		lim.LoadOverrides(rootCtx)
+		return lim
+	}
+	tenantTenantLim := newTenantLim(100, 500, "tenant")
+	tenantUserLim := newTenantLim(30, 100, "user")
+	tenantAPIKeyLim := newTenantLim(50, 200, "api_key")
+	rateLimitsHandler := &ratelimits.Handler{
+		Pool:      pool,
+		TenantLim: tenantTenantLim,
+		UserLim:   tenantUserLim,
+		APIKeyLim: tenantAPIKeyLim,
+		Defaults:  ratelimits.Defaults{TenantRate: 100, TenantCapacity: 500, UserRate: 30, UserCapacity: 100, APIKeyRate: 50, APIKeyCapacity: 200},
+	}
+
 	v := validator.New(validator.WithRequiredStructEnabled())
 	// Use JSON field names in validation errors so the per-field messages the
 	// API returns match the request body the client sent (e.g. "display_name",
@@ -467,6 +494,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Threat:        &threat.Handler{Service: threatService},
 		Bot:           &bot.Handler{Service: botService},
+		Risk:          &risk.Handler{Service: riskService},
+		RateLimits:    rateLimitsHandler,
 		Notification:  &notification.Handler{Service: notificationService},
 		DomainVerify:  &domainverify.Handler{Service: domainverify.NewService(pool)},
 		SIEM:          &siem.Handler{Service: siemService},

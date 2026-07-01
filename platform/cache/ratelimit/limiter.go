@@ -37,6 +37,9 @@ type memStore struct {
 
 func newMemStore() *memStore { return &memStore{buckets: make(map[string]*bucket)} }
 
+// NewMemStore returns a new in-process token-bucket store.
+func NewMemStore() Store { return newMemStore() }
+
 func (s *memStore) Take(_ context.Context, key string, rate, capacity float64) (bool, int, error) {
 	now := time.Now()
 	s.mu.Lock()

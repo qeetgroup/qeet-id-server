@@ -1,145 +1,221 @@
 import {
-  Badge,
   Button,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
+  Field,
+  FieldDescription,
+  FieldLabel,
   Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { GaugeIcon, PlusIcon } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { GaugeIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { api } from "@/lib/api";
+import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/security/threats/rate-limits")({ component: ThreatRateLimitsPage });
+export const Route = createFileRoute("/_app/security/threats/rate-limits")({
+  component: RateLimitsPage,
+});
 
-const rules = [
-  { id: "1", endpoint: "/v1/auth/login", scope: "per-ip", limit: 10, window: "1m", action: "throttle", hits24: 412 },
-  { id: "2", endpoint: "/v1/auth/login", scope: "per-account", limit: 5, window: "5m", action: "block", hits24: 67 },
-  { id: "3", endpoint: "/v1/auth/refresh", scope: "per-ip", limit: 30, window: "1m", action: "throttle", hits24: 89 },
-  { id: "4", endpoint: "/v1/users", scope: "per-tenant", limit: 1000, window: "1m", action: "throttle", hits24: 4 },
-  { id: "5", endpoint: "/v1/oauth/token", scope: "per-client", limit: 50, window: "1m", action: "throttle", hits24: 18 },
-  { id: "6", endpoint: "/v1/oauth/authorize", scope: "per-ip", limit: 20, window: "1m", action: "captcha", hits24: 142 },
-];
-
-function actionBadge(a: string) {
-  if (a === "block") return <Badge variant="destructive">block</Badge>;
-  if (a === "captcha") return <Badge variant="secondary">captcha</Badge>;
-  return <Badge variant="outline">throttle</Badge>;
+interface LimitConfig {
+  rate: number;
+  capacity: number;
 }
 
-function ThreatRateLimitsPage() {
-  return (
-    <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader
-        description="Per-endpoint rate-limit rules. Buckets are enforced at the edge before any database read."
-        actions={
-          <Button>
-            <PlusIcon className="mr-2 size-4" />
-            New rule
-          </Button>
-        }
-      />
+interface TenantLimits {
+  tenant: LimitConfig;
+  user: LimitConfig;
+  api_key: LimitConfig;
+}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Active rules</CardDescription>
-            <GaugeIcon className="size-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">{rules.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Hits triggered (24h)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold tracking-tight">
-              {rules.reduce((s, r) => s + r.hits24, 0).toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardDescription>Strictest rule</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm font-medium">/v1/auth/login</div>
-            <div className="text-xs text-muted-foreground">5 / 5m per account</div>
-          </CardContent>
-        </Card>
-      </div>
+function useRateLimits() {
+  const tenantId = useTenantId();
+  return useQuery({
+    queryKey: ["rate-limits", tenantId],
+    queryFn: () => api<TenantLimits>(`/v1/tenants/${tenantId}/rate-limits`),
+    enabled: !!tenantId,
+  });
+}
+
+function useUpdateRateLimits() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: TenantLimits) =>
+      api<TenantLimits>(`/v1/tenants/${tenantId}/rate-limits`, { method: "PUT", body }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rate-limits", tenantId] }),
+  });
+}
+
+function useResetRateLimits() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<void>(`/v1/tenants/${tenantId}/rate-limits`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rate-limits", tenantId] }),
+  });
+}
+
+function LimitRow({
+  label,
+  description,
+  rate,
+  capacity,
+  onRate,
+  onCapacity,
+}: {
+  label: string;
+  description: string;
+  rate: number;
+  capacity: number;
+  onRate: (v: number) => void;
+  onCapacity: (v: number) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-[1fr_120px_120px] sm:items-end border-b pb-4 last:border-0 last:pb-0">
+      <Field>
+        <FieldLabel>{label}</FieldLabel>
+        <FieldDescription>{description}</FieldDescription>
+      </Field>
+      <Field>
+        <FieldLabel htmlFor={`${label}-rate`}>Rate (req/s)</FieldLabel>
+        <Input
+          id={`${label}-rate`}
+          type="number"
+          min={1}
+          step={1}
+          value={rate}
+          onChange={(e) => onRate(Number(e.target.value) || 1)}
+        />
+      </Field>
+      <Field>
+        <FieldLabel htmlFor={`${label}-burst`}>Burst</FieldLabel>
+        <Input
+          id={`${label}-burst`}
+          type="number"
+          min={1}
+          step={1}
+          value={capacity}
+          onChange={(e) => onCapacity(Number(e.target.value) || 1)}
+        />
+      </Field>
+    </div>
+  );
+}
+
+function RateLimitsPage() {
+  const limitsQ = useRateLimits();
+  const update = useUpdateRateLimits();
+  const reset = useResetRateLimits();
+
+  const [tenantRate, setTenantRate] = useState(100);
+  const [tenantCap, setTenantCap] = useState(500);
+  const [userRate, setUserRate] = useState(30);
+  const [userCap, setUserCap] = useState(100);
+  const [apiKeyRate, setApiKeyRate] = useState(50);
+  const [apiKeyCap, setApiKeyCap] = useState(200);
+
+  useEffect(() => {
+    if (limitsQ.data) {
+      setTenantRate(limitsQ.data.tenant.rate);
+      setTenantCap(limitsQ.data.tenant.capacity);
+      setUserRate(limitsQ.data.user.rate);
+      setUserCap(limitsQ.data.user.capacity);
+      setApiKeyRate(limitsQ.data.api_key.rate);
+      setApiKeyCap(limitsQ.data.api_key.capacity);
+    }
+  }, [limitsQ.data]);
+
+  const dirty =
+    limitsQ.data &&
+    (tenantRate !== limitsQ.data.tenant.rate ||
+      tenantCap !== limitsQ.data.tenant.capacity ||
+      userRate !== limitsQ.data.user.rate ||
+      userCap !== limitsQ.data.user.capacity ||
+      apiKeyRate !== limitsQ.data.api_key.rate ||
+      apiKeyCap !== limitsQ.data.api_key.capacity);
+
+  return (
+    <div className="flex min-w-0 flex-col gap-4">
+      <PageHeader description="Configure per-tenant rate limits. Rate is tokens per second; burst is the maximum burst capacity. These override the platform defaults for this tenant." />
 
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div>
-            <CardTitle>Rules</CardTitle>
-            <CardDescription>Evaluated in order, first match wins.</CardDescription>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <GaugeIcon className="size-4" />
+              Rate Limits
+            </CardTitle>
+            <CardDescription>
+              Limits are enforced per bucket (tenant, user, API key). Burst allows short spikes above the sustained rate.
+            </CardDescription>
           </div>
-          <div className="flex gap-2">
-            <Input placeholder="Filter endpoint…" className="w-[220px]" />
-            <Select defaultValue="all">
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All scopes</SelectItem>
-                <SelectItem value="per-ip">per-ip</SelectItem>
-                <SelectItem value="per-account">per-account</SelectItem>
-                <SelectItem value="per-tenant">per-tenant</SelectItem>
-                <SelectItem value="per-client">per-client</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={reset.isPending}
+            onClick={() => {
+              if (confirm("Reset all rate limits to platform defaults?")) reset.mutate();
+            }}
+          >
+            {reset.isPending ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
+            Reset to defaults
+          </Button>
         </CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Endpoint</TableHead>
-                <TableHead>Scope</TableHead>
-                <TableHead>Limit</TableHead>
-                <TableHead>Window</TableHead>
-                <TableHead>Action</TableHead>
-                <TableHead>Hits (24h)</TableHead>
-                <TableHead className="w-[1%]" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rules.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-mono text-xs">{r.endpoint}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{r.scope}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm">{r.limit}</TableCell>
-                  <TableCell className="text-sm">{r.window}</TableCell>
-                  <TableCell>{actionBadge(r.action)}</TableCell>
-                  <TableCell className="text-sm">{r.hits24.toLocaleString()}</TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="sm">
-                      Edit
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <CardContent>
+          {limitsQ.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : (
+            <form
+              className="flex flex-col gap-5"
+              onSubmit={(e) => {
+                e.preventDefault();
+                update.mutate({
+                  tenant: { rate: tenantRate, capacity: tenantCap },
+                  user: { rate: userRate, capacity: userCap },
+                  api_key: { rate: apiKeyRate, capacity: apiKeyCap },
+                });
+              }}
+            >
+              <LimitRow
+                label="Per-tenant"
+                description="Total requests per second across all users in this tenant."
+                rate={tenantRate}
+                capacity={tenantCap}
+                onRate={setTenantRate}
+                onCapacity={setTenantCap}
+              />
+              <LimitRow
+                label="Per-user"
+                description="Requests per second per individual user account."
+                rate={userRate}
+                capacity={userCap}
+                onRate={setUserRate}
+                onCapacity={setUserCap}
+              />
+              <LimitRow
+                label="Per-API-key"
+                description="Requests per second per API key credential."
+                rate={apiKeyRate}
+                capacity={apiKeyCap}
+                onRate={setApiKeyRate}
+                onCapacity={setApiKeyCap}
+              />
+              <div className="flex items-center gap-3 pt-2">
+                <Button type="submit" disabled={!dirty || update.isPending}>
+                  {update.isPending && <Loader2Icon className="animate-spin" />}
+                  Save changes
+                </Button>
+                {update.isSuccess && <span className="text-sm text-green-600">Saved.</span>}
+              </div>
+            </form>
+          )}
         </CardContent>
       </Card>
     </div>

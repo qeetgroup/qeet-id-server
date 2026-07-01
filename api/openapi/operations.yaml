@@ -31,7 +31,92 @@ tags:
     description: Operational/admin endpoints (outbox DLQ).
   - name: Health
     description: Liveness, readiness, and Prometheus metrics.
+  - name: Rate Limits
+    description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
 paths:
+  /v1/tenants/{tenantID}/rate-limits:
+    get:
+      operationId: get_v1_tenants_ByTenantID_rate_limits
+      summary: Get a tenant's effective rate limits
+      description: >-
+        Returns the effective per-bucket limits (tenant, user, api_key) — the
+        platform defaults merged with any tenant-specific overrides.
+      tags:
+        - Rate Limits
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Effective limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantRateLimits'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_rate_limits
+      summary: Set a tenant's rate-limit overrides
+      tags:
+        - Rate Limits
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantRateLimits'
+      responses:
+        '200':
+          description: Updated effective limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantRateLimits'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_rate_limits
+      summary: Reset a tenant's rate limits to the platform defaults
+      tags:
+        - Rate Limits
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Overrides cleared
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /healthz:
     get:
       operationId: get_healthz
@@ -1178,6 +1263,29 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    RateLimitBucket:
+      type: object
+      description: A single token-bucket limit (rate tokens/sec, burst capacity).
+      properties:
+        rate:
+          type: number
+          description: Sustained tokens per second.
+        capacity:
+          type: integer
+          description: Maximum burst capacity.
+    TenantRateLimits:
+      type: object
+      description: >-
+        Per-bucket rate limits for a tenant. On GET these are the effective
+        values (defaults merged with overrides); on PUT, any bucket supplied is
+        upserted as an override.
+      properties:
+        tenant:
+          $ref: '#/components/schemas/RateLimitBucket'
+        user:
+          $ref: '#/components/schemas/RateLimitBucket'
+        api_key:
+          $ref: '#/components/schemas/RateLimitBucket'
     Error:
       type: object
       required:
