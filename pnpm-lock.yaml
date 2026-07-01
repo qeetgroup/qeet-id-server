@@ -359,6 +359,9 @@ importers:
       '@qeet-id/nextjs':
         specifier: workspace:*
         version: link:../../sdk/js/nextjs
+      '@qeet-id/node':
+        specifier: workspace:*
+        version: link:../../sdk/js/node
       '@qeet-id/react':
         specifier: workspace:*
         version: link:../../sdk/js/react

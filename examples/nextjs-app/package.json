@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@qeet-id/nextjs": "workspace:*",
+    "@qeet-id/node": "workspace:*",
     "@qeet-id/react": "workspace:*",
     "next": "catalog:",
     "react": "catalog:",

@@ -25,9 +25,29 @@ import (
 // Client is the Qeet ID API client. Construct once with New and reuse it; it is
 // safe for concurrent use.
 type Client struct {
-	Users    *Users
-	Tenants  *Tenants
-	Sessions *Sessions
+	Users       *Users
+	Tenants     *Tenants
+	Sessions    *Sessions
+	Groups      *Groups
+	Invitations *Invitations
+	Branding    *Branding
+	Domains     *Domains
+	Roles       *Roles
+	Permissions *Permissions
+	Mfa         *MfaAdmin
+	AuthPolicy  *AuthPolicy
+	IPRules     *IPRules
+	APIKeys     *APIKeys
+	Webhooks    *Webhooks
+	AuthHooks   *AuthHooks
+	SAML           *SAML
+	OIDCClients    *OIDCClients
+	AuditLogs      *AuditLogs
+	EmailTemplates *EmailTemplates
+	Agents     *Agents
+	Vault      *Vault
+	OAuth      *OAuth
+	Credentials *Credentials
 
 	http *httpClient
 }
@@ -51,10 +71,30 @@ func New(opts Options) *Client {
 
 	h := &httpClient{apiKey: opts.APIKey, baseURL: base, hc: hc, maxRetries: maxRetries}
 	return &Client{
-		http:     h,
-		Users:    &Users{http: h},
-		Tenants:  &Tenants{http: h},
-		Sessions: newSessions(base, hc),
+		http:        h,
+		Users:       &Users{http: h},
+		Tenants:     &Tenants{http: h},
+		Sessions:    newSessions(base, hc),
+		Groups:      &Groups{http: h},
+		Invitations: &Invitations{http: h},
+		Branding:    &Branding{http: h},
+		Domains:     &Domains{http: h},
+		Roles:       &Roles{http: h},
+		Permissions: &Permissions{http: h},
+		Mfa:         &MfaAdmin{http: h},
+		AuthPolicy:  &AuthPolicy{http: h},
+		IPRules:     &IPRules{http: h},
+		APIKeys:     &APIKeys{http: h},
+		Webhooks:    &Webhooks{http: h},
+		AuthHooks:   &AuthHooks{http: h},
+		SAML:           &SAML{http: h},
+		OIDCClients:    &OIDCClients{http: h},
+		AuditLogs:      &AuditLogs{http: h},
+		EmailTemplates: &EmailTemplates{http: h},
+		Agents:      &Agents{http: h},
+		Vault:       &Vault{http: h},
+		OAuth:       newOAuth(base, hc),
+		Credentials: &Credentials{http: h},
 	}
 }
 

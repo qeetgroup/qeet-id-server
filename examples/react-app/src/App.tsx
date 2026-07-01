@@ -127,6 +127,8 @@ function Home() {
           <h2>Access token</h2>
           <p className="muted">Dev only — copy this bearer token to test an API example.</p>
           <pre className="code token">{token?.accessToken}</pre>
+
+          {token && <TokenInspector token={token.accessToken} />}
         </SignedIn>
       </main>
     </QeetIDProvider>
@@ -135,4 +137,49 @@ function Home() {
 
 function Centered({ children }: { children: ReactNode }) {
   return <main className="container center">{children}</main>;
+}
+
+// M5 demo — calls the public /v1/oauth/introspect endpoint directly from the
+// browser (form-encoded POST, no API key required) to show token claims.
+function TokenInspector({ token }: { token: string }) {
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function inspect() {
+    setLoading(true);
+    setResult(null);
+    try {
+      const apiUrl = import.meta.env.VITE_QEETID_API_URL as string;
+      const res = await fetch(`${apiUrl}/v1/oauth/introspect`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({ token }).toString(),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      setResult(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setResult(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <h2>Token Inspector (MCP introspect demo)</h2>
+      <p className="muted">
+        Calls <code>POST /v1/oauth/introspect</code> — the public RFC 7662 endpoint that MCP tool
+        servers use to verify caller identity via <code>qeetid.oauth.verify(token)</code>.
+      </p>
+      <div className="btn-wrap">
+        <button onClick={() => void inspect()} disabled={loading} className="link-btn">
+          {loading ? "Inspecting…" : "Introspect token →"}
+        </button>
+      </div>
+      {result && <pre className="code">{result}</pre>}
+    </>
+  );
 }
