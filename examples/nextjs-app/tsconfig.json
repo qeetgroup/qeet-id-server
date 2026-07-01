@@ -1,5 +1,5 @@
 {
-  "extends": "@qeetid/tsconfig/next.json",
+  "extends": "@qeet-id/tsconfig/next.json",
   "compilerOptions": {
     "paths": {
       "@/*": ["./*"]

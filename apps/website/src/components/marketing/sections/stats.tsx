@@ -38,7 +38,7 @@ export function Stats() {
               <div className="group relative flex h-full flex-col items-start gap-2 overflow-hidden bg-foreground p-6 transition-colors sm:p-8">
                 <span
                   aria-hidden
-                  className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-[image:var(--brand-gradient)] transition-transform duration-500 group-hover:scale-x-100"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-(image:--brand-gradient) transition-transform duration-500 group-hover:scale-x-100"
                 />
                 <dt className="text-xs font-medium uppercase tracking-widest text-background/60">
                   {s.label}

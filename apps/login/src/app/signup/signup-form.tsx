@@ -1,9 +1,12 @@
 "use client";
 
-import { Button, Card, CardContent, Input } from "@qeetrix/ui";
+import { Button, Input, PasswordStrengthMeter, Spinner } from "@qeetrix/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthCard } from "@/components/auth-card";
+import { FormAlert } from "@/components/form-alert";
+import type { Branding } from "@/lib/branding";
 import { API_BASE_URL, ApiError, apiPost } from "@/lib/api";
 
 type SignupFormProps = {
@@ -11,6 +14,7 @@ type SignupFormProps = {
   clientName: string;
   tenantId: string;
   selfRegistrationEnabled: boolean;
+  branding?: Branding;
 };
 
 // safeReturnTo guards against open redirects: we only ever bounce back to our
@@ -34,6 +38,7 @@ export function SignupForm({
   clientName,
   tenantId,
   selfRegistrationEnabled,
+  branding,
 }: SignupFormProps) {
   const { t } = useTranslation("signup");
   const [name, setName] = useState("");
@@ -75,96 +80,98 @@ export function SignupForm({
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardContent className="space-y-6 pt-6">
-        <div className="space-y-1 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">
-            {clientName ? t("titleTo", { client: clientName }) : t("title")}
-          </h1>
-          <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
-        </div>
-
-        {!selfRegistrationEnabled || !tenantId ? (
-          <p role="status" className="text-muted-foreground text-center text-sm">
-            {t("disabled")}
-          </p>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label htmlFor="name" className="text-sm font-medium">
-                {t("fields.name")}
-              </label>
-              <Input
-                id="name"
-                type="text"
-                autoComplete="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="email" className="text-sm font-medium">
-                {t("fields.email")}
-              </label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="password" className="text-sm font-medium">
-                {t("fields.password")}
-              </label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <p className="text-muted-foreground text-xs">{t("hint")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="confirm" className="text-sm font-medium">
-                {t("fields.confirm")}
-              </label>
-              <Input
-                id="confirm"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={8}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-            </div>
-
-            {error && (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-              </p>
-            )}
-
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? t("submit.busy") : t("submit.idle")}
-            </Button>
-          </form>
-        )}
-
-        <p className="text-muted-foreground text-center text-sm">
-          {t("haveAccount")}{" "}
-          <a href={loginHref} className="hover:text-foreground underline">
-            {t("signIn")}
-          </a>
+    <AuthCard
+      branding={branding}
+      title={clientName ? t("titleTo", { client: clientName }) : t("title")}
+      subtitle={t("subtitle")}
+    >
+      {!selfRegistrationEnabled || !tenantId ? (
+        <p role="status" className="text-muted-foreground text-center text-sm">
+          {t("disabled")}
         </p>
-      </CardContent>
-    </Card>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="name" className="text-sm font-medium">
+              {t("fields.name")}
+            </label>
+            <Input
+              id="name"
+              type="text"
+              autoComplete="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="email" className="text-sm font-medium">
+              {t("fields.email")}
+            </label>
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="password" className="text-sm font-medium">
+              {t("fields.password")}
+            </label>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {password ? (
+              <PasswordStrengthMeter value={password} className="pt-1" />
+            ) : (
+              <p className="text-muted-foreground text-xs">{t("hint")}</p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="confirm" className="text-sm font-medium">
+              {t("fields.confirm")}
+            </label>
+            <Input
+              id="confirm"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              aria-invalid={confirm.length > 0 && confirm !== password}
+            />
+          </div>
+
+          <FormAlert>{error}</FormAlert>
+
+          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+            {loading ? (
+              <>
+                <Spinner size="sm" className="mr-2" /> {t("submit.busy")}
+              </>
+            ) : (
+              t("submit.idle")
+            )}
+          </Button>
+        </form>
+      )}
+
+      <p className="text-muted-foreground text-center text-sm">
+        {t("haveAccount")}{" "}
+        <a href={loginHref} className="text-foreground font-medium underline-offset-2 hover:underline">
+          {t("signIn")}
+        </a>
+      </p>
+    </AuthCard>
   );
 }

@@ -270,7 +270,7 @@ export function Hero() {
     <section className="relative flex min-h-screen flex-col justify-center overflow-hidden border-b border-border/60">
       {/* Brand-tinted background — Aurora reads --aurora-* (warm), DotPattern fades to edges. */}
       <Aurora className="opacity-90" />
-      <DotPattern className="opacity-20 [mask-image:radial-gradient(ellipse_at_top,black,transparent_75%)] dark:opacity-30" />
+      <DotPattern className="opacity-20 mask-[radial-gradient(ellipse_at_top,black,transparent_75%)] dark:opacity-30" />
 
       <div className="relative mx-auto grid max-w-7xl items-center gap-14 px-4 py-20 sm:gap-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:gap-12 lg:px-8">
         {/* Left — copy */}
@@ -284,7 +284,7 @@ export function Hero() {
               href="/changelog"
               className="group inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 py-1 pl-1 pr-3 text-xs font-medium shadow-sm backdrop-blur transition-colors hover:bg-background focus-ring-brand"
             >
-              <span className="inline-flex items-center gap-1 rounded-full bg-[image:var(--brand-gradient)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-brand-foreground">
+              <span className="inline-flex items-center gap-1 rounded-full bg-(image:--brand-gradient) px-2 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-brand-foreground">
                 <SparklesIcon className="size-3" /> New
               </span>
               <span className="text-foreground/90">

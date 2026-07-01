@@ -1,4 +1,4 @@
-import type { QeetidConfig } from "./config.js";
+import type { QeetIDConfig } from "./config.js";
 import type { SessionData } from "./types.js";
 
 interface TokenResponse {
@@ -14,7 +14,7 @@ interface TokenResponse {
 // Persisting the rotated refresh token is essential: Qeet ID rotates refresh
 // tokens with reuse detection, so reusing the old one would revoke the chain.
 // Edge-safe (fetch only) so it can run in middleware.
-export async function refreshSession(cfg: QeetidConfig, data: SessionData): Promise<SessionData | null> {
+export async function refreshSession(cfg: QeetIDConfig, data: SessionData): Promise<SessionData | null> {
   if (!data.refreshToken) return null;
   try {
     const res = await fetch(`${cfg.apiUrl}/v1/oauth/token-code`, {

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { getConfig, SESSION_COOKIE, type QeetidConfig } from "./config.js";
+import { getConfig, SESSION_COOKIE, type QeetIDConfig } from "./config.js";
 import { open, seal } from "./cookies.js";
 import { refreshSession } from "./refresh.js";
 import type { SessionData } from "./types.js";
@@ -18,11 +18,11 @@ export interface MiddlewareOptions {
 const REFRESH_SKEW_SECONDS = 60;
 
 /**
- * qeetidMiddleware protects routes and keeps the session fresh. It runs in the
- * Edge runtime (Web Crypto only), so import it from "@qeetid/nextjs/middleware".
+ * qeetIDMiddleware protects routes and keeps the session fresh. It runs in the
+ * Edge runtime (Web Crypto only), so import it from "@qeet-id/nextjs/middleware".
  *
- *   import { qeetidMiddleware } from "@qeetid/nextjs/middleware";
- *   export default qeetidMiddleware({ publicRoutes: ["/", "/pricing"] });
+ *   import { qeetIDMiddleware } from "@qeet-id/nextjs/middleware";
+ *   export default qeetIDMiddleware({ publicRoutes: ["/", "/pricing"] });
  *   export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };
  *
  * On each request it: redirects unauthenticated users to the hosted login;
@@ -30,7 +30,7 @@ const REFRESH_SKEW_SECONDS = 60;
  * token); and, if the token had already expired, redirects to the same URL so
  * the request re-runs with the fresh cookie.
  */
-export function qeetidMiddleware(options: MiddlewareOptions = {}) {
+export function qeetIDMiddleware(options: MiddlewareOptions = {}) {
   const publicRoutes = options.publicRoutes ?? [];
   return async function middleware(req: NextRequest): Promise<NextResponse> {
     const { pathname } = req.nextUrl;
@@ -66,7 +66,7 @@ export function qeetidMiddleware(options: MiddlewareOptions = {}) {
   };
 }
 
-function cookieOptions(cfg: QeetidConfig) {
+function cookieOptions(cfg: QeetIDConfig) {
   return {
     httpOnly: true,
     secure: cfg.appUrl.startsWith("https"),

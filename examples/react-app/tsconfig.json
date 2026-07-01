@@ -1,5 +1,5 @@
 {
-  "extends": "@qeetid/tsconfig/react-vite.json",
+  "extends": "@qeet-id/tsconfig/react-vite.json",
   "compilerOptions": {
     "noEmit": true,
     "paths": {

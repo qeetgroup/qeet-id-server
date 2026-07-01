@@ -88,7 +88,7 @@ const configCode: Record<Lang, ReactNode> = {
       {" } "}
       <Tok.k>from</Tok.k>
       {" "}
-      <Tok.s>"@qeet-id/sdk"</Tok.s>
+      <Tok.s>"@qeet-id/node"</Tok.s>
       {";\n\n"}
       <Tok.k>const</Tok.k>
       {" "}

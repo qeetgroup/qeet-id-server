@@ -46,7 +46,7 @@ export function StickyCtaBar() {
           className="fixed inset-x-0 bottom-0 z-40 px-4 pb-4 sm:px-6 lg:px-8"
         >
           {/* Gradient frame -> inner card. The 1px brand gradient ring reads as premium. */}
-          <div className="mx-auto max-w-3xl rounded-2xl bg-[image:var(--brand-gradient)] p-px shadow-2xl shadow-brand/20">
+          <div className="mx-auto max-w-3xl rounded-2xl bg-(image:--brand-gradient) p-px shadow-2xl shadow-brand/20">
             <div className="flex items-center gap-3 rounded-[calc(1rem-1px)] bg-background/90 p-3 backdrop-blur-xl sm:gap-4 sm:p-4">
               <span
                 aria-hidden

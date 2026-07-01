@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-import { auth, currentUser } from "@qeetid/nextjs";
-import { QeetidProvider } from "@qeetid/react";
+import { auth, currentUser } from "@qeet-id/nextjs";
+import { QeetIDProvider } from "@qeet-id/react";
 
 import "./globals.css";
 
@@ -27,14 +27,14 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html lang="en">
       <body>
-        {/* signUpUrl points at login because @qeetid/nextjs doesn't mount a
+        {/* signUpUrl points at login because @qeet-id/nextjs doesn't mount a
             dedicated sign-up route; the hosted login handles new accounts. */}
-        <QeetidProvider
+        <QeetIDProvider
           initialState={{ isAuthenticated, userId, tenantId, sessionId, user }}
           signUpUrl="/api/auth/login"
         >
           {children}
-        </QeetidProvider>
+        </QeetIDProvider>
       </body>
     </html>
   );

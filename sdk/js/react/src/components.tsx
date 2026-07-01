@@ -2,17 +2,17 @@
 
 import { useState, type CSSProperties, type ReactNode } from "react";
 
-import { usePaths, useQeetidState, useUser } from "./context.js";
-import type { QeetidUser } from "./types.js";
+import { usePaths, useQeetIDState, useUser } from "./context.js";
+import type { QeetIDUser } from "./types.js";
 
 /** Renders children only when the user is signed in. */
 export function SignedIn({ children }: { children: ReactNode }) {
-  return useQeetidState().isAuthenticated ? <>{children}</> : null;
+  return useQeetIDState().isAuthenticated ? <>{children}</> : null;
 }
 
 /** Renders children only when the user is signed out. */
 export function SignedOut({ children }: { children: ReactNode }) {
-  return useQeetidState().isAuthenticated ? null : <>{children}</>;
+  return useQeetIDState().isAuthenticated ? null : <>{children}</>;
 }
 
 function navigate(url: string, returnTo?: string): void {
@@ -28,7 +28,7 @@ export interface AuthButtonProps {
   returnTo?: string;
 }
 
-/** A button that sends the browser to the hosted login. */
+/** Generic unstyled button that sends the browser to the hosted login. */
 export function SignInButton({ children, className, returnTo }: AuthButtonProps) {
   const { loginUrl } = usePaths();
   return (
@@ -44,7 +44,23 @@ export function SignInButton({ children, className, returnTo }: AuthButtonProps)
   );
 }
 
-/** A button that signs the user out (clears the session + RP-initiated logout). */
+/** Generic unstyled button that sends the browser to the hosted sign-up. */
+export function SignUpButton({ children, className, returnTo }: AuthButtonProps) {
+  const { signUpUrl } = usePaths();
+  return (
+    <button
+      type="button"
+      className={className}
+      onClick={() =>
+        navigate(signUpUrl, returnTo ?? window.location.pathname + window.location.search)
+      }
+    >
+      {children ?? "Sign up"}
+    </button>
+  );
+}
+
+/** Generic unstyled button that signs the user out. */
 export function SignOutButton({ children, className }: AuthButtonProps) {
   const { logoutUrl } = usePaths();
   return (
@@ -54,8 +70,7 @@ export function SignOutButton({ children, className }: AuthButtonProps) {
   );
 }
 
-function imageURL(user: QeetidUser | null | undefined): string | undefined {
-  // picture (OIDC standard) / imageUrl live under QeetidUser's index signature.
+function imageURL(user: QeetIDUser | null | undefined): string | undefined {
   if (typeof user?.["picture"] === "string") return user["picture"];
   if (typeof user?.["imageUrl"] === "string") return user["imageUrl"];
   return undefined;
@@ -63,15 +78,14 @@ function imageURL(user: QeetidUser | null | undefined): string | undefined {
 
 export interface UserButtonProps {
   className?: string;
-  /** Extra menu items rendered above "Sign out" (e.g. a link to account settings). */
+  /** Extra menu items rendered above "Sign out". */
   menuItems?: ReactNode;
 }
 
 /**
  * A drop-in account control: an avatar/initials trigger that opens a menu with
  * the signed-in user's name + email and a "Sign out" action. Renders nothing
- * when signed out. Headless-friendly (style via `className` on the wrapper);
- * ships with minimal neutral styles so it works out of the box.
+ * when signed out.
  */
 export function UserButton({ className, menuItems }: UserButtonProps) {
   const { user, isAuthenticated } = useUser();
@@ -139,7 +153,6 @@ export function UserButton({ className, menuItems }: UserButtonProps) {
       </button>
       {open && (
         <>
-          {/* click-away backdrop */}
           <div
             aria-hidden
             onClick={() => setOpen(false)}
@@ -155,14 +168,7 @@ export function UserButton({ className, menuItems }: UserButtonProps) {
             >
               {user?.displayName && <div style={{ fontWeight: 600 }}>{user.displayName}</div>}
               {user?.email && (
-                <div
-                  style={{
-                    color: "#6b7280",
-                    fontSize: 12,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
+                <div style={{ color: "#6b7280", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis" }}>
                   {user.email}
                 </div>
               )}

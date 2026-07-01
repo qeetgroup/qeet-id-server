@@ -1,9 +1,11 @@
 "use client";
 
-import { Button, Card, CardContent, Input } from "@qeetrix/ui";
+import { Button, Input, PasswordStrengthMeter, Spinner } from "@qeetrix/ui";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import { AuthCard } from "@/components/auth-card";
+import { FormAlert } from "@/components/form-alert";
 import { ApiError, apiPost } from "@/lib/api";
 
 export function ResetForm({ token }: { token: string }) {
@@ -35,71 +37,69 @@ export function ResetForm({ token }: { token: string }) {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardContent className="space-y-6 pt-6">
-        <div className="space-y-1 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">{t("reset.title")}</h1>
-          <p className="text-muted-foreground text-sm">{t("reset.subtitle")}</p>
-        </div>
-
-        {done ? (
-          <div className="space-y-4 text-center">
-            <p role="status" className="text-muted-foreground text-sm">
-              {t("reset.done")}
-            </p>
-            <Button render={<a href="/login" />} className="w-full">
-              {t("reset.goToLogin")}
-            </Button>
-          </div>
-        ) : !token ? (
-          <p role="alert" className="text-destructive text-center text-sm">
-            {t("reset.missingToken")}
+    <AuthCard title={t("reset.title")} subtitle={t("reset.subtitle")}>
+      {done ? (
+        <div className="space-y-4 text-center">
+          <p role="status" className="text-muted-foreground text-sm">
+            {t("reset.done")}
           </p>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label htmlFor="password" className="text-sm font-medium">
-                {t("reset.fields.password")}
-              </label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                autoFocus
-                required
-                minLength={8}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+          <Button render={<a href="/login" />} size="lg" className="w-full">
+            {t("reset.goToLogin")}
+          </Button>
+        </div>
+      ) : !token ? (
+        <FormAlert>{t("reset.missingToken")}</FormAlert>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label htmlFor="password" className="text-sm font-medium">
+              {t("reset.fields.password")}
+            </label>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              autoFocus
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {password ? (
+              <PasswordStrengthMeter value={password} className="pt-1" />
+            ) : (
               <p className="text-muted-foreground text-xs">{t("reset.hint")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="confirm" className="text-sm font-medium">
-                {t("reset.fields.confirm")}
-              </label>
-              <Input
-                id="confirm"
-                type="password"
-                autoComplete="new-password"
-                required
-                minLength={8}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-            </div>
-
-            {error && (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-              </p>
             )}
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="confirm" className="text-sm font-medium">
+              {t("reset.fields.confirm")}
+            </label>
+            <Input
+              id="confirm"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              aria-invalid={confirm.length > 0 && confirm !== password}
+            />
+          </div>
 
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? t("reset.submit.busy") : t("reset.submit.idle")}
-            </Button>
-          </form>
-        )}
-      </CardContent>
-    </Card>
+          <FormAlert>{error}</FormAlert>
+
+          <Button type="submit" size="lg" className="w-full" disabled={loading}>
+            {loading ? (
+              <>
+                <Spinner size="sm" className="mr-2" /> {t("reset.submit.busy")}
+              </>
+            ) : (
+              t("reset.submit.idle")
+            )}
+          </Button>
+        </form>
+      )}
+    </AuthCard>
   );
 }

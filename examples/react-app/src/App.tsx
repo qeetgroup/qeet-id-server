@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { QeetidProvider, SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeetid/react";
+import { QeetIDProvider, SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeet-id/react";
 
 import {
   fetchUserInfo,
@@ -84,7 +84,7 @@ function Home() {
   const isAuthenticated = Boolean(token && user);
 
   return (
-    <QeetidProvider
+    <QeetIDProvider
       initialState={{
         isAuthenticated,
         userId: user?.sub,
@@ -105,7 +105,7 @@ function Home() {
         <h1>Qeet ID — React SPA Example</h1>
         <p className="muted">
           A Vite single-page app that signs in with Qeet ID using a client-side OAuth2 + PKCE flow
-          (public client) and <code>@qeetid/react</code> components.
+          (public client) and <code>@qeet-id/react</code> components.
         </p>
 
         <SignedOut>
@@ -127,12 +127,59 @@ function Home() {
           <h2>Access token</h2>
           <p className="muted">Dev only — copy this bearer token to test an API example.</p>
           <pre className="code token">{token?.accessToken}</pre>
+
+          {token && <TokenInspector token={token.accessToken} />}
         </SignedIn>
       </main>
-    </QeetidProvider>
+    </QeetIDProvider>
   );
 }
 
 function Centered({ children }: { children: ReactNode }) {
   return <main className="container center">{children}</main>;
+}
+
+// M5 demo — calls the public /v1/oauth/introspect endpoint directly from the
+// browser (form-encoded POST, no API key required) to show token claims.
+function TokenInspector({ token }: { token: string }) {
+  const [result, setResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function inspect() {
+    setLoading(true);
+    setResult(null);
+    try {
+      const apiUrl = import.meta.env.VITE_QEETID_API_URL as string;
+      const res = await fetch(`${apiUrl}/v1/oauth/introspect`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({ token }).toString(),
+      });
+      const data = await res.json() as Record<string, unknown>;
+      setResult(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setResult(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <h2>Token Inspector (MCP introspect demo)</h2>
+      <p className="muted">
+        Calls <code>POST /v1/oauth/introspect</code> — the public RFC 7662 endpoint that MCP tool
+        servers use to verify caller identity via <code>qeetid.oauth.verify(token)</code>.
+      </p>
+      <div className="btn-wrap">
+        <button onClick={() => void inspect()} disabled={loading} className="link-btn">
+          {loading ? "Inspecting…" : "Introspect token →"}
+        </button>
+      </div>
+      {result && <pre className="code">{result}</pre>}
+    </>
+  );
 }

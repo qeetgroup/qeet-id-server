@@ -22,8 +22,13 @@
   "signUp": "Sign up",
   "mfa": {
     "title": "Two-step verification",
-    "subtitle": "Enter the code from your authenticator app, or a recovery code.",
+    "subtitle": "Enter the 6-digit code from your authenticator app.",
+    "subtitleRecovery": "Enter one of your saved recovery codes.",
     "label": "Verification code",
+    "recoveryLabel": "Recovery code",
+    "recoveryPlaceholder": "xxxx-xxxx-xxxx",
+    "useRecovery": "Use a recovery code",
+    "useTotp": "Use your authenticator app",
     "remember": "Remember this device",
     "submit": {
       "idle": "Verify",

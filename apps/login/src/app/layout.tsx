@@ -26,7 +26,9 @@ export default function RootLayout({
       <body className="bg-background text-foreground min-h-full font-sans">
         <ThemeProvider defaultTheme="system" storageKey={STORAGE_KEY}>
           <I18nProvider>
-            <main className="flex min-h-dvh items-center justify-center p-4">{children}</main>
+            {/* The per-screen <AuthShell> owns full-page layout (split-screen on
+                ≥lg), so the root just provides a full-height canvas. */}
+            <main className="min-h-dvh">{children}</main>
           </I18nProvider>
         </ThemeProvider>
       </body>

@@ -27,7 +27,7 @@ export function ScrollProgress({ className }: ScrollProgressProps) {
       aria-hidden
       style={{ scaleX }}
       className={
-        "fixed inset-x-0 top-0 z-[60] h-[3px] origin-left bg-[image:var(--brand-gradient)] " +
+        "fixed inset-x-0 top-0 z-60 h-0.75 origin-left bg-(image:--brand-gradient) " +
         (className ?? "")
       }
     />

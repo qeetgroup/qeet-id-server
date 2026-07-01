@@ -26,7 +26,26 @@ from typing import List, Optional
 
 import httpx
 
+from .agents import Agent, AgentTokenResult, Agents, CreateAgentInput
+from .api_keys import ApiKey, ApiKeys, CreateApiKeyInput
+from .audit_logs import AuditLog, AuditLogListParams, AuditLogs
+from .auth_hooks import AuthHookSettings, AuthHooks, UpdateAuthHookInput
+from .auth_policy import AuthPolicy, AuthPolicySettings, UpdateAuthPolicyInput
+from .branding import Branding, BrandingSettings, UpdateBrandingInput
 from .client import DEFAULT_BASE_URL, HttpClient
+from .credentials import (
+    Credential,
+    Credentials,
+    IssueCredentialInput,
+    IssueCredentialResult,
+    VerifyCredentialResult,
+)
+from .domains import CreateDomainInput, Domain, Domains
+from .email_templates import EmailTemplate, EmailTemplates, UpdateEmailTemplateInput
+from .oauth_helpers import IntrospectResult, OAuth, TokenExchangeInput, TokenExchangeResult
+from .oidc_clients import CreateOidcClientInput, OidcClient, OidcClients, UpdateOidcClientInput
+from .saml import CreateSamlConnectionInput, Saml, SamlConnection, UpdateSamlConnectionInput
+from .vault import CreateSecretInput, Secret, UpdateSecretInput, Vault
 from .errors import (
     ForbiddenError,
     InvalidCredentialsError,
@@ -35,6 +54,13 @@ from .errors import (
     RateLimitError,
     SessionVerificationError,
 )
+from .groups import CreateGroupInput, Group, GroupMember, Groups, UpdateGroupInput
+from .invitations import CreateInvitationInput, Invitation, Invitations
+from .ip_rules import CreateIpRuleInput, IpRule, IpRules
+from .mfa import MfaAdmin, MfaFactor
+from .permissions import CreatePermissionInput, Permission, Permissions
+from .roles import CreateRoleInput, Role, Roles, UpdateRoleInput
+from .webhooks import CreateWebhookInput, UpdateWebhookInput, Webhook, WebhookDelivery, Webhooks
 from .sessions import SessionClaims, Sessions, VerifyOptions
 from .tenants import CreateTenantInput, Tenant, Tenants, UpdateTenantInput
 from .users import (
@@ -53,6 +79,26 @@ __all__ = [
     "Users",
     "Tenants",
     "Sessions",
+    "Groups",
+    "Invitations",
+    "Branding",
+    "Domains",
+    "Roles",
+    "Permissions",
+    "MfaAdmin",
+    "AuthPolicy",
+    "IpRules",
+    "ApiKeys",
+    "Webhooks",
+    "AuthHooks",
+    "Saml",
+    "OidcClients",
+    "AuditLogs",
+    "EmailTemplates",
+    "Agents",
+    "Vault",
+    "OAuth",
+    "Credentials",
     "HttpClient",
     # models / inputs
     "User",
@@ -65,6 +111,39 @@ __all__ = [
     "UpdateTenantInput",
     "SessionClaims",
     "VerifyOptions",
+    "Group",
+    "CreateGroupInput",
+    "UpdateGroupInput",
+    "GroupMember",
+    "Invitation",
+    "CreateInvitationInput",
+    "BrandingSettings",
+    "UpdateBrandingInput",
+    "Domain",
+    "CreateDomainInput",
+    "Role",
+    "CreateRoleInput",
+    "UpdateRoleInput",
+    "Permission",
+    "CreatePermissionInput",
+    "MfaFactor",
+    "AuthPolicySettings",
+    "UpdateAuthPolicyInput",
+    "IpRule",
+    "CreateIpRuleInput",
+    "Agent",
+    "CreateAgentInput",
+    "AgentTokenResult",
+    "Secret",
+    "CreateSecretInput",
+    "UpdateSecretInput",
+    "TokenExchangeInput",
+    "TokenExchangeResult",
+    "IntrospectResult",
+    "Credential",
+    "IssueCredentialInput",
+    "IssueCredentialResult",
+    "VerifyCredentialResult",
     # errors
     "QeetidError",
     "InvalidCredentialsError",
@@ -123,8 +202,28 @@ class Qeetid:
         )
         self.users = Users(self._http)
         self.tenants = Tenants(self._http)
-        # Sessions shares the same httpx client for JWKS fetches.
+        self.groups = Groups(self._http)
+        self.invitations = Invitations(self._http)
+        self.branding = Branding(self._http)
+        self.domains = Domains(self._http)
+        self.roles = Roles(self._http)
+        self.permissions = Permissions(self._http)
+        self.mfa = MfaAdmin(self._http)
+        self.auth_policy = AuthPolicy(self._http)
+        self.ip_rules = IpRules(self._http)
+        self.api_keys = ApiKeys(self._http)
+        self.webhooks = Webhooks(self._http)
+        self.auth_hooks = AuthHooks(self._http)
+        self.saml = Saml(self._http)
+        self.oidc_clients = OidcClients(self._http)
+        self.audit_logs = AuditLogs(self._http)
+        self.email_templates = EmailTemplates(self._http)
+        self.agents = Agents(self._http)
+        self.vault = Vault(self._http)
+        self.credentials = Credentials(self._http)
+        # Sessions and OAuth share the raw httpx client (no API-key header needed).
         self.sessions = Sessions(self._http.base_url, self._http._http)
+        self.oauth = OAuth(self._http.base_url, self._http._http)
 
     def can(
         self,

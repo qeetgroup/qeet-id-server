@@ -106,7 +106,7 @@ function KpiSkeleton() {
   );
 }
 
-function EmptyChart({ message, height = "h-[280px]" }: { message: string; height?: string }) {
+function EmptyChart({ message, height = "h-70" }: { message: string; height?: string }) {
   return (
     <div
       className={`flex w-full items-center justify-center rounded-md border border-dashed text-center text-sm text-muted-foreground ${height}`}
@@ -163,7 +163,7 @@ function AnalyticsPage() {
         description="Product analytics across tenants, applications, and authentication methods."
         actions={
           <Select value={range} onValueChange={(v) => v && setRange(v)}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-45">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -226,11 +226,11 @@ function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="h-[280px] w-full animate-pulse rounded bg-muted/40" />
+              <div className="h-70 w-full animate-pulse rounded bg-muted/40" />
             ) : weekly.length === 0 || weekly.every((w) => w.wau === 0 && w.dau === 0) ? (
               <EmptyChart message="No session activity recorded in the last 8 weeks." />
             ) : (
-              <ChartContainer config={mauConfig} className="h-[280px] w-full">
+              <ChartContainer config={mauConfig} className="h-70 w-full">
                 <AreaChart data={weekly}>
                   <CartesianGrid vertical={false} />
                   <XAxis dataKey="week" tickLine={false} axisLine={false} />

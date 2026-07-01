@@ -1,9 +1,9 @@
-import { errorFromResponse, QeetidError } from "./errors.js";
+import { errorFromResponse, QeetIDError } from "./errors.js";
 
 /** A fetch implementation (defaults to the global `fetch`, Node ≥18). */
 export type FetchLike = typeof globalThis.fetch;
 
-export interface QeetidOptions {
+export interface QeetIDOptions {
   /** Server-side API key (`qk_…`). Never expose this in a browser. */
   apiKey: string;
   /** API base URL. Defaults to https://api.id.qeet.in. */
@@ -38,9 +38,9 @@ export class HttpClient {
   private readonly maxRetries: number;
   private readonly fetchImpl: FetchLike;
 
-  constructor(opts: QeetidOptions) {
+  constructor(opts: QeetIDOptions) {
     if (!opts.apiKey) {
-      throw new QeetidError(0, "config_error", "Qeetid: apiKey is required");
+      throw new QeetIDError(0, "config_error", "QeetID: apiKey is required");
     }
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
@@ -48,7 +48,7 @@ export class HttpClient {
     this.maxRetries = opts.maxRetries ?? 2;
     const f = opts.fetch ?? globalThis.fetch;
     if (!f) {
-      throw new QeetidError(0, "config_error", "Qeetid: no fetch available — pass options.fetch on Node <18");
+      throw new QeetIDError(0, "config_error", "QeetID: no fetch available — pass options.fetch on Node <18");
     }
     this.fetchImpl = f;
   }
@@ -98,7 +98,7 @@ export class HttpClient {
           attempt++;
           continue;
         }
-        throw new QeetidError(0, "network_error", `request failed: ${(cause as Error).message}`);
+        throw new QeetIDError(0, "network_error", `request failed: ${(cause as Error).message}`);
       }
       clearTimeout(timer);
 

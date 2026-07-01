@@ -1,8 +1,8 @@
 {
-  "name": "@qeetid/example-react",
+  "name": "@qeet-id/example-react",
   "version": "0.1.0",
   "private": true,
-  "description": "Example Vite React SPA that signs in with Qeet ID via client-side OAuth2 + PKCE and @qeetid/react.",
+  "description": "Example Vite React SPA that signs in with Qeet ID via client-side OAuth2 + PKCE and @qeet-id/react.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,12 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@qeetid/react": "workspace:*",
+    "@qeet-id/react": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@qeetid/tsconfig": "workspace:*",
+    "@qeet-id/tsconfig": "workspace:*",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "^6.0.2",

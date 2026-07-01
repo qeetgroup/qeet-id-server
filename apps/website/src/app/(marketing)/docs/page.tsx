@@ -21,10 +21,10 @@ const quickstartTabs: CodeTab[] = [
     language: "shell",
     caption: "terminal",
     value: `# Install the SDK
-pnpm add @qeetid/sdk
+pnpm add @qeet-id/node
 
 # Initialize the client
-import { QeetID } from "@qeetid/sdk";
+import { QeetID } from "@qeet-id/node";
 
 const qg = new QeetID({ tenant: "acme" });
 const session = await qg.signIn({ provider: "passkey" });`,

@@ -22,7 +22,7 @@
     "react-i18next": "^17.0.8"
   },
   "devDependencies": {
-    "@qeetid/tsconfig": "workspace:*",
+    "@qeet-id/tsconfig": "workspace:*",
     "@tailwindcss/postcss": "catalog:",
     "@types/node": "catalog:",
     "@types/react": "catalog:",

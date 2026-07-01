@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeetid/react";
+import { SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeet-id/react";
 
 export default function Home() {
   return (
@@ -10,7 +10,7 @@ export default function Home() {
       <h1>Qeet ID — Example App</h1>
       <p className="muted">
         A minimal Next.js app that authenticates users with Qeet ID using{" "}
-        <code>@qeetid/nextjs</code> + <code>@qeetid/react</code>.
+        <code>@qeet-id/nextjs</code> + <code>@qeet-id/react</code>.
       </p>
 
       <SignedOut>

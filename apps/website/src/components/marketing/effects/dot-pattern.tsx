@@ -9,7 +9,7 @@ export function DotPattern({ className }: DotPatternProps) {
     <div
       aria-hidden
       className={cn(
-        "pointer-events-none absolute inset-0 -z-10 [background-image:radial-gradient(circle,var(--color-foreground)_1px,transparent_1px)] [background-size:24px_24px] opacity-[0.06] [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]",
+        "pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle,var(--color-foreground)_1px,transparent_1px)] bg-size-[24px_24px] opacity-[0.06] mask-[radial-gradient(ellipse_at_center,black,transparent_70%)]",
         className,
       )}
     />
