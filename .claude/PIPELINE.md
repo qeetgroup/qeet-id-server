@@ -9,6 +9,7 @@ How a competitive proposal becomes shipped, tested, security-reviewed code. The
 |---|---|---|---|
 | 0. Research | `product-manager` | `qeet-files/qeet-id/FEATURE-PROPOSALS.md` | sonnet |
 | 1. Spec | `feature-architect` | `docs/specs/<slug>.md` | opus |
+| 1.5. Track | `issue-tracker` | GitHub Issue on the roadmap board (Project #24) — labels/fields/milestone; also reconciles the board vs code | sonnet |
 | 2a. Backend | `backend-engineer` | Go domain pkg + migration + OpenAPI + wiring | sonnet |
 | 2b. Frontend | `frontend-engineer` | React app(s) + SDK updates | sonnet |
 | 3. Tests | `qa-test-engineer` | unit + integration + API + Vitest | sonnet |
@@ -24,6 +25,8 @@ FEATURE-PROPOSALS.md
         │  pick one (e.g. FP-013)
         ▼
 feature-architect ──► docs/specs/<slug>.md
+        │
+        ├─► issue-tracker ──► GitHub Issue on the roadmap board (Project #24)
         │
         ├─► backend-engineer  ─┐
         └─► frontend-engineer ─┤  (implement from the spec, in parallel where independent)
