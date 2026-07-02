@@ -37,7 +37,7 @@ paths:
   /v1/tenants/{tenantID}/rate-limits:
     get:
       operationId: get_v1_tenants_ByTenantID_rate_limits
-      summary: Get a tenant's effective rate limits
+      summary: Get rate limits
       description: >-
         Returns the effective per-bucket limits (tenant, user, api_key) — the
         platform defaults merged with any tenant-specific overrides.
@@ -65,7 +65,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_rate_limits
-      summary: Set a tenant's rate-limit overrides
+      summary: Set rate limits
       tags:
         - Rate Limits
       parameters:
@@ -98,7 +98,7 @@ paths:
           $ref: '#/components/responses/Unprocessable'
     delete:
       operationId: delete_v1_tenants_ByTenantID_rate_limits
-      summary: Reset a tenant's rate limits to the platform defaults
+      summary: Reset rate limits
       tags:
         - Rate Limits
       parameters:
@@ -120,7 +120,7 @@ paths:
   /healthz:
     get:
       operationId: get_healthz
-      summary: Get healthz
+      summary: Liveness
       tags:
         - Health
       security: []
@@ -138,7 +138,7 @@ paths:
   /metrics:
     get:
       operationId: get_metrics
-      summary: Get metrics
+      summary: Metrics (Prometheus)
       tags:
         - Health
       security: []
@@ -152,7 +152,7 @@ paths:
   /readyz:
     get:
       operationId: get_readyz
-      summary: Get readyz
+      summary: Readiness
       tags:
         - Health
       security: []
@@ -171,7 +171,7 @@ paths:
   /v1/admin/outbox/dlq:
     get:
       operationId: get_v1_admin_outbox_dlq
-      summary: Get dlq
+      summary: List DLQ events
       tags:
         - Admin
       security:
@@ -199,7 +199,7 @@ paths:
   /v1/tenants/{tenantID}/billing/checkout:
     post:
       operationId: post_v1_tenants_ByTenantID_billing_checkout
-      summary: Start a paid plan change (hosted Stripe/Razorpay checkout)
+      summary: Start checkout
       description: >-
         Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the currency (direct activation). Provider routing: INR → Razorpay, else → Stripe. The provider's webhook later activates the subscription.
       tags:
@@ -254,7 +254,7 @@ paths:
   /v1/billing/webhooks/{provider}:
     post:
       operationId: post_v1_billing_webhooks_ByProvider
-      summary: 'Payment provider webhook (Stripe/Razorpay) — signature-verified'
+      summary: Payment webhook
       description: >-
         Receives provider payment events. Authenticated by the provider's webhook signature (no user session); on a verified successful payment the referenced checkout is completed idempotently.
       tags:
@@ -284,7 +284,7 @@ paths:
   /v1/billing/plans:
     get:
       operationId: get_v1_billing_plans
-      summary: Get plans
+      summary: List plans
       tags:
         - Billing
       security:
@@ -312,7 +312,7 @@ paths:
   /v1/gdpr/purge:
     post:
       operationId: post_v1_gdpr_purge
-      summary: Create purge
+      summary: Create purge request
       tags:
         - GDPR
       security:
@@ -348,7 +348,7 @@ paths:
   /v1/gdpr/purge/{id}:
     delete:
       operationId: delete_v1_gdpr_purge_ById
-      summary: Delete purge
+      summary: Cancel purge request
       tags:
         - GDPR
       parameters:
@@ -377,7 +377,7 @@ paths:
   /v1/tenants/{tenantID}/analytics/overview:
     get:
       operationId: get_v1_tenants_ByTenantID_analytics_overview
-      summary: Get overview
+      summary: Tenant analytics overview
       tags:
         - Analytics
       parameters:
@@ -411,7 +411,7 @@ paths:
   /v1/tenants/{tenantID}/audit:
     get:
       operationId: get_v1_tenants_ByTenantID_audit
-      summary: Get audit
+      summary: List audit events
       tags:
         - Audit
       parameters:
@@ -445,7 +445,7 @@ paths:
   /v1/tenants/{tenantID}/audit/verify:
     get:
       operationId: get_v1_tenants_ByTenantID_audit_verify
-      summary: Get verify
+      summary: Verify audit chain
       tags:
         - Audit
       parameters:
@@ -479,7 +479,7 @@ paths:
   /v1/tenants/{tenantID}/billing/invoices:
     get:
       operationId: get_v1_tenants_ByTenantID_billing_invoices
-      summary: Get invoices
+      summary: List invoices
       tags:
         - Billing
       parameters:
@@ -546,7 +546,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     put:
       operationId: put_v1_tenants_ByTenantID_billing_subscription
-      summary: Replace subscription
+      summary: Subscribe / change plan
       tags:
         - Billing
       parameters:
@@ -588,7 +588,7 @@ paths:
   /v1/tenants/{tenantID}/billing/subscription/cancel:
     post:
       operationId: post_v1_tenants_ByTenantID_billing_subscription_cancel
-      summary: Create cancel
+      summary: Cancel at period end
       tags:
         - Billing
       parameters:
@@ -630,7 +630,7 @@ paths:
   /v1/tenants/{tenantID}/email-templates:
     get:
       operationId: get_v1_tenants_ByTenantID_email_templates
-      summary: Get email templates
+      summary: List templates
       tags:
         - Email Templates
       parameters:
@@ -664,7 +664,7 @@ paths:
   /v1/tenants/{tenantID}/email-templates/{key}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_email_templates_ByKey
-      summary: Delete email templates
+      summary: Reset to default
       tags:
         - Email Templates
       parameters:
@@ -697,7 +697,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     get:
       operationId: get_v1_tenants_ByTenantID_email_templates_ByKey
-      summary: Get email templates
+      summary: Get template
       tags:
         - Email Templates
       parameters:
@@ -735,7 +735,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     put:
       operationId: put_v1_tenants_ByTenantID_email_templates_ByKey
-      summary: Replace email templates
+      summary: Override template
       tags:
         - Email Templates
       parameters:
@@ -782,7 +782,7 @@ paths:
   /v1/tenants/{tenantID}/email-templates/{key}/preview:
     post:
       operationId: post_v1_tenants_ByTenantID_email_templates_ByKey_preview
-      summary: Create preview
+      summary: Preview template
       tags:
         - Email Templates
       parameters:
@@ -829,7 +829,7 @@ paths:
   /v1/tenants/{tenantID}/gdpr/purge:
     get:
       operationId: get_v1_tenants_ByTenantID_gdpr_purge
-      summary: Get purge
+      summary: List purge requests
       tags:
         - GDPR
       parameters:
@@ -863,7 +863,7 @@ paths:
   /v1/tenants/{tenantID}/log-sinks:
     get:
       operationId: get_v1_tenants_ByTenantID_log_sinks
-      summary: List a tenant's SIEM / log-streaming sinks
+      summary: List log sinks
       tags:
         - Log Sinks
       parameters:
@@ -894,7 +894,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_log_sinks
-      summary: Add a SIEM / log-streaming sink (Splunk HEC, Datadog, or HTTP)
+      summary: Create log sink
       tags:
         - Log Sinks
       parameters:
@@ -941,7 +941,7 @@ paths:
   /v1/tenants/{tenantID}/log-sinks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_log_sinks_ById
-      summary: Enable or disable a sink
+      summary: Enable/disable sink
       tags:
         - Log Sinks
       parameters:
@@ -978,7 +978,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: delete_v1_tenants_ByTenantID_log_sinks_ById
-      summary: Remove a sink
+      summary: Delete sink
       tags:
         - Log Sinks
       parameters:
@@ -1007,7 +1007,7 @@ paths:
   /v1/tenants/{tenantID}/retention:
     get:
       operationId: get_v1_tenants_ByTenantID_retention
-      summary: Get retention
+      summary: Get retention policy
       tags:
         - Data Retention
       parameters:
@@ -1040,7 +1040,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     put:
       operationId: put_v1_tenants_ByTenantID_retention
-      summary: Replace retention
+      summary: Update retention policy
       tags:
         - Data Retention
       parameters:
@@ -1082,7 +1082,7 @@ paths:
   /v1/tenants/{tenantID}/retention/preview:
     post:
       operationId: post_v1_tenants_ByTenantID_retention_preview
-      summary: Create preview
+      summary: Preview ripe users
       tags:
         - Data Retention
       parameters:
@@ -1124,7 +1124,7 @@ paths:
   /v1/tenants/{tenantID}/retention/run:
     post:
       operationId: post_v1_tenants_ByTenantID_retention_run
-      summary: Create run
+      summary: Run purge now
       tags:
         - Data Retention
       parameters:
@@ -1166,7 +1166,7 @@ paths:
   /v1/notifications:
     get:
       operationId: get_v1_notifications
-      summary: List the current user's in-app notifications + unread count
+      summary: List notifications
       tags:
         - Notifications
       security:
@@ -1192,7 +1192,7 @@ paths:
   /v1/notifications/mark-all-read:
     post:
       operationId: post_v1_notifications_mark_all_read
-      summary: Mark all of the current user's notifications read
+      summary: Mark all read
       tags:
         - Notifications
       security:

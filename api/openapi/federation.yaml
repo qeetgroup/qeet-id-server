@@ -29,7 +29,7 @@ paths:
   /.well-known/jwks.json:
     get:
       operationId: get_wellKnown_jwks_json
-      summary: JSON Web Key Set for verifying issued tokens
+      summary: JWKS
       tags:
         - OIDC
       security: []
@@ -43,7 +43,7 @@ paths:
   /.well-known/openid-configuration:
     get:
       operationId: get_wellKnown_openid_configuration
-      summary: OIDC discovery document
+      summary: OpenID configuration
       tags:
         - OIDC
       security: []
@@ -57,7 +57,7 @@ paths:
   /.well-known/oauth-protected-resource:
     get:
       operationId: get_wellKnown_oauth_protected_resource
-      summary: OAuth 2.0 Protected Resource Metadata (RFC 9728)
+      summary: Protected resource metadata
       description: >-
         Protected-resource metadata for MCP authorization-server compliance.
         Advertises the resource identifier, its authorization server(s), and the
@@ -96,7 +96,7 @@ paths:
   /ldap/{id}/authenticate:
     post:
       operationId: post_ldap_ById_authenticate
-      summary: Authenticate an end user against an LDAP/AD connection (bind)
+      summary: Authenticate (public)
       tags:
         - LDAP
       parameters:
@@ -124,7 +124,7 @@ paths:
   /oauth/introspect:
     post:
       operationId: post_oauth_introspect
-      summary: RFC 7662 token introspection (client-authenticated)
+      summary: Token introspect (RFC 7662)
       tags:
         - OIDC
       security:
@@ -156,7 +156,7 @@ paths:
   /oauth/revoke:
     post:
       operationId: post_oauth_revoke
-      summary: RFC 7009 token revocation (client-authenticated)
+      summary: Token revoke (RFC 7009)
       tags:
         - OIDC
       security:
@@ -187,7 +187,7 @@ paths:
   /saml/acs/{id}:
     post:
       operationId: post_saml_acs_ById
-      summary: Assertion Consumer Service (CSRF-exempt; signature-validated)
+      summary: "[acs] Assertion Consumer Service"
       tags:
         - SAML
       parameters:
@@ -218,7 +218,7 @@ paths:
   /saml/exchange:
     post:
       operationId: post_saml_exchange
-      summary: Exchange a one-time SAML login code for a token pair
+      summary: Exchange code (public)
       tags:
         - SAML
       security: []
@@ -247,7 +247,7 @@ paths:
   /saml/idp/metadata:
     get:
       operationId: get_saml_idp_metadata
-      summary: IdP metadata XML (Qeet as IdP)
+      summary: "[idp] IdP metadata"
       tags:
         - SAML
       security: []
@@ -261,7 +261,7 @@ paths:
   /saml/idp/sso:
     get:
       operationId: get_saml_idp_sso
-      summary: IdP SingleSignOnService (HTTP-Redirect binding)
+      summary: "[idp] IdP SSO (redirect binding)"
       tags:
         - SAML
       parameters:
@@ -287,7 +287,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
     post:
       operationId: post_saml_idp_sso
-      summary: IdP SingleSignOnService (HTTP-POST binding; CSRF-exempt)
+      summary: "[idp] IdP SSO (POST binding)"
       tags:
         - SAML
       security: []
@@ -316,7 +316,7 @@ paths:
   /saml/login/{id}:
     get:
       operationId: get_saml_login_ById
-      summary: SP-initiated login redirect to the external IdP
+      summary: Login redirect (public)
       tags:
         - SAML
       parameters:
@@ -334,7 +334,7 @@ paths:
   /saml/metadata/{id}:
     get:
       operationId: get_saml_metadata_ById
-      summary: SP metadata XML for a SAML connection (Qeet as SP)
+      summary: SP metadata (public)
       tags:
         - SAML
       parameters:
@@ -356,7 +356,7 @@ paths:
   /scim/v2/Groups:
     get:
       operationId: get_scim_v2_Groups
-      summary: List/filter SCIM groups
+      summary: "[scim] List groups"
       tags:
         - SCIM
       parameters:
@@ -387,7 +387,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_scim_v2_Groups
-      summary: Create a SCIM group
+      summary: "[scim] Create group"
       tags:
         - SCIM
       security:
@@ -414,7 +414,7 @@ paths:
   /scim/v2/Groups/{id}:
     delete:
       operationId: delete_scim_v2_Groups_ById
-      summary: Delete a SCIM group
+      summary: "[scim] Delete group"
       tags:
         - SCIM
       parameters:
@@ -434,7 +434,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_scim_v2_Groups_ById
-      summary: Get a SCIM group
+      summary: "[scim] Get group"
       tags:
         - SCIM
       parameters:
@@ -458,7 +458,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_scim_v2_Groups_ById
-      summary: Patch a SCIM group (PatchOp; member add/remove)
+      summary: "[scim] Patch group"
       tags:
         - SCIM
       parameters:
@@ -490,7 +490,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     put:
       operationId: put_scim_v2_Groups_ById
-      summary: Replace a SCIM group
+      summary: "[scim] Replace group"
       tags:
         - SCIM
       parameters:
@@ -523,7 +523,7 @@ paths:
   /scim/v2/ResourceTypes:
     get:
       operationId: get_scim_v2_ResourceTypes
-      summary: SCIM ResourceTypes
+      summary: "[scim] ResourceTypes"
       tags:
         - SCIM
       security:
@@ -541,7 +541,7 @@ paths:
   /scim/v2/Schemas:
     get:
       operationId: get_scim_v2_Schemas
-      summary: SCIM Schemas
+      summary: "[scim] Schemas"
       tags:
         - SCIM
       security:
@@ -559,7 +559,7 @@ paths:
   /scim/v2/ServiceProviderConfig:
     get:
       operationId: get_scim_v2_ServiceProviderConfig
-      summary: SCIM ServiceProviderConfig
+      summary: "[scim] ServiceProviderConfig"
       tags:
         - SCIM
       security:
@@ -577,7 +577,7 @@ paths:
   /scim/v2/Users:
     get:
       operationId: get_scim_v2_Users
-      summary: List/filter SCIM users
+      summary: "[scim] List users"
       tags:
         - SCIM
       parameters:
@@ -611,7 +611,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_scim_v2_Users
-      summary: Provision a SCIM user
+      summary: "[scim] Create user"
       tags:
         - SCIM
       security:
@@ -641,7 +641,7 @@ paths:
   /scim/v2/Users/{id}:
     delete:
       operationId: delete_scim_v2_Users_ById
-      summary: Delete (deprovision) a SCIM user
+      summary: "[scim] Delete user"
       tags:
         - SCIM
       parameters:
@@ -661,7 +661,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_scim_v2_Users_ById
-      summary: Get a SCIM user
+      summary: "[scim] Get user"
       tags:
         - SCIM
       parameters:
@@ -685,7 +685,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_scim_v2_Users_ById
-      summary: Patch a SCIM user (PatchOp; e.g. deprovision via active=false)
+      summary: "[scim] Patch user (deprovision)"
       tags:
         - SCIM
       parameters:
@@ -717,7 +717,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     put:
       operationId: put_scim_v2_Users_ById
-      summary: Replace a SCIM user
+      summary: "[scim] Replace user"
       tags:
         - SCIM
       parameters:
@@ -750,7 +750,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      summary: OAuth 2.0 authorization endpoint (SSO-cookie gated)
+      summary: Authorize
       tags:
         - OIDC
       parameters:
@@ -806,7 +806,7 @@ paths:
   /v1/oauth/authorize/decision:
     post:
       operationId: post_v1_oauth_authorize_decision
-      summary: Record the user's consent decision for an authorization request
+      summary: Authorize decision (consent)
       tags:
         - OIDC
       security:
@@ -838,7 +838,7 @@ paths:
   /v1/oauth/device:
     get:
       operationId: get_v1_oauth_device
-      summary: Device verification context (RFC 8628) for the hosted /device page
+      summary: Device verification context
       description: Returns the requesting client's display name and requested scopes for a pending device-authorization, looked up by user_code, so the hosted-login /device page can render the approval screen. SSO-cookie gated.
       tags:
         - OIDC
@@ -874,7 +874,7 @@ paths:
   /v1/oauth/device/decision:
     post:
       operationId: post_v1_oauth_device_decision
-      summary: Record the user's approve/deny for a device-authorization (RFC 8628)
+      summary: Device decision (approve)
       description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant) is bound and the device can complete its token poll.
       tags:
         - OIDC
@@ -920,7 +920,7 @@ paths:
   /v1/oauth/device_authorization:
     post:
       operationId: post_v1_oauth_device_authorization
-      summary: OAuth 2.0 Device Authorization endpoint (RFC 8628 §3.1)
+      summary: Device authorization
       description: Client-authenticated endpoint for input-constrained (CLI/TV/IoT) clients. Returns a (device_code, user_code) pair plus the verification URIs; the device then polls /v1/oauth/token-code with grant_type=urn:ietf:params:oauth:grant-type:device_code.
       tags:
         - OIDC
@@ -955,7 +955,7 @@ paths:
   /v1/oauth/login-context:
     get:
       operationId: get_v1_oauth_login_context
-      summary: Return the hosted-login UI context for an in-flight authorize request
+      summary: Login context
       tags:
         - OIDC
       parameters:
@@ -981,7 +981,7 @@ paths:
   /v1/oauth/logout:
     get:
       operationId: get_v1_oauth_logout
-      summary: RP-initiated logout (end session)
+      summary: RP-initiated logout
       tags:
         - OIDC
       parameters:
@@ -1007,7 +1007,7 @@ paths:
           $ref: '#/components/responses/BadRequest'
     post:
       operationId: post_v1_oauth_logout
-      summary: RP-initiated logout (end session)
+      summary: RP-initiated logout
       tags:
         - OIDC
       parameters:
@@ -1042,7 +1042,7 @@ paths:
   /v1/oauth/token:
     post:
       operationId: post_v1_oauth_token
-      summary: OAuth token endpoint for client_credentials (service principals)
+      summary: OAuth token (client_credentials)
       tags:
         - OIDC
       security:
@@ -1080,7 +1080,7 @@ paths:
   /v1/oauth/token-code:
     post:
       operationId: post_v1_oauth_token_code
-      summary: 'OAuth token endpoint: exchange authorization_code or refresh_token'
+      summary: Token (authorization_code)
       tags:
         - OIDC
       security:
@@ -1105,7 +1105,7 @@ paths:
   /v1/oauth/userinfo:
     get:
       operationId: get_v1_oauth_userinfo
-      summary: OIDC UserInfo endpoint
+      summary: UserInfo
       tags:
         - OIDC
       security:
@@ -1130,7 +1130,7 @@ paths:
   /v1/oidc/clients:
     post:
       operationId: post_v1_oidc_clients
-      summary: Register an OIDC/OAuth client
+      summary: Register OIDC client
       tags:
         - OIDC
       security:
@@ -1167,7 +1167,7 @@ paths:
   /v1/oidc/clients/{id}:
     delete:
       operationId: delete_v1_oidc_clients_ById
-      summary: Delete an OIDC client (tenant scoped by caller's token)
+      summary: Delete OIDC client (by scope)
       tags:
         - OIDC
       parameters:
@@ -1192,7 +1192,7 @@ paths:
   /v1/oidc/signing-keys:
     get:
       operationId: get_v1_oidc_signing_keys
-      summary: List issuer signing-key metadata (no key material)
+      summary: Signing keys metadata
       tags:
         - OIDC
       security:
@@ -1217,7 +1217,7 @@ paths:
   /v1/oidc/signing-keys/rotate:
     post:
       operationId: post_v1_oidc_signing_keys_rotate
-      summary: Rotate the issuer signing key
+      summary: Rotate signing key
       description: >-
         Generates a fresh EC P-256 signing key, makes it active, and retires the
         previous key to verify-only. The new private key PEM is returned once in
@@ -1251,7 +1251,7 @@ paths:
   /v1/service-principals:
     post:
       operationId: post_v1_service_principals
-      summary: Create a machine-to-machine service principal (client credentials)
+      summary: Create service principal
       tags:
         - OIDC
       security:
@@ -1282,7 +1282,7 @@ paths:
   /v1/service-principals/{id}:
     delete:
       operationId: delete_v1_service_principals_ById
-      summary: Disable a service principal
+      summary: Disable service principal
       tags:
         - OIDC
       parameters:
@@ -1311,7 +1311,7 @@ paths:
   /v1/social/exchange:
     post:
       operationId: post_v1_social_exchange
-      summary: Create exchange
+      summary: Exchange social code
       tags:
         - Social
       security: []
@@ -1341,7 +1341,7 @@ paths:
   /v1/social/identities/{id}:
     delete:
       operationId: delete_v1_social_identities_ById
-      summary: Delete identities
+      summary: Unlink identity
       tags:
         - Social
       parameters:
@@ -1370,7 +1370,7 @@ paths:
   /v1/social/providers:
     post:
       operationId: post_v1_social_providers
-      summary: Create providers
+      summary: Upsert provider
       tags:
         - Social
       security:
@@ -1406,7 +1406,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
-      summary: Get callback
+      summary: Social login callback
       tags:
         - Social
       parameters:
@@ -1434,7 +1434,7 @@ paths:
   /v1/social/{provider}/start:
     get:
       operationId: get_v1_social_ByProvIDer_start
-      summary: Get start
+      summary: Start social login
       tags:
         - Social
       parameters:
@@ -1462,7 +1462,7 @@ paths:
   /v1/tenants/{tenantID}/ldap:
     get:
       operationId: get_v1_tenants_ByTenantID_ldap
-      summary: List LDAP/AD connections
+      summary: List connections
       tags:
         - LDAP
       parameters:
@@ -1495,7 +1495,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       operationId: post_v1_tenants_ByTenantID_ldap
-      summary: Create an LDAP/AD connection
+      summary: Create connection
       tags:
         - LDAP
       parameters:
@@ -1537,7 +1537,7 @@ paths:
   /v1/tenants/{tenantID}/ldap/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_ldap_ById
-      summary: Delete an LDAP/AD connection
+      summary: Delete connection
       tags:
         - LDAP
       parameters:
@@ -1570,7 +1570,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     get:
       operationId: get_v1_tenants_ByTenantID_ldap_ById
-      summary: Get an LDAP/AD connection
+      summary: Get connection
       tags:
         - LDAP
       parameters:
@@ -1608,7 +1608,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     patch:
       operationId: patch_v1_tenants_ByTenantID_ldap_ById
-      summary: Update an LDAP/AD connection
+      summary: Update connection
       tags:
         - LDAP
       parameters:
@@ -1655,7 +1655,7 @@ paths:
   /v1/tenants/{tenantID}/ldap/{id}/test:
     post:
       operationId: post_v1_tenants_ByTenantID_ldap_ById_test
-      summary: Test-bind an LDAP/AD connection
+      summary: Test bind
       tags:
         - LDAP
       parameters:
@@ -1702,7 +1702,7 @@ paths:
   /v1/tenants/{tenantID}/oauth/devices:
     get:
       operationId: get_v1_tenants_ByTenantID_oauth_devices
-      summary: List a tenant's device authorizations (RFC 8628)
+      summary: List device authorizations
       tags:
         - OIDC
       parameters:
@@ -1736,7 +1736,7 @@ paths:
   /v1/tenants/{tenantID}/oauth/devices/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_oauth_devices_ById
-      summary: Revoke a device authorization
+      summary: Revoke device authorization
       tags:
         - OIDC
       parameters:
@@ -1767,7 +1767,7 @@ paths:
   /v1/tenants/{tenantID}/oidc/clients:
     get:
       operationId: get_v1_tenants_ByTenantID_oidc_clients
-      summary: List a tenant's OIDC clients
+      summary: List OIDC clients
       tags:
         - OIDC
       parameters:
@@ -1800,7 +1800,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_tenants_ByTenantID_oidc_clients
-      summary: Register an OIDC client under the tenant
+      summary: Create OIDC client
       tags:
         - OIDC
       parameters:
@@ -1844,7 +1844,7 @@ paths:
   /v1/tenants/{tenantID}/oidc/clients/{id}:
     get:
       operationId: get_v1_tenants_ByTenantID_oidc_clients_ById
-      summary: Get an OIDC client
+      summary: Get OIDC client
       tags:
         - OIDC
       parameters:
@@ -1878,7 +1878,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_oidc_clients_ById
-      summary: Update an OIDC client (partial)
+      summary: Update OIDC client
       tags:
         - OIDC
       parameters:
@@ -1922,7 +1922,7 @@ paths:
           $ref: '#/components/responses/Unprocessable'
     delete:
       operationId: delete_v1_tenants_ByTenantID_oidc_clients_ById
-      summary: Delete an OIDC client
+      summary: Delete OIDC client
       tags:
         - OIDC
       parameters:
@@ -1953,7 +1953,7 @@ paths:
   /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret:
     post:
       operationId: post_v1_tenants_ByTenantID_oidc_clients_ById_rotate_secret
-      summary: Rotate a confidential OIDC client's secret
+      summary: Rotate client secret
       tags:
         - OIDC
       parameters:
@@ -1995,7 +1995,7 @@ paths:
   /v1/tenants/{tenantID}/oauth/grants:
     get:
       operationId: get_v1_tenants_ByTenantID_oauth_grants
-      summary: List a tenant's OAuth consent grants
+      summary: List active grants
       tags:
         - OIDC
       parameters:
@@ -2029,7 +2029,7 @@ paths:
   /v1/tenants/{tenantID}/oauth/grants/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_oauth_grants_ById
-      summary: Revoke an OAuth consent grant
+      summary: Revoke grant
       tags:
         - OIDC
       parameters:
@@ -2058,7 +2058,7 @@ paths:
   /v1/tenants/{tenantID}/saml:
     get:
       operationId: get_v1_tenants_ByTenantID_saml
-      summary: List external-IdP SAML connections (SP side)
+      summary: List connections
       tags:
         - SAML
       parameters:
@@ -2088,7 +2088,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_saml
-      summary: Create an external-IdP SAML connection (SP side)
+      summary: Create connection
       tags:
         - SAML
       parameters:
@@ -2124,7 +2124,7 @@ paths:
   /v1/tenants/{tenantID}/saml-providers:
     get:
       operationId: get_v1_tenants_ByTenantID_saml_providers
-      summary: List downstream SAML service providers (IdP side)
+      summary: List SAML SPs (IdP side)
       tags:
         - SAML
       parameters:
@@ -2154,7 +2154,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_saml_providers
-      summary: Register a downstream SAML service provider (IdP side)
+      summary: Register SAML SP (IdP side)
       tags:
         - SAML
       parameters:
@@ -2190,7 +2190,7 @@ paths:
   /v1/tenants/{tenantID}/saml-providers/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_saml_providers_ById
-      summary: Delete a SAML service provider
+      summary: Delete SAML SP
       tags:
         - SAML
       parameters:
@@ -2218,7 +2218,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_v1_tenants_ByTenantID_saml_providers_ById
-      summary: Get a SAML service provider
+      summary: Get SAML SP
       tags:
         - SAML
       parameters:
@@ -2250,7 +2250,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_saml_providers_ById
-      summary: Update a SAML service provider
+      summary: Update SAML SP
       tags:
         - SAML
       parameters:
@@ -2291,7 +2291,7 @@ paths:
   /v1/tenants/{tenantID}/saml/{id}/test:
     post:
       operationId: post_v1_tenants_ByTenantID_saml_ById_test
-      summary: Preflight-test a SAML connection's config before rollout
+      summary: Test SAML connection
       description: >-
         Runs offline checks (entity ID present, https SSO URL, the signing certificate parses and is in its validity window, email attribute mapped) and returns per-check results. No network I/O.
       tags:
@@ -2327,7 +2327,7 @@ paths:
   /v1/tenants/{tenantID}/saml/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_saml_ById
-      summary: Delete a SAML connection
+      summary: Delete connection
       tags:
         - SAML
       parameters:
@@ -2355,7 +2355,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_v1_tenants_ByTenantID_saml_ById
-      summary: Get a SAML connection
+      summary: Get connection
       tags:
         - SAML
       parameters:
@@ -2387,7 +2387,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_saml_ById
-      summary: Update a SAML connection
+      summary: Update connection
       tags:
         - SAML
       parameters:
@@ -2428,7 +2428,7 @@ paths:
   /v1/tenants/{tenantID}/scim:
     get:
       operationId: get_v1_tenants_ByTenantID_scim
-      summary: Get the tenant's SCIM provisioning config/status
+      summary: Get SCIM config
       tags:
         - SCIM
       parameters:
@@ -2462,7 +2462,7 @@ paths:
   /v1/tenants/{tenantID}/scim/token:
     delete:
       operationId: delete_v1_tenants_ByTenantID_scim_token
-      summary: Revoke the tenant's SCIM bearer token
+      summary: Revoke SCIM token
       tags:
         - SCIM
       parameters:
@@ -2490,7 +2490,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       operationId: post_v1_tenants_ByTenantID_scim_token
-      summary: Rotate the tenant's SCIM bearer token
+      summary: Rotate SCIM token
       tags:
         - SCIM
       parameters:
@@ -2532,7 +2532,7 @@ paths:
   /v1/tenants/{tenantID}/scim/users:
     get:
       operationId: get_v1_tenants_ByTenantID_scim_users
-      summary: 'Admin: list SCIM-provisioned users for a tenant'
+      summary: List provisioned users
       tags:
         - SCIM
       parameters:
@@ -2566,7 +2566,7 @@ paths:
   /v1/tenants/{tenantID}/service-principals:
     get:
       operationId: get_v1_tenants_ByTenantID_service_principals
-      summary: List a tenant's service principals
+      summary: List service principals
       tags:
         - OIDC
       parameters:
@@ -2600,7 +2600,7 @@ paths:
   /v1/tenants/{tenantID}/social/providers:
     get:
       operationId: get_v1_tenants_ByTenantID_social_providers
-      summary: Get providers
+      summary: List providers
       tags:
         - Social
       parameters:
@@ -2634,7 +2634,7 @@ paths:
   /v1/users/{userID}/social/identities:
     get:
       operationId: get_v1_users_ByUserID_social_identities
-      summary: List a user's linked social identities
+      summary: List linked identities
       tags:
         - Social
       parameters:
