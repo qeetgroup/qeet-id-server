@@ -272,7 +272,7 @@ function GroupRolesCard({ groupId }: { groupId: string }) {
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedRoleId} onValueChange={(v) => v && setSelectedRoleId(v)}>
-            <SelectTrigger className="w-[220px]" aria-label={t("groupRoles.selectAriaLabel")}>
+            <SelectTrigger className="w-55" aria-label={t("groupRoles.selectAriaLabel")}>
               <SelectValue placeholder={t("groupRoles.addPlaceholder")} />
             </SelectTrigger>
             <SelectContent>
