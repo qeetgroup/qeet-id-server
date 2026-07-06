@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/access/recovery"
 	"github.com/qeetgroup/qeet-id/domains/access/risk/ipallow"
 	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/bot"
+	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/risk"
 	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/threat"
 	"github.com/qeetgroup/qeet-id/domains/developer/agents"
 	"github.com/qeetgroup/qeet-id/domains/developer/api-keys"
@@ -43,6 +44,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/operations/billing"
 	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
 	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
+	"github.com/qeetgroup/qeet-id/domains/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id/domains/operations/notifications"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
 	"github.com/qeetgroup/qeet-id/domains/operations/siem"
@@ -92,6 +94,8 @@ type Deps struct {
 	IPAllow       *ipallow.Handler
 	Threat        *threat.Handler
 	Bot           *bot.Handler
+	Risk          *risk.Handler
+	RateLimits    *ratelimits.Handler
 	Notification  *notification.Handler
 	DomainVerify  *domainverify.Handler
 	SIEM          *siem.Handler
@@ -273,6 +277,8 @@ func NewRouter(d Deps) http.Handler {
 			d.IPAllow.Mount(r)      // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
 			d.Threat.Mount(r)       // /tenants/{id}/security/anomalies: detected security events
 			d.Bot.Mount(r)          // /tenants/{id}/security/bots: bot-detection telemetry + settings
+			d.Risk.Mount(r)         // /tenants/{id}/security/risk-settings: adaptive MFA thresholds
+			d.RateLimits.Mount(r)   // /tenants/{id}/rate-limits: per-tenant rate limit overrides
 			d.Notification.Mount(r) // /notifications: in-app inbox (principal-scoped)
 			d.DomainVerify.Mount(r) // /tenants/{id}/domains: DNS domain verification
 			d.SIEM.Mount(r)         // /tenants/{id}/log-sinks: SIEM / log streaming

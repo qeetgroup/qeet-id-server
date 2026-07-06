@@ -25,7 +25,7 @@ paths:
   /v1/api-keys:
     post:
       operationId: post_v1_api_keys
-      summary: Create an API key (secret shown once)
+      summary: Create API key
       tags:
         - API Keys
       security:
@@ -62,7 +62,7 @@ paths:
   /v1/api-keys/{id}:
     delete:
       operationId: delete_v1_api_keys_ById
-      summary: Revoke an API key
+      summary: Revoke API key
       tags:
         - API Keys
       parameters:
@@ -86,7 +86,7 @@ paths:
   /v1/tenants/{tenantID}/api-keys:
     get:
       operationId: get_v1_tenants_ByTenantID_api_keys
-      summary: List a tenant's API keys
+      summary: List API keys
       tags:
         - API Keys
       parameters:
@@ -117,7 +117,7 @@ paths:
   /v1/credentials/verify:
     post:
       operationId: post_v1_credentials_verify
-      summary: 'Verifiable Credentials: verify a presented JWT-VC'
+      summary: Verify credential (public)
       description: >-
         Any relying party can present a JWT-serialized W3C Verifiable Credential issued by this server; the response reports validity (signature, issuer, expiry, and revocation status) plus the credential subject + claims. No session required.
       tags:
@@ -148,7 +148,7 @@ paths:
   /v1/tenants/{tenantID}/credentials:
     get:
       operationId: get_v1_tenants_ByTenantID_credentials
-      summary: List issued verifiable credentials
+      summary: List credentials
       tags:
         - Credentials
       parameters:
@@ -179,7 +179,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_credentials
-      summary: Issue a verifiable credential (returns a signed JWT-VC)
+      summary: Issue credential
       tags:
         - Credentials
       parameters:
@@ -227,7 +227,7 @@ paths:
   /v1/tenants/{tenantID}/credentials/{id}/revoke:
     post:
       operationId: post_v1_tenants_ByTenantID_credentials_ById_revoke
-      summary: Revoke an issued credential
+      summary: Revoke credential
       tags:
         - Credentials
       parameters:
@@ -256,7 +256,7 @@ paths:
   /v1/agents/token:
     post:
       operationId: post_v1_agents_token
-      summary: 'AI agent: exchange agent credentials for a short-lived scoped token'
+      summary: Mint agent token
       description: >-
         An AI agent authenticates with its agent_id + secret (JSON body or HTTP Basic) and receives an ephemeral access token marked actor_type="agent" (+ agent_id claim), verifiable on the standard JWKS path. No user session.
       tags:
@@ -289,7 +289,7 @@ paths:
   /v1/tenants/{tenantID}/agents:
     get:
       operationId: get_v1_tenants_ByTenantID_agents
-      summary: List AI-agent identities
+      summary: List agents
       tags:
         - Agents
       parameters:
@@ -320,7 +320,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_agents
-      summary: Create an AI-agent identity (returns its secret once)
+      summary: Create agent
       tags:
         - Agents
       parameters:
@@ -366,7 +366,7 @@ paths:
   /v1/tenants/{tenantID}/agents/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_agents_ById
-      summary: Delete an AI-agent identity
+      summary: Delete agent
       tags:
         - Agents
       parameters:
@@ -392,10 +392,113 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_agents_ById
+      summary: Update agent
+      description: >-
+        Sets or clears the agent's disabled_at. A disabled agent can no longer
+        mint tokens; existing tokens remain valid until they expire.
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - disabled
+              properties:
+                disabled:
+                  type: boolean
+      responses:
+        '204':
+          description: Updated
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/agents/{id}/suspend:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_ById_suspend
+      summary: Suspend agent
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Suspended
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/agents/kill-all:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_kill_all
+      summary: Suspend all agents
+      description: >-
+        Security incident-response control. Sets disabled_at on all of the
+        tenant's agents in a single transaction. Returns the number suspended.
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Agents suspended
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suspended:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/auth-hooks:
     get:
       operationId: get_v1_tenants_ByTenantID_auth_hooks
-      summary: List a tenant's login Actions/Hooks
+      summary: List auth hooks
       tags:
         - Auth Hooks
       parameters:
@@ -426,7 +529,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_auth_hooks
-      summary: Add a synchronous login hook (post-credential allow/deny gate)
+      summary: Create auth hook
       tags:
         - Auth Hooks
       parameters:
@@ -471,7 +574,7 @@ paths:
   /v1/tenants/{tenantID}/auth-hooks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_auth_hooks_ById
-      summary: Update a hook (enabled / fail_open)
+      summary: Update auth hook
       tags:
         - Auth Hooks
       parameters:
@@ -510,7 +613,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: delete_v1_tenants_ByTenantID_auth_hooks_ById
-      summary: Remove a hook
+      summary: Delete auth hook
       tags:
         - Auth Hooks
       parameters:
@@ -539,7 +642,7 @@ paths:
   /v1/vault/{name}:
     get:
       operationId: get_v1_vault_ByName
-      summary: 'Token vaulting: fetch a vault secret by name (scoped principal, e.g. an AI agent)'
+      summary: Vault read by name
       description: >-
         Returns a secret's value to a caller holding a "vault:<name>" (or "vault:read") scope — e.g. an AI agent fetching a credential at runtime without embedding it. Tenant comes from the caller's token; every access is audited.
       tags:
@@ -574,7 +677,7 @@ paths:
   /v1/tenants/{tenantID}/secrets:
     get:
       operationId: get_v1_tenants_ByTenantID_secrets
-      summary: Get secrets
+      summary: List secrets
       tags:
         - Secrets
       parameters:
@@ -607,7 +710,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       operationId: post_v1_tenants_ByTenantID_secrets
-      summary: Create secrets
+      summary: Create secret
       tags:
         - Secrets
       parameters:
@@ -649,7 +752,7 @@ paths:
   /v1/tenants/{tenantID}/secrets/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_secrets_ById
-      summary: Delete secrets
+      summary: Delete secret
       tags:
         - Secrets
       parameters:
@@ -682,7 +785,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     patch:
       operationId: patch_v1_tenants_ByTenantID_secrets_ById
-      summary: Update secrets
+      summary: Rotate secret
       tags:
         - Secrets
       parameters:
@@ -729,7 +832,7 @@ paths:
   /v1/tenants/{tenantID}/secrets/{id}/reveal:
     post:
       operationId: post_v1_tenants_ByTenantID_secrets_ById_reveal
-      summary: Create reveal
+      summary: Reveal secret
       tags:
         - Secrets
       parameters:
@@ -776,7 +879,7 @@ paths:
   /v1/tenants/{tenantID}/webhooks:
     get:
       operationId: get_v1_tenants_ByTenantID_webhooks
-      summary: Get webhooks
+      summary: List webhooks
       tags:
         - Webhooks
       parameters:
@@ -810,7 +913,7 @@ paths:
   /v1/webhooks:
     post:
       operationId: post_v1_webhooks
-      summary: Create webhooks
+      summary: Create webhook
       tags:
         - Webhooks
       security:
@@ -846,7 +949,7 @@ paths:
   /v1/webhooks/{id}:
     get:
       operationId: get_v1_webhooks_ById
-      summary: Get a single webhook subscription
+      summary: Get webhook
       tags:
         - Webhooks
       parameters:
@@ -874,7 +977,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: delete_v1_webhooks_ById
-      summary: Delete webhooks
+      summary: Disable webhook
       tags:
         - Webhooks
       parameters:
@@ -903,7 +1006,7 @@ paths:
   /v1/webhooks/{id}/deliveries:
     get:
       operationId: get_v1_webhooks_ById_deliveries
-      summary: List recent delivery attempts for a webhook (with payload + response)
+      summary: List deliveries
       tags:
         - Webhooks
       parameters:
@@ -935,7 +1038,7 @@ paths:
   /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
     post:
       operationId: post_v1_webhooks_ById_deliveries_ByDeliveryID_retry
-      summary: Re-queue a webhook delivery for immediate redelivery
+      summary: Retry delivery
       tags:
         - Webhooks
       parameters:
@@ -964,7 +1067,7 @@ paths:
   /v1/webhooks/{id}/test:
     post:
       operationId: post_v1_webhooks_ById_test
-      summary: Create test
+      summary: Test webhook
       tags:
         - Webhooks
       parameters:

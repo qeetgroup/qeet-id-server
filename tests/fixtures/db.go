@@ -2,10 +2,10 @@ package fixtures
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qeetgroup/qeet-id/platform/database/migrations"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -51,13 +51,6 @@ func NewTestDB(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func runMigrations(ctx context.Context, connStr string) error {
-	// golang-migrate programmatic API
-	// Import path: github.com/golang-migrate/migrate/v4
-	// This is a compile-time dep already present via Makefile migrate targets.
-	_ = ctx
-	_ = connStr
-	// TODO: wire golang-migrate programmatic API here if needed for CI
-	// For now tests that need this call `make db-up migrate-up` first.
-	return fmt.Errorf("not yet implemented — run `make db-up migrate-up` before tests")
+func runMigrations(_ context.Context, connStr string) error {
+	return migrations.Run(connStr)
 }

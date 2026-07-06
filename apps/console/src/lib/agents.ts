@@ -49,3 +49,26 @@ export function useDeleteAgent() {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
+
+export function useSetAgentDisabled() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) =>
+      api<void>(`/v1/tenants/${tenantId}/agents/${id}`, {
+        method: "PATCH",
+        body: { disabled },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function useKillAllAgents() {
+  const tenantId = useTenantId();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ suspended: number }>(`/v1/tenants/${tenantId}/agents/kill-all`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}

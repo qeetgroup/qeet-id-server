@@ -321,7 +321,7 @@ func TestDeviceGrantHTTPHappyPath(t *testing.T) {
 	// A user with a password, made a member of the client's tenant.
 	authSvc, _ := newAuth()
 	email := uniqueSlug("dev") + "@example.com"
-	_, u, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "password123"})
+	_, u, _, err := authSvc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("signup: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestDeviceGrantHTTPHappyPath(t *testing.T) {
 	}
 
 	// 3) Establish the SSO session, then approve via the cookie-gated decision.
-	sb, _ := json.Marshal(map[string]string{"email": email, "password": "password123"})
+	sb, _ := json.Marshal(map[string]string{"email": email, "password": "Kx7mQ2vLp9Wz"})
 	sresp, err := hc.Post(srv.URL+"/v1/auth/session", "application/json", bytes.NewReader(sb))
 	if err != nil || sresp.StatusCode != http.StatusOK {
 		t.Fatalf("session: %v (status %v)", err, sresp.StatusCode)

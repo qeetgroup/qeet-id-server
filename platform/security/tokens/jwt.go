@@ -304,6 +304,52 @@ func (i *Issuer) KeyInfo() []KeyMeta {
 	return out
 }
 
+// Rotate generates a fresh EC P-256 signing key, retires the current active key
+// to verify-only status (tokens it signed remain verifiable), and returns the new
+// private key's PEM and kid. The caller MUST persist the returned PEM as the new
+// JWT_SIGNING_KEY before the process restarts; until then the new key is in-memory
+// only. This method is safe to call at runtime — new tokens will immediately be
+// signed by the new key.
+func (i *Issuer) Rotate() (privKeyPEM string, newKID string, err error) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", "", fmt.Errorf("generate key: %w", err)
+	}
+	kid, err := thumbprint(&priv.PublicKey)
+	if err != nil {
+		return "", "", fmt.Errorf("thumbprint: %w", err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal key: %w", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+
+	newKey := &signingKey{
+		kid:    kid,
+		alg:    "ES256",
+		method: jwt.SigningMethodES256,
+		priv:   priv,
+		pub:    &priv.PublicKey,
+	}
+
+	// Retire the current active key: keep a verify-only copy in verifiers so
+	// tokens signed by the old key continue to verify during the grace window.
+	if old := i.active; old != nil {
+		i.verifiers[old.kid] = &signingKey{
+			kid:    old.kid,
+			alg:    old.alg,
+			method: old.method,
+			pub:    old.pub,
+			// priv intentionally nil — verify-only
+		}
+	}
+
+	i.verifiers[kid] = newKey
+	i.active = newKey
+	return string(pemBytes), kid, nil
+}
+
 // JWK is a public JSON Web Key as published at /.well-known/jwks.json.
 type JWK struct {
 	Kty string `json:"kty"`

@@ -9,8 +9,10 @@ How a competitive proposal becomes shipped, tested, security-reviewed code. The
 |---|---|---|---|
 | 0. Research | `product-manager` | `qeet-files/qeet-id/FEATURE-PROPOSALS.md` | sonnet |
 | 1. Spec | `feature-architect` | `docs/specs/<slug>.md` | opus |
+| 1.5. Track | `issue-tracker` | GitHub Issue on the roadmap board (Project #24) — labels/fields/milestone; also reconciles the board vs code | sonnet |
 | 2a. Backend | `backend-engineer` | Go domain pkg + migration + OpenAPI + wiring | sonnet |
 | 2b. Frontend | `frontend-engineer` | React app(s) + SDK updates | sonnet |
+| 2b+. UI review | `design-reviewer` | enterprise-UI findings: Qeetrix fidelity + states + responsive/dark + WCAG 2.2 AA (read-only; verdict) | sonnet |
 | 3. Tests | `qa-test-engineer` | unit + integration + API + Vitest | sonnet |
 | 4. Security | `security-reviewer` | findings report (read-only) | opus |
 | 5. Docs / loop | `docs-writer` | docs + proposal marked `done` | sonnet |
@@ -25,8 +27,10 @@ FEATURE-PROPOSALS.md
         ▼
 feature-architect ──► docs/specs/<slug>.md
         │
+        ├─► issue-tracker ──► GitHub Issue on the roadmap board (Project #24)
+        │
         ├─► backend-engineer  ─┐
-        └─► frontend-engineer ─┤  (implement from the spec, in parallel where independent)
+        └─► frontend-engineer ─┤  (implement from the spec; design-reviewer checks UI craft + Qeetrix + WCAG 2.2 AA)
                                ▼
                        qa-test-engineer   (suite green: build + vet + go test + arch + coverage + pnpm test)
                                ▼

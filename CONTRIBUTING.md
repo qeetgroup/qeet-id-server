@@ -15,6 +15,20 @@ If you're reporting a security issue, please follow [SECURITY.md](./SECURITY.md)
 
 ---
 
+## Filing issues
+
+Work is tracked on the **"Qeet ID - Roadmap"** board ([github.com/orgs/qeetgroup/projects/24](https://github.com/orgs/qeetgroup/projects/24)). When you open an issue:
+
+- **Title:** prefix with `[feat]`, `[fix]`, or `[chore]` (the issue templates do this for you).
+- **Body:** use these three sections — **Context** (why / the gap), **Requirements** (what's needed), **Acceptance criteria** (`- [ ]` checkboxes that are specific and testable). Don't add a "References" section.
+- **Labels:** a priority (`P0`–`P3`), an area (`area/backend|console|login|web|sdk|docs|deploy|infra|dx`), a type (`type/feature|bug|chore|…`), and a workstream (`ws/*`) where it fits.
+- **Milestone:** pick the target release (`v1.0 — GA`, `v1.1 — Agent & MCP Fast-Follow`, `v1.2 — Standards & Federation`, `Infra & Deploy`, `Ops & Go-Live Hardening`, or `Post-GA Backlog`).
+- **Before opening:** search existing issues and the code — the roadmap docs sometimes over-claim what's shipped. Agents/maintainers can use the `issue-tracker` subagent to create + reconcile these automatically.
+
+Security issues do **not** go here — follow [SECURITY.md](./SECURITY.md).
+
+---
+
 ## Development setup
 
 See the [Quickstart in the root README](./README.md#quickstart). In short:

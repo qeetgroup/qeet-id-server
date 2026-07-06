@@ -31,7 +31,7 @@ paths:
   /v1/groups:
     post:
       operationId: post_v1_groups
-      summary: Create groups
+      summary: Create group
       tags:
         - Groups
       security:
@@ -67,7 +67,7 @@ paths:
   /v1/groups/{id}:
     delete:
       operationId: delete_v1_groups_ById
-      summary: Delete groups
+      summary: Delete group
       tags:
         - Groups
       parameters:
@@ -96,7 +96,7 @@ paths:
   /v1/groups/{id}/members:
     get:
       operationId: get_v1_groups_ById_members
-      summary: Get members
+      summary: List members
       tags:
         - Groups
       parameters:
@@ -130,7 +130,7 @@ paths:
   /v1/groups/{id}/members/{userID}:
     delete:
       operationId: delete_v1_groups_ById_members_ByUserID
-      summary: Delete members
+      summary: Remove member
       tags:
         - Groups
       parameters:
@@ -163,7 +163,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       operationId: post_v1_groups_ById_members_ByUserID
-      summary: Act on members
+      summary: Add member
       tags:
         - Groups
       parameters:
@@ -210,7 +210,7 @@ paths:
   /v1/invites:
     post:
       operationId: post_v1_invites
-      summary: Create invites
+      summary: Create invite
       tags:
         - Invites
       security:
@@ -246,7 +246,7 @@ paths:
   /v1/invites/accept:
     post:
       operationId: post_v1_invites_accept
-      summary: Create accept
+      summary: Accept invite (public)
       tags:
         - Invites
       security: []
@@ -276,7 +276,7 @@ paths:
   /v1/invites/{id}:
     delete:
       operationId: delete_v1_invites_ById
-      summary: Delete invites
+      summary: Revoke invite
       tags:
         - Invites
       parameters:
@@ -305,7 +305,7 @@ paths:
   /v1/tenants:
     get:
       operationId: get_v1_tenants
-      summary: List tenants the caller belongs to
+      summary: List tenants
       tags:
         - Tenants
       parameters:
@@ -325,7 +325,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_tenants
-      summary: Create a tenant (caller becomes owner)
+      summary: Create tenant
       tags:
         - Tenants
       security:
@@ -355,7 +355,7 @@ paths:
   /v1/tenants/{id}:
     delete:
       operationId: delete_v1_tenants_ById
-      summary: Delete a tenant
+      summary: Delete tenant
       tags:
         - Tenants
       parameters:
@@ -378,7 +378,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_v1_tenants_ById
-      summary: Get a tenant
+      summary: Get tenant
       tags:
         - Tenants
       parameters:
@@ -405,7 +405,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ById
-      summary: Update a tenant
+      summary: Update tenant
       tags:
         - Tenants
       parameters:
@@ -476,7 +476,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     put:
       operationId: put_v1_tenants_ByTenantID_branding
-      summary: Replace branding
+      summary: Update branding
       tags:
         - Branding
       parameters:
@@ -518,7 +518,7 @@ paths:
   /v1/tenants/{tenantID}/groups:
     get:
       operationId: get_v1_tenants_ByTenantID_groups
-      summary: Get groups
+      summary: List groups
       tags:
         - Groups
       parameters:
@@ -552,7 +552,7 @@ paths:
   /v1/tenants/{tenantID}/invites:
     get:
       operationId: get_v1_tenants_ByTenantID_invites
-      summary: Get invites
+      summary: List invites
       tags:
         - Invites
       parameters:
@@ -586,7 +586,7 @@ paths:
   /v1/users:
     get:
       operationId: get_v1_users
-      summary: List users in the caller's tenant (cursor-paginated)
+      summary: List users
       tags:
         - Users
       parameters:
@@ -606,7 +606,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_users
-      summary: Create a user
+      summary: Create user
       tags:
         - Users
       security:
@@ -638,7 +638,7 @@ paths:
   /v1/users/deleted:
     get:
       operationId: get_v1_users_deleted
-      summary: List soft-deleted users (recycle bin)
+      summary: List deleted users
       tags:
         - Users
       parameters:
@@ -663,7 +663,7 @@ paths:
   /v1/users/{id}:
     delete:
       operationId: delete_v1_users_ById
-      summary: Soft-delete a user
+      summary: Delete user
       tags:
         - Users
       parameters:
@@ -688,7 +688,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     get:
       operationId: get_v1_users_ById
-      summary: Get a user
+      summary: Get user
       tags:
         - Users
       parameters:
@@ -713,7 +713,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_users_ById
-      summary: Update a user
+      summary: Update user
       tags:
         - Users
       parameters:
@@ -751,7 +751,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      summary: Set a user's password
+      summary: Set password
       tags:
         - Users
       parameters:
@@ -792,7 +792,7 @@ paths:
   /v1/users/{id}/mfa:
     delete:
       operationId: delete_v1_users_ById_mfa
-      summary: 'Admin: reset a user''s MFA (TOTP, recovery codes, OTP factors)'
+      summary: Admin reset user MFA
       description: Account-recovery for a locked-out user. Requires the `user.write` permission; audited as `mfa.admin_reset`.
       tags:
         - Users
@@ -826,7 +826,7 @@ paths:
   /v1/users/{id}/purge:
     delete:
       operationId: delete_v1_users_ById_purge
-      summary: Permanently purge a soft-deleted user
+      summary: Purge user
       tags:
         - Users
       parameters:
@@ -852,7 +852,7 @@ paths:
   /v1/users/{id}/restore:
     post:
       operationId: post_v1_users_ById_restore
-      summary: Restore a soft-deleted user
+      summary: Restore user
       tags:
         - Users
       parameters:
@@ -890,7 +890,7 @@ paths:
   /v1/users/{id}/verify/email/confirm:
     post:
       operationId: post_v1_users_ById_verify_email_confirm
-      summary: Confirm an email-verification code
+      summary: Confirm email verification
       tags:
         - Verification
       parameters:
@@ -938,7 +938,7 @@ paths:
   /v1/users/{id}/verify/email/start:
     post:
       operationId: post_v1_users_ById_verify_email_start
-      summary: Send an email-verification code
+      summary: Start email verification
       description: Sends a 6-digit code to the address on file. Pass `email` only to verify a different address.
       tags:
         - Verification
@@ -985,7 +985,7 @@ paths:
   /v1/users/{id}/verify/phone/confirm:
     post:
       operationId: post_v1_users_ById_verify_phone_confirm
-      summary: Confirm a phone-verification code
+      summary: Confirm phone verification
       tags:
         - Verification
       parameters:
@@ -1033,7 +1033,7 @@ paths:
   /v1/users/{id}/verify/phone/start:
     post:
       operationId: post_v1_users_ById_verify_phone_start
-      summary: Send a phone-verification code (SMS)
+      summary: Start phone verification
       description: Sends a 6-digit code to the number on file. Pass `phone` only to verify a different number.
       tags:
         - Verification
@@ -1079,7 +1079,7 @@ paths:
   /v1/tenants/{tenantID}/domains:
     get:
       operationId: get_v1_tenants_ByTenantID_domains
-      summary: List a tenant's claimed/verified email domains
+      summary: List domains
       tags:
         - Domains
       parameters:
@@ -1110,7 +1110,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_domains
-      summary: Claim a domain (returns the DNS TXT record to publish)
+      summary: Claim domain
       tags:
         - Domains
       parameters:
@@ -1152,7 +1152,7 @@ paths:
   /v1/tenants/{tenantID}/domains/{id}/verify:
     post:
       operationId: post_v1_tenants_ByTenantID_domains_ById_verify
-      summary: Check the DNS TXT record and mark the domain verified
+      summary: Verify domain
       tags:
         - Domains
       parameters:
@@ -1190,7 +1190,7 @@ paths:
   /v1/tenants/{tenantID}/domains/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_domains_ById
-      summary: Remove a claimed domain
+      summary: Remove domain
       tags:
         - Domains
       parameters:

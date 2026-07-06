@@ -5,10 +5,8 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-POSTGRES_USER ?= postgres
-POSTGRES_DB   ?= qeet_id
-POSTGRES_PORT ?= 5001
-DB_URL        ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
+# DB_URL comes from .env (included above); this is the fallback when .env is absent.
+DB_URL        ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
 MIGRATIONS_DIR = platform/database/migrations
 
 dev:

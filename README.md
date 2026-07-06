@@ -190,7 +190,7 @@ go mod download
 nvm use 24 && pnpm install
 
 # 3. Copy env files
-cp .env.example .env                                      # backend — set POSTGRES_PASSWORD at minimum
+cp .env.example .env                                      # backend — DB_URL has a working local default
 cp apps/console/.env.example apps/console/.env            # admin frontend
 cp apps/login/.env.example apps/login/.env.local          # hosted login
 cp apps/website/.env.example apps/website/.env.local      # marketing site
@@ -213,7 +213,7 @@ make dev
 | `pnpm --filter @qeetid/login dev` | Hosted login | <http://localhost:3004> |
 | `pnpm --filter @qeetid/web dev` | Marketing site | <http://localhost:3001> |
 
-Sanity check: `curl localhost:4001/healthz` · Demo login: **`owner@acme.test`** / **`Password123!`**
+Sanity check: `curl localhost:4001/healthz` · Demo login: **`saibabu@qeet.in`** / **`Password123!`**
 
 ---
 

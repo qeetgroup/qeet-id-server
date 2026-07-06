@@ -709,8 +709,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/oauth/devices", h.listDevices)
 	r.Delete("/tenants/{tenantID}/oauth/devices/{id}", h.revokeDevice)
 
-	// Read-only signing-key metadata (global/issuer-level; rotation is ops-driven).
+	// Signing-key management (global/issuer-level, not tenant-scoped).
 	r.Get("/oidc/signing-keys", h.signingKeys)
+	r.Post("/oidc/signing-keys/rotate", h.rotateKey)
 }
 
 // MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate
@@ -791,6 +792,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/.well-known/openid-configuration", h.discovery)
 	r.Get("/.well-known/jwks.json", h.jwks)
+	r.Get("/.well-known/oauth-protected-resource", h.protectedResourceMetadata) // RFC 9728
 	// Client-authenticated, machine-to-machine; CSRF-exempt in the router.
 	r.Post("/oauth/revoke", h.revoke)         // RFC 7009
 	r.Post("/oauth/introspect", h.introspect) // RFC 7662
@@ -1028,6 +1030,16 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
 		return
 	}
+	// RFC 8707 §2 — validate the optional resource indicator if present.
+	// The resource must be an absolute URI with a scheme; fragment components
+	// are forbidden. An unrecognised or malformed value yields invalid_target.
+	if resource := r.Form.Get("resource"); resource != "" {
+		u, parseErr := url.Parse(resource)
+		if parseErr != nil || !u.IsAbs() || u.Fragment != "" {
+			writeOAuthError(w, oauthErr("invalid_target", "resource must be an absolute URI without a fragment"))
+			return
+		}
+	}
 	clientID := r.Form.Get("client_id")
 	clientSecret := r.Form.Get("client_secret")
 	if u, p, ok := r.BasicAuth(); ok {
@@ -1152,6 +1164,25 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"scopes_supported":                      []string{"openid", "profile", "email"},
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange},
 		"code_challenge_methods_supported":      []string{"S256"},
+		// RFC 9728 — Protected Resource Metadata discovery link
+		"protected_resource_metadata": base + "/.well-known/oauth-protected-resource",
+		// RFC 8707 — Resource Indicators
+		"resource_indicators_supported": true,
+	})
+}
+
+// protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
+// Resource Metadata. MCP authorization servers must advertise this document
+// so MCP clients can discover the resource's authorization server and
+// supported token types without out-of-band configuration.
+func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	base := externalScheme(r) + "://" + r.Host
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"resource":                              base,
+		"authorization_servers":                 []string{base},
+		"bearer_methods_supported":              []string{"header"},
+		"resource_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
+		"resource_documentation":                "https://docs.qeet.in/id/api-reference",
 	})
 }
 

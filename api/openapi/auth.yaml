@@ -33,7 +33,7 @@ paths:
   /v1/auth/forgot-password:
     post:
       operationId: post_v1_auth_forgot_password
-      summary: Start a password-reset flow (enumeration-safe)
+      summary: Forgot password
       tags:
         - Auth
       security: []
@@ -66,7 +66,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      summary: Password login; issues a token pair, or an MFA challenge if a second factor is enrolled
+      summary: Sign in
       tags:
         - Auth
       security: []
@@ -106,7 +106,7 @@ paths:
   /v1/auth/mfa:
     post:
       operationId: post_v1_auth_mfa
-      summary: Complete a two-step login by verifying a second-factor code
+      summary: Complete MFA login
       description: Exchanges the mfa_token from /v1/auth/login plus a TOTP or recovery code for a token pair.
       tags:
         - Auth
@@ -142,7 +142,7 @@ paths:
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
-      summary: Revoke the caller's current session
+      summary: Logout
       tags:
         - Auth
       security:
@@ -171,7 +171,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: post_v1_auth_magic_link_consume
-      summary: Consume a magic-link token and issue a token pair
+      summary: Magic link consume
       tags:
         - Auth
       security: []
@@ -202,7 +202,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      summary: Send a passwordless magic-link email
+      summary: Magic link start
       tags:
         - Auth
       security: []
@@ -235,7 +235,7 @@ paths:
   /v1/auth/me:
     get:
       operationId: get_v1_auth_me
-      summary: Return the authenticated principal (user/tenant/session/scopes)
+      summary: Me
       tags:
         - Auth
       security:
@@ -253,7 +253,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
-      summary: Rotate a refresh token (reuse triggers session revocation)
+      summary: Refresh
       tags:
         - Auth
       security: []
@@ -277,7 +277,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
-      summary: Complete a password reset with a reset token
+      summary: Reset password
       tags:
         - Auth
       security: []
@@ -316,7 +316,7 @@ paths:
   /v1/auth/session:
     delete:
       operationId: delete_v1_auth_session
-      summary: 'Hosted-login logout: revoke the SSO session and clear the cookie'
+      summary: Destroy SSO session (logout)
       tags:
         - Auth
       security: []
@@ -325,7 +325,7 @@ paths:
           description: Session revoked, cookie cleared
     post:
       operationId: post_v1_auth_session
-      summary: 'Hosted-login: verify credentials and set the SSO cookie (qe_ls)'
+      summary: Create SSO session
       tags:
         - Auth
       security: []
@@ -368,7 +368,7 @@ paths:
   /v1/auth/session/mfa:
     post:
       operationId: post_v1_auth_session_mfa
-      summary: 'Hosted-login: complete a two-step login and set the SSO cookie'
+      summary: Complete SSO session MFA
       description: Exchanges the mfa_token from POST /v1/auth/session plus a TOTP or recovery code for the SSO cookie (qe_ls).
       tags:
         - Auth
@@ -412,7 +412,7 @@ paths:
   /v1/auth/register:
     post:
       operationId: post_v1_auth_register
-      summary: 'Hosted-login: end-user self-registration into a tenant (B2C)'
+      summary: Register (hosted, B2C)
       description: |
         Creates a new end-user in the client's tenant and sets the SSO cookie
         (qe_ls) so they continue into the OAuth authorize flow. Gated by the
@@ -462,7 +462,7 @@ paths:
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions
-      summary: List the caller's active sessions
+      summary: List sessions
       tags:
         - Auth
       security:
@@ -485,7 +485,7 @@ paths:
   /v1/auth/sessions/{id}:
     delete:
       operationId: delete_v1_auth_sessions_ById
-      summary: Revoke one of the caller's sessions
+      summary: Revoke session
       tags:
         - Auth
       parameters:
@@ -516,7 +516,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: post_v1_auth_signup
-      summary: 'Self-service signup: create user + personal workspace, return token pair'
+      summary: Sign up
       tags:
         - Auth
       security: []
@@ -542,7 +542,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
-      summary: Issue a token pair scoped to another tenant the caller belongs to
+      summary: Switch tenant
       tags:
         - Auth
       security:
@@ -578,7 +578,7 @@ paths:
   /v1/check:
     get:
       operationId: get_v1_check
-      summary: Authorize an action (permission check)
+      summary: Permission check
       tags:
         - RBAC
       parameters:
@@ -631,7 +631,7 @@ paths:
   /v1/mfa/otp/factors:
     get:
       operationId: get_v1_mfa_otp_factors
-      summary: Get factors
+      summary: List OTP factors
       tags:
         - MFA
       security:
@@ -658,7 +658,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       operationId: post_v1_mfa_otp_factors
-      summary: Create factors
+      summary: Add OTP factor
       tags:
         - MFA
       security:
@@ -694,7 +694,7 @@ paths:
   /v1/mfa/otp/factors/{id}:
     delete:
       operationId: delete_v1_mfa_otp_factors_ById
-      summary: Delete factors
+      summary: Delete OTP factor
       tags:
         - MFA
       parameters:
@@ -723,7 +723,7 @@ paths:
   /v1/mfa/otp/factors/{id}/challenge:
     post:
       operationId: post_v1_mfa_otp_factors_ById_challenge
-      summary: Create challenge
+      summary: Challenge OTP factor
       tags:
         - MFA
       parameters:
@@ -765,7 +765,7 @@ paths:
   /v1/mfa/otp/factors/{id}/confirm:
     post:
       operationId: post_v1_mfa_otp_factors_ById_confirm
-      summary: Create confirm
+      summary: Confirm OTP factor
       tags:
         - MFA
       parameters:
@@ -807,7 +807,7 @@ paths:
   /v1/mfa/otp/verify:
     post:
       operationId: post_v1_mfa_otp_verify
-      summary: Create verify
+      summary: Verify OTP
       tags:
         - MFA
       security:
@@ -843,7 +843,7 @@ paths:
   /v1/mfa/recovery-codes:
     get:
       operationId: get_v1_mfa_recovery_codes
-      summary: Get recovery codes
+      summary: Recovery codes status
       tags:
         - MFA
       security:
@@ -871,7 +871,7 @@ paths:
   /v1/mfa/recovery-codes/regenerate:
     post:
       operationId: post_v1_mfa_recovery_codes_regenerate
-      summary: Create regenerate
+      summary: Regenerate recovery codes (step-up)
       tags:
         - MFA
       security:
@@ -907,7 +907,7 @@ paths:
   /v1/mfa/step-up/status:
     get:
       operationId: get_v1_mfa_step_up_status
-      summary: Get step-up MFA status
+      summary: Step-up status
       tags:
         - MFA
       security:
@@ -935,7 +935,7 @@ paths:
   /v1/mfa/totp:
     delete:
       operationId: delete_v1_mfa_totp
-      summary: Delete totp
+      summary: Disable TOTP
       tags:
         - MFA
       security:
@@ -958,7 +958,7 @@ paths:
   /v1/mfa/totp/enroll/confirm:
     post:
       operationId: post_v1_mfa_totp_enroll_confirm
-      summary: Create confirm
+      summary: Confirm TOTP enrollment
       tags:
         - MFA
       security:
@@ -994,7 +994,7 @@ paths:
   /v1/mfa/totp/enroll/start:
     post:
       operationId: post_v1_mfa_totp_enroll_start
-      summary: Create start
+      summary: Start TOTP enrollment
       tags:
         - MFA
       security:
@@ -1030,7 +1030,7 @@ paths:
   /v1/mfa/totp/verify:
     post:
       operationId: post_v1_mfa_totp_verify
-      summary: Create verify
+      summary: Verify TOTP
       tags:
         - MFA
       security:
@@ -1066,7 +1066,7 @@ paths:
   /v1/mfa/webauthn/challenge:
     post:
       operationId: post_v1_mfa_webauthn_challenge
-      summary: Begin WebAuthn second-factor assertion
+      summary: WebAuthn 2FA challenge
       tags:
         - MFA
       security:
@@ -1096,7 +1096,7 @@ paths:
   /v1/mfa/webauthn/verify:
     post:
       operationId: post_v1_mfa_webauthn_verify
-      summary: Verify WebAuthn second-factor assertion
+      summary: WebAuthn 2FA verify
       tags:
         - MFA
       security:
@@ -1134,7 +1134,7 @@ paths:
   /v1/passkeys:
     get:
       operationId: get_v1_passkeys
-      summary: Get passkeys
+      summary: List passkeys
       tags:
         - Passkeys
       security:
@@ -1162,7 +1162,7 @@ paths:
   /v1/passkeys/login/begin:
     post:
       operationId: post_v1_passkeys_login_begin
-      summary: Create begin
+      summary: Login begin
       tags:
         - Passkeys
       security: []
@@ -1192,7 +1192,7 @@ paths:
   /v1/passkeys/login/finish:
     post:
       operationId: post_v1_passkeys_login_finish
-      summary: Create finish
+      summary: Login finish
       tags:
         - Passkeys
       security: []
@@ -1222,7 +1222,7 @@ paths:
   /v1/passkeys/register/begin:
     post:
       operationId: post_v1_passkeys_register_begin
-      summary: Create begin
+      summary: Register begin
       tags:
         - Passkeys
       security:
@@ -1258,7 +1258,7 @@ paths:
   /v1/passkeys/register/finish:
     post:
       operationId: post_v1_passkeys_register_finish
-      summary: Create finish
+      summary: Register finish
       tags:
         - Passkeys
       security:
@@ -1294,7 +1294,7 @@ paths:
   /v1/passkeys/{id}:
     delete:
       operationId: delete_v1_passkeys_ById
-      summary: Delete passkeys
+      summary: Delete passkey
       tags:
         - Passkeys
       parameters:
@@ -1323,7 +1323,7 @@ paths:
   /v1/permissions:
     get:
       operationId: get_v1_permissions
-      summary: List all platform permissions
+      summary: List permissions
       tags:
         - RBAC
       security:
@@ -1346,7 +1346,7 @@ paths:
   /v1/roles/{roleID}/permissions/{permID}:
     delete:
       operationId: delete_v1_roles_ByRoleID_permissions_ByPermID
-      summary: Revoke a permission from a role
+      summary: Revoke permission from role
       tags:
         - RBAC
       parameters:
@@ -1376,7 +1376,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_roles_ByRoleID_permissions_ByPermID
-      summary: Grant a permission to a role
+      summary: Grant permission to role
       tags:
         - RBAC
       parameters:
@@ -1448,7 +1448,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     put:
       operationId: put_v1_tenants_ByTenantID_auth_policy
-      summary: Replace auth policy
+      summary: Update auth policy
       tags:
         - Auth Policy
       parameters:
@@ -1490,7 +1490,7 @@ paths:
   /v1/tenants/{tenantID}/groups/{groupID}/roles:
     get:
       operationId: get_v1_tenants_ByTenantID_groups_ByGroupID_roles
-      summary: List roles granted to a group
+      summary: List group roles
       tags:
         - RBAC
       parameters:
@@ -1528,7 +1528,7 @@ paths:
   /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}:
     post:
       operationId: post_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
-      summary: Grant a role to a group
+      summary: Grant role to group
       description: >-
         Grant a role to a group. Every member of the group inherits the role's permissions (effective permissions = direct user grants UNION group-derived grants). The role and group must belong to the tenant.
       tags:
@@ -1565,7 +1565,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: delete_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
-      summary: Revoke a role from a group
+      summary: Revoke role from group
       tags:
         - RBAC
       parameters:
@@ -1601,7 +1601,7 @@ paths:
   /v1/tenants/{tenantID}/security/bots:
     get:
       operationId: get_v1_tenants_ByTenantID_security_bots
-      summary: Bot-detection telemetry (recent verdicts + 24h stats)
+      summary: Bot telemetry
       tags:
         - Threats
       parameters:
@@ -1625,10 +1625,89 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/security/risk-settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_risk_settings
+      summary: Get risk settings
+      description: >-
+        Returns the medium/high risk-score thresholds and the level at which
+        step-up MFA is forced even for a trusted device.
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Risk settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  medium_threshold:
+                    type: number
+                  high_threshold:
+                    type: number
+                  force_mfa_at_level:
+                    type: string
+                    enum: [medium, high]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_security_risk_settings
+      summary: Update risk settings
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                medium_threshold:
+                  type: number
+                high_threshold:
+                  type: number
+                force_mfa_at_level:
+                  type: string
+                  enum: [medium, high]
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/security/bots/settings:
     get:
       operationId: get_v1_tenants_ByTenantID_security_bots_settings
-      summary: Get a tenant's bot-detection settings
+      summary: Get bot settings
       tags:
         - Threats
       parameters:
@@ -1654,7 +1733,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_security_bots_settings
-      summary: Update a tenant's bot-detection settings
+      summary: Update bot settings
       tags:
         - Threats
       parameters:
@@ -1690,7 +1769,7 @@ paths:
   /v1/tenants/{tenantID}/security/anomalies:
     get:
       operationId: get_v1_tenants_ByTenantID_security_anomalies
-      summary: List detected security anomalies for a tenant (newest first)
+      summary: List anomalies
       tags:
         - Threats
       parameters:
@@ -1722,7 +1801,7 @@ paths:
   /v1/tenants/{tenantID}/security/anomalies/summary:
     get:
       operationId: get_v1_tenants_ByTenantID_security_anomalies_summary
-      summary: Security-anomaly KPI summary for a tenant
+      summary: Anomaly summary
       tags:
         - Threats
       parameters:
@@ -1749,7 +1828,7 @@ paths:
   /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
     post:
       operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
-      summary: Mark a security anomaly resolved
+      summary: Resolve anomaly
       tags:
         - Threats
       parameters:
@@ -1778,7 +1857,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples:
     get:
       operationId: get_v1_tenants_ByTenantID_relation_tuples
-      summary: List ReBAC relationship tuples on an object
+      summary: List relation tuples
       tags:
         - ReBAC
       parameters:
@@ -1815,7 +1894,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_relation_tuples
-      summary: Write a ReBAC relationship tuple
+      summary: Write relation tuple
       tags:
         - ReBAC
       parameters:
@@ -1863,7 +1942,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_relation_tuples_ById
-      summary: Delete a relationship tuple
+      summary: Delete relation tuple
       tags:
         - ReBAC
       parameters:
@@ -1892,7 +1971,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/check:
     post:
       operationId: post_v1_tenants_ByTenantID_relation_tuples_check
-      summary: Check whether a user has a relation on an object (ReBAC)
+      summary: Check relation
       tags:
         - ReBAC
       parameters:
@@ -1940,7 +2019,7 @@ paths:
   /v1/tenants/{tenantID}/ip-rules:
     get:
       operationId: get_v1_tenants_ByTenantID_ip_rules
-      summary: Get ip rules
+      summary: List rules + enforcement
       tags:
         - IP Rules
       parameters:
@@ -1973,7 +2052,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     post:
       operationId: post_v1_tenants_ByTenantID_ip_rules
-      summary: Create ip rules
+      summary: Add rule
       tags:
         - IP Rules
       parameters:
@@ -2015,7 +2094,7 @@ paths:
   /v1/tenants/{tenantID}/ip-rules/check:
     post:
       operationId: post_v1_tenants_ByTenantID_ip_rules_check
-      summary: Create check
+      summary: Check an address
       tags:
         - IP Rules
       parameters:
@@ -2057,7 +2136,7 @@ paths:
   /v1/tenants/{tenantID}/ip-rules/config:
     put:
       operationId: put_v1_tenants_ByTenantID_ip_rules_config
-      summary: Replace config
+      summary: Set enforcement
       tags:
         - IP Rules
       parameters:
@@ -2099,7 +2178,7 @@ paths:
   /v1/tenants/{tenantID}/ip-rules/{ruleID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_ip_rules_ByRuleID
-      summary: Delete ip rules
+      summary: Delete rule
       tags:
         - IP Rules
       parameters:
@@ -2166,7 +2245,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
     put:
       operationId: put_v1_tenants_ByTenantID_policy
-      summary: Replace policy
+      summary: Update policy
       tags:
         - Policy
       parameters:
@@ -2208,7 +2287,7 @@ paths:
   /v1/tenants/{tenantID}/roles:
     get:
       operationId: get_v1_tenants_ByTenantID_roles
-      summary: List a tenant's roles
+      summary: List roles
       tags:
         - RBAC
       parameters:
@@ -2238,7 +2317,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_roles
-      summary: Create a role in a tenant
+      summary: Create role
       tags:
         - RBAC
       parameters:
@@ -2274,7 +2353,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/permissions:
     get:
       operationId: get_v1_users_ByUserID_tenants_ByTenantID_permissions
-      summary: List a user's effective permissions in a tenant
+      summary: Effective permissions
       tags:
         - RBAC
       parameters:
@@ -2312,7 +2391,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
     delete:
       operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      summary: Unassign a role from a user in a tenant
+      summary: Unassign role from user
       tags:
         - RBAC
       parameters:
@@ -2347,7 +2426,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      summary: Assign a role to a user in a tenant
+      summary: Assign role to user
       tags:
         - RBAC
       parameters:

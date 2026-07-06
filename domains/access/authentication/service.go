@@ -44,6 +44,8 @@ type Service struct {
 	// devicePolicy reports whether a tenant has opted into adaptive MFA
 	// (trusted-device skip). nil = always-on MFA. Set via SetDevicePolicy.
 	devicePolicy DevicePolicy
+	// riskAssessor overrides trusted-device skip when risk is too high. nil = no override.
+	riskAssessor RiskAssessor
 	// loginHook is an optional synchronous policy gate run after credentials
 	// verify (nil = no gate). Set via SetLoginHook.
 	loginHook LoginHook
@@ -102,6 +104,18 @@ type DevicePolicy interface {
 // SetDevicePolicy wires the adaptive-MFA (trusted-device) gate. Called from
 // cmd/server/main.go.
 func (s *Service) SetDevicePolicy(d DevicePolicy) { s.devicePolicy = d }
+
+// RiskAssessor checks whether the risk level of an auth request should force
+// MFA even on a trusted device. Satisfied by *risk.Service (threat-detection/risk);
+// kept as an interface so auth doesn't import that package. Wired via SetRiskAssessor.
+type RiskAssessor interface {
+	// ShouldForceMFA returns true when the UA's risk score exceeds the tenant's
+	// configured force-MFA threshold. Fails open (false) on any error.
+	ShouldForceMFA(ctx context.Context, tenantID uuid.UUID, ua string) bool
+}
+
+// SetRiskAssessor wires the adaptive-MFA risk override. Called from cmd/server/main.go.
+func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
 
 // LoginHook is a synchronous policy gate run after credentials verify: it
 // returns a non-nil error to DENY the sign-in, or nil to allow. nil hook = no
@@ -343,7 +357,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 		if err != nil {
 			return nil, err
 		}
-		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken) {
+		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, ua) {
 			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
 			if err != nil {
 				return nil, err
@@ -360,14 +374,19 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 
 // deviceTrusted reports whether the second factor may be skipped for this login:
 // only when the tenant has opted into adaptive MFA AND the request carries a
-// live trusted-device token bound to this user. Any failure or missing piece
-// returns false, so the safe default is always to require MFA.
-func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID, trustedToken string) bool {
+// live trusted-device token bound to this user AND the risk level is not too
+// high. Any failure or missing piece returns false — the safe default is always
+// to require MFA.
+func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID, trustedToken, ua string) bool {
 	if s.devicePolicy == nil || trustedToken == "" {
 		return false
 	}
 	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, tenantID)
 	if err != nil || !enabled {
+		return false
+	}
+	// A high-risk request (e.g. bot-like UA) forces MFA even on a trusted device.
+	if s.riskAssessor != nil && s.riskAssessor.ShouldForceMFA(ctx, tenantID, ua) {
 		return false
 	}
 	return s.IsTrustedDevice(ctx, userID, trustedToken)

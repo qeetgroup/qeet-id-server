@@ -43,7 +43,7 @@ Open **http://localhost:3010** and click **Sign in with Qeet**. You'll be sent t
 (:3004); sign in with a seeded account:
 
 ```
-owner@acme.test  /  Password123!
+saibabu@qeet.in  /  Password123!
 ```
 
 Approve the consent screen and you'll land back on `/dashboard` with your profile and access token.
