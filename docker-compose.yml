@@ -6,17 +6,19 @@ name: qeet-id-dev
 services:
   postgres:
     image: postgres:16-alpine
+    # Fixed local-dev credentials. These must match DB_URL in .env
+    # (default: postgres://postgres:password@localhost:5001/qeet_id).
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-qeet_id}
-      PGPORT: ${POSTGRES_PORT:-5001}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: qeet_id
+      PGPORT: 5001
     ports:
-      - "${POSTGRES_PORT:-5001}:${POSTGRES_PORT:-5001}"
+      - "5001:5001"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -p $${PGPORT}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d qeet_id -p 5001"]
       interval: 5s
       timeout: 5s
       retries: 10

@@ -52,13 +52,14 @@ Open the admin console at `http://localhost:3002`. Log in with any of the seed a
 
 | Email | Workspace | Role |
 |---|---|---|
-| `owner@acme.test` | Acme + Globex | Owner (both) |
-| `alice@acme.test` | Acme | Admin |
-| `bob@acme.test` | Acme | Member |
-| `carol@acme.test` | Acme | Member |
-| `erin@globex.test` | Globex | Member |
+| `saibabu@qeet.in` | Qeet Group + Qeet Sandbox | Owner (both) |
+| `aarav@qeet.in` | Qeet Group | Admin |
+| `rohan@qeet.in` | Qeet Group | Engineer |
+| `sneha@qeet.in` | Qeet Group | Member |
 
-The `owner@acme.test` account is a member of **both** workspaces — use it to explore the workspace switcher.
+The `saibabu@qeet.in` account owns **both** the Qeet Group and Qeet Sandbox workspaces — use it to explore the workspace switcher.
+
+The seed also creates **seven fictional customer workspaces** (Northwind Capital, Meridian Health, Lumen Labs, Aster Retail, Vertex Logistics, Cobalt Studios, Fjord Analytics) spanning every plan tier and region, each with its own owner and a generated roster of members (~80 users total). Their owner logins are **printed at the end of `make seed`** (they're generated, so grab them from that output). All accounts share the `Password123!` password.
 
 ## First things to explore
 
@@ -82,7 +83,7 @@ make dev-backend    # starts Go server on :4001 only
 Without SMTP configured, one-time codes and magic-link tokens are printed directly to the backend terminal output. Look for lines like:
 
 ```
-{"level":"INFO","msg":"dev OTP","email":"alice@acme.test","code":"482910"}
+{"level":"INFO","msg":"dev OTP","email":"rohan@qeet.in","code":"482910"}
 ```
 
 ## Resetting the database

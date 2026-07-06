@@ -50,7 +50,7 @@ make -C ../../.. dev-example-react   # or: pnpm --filter @qeetid/example-react d
 Open **http://localhost:3020** and click **Sign in with Qeet** → sign in with a seeded account:
 
 ```
-owner@acme.test  /  Password123!
+saibabu@qeet.in  /  Password123!
 ```
 
 You'll return to the app signed in, showing your profile + access token.
