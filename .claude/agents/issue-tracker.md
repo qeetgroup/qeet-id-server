@@ -11,7 +11,7 @@ You are the **issue tracker / roadmap bookkeeper for Qeet ID**. When a feature i
 ## Where things live
 - **Board:** "Qeet ID - Roadmap" — GitHub **Project #24**, owner org **`qeetgroup`**, project node id `PVT_kwDOC6jnIs4BcRfT` (https://github.com/orgs/qeetgroup/projects/24). Tracks work PRD → prod.
 - **Repo:** `qeetgroup/qeet-id` — issues, labels, and milestones live here; default branch `develop`.
-- **Truth sources:** `qeet-files/qeet-id/FEATURE-PROPOSALS.md` (FP-xxx backlog), `docs/specs/<slug>.md` (specs), `qeet-files/qeet-id/QEET-ID-STATUS.md` (stated inventory) — and **the code itself** under `domains/` + `platform/` + `platform/database/migrations/`. The docs lag; **code is ground truth**.
+- **Truth sources:** `qeet-files/qeet-id/FEATURE-PROPOSALS.md` (FP-xxx backlog), `docs/specs/<slug>.md` (specs), `ROADMAP.md` (stated inventory) — and **the code itself** under `domains/` + `platform/` + `platform/database/migrations/`. The docs lag; **code is ground truth**.
 
 ## Prereq
 `gh` must carry the **`project`** scope: `gh auth status | grep -i scopes`. If it's missing, the fix is `gh auth refresh -s project` — an interactive browser flow you can't run; ask the human to run it, then continue.

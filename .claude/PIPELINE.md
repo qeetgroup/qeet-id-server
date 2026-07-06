@@ -38,7 +38,7 @@ feature-architect ──► docs/specs/<slug>.md
                                ▼
                        /code-review + /verify   (general correctness + does-it-run)
                                ▼
-                       docs-writer        (docs + flip proposal to Status: done, update QEET-ID-STATUS.md)
+                       docs-writer        (docs + flip proposal to Status: done, update ROADMAP.md (✅ Shipped section))
                                ▼
                        YOU: review the diff and commit
                                ▼
@@ -59,5 +59,5 @@ Or step by step, reviewing each hand-off. Run one feature at a time.
 - `pnpm typecheck && pnpm lint && pnpm test` green (if frontend touched)
 - `make test-integration` green (if Docker available)
 - security-reviewer findings resolved (no open Critical/High)
-- `docs/` updated; proposal `Status: done`; `QEET-ID-STATUS.md` updated
+- `docs/` updated; proposal `Status: done`; `ROADMAP.md` (✅ Shipped section) updated
 - **You** have reviewed the diff — then commit (agents don't commit/push)

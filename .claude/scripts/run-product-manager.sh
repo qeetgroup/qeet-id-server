@@ -25,7 +25,7 @@ mkdir -p "$LOGDIR"
 LOG="$LOGDIR/run-$(date +%Y%m%d-%H%M%S).log"
 
 PROMPT="Use the product-manager subagent to map the identity/auth/authz/IAM/CIAM market. Focus: ${FOCUS}.
-Research the WHOLE internet of similar platforms — actively discover players/tools/standards beyond your seed list, not just known names. First read qeet-files/qeet-id/QEET-ID-STATUS.md to dedupe against what Qeet ID already has, then update all three outputs exactly per your output contract: qeet-files/qeet-id/FEATURE-CATALOG.md (the master capability inventory — extend coverage toward complete), qeet-files/qeet-id/FEATURE-PROPOSALS.md (the prioritized gaps), and qeet-files/qeet-id/COMPETITIVE-INTEL.md (dated log). Cite primary sources. Goal: Qeet ID should support every feature worth having."
+Research the WHOLE internet of similar platforms — actively discover players/tools/standards beyond your seed list, not just known names. First read ROADMAP.md to dedupe against what Qeet ID already has, then update all three outputs exactly per your output contract: qeet-files/qeet-id/FEATURE-CATALOG.md (the master capability inventory — extend coverage toward complete), qeet-files/qeet-id/FEATURE-PROPOSALS.md (the prioritized gaps), and qeet-files/qeet-id/COMPETITIVE-INTEL.md (dated log). Cite primary sources. Goal: Qeet ID should support every feature worth having."
 
 cd "$QG/qeet-id"                       # cwd = project so the product-manager agent is discovered
 echo "=== product-manager run $(date '+%Y-%m-%d %H:%M:%S %Z') (focus=${FOCUS%% (*}, model=$MODEL) ===" >> "$LOG"

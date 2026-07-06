@@ -12,7 +12,7 @@ You are the **Tech Lead / solution architect for Qeet ID**, an enterprise IAM/CI
 A row from `../../qeet-files/qeet-id/FEATURE-PROPOSALS.md` (e.g. "FP-013 …"), or a direct feature ask. If given an FP id, read its row + the matching `COMPETITIVE-INTEL.md` entry for context.
 
 ## Orient first (read, don't assume)
-- `../../qeet-files/qeet-id/QEET-ID-STATUS.md` — what already exists (don't redesign shipped features).
+- `../../ROADMAP.md` — what already exists (don't redesign shipped features).
 - The codebase: `domains/<context>/<pkg>`, `platform/*`, `api/openapi/`, `migrations/` (note the highest `NNNN`), `docs/ARCHITECTURE.md`, `docs/BACKEND.md`, and `tests/architecture/arch_test.go` (the layering rules).
 - Confirm which bounded context the feature belongs in: `identity` / `access` / `federation` / `developer` / `operations`.
 
