@@ -25,11 +25,9 @@ const DISMISS_KEY = "qeetid-admin-passkey-prompt-dismissed";
  *   2. The list query is still loading (avoid flicker).
  *   3. The user has explicitly dismissed it.
  *
- * Today the register endpoints return 501 (GAP-ANALYSIS P0-3); the
- * card still renders so users see the nudge — clicking the CTA routes
- * to the passkey settings page, which has its own "ceremony not
- * implemented yet" copy. Once the backend ceremony ships, this is
- * already wired.
+ * The card renders the nudge and its CTA routes to the passkey settings
+ * page, where the register ceremony (backed by the WebAuthn register
+ * begin/finish endpoints) runs.
  */
 export function PasskeyPromptCard() {
   const [dismissed, setDismissed] = useState(

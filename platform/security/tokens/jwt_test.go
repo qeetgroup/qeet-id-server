@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,43 @@ func decodeHeader(t *testing.T, token string) map[string]any {
 		t.Fatalf("unmarshal header: %v", err)
 	}
 	return h
+}
+
+func TestIssueAccessResource_BindsAudienceAndStillVerifies(t *testing.T) {
+	i, _ := testIssuer(t)
+	uid, tid, sid := uuid.New(), uuid.New(), uuid.New()
+	const resource = "https://mcp.example/server"
+
+	tok, _, err := i.IssueAccessResource(uid, tid, sid, "read", resource)
+	if err != nil {
+		t.Fatalf("IssueAccessResource: %v", err)
+	}
+	// Critical safety property: a resource-bound token must STILL verify on the
+	// platform, because VerifyAccess enforces the platform audience.
+	c, err := i.VerifyAccess(tok)
+	if err != nil {
+		t.Fatalf("VerifyAccess of resource-bound token: %v", err)
+	}
+	auds := []string(c.Audience)
+	if !slices.Contains(auds, "qeet-test") {
+		t.Errorf("aud missing platform audience: %v", auds)
+	}
+	if !slices.Contains(auds, resource) {
+		t.Errorf("aud missing RFC 8707 resource: %v", auds)
+	}
+
+	// No resource → a single, platform-only audience (back-compat).
+	tok2, _, err := i.IssueAccessResource(uid, tid, sid, "read", "")
+	if err != nil {
+		t.Fatalf("IssueAccessResource(no resource): %v", err)
+	}
+	c2, err := i.VerifyAccess(tok2)
+	if err != nil {
+		t.Fatalf("VerifyAccess: %v", err)
+	}
+	if len(c2.Audience) != 1 || c2.Audience[0] != "qeet-test" {
+		t.Errorf("no-resource aud = %v, want [qeet-test]", c2.Audience)
+	}
 }
 
 func TestIssueAccess_AlwaysCarriesKID(t *testing.T) {

@@ -438,6 +438,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_agents_ById_suspend
       summary: Suspend agent
+      description: Move an agent to `suspended` (reversible). Its tokens are denied at authz within one request cycle.
       tags:
         - Agents
       parameters:
@@ -455,14 +456,92 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
-        '204':
-          description: Suspended
+        '200':
+          description: New lifecycle status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/tenants/{tenantID}/agents/{id}/resume:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_ById_resume
+      summary: Resume agent
+      description: Move a suspended agent back to `active`.
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: New lifecycle status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/tenants/{tenantID}/agents/{id}/decommission:
+    post:
+      operationId: post_v1_tenants_ByTenantID_agents_ById_decommission
+      summary: Decommission agent
+      description: Permanently retire an agent (terminal). It can no longer mint tokens and is excluded from listings.
+      tags:
+        - Agents
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: New lifecycle status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/tenants/{tenantID}/agents/kill-all:
     post:
       operationId: post_v1_tenants_ByTenantID_agents_kill_all
@@ -1171,7 +1250,24 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflicting state (e.g. an invalid lifecycle transition)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
+    AgentStatus:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - active
+            - suspended
+            - decommissioned
     Error:
       type: object
       required:

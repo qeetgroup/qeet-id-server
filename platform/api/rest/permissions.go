@@ -23,6 +23,7 @@ func permissionMap() map[string]string {
 		// Users.
 		"GET /v1/users":                "user.read",
 		"POST /v1/users":               "user.write",
+		"POST /v1/users/bulk":          "user.write",
 		"GET /v1/users/deleted":        "user.read",
 		"GET /v1/users/{id}":           "user.read",
 		"PATCH /v1/users/{id}":         "user.write",

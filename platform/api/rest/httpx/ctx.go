@@ -21,6 +21,8 @@ type Principal struct {
 	Scopes    []string
 	Subject   string
 	SessionID *uuid.UUID
+	// AgentID is set when the token is an AI-agent token (ActorType == "agent").
+	AgentID *uuid.UUID
 }
 
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {

@@ -30,7 +30,7 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2Icon, PlusIcon, RefreshCwIcon, ScrollTextIcon, ShieldOffIcon } from "lucide-react";
+import { Loader2Icon, PlusIcon, RefreshCwIcon, ScrollTextIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -86,12 +86,12 @@ function GdprPage() {
 
       <Card className="border-amber-500/40 bg-amber-50/30 dark:bg-amber-950/20">
         <CardContent className="flex items-start gap-3 p-4">
-          <ShieldOffIcon className="size-5 text-amber-700 dark:text-amber-500" />
+          <ShieldCheckIcon className="size-5 text-emerald-700 dark:text-emerald-500" />
           <div className="text-sm">
-            <p className="font-medium">Background purge runner is scaffolded but does not yet redact PII.</p>
+            <p className="font-medium">Right-to-erasure runs an async background purge.</p>
             <p className="text-muted-foreground">
-              Requests are recorded with their 30-day grace window. The actual <code>Run()</code> job at
-              <code> backend/internal/gdpr/gdpr.go</code> is a no-op — see GAP-ANALYSIS P0-8.
+              Requests are recorded with a 30-day grace window; the purge job then redacts PII while
+              preserving the tamper-evident audit trail.
             </p>
           </div>
         </CardContent>

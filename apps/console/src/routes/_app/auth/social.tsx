@@ -158,7 +158,7 @@ function SocialPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Configure OAuth client credentials for social IdPs. The exchange flow (start / callback) returns 501 today — see GAP-ANALYSIS P1-1."
+        description="Configure OAuth client credentials for social IdPs. The sign-in flow (start / callback / token exchange) runs through the hosted login app."
         actions={
           <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
             <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />

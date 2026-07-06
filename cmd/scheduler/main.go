@@ -12,16 +12,19 @@ package main
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
 	"github.com/qeetgroup/qeet-id/platform/config"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
 	"github.com/qeetgroup/qeet-id/platform/observability/logging"
 )
 
@@ -99,7 +102,7 @@ func main() {
 			interval: 1 * time.Hour,
 			run: func(ctx context.Context) error {
 				tag, err := pool.Exec(ctx,
-					`DELETE FROM platform.outbox_events WHERE state = 'dead' AND created_at < now() - interval '30 days'`)
+					`DELETE FROM platform.outbox_dead_letter WHERE dead_lettered_at < now() - interval '30 days'`)
 				if err != nil {
 					return err
 				}
@@ -119,7 +122,7 @@ func main() {
 				select {
 				case <-t.C:
 					start := time.Now()
-					if err := j.run(rootCtx); err != nil {
+					if err := runWithLock(rootCtx, pool, j); err != nil {
 						slog.Error("scheduled job failed",
 							"job", j.name,
 							"err", err,
@@ -142,4 +145,38 @@ func main() {
 		t.Stop()
 	}
 	slog.Info("scheduler shutdown complete")
+}
+
+// runWithLock executes a job while holding a Postgres session-level advisory
+// lock keyed on the job name. The lock is a cross-process mutex: if more than
+// one scheduler replica is running, only the one that wins the lock executes
+// the job on a given tick; the others skip. The lock only needs to gate the
+// job for its duration — the job's own queries may use any pooled connection.
+func runWithLock(ctx context.Context, pool *pgxpool.Pool, j scheduledJob) error {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn: %w", err)
+	}
+	defer conn.Release()
+
+	key := lockKey(j.name)
+	var locked bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&locked); err != nil {
+		return fmt.Errorf("advisory lock: %w", err)
+	}
+	if !locked {
+		slog.Info("scheduled job skipped — lock held by another replica", "job", j.name)
+		return nil
+	}
+	// Unlock on a background context so a cancelled ctx can't leak the session lock.
+	defer func() { _, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key) }()
+
+	return j.run(ctx)
+}
+
+// lockKey derives a stable 64-bit advisory-lock key from a job name.
+func lockKey(name string) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte("qeetid-scheduler:" + name))
+	return int64(h.Sum64())
 }

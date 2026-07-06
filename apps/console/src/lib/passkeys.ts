@@ -1,8 +1,8 @@
-// Passkey data layer. The list/delete endpoints exist in the backend
-// today (auth.passkey_credentials table is real), but register/login
-// ceremonies still return 501 (GAP-ANALYSIS P0-3). We handle both:
-// list returns [] gracefully if the endpoint isn't deployed, so the UI
-// can render the "you have no passkeys yet" nudge without erroring out.
+// Passkey data layer. The full WebAuthn flow is implemented backend-side —
+// list/delete plus register and login ceremonies (register/begin+finish,
+// login/begin+finish via go-webauthn). list still returns [] gracefully if the
+// endpoint isn't deployed, so the UI can render the "you have no passkeys yet"
+// nudge without erroring out.
 
 import { useQuery } from "@tanstack/react-query";
 

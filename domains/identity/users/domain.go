@@ -43,6 +43,36 @@ type CreateInput struct {
 	Metadata    map[string]any `json:"metadata"`
 }
 
+// BulkUserInput is one row of a bulk user import (POST /v1/users/bulk).
+type BulkUserInput struct {
+	Email       string `json:"email" validate:"required,email"`
+	Password    string `json:"password" validate:"omitempty,min=8,max=256"`
+	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
+	Phone       string `json:"phone" validate:"omitempty,e164"`
+}
+
+// BulkCreateInput is the POST /v1/users/bulk request body. TenantID is optional;
+// when present it must match the caller's tenant (enforced in the handler).
+type BulkCreateInput struct {
+	TenantID uuid.UUID       `json:"tenant_id"`
+	Users    []BulkUserInput `json:"users" validate:"required,min=1,max=1000"`
+}
+
+// BulkImportError describes why a single row failed. Line is the 1-based index
+// of the row within the submitted `users` array.
+type BulkImportError struct {
+	Line    int    `json:"line,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Message string `json:"message"`
+}
+
+// BulkImportResult is the POST /v1/users/bulk response — a per-row summary.
+type BulkImportResult struct {
+	Succeeded int               `json:"succeeded"`
+	Failed    int               `json:"failed"`
+	Errors    []BulkImportError `json:"errors,omitempty"`
+}
+
 type UpdateInput struct {
 	DisplayName *string `json:"display_name,omitempty" validate:"omitempty,max=200"`
 	// AvatarURL is a small image data-URL (capped/compressed client-side). Empty

@@ -153,7 +153,8 @@ function ImportUsersPage() {
 
   const importM = useMutation({
     mutationFn: async (toSubmit: Row[]): Promise<ImportResult> => {
-      // Backend endpoint per GAP-ANALYSIS P1-10. Until it ships, surface a
+      // The POST /v1/users/bulk endpoint isn't built yet (only single-user
+      // create ships) — tracked in issue #173. Until it ships, surface a
       // friendly fallback instead of a generic 404.
       try {
         return await api<ImportResult>("/v1/users/bulk", {
@@ -172,7 +173,7 @@ function ImportUsersPage() {
           throw new ApiError(
             404,
             "endpoint_unavailable",
-            "Bulk import endpoint is not enabled on this instance yet (GAP-ANALYSIS P1-10).",
+            "Bulk import endpoint is not enabled on this instance yet (tracked in issue #173).",
           )
         }
         throw err

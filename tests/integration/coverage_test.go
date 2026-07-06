@@ -93,15 +93,15 @@ func TestOIDCPKCEExchange(t *testing.T) {
 
 	// Wrong verifier is rejected (and per the code path the code row is left
 	// for a correct retry — only a successful exchange marks it used).
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "wrong-verifier"); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "wrong-verifier", ""); err == nil {
 		t.Fatal("exchange with a wrong PKCE verifier must fail")
 	}
 	// Missing verifier when a challenge was registered is rejected.
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, ""); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", ""); err == nil {
 		t.Fatal("exchange with a missing PKCE verifier must fail when challenge present")
 	}
 	// Correct verifier succeeds.
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier)
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier, "")
 	if err != nil {
 		t.Fatalf("exchange with correct verifier: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestOIDCPKCEExchange(t *testing.T) {
 		t.Fatal("exchange yielded no access token")
 	}
 	// Single-use: replaying the consumed code fails.
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier, ""); err == nil {
 		t.Fatal("a consumed authorization code must not be redeemable again")
 	}
 }
@@ -134,7 +134,7 @@ func TestOIDCPKCEUnsupportedMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier, ""); err == nil {
 		t.Fatal("a non-S256 code_challenge_method must be rejected")
 	}
 }
@@ -178,7 +178,7 @@ func TestOIDCExchangeRedirectMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, "https://app.example/other", ""); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, "https://app.example/other", "", ""); err == nil {
 		t.Fatal("exchange with a mismatched redirect_uri must fail")
 	}
 }
@@ -204,7 +204,7 @@ func TestOIDCExchangeExpiredCode(t *testing.T) {
 		codes.Hash(code)); err != nil {
 		t.Fatalf("expire code: %v", err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, ""); err == nil {
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", ""); err == nil {
 		t.Fatal("an expired authorization code must be rejected")
 	}
 }
@@ -226,7 +226,7 @@ func TestOIDCRefreshClientMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, clientA.ClientID, secretA, code, redirectURI, "")
+	issued, err := svc.ExchangeCode(ctx, clientA.ClientID, secretA, code, redirectURI, "", "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestOIDCRefreshExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestOIDCIntrospectClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}

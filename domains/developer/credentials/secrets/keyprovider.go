@@ -8,10 +8,11 @@ import (
 // KeyProvider supplies the vault's AES data-encryption key (DEK) at startup.
 // NewService unwraps it once and caches the AEAD cipher.
 //
-// Today the only implementation is StaticKeyProvider (a key supplied via config
-// / secret manager, independent of the JWT secret). A KMS-backed provider drops
-// in without touching the Service — e.g. AWS KMS holding a wrapped DEK that
-// DataKey unwraps via kms.Decrypt:
+// Two implementations ship: StaticKeyProvider (a key supplied via config /
+// secret manager, independent of the JWT secret) and AWSKMSProvider (see
+// kms.go), which holds a KMS-wrapped DEK that DataKey unwraps via kms.Decrypt.
+// A provider drops in without touching the Service — the sketch below matches
+// the real AWSKMSProvider:
 //
 //	type AWSKMSProvider struct {
 //		Client     *kms.Client

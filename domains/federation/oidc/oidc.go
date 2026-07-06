@@ -360,7 +360,7 @@ func containsAny(set []string, vs ...string) bool {
 }
 
 // ExchangeCode swaps an authorization_code for tokens.
-func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier string) (*TokenResponse, error) {
+func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier, resource string) (*TokenResponse, error) {
 	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
@@ -423,7 +423,8 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 
 	sessionID := uuid.New()
-	access, _, err := s.issuer.IssueAccess(userID, tenantID, sessionID, strings.Join(scopes, " "))
+	// RFC 8707: bind the token's audience to the requested resource (if any).
+	access, _, err := s.issuer.IssueAccessResource(userID, tenantID, sessionID, strings.Join(scopes, " "), resource)
 	if err != nil {
 		return nil, err
 	}
@@ -897,7 +898,8 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state")), http.StatusFound)
+	// RFC 9207: identify the issuer in the authorization response.
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state"), "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
 type decisionInput struct {
@@ -928,7 +930,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	}
 	if !in.Approve {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"redirect": appendQuery(in.RedirectURI, "error", "access_denied", "state", in.State),
+			"redirect": appendQuery(in.RedirectURI, "error", "access_denied", "state", in.State, "iss", h.Service.issuer.JWTIssuer()),
 		})
 		return
 	}
@@ -944,7 +946,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"redirect": appendQuery(in.RedirectURI, "code", code, "state", in.State),
+		"redirect": appendQuery(in.RedirectURI, "code", code, "state", in.State, "iss", h.Service.issuer.JWTIssuer()),
 	})
 }
 
@@ -1033,7 +1035,8 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	// RFC 8707 §2 — validate the optional resource indicator if present.
 	// The resource must be an absolute URI with a scheme; fragment components
 	// are forbidden. An unrecognised or malformed value yields invalid_target.
-	if resource := r.Form.Get("resource"); resource != "" {
+	resource := r.Form.Get("resource")
+	if resource != "" {
 		u, parseErr := url.Parse(resource)
 		if parseErr != nil || !u.IsAbs() || u.Fragment != "" {
 			writeOAuthError(w, oauthErr("invalid_target", "resource must be an absolute URI without a fragment"))
@@ -1051,7 +1054,7 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		resp, err = h.Service.ExchangeCode(r.Context(),
 			clientID, clientSecret,
-			r.Form.Get("code"), r.Form.Get("redirect_uri"), r.Form.Get("code_verifier"))
+			r.Form.Get("code"), r.Form.Get("redirect_uri"), r.Form.Get("code_verifier"), resource)
 	case "refresh_token":
 		resp, err = h.Service.RefreshToken(r.Context(),
 			clientID, clientSecret, r.Form.Get("refresh_token"))
@@ -1168,6 +1171,8 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"protected_resource_metadata": base + "/.well-known/oauth-protected-resource",
 		// RFC 8707 — Resource Indicators
 		"resource_indicators_supported": true,
+		// RFC 9207 — the authorization response carries an `iss` parameter.
+		"authorization_response_iss_parameter_supported": true,
 	})
 }
 

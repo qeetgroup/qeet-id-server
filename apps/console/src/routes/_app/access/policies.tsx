@@ -220,7 +220,7 @@ function PoliciesPage() {
                       <SelectItem value="admin_only">Admins only — require MFA for owner/admin roles</SelectItem>
                     </SelectContent>
                   </Select>
-                  <FieldDescription>Step-up enforcement on login lands in P1-7 (see GAP-ANALYSIS).</FieldDescription>
+                  <FieldDescription>Note: this policy isn&apos;t enforced at login yet — only the separate risk-based step-up (adaptive MFA) applies today.</FieldDescription>
                 </Field>
               </FieldGroup>
             </CardContent>

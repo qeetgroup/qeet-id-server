@@ -52,7 +52,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 ### 👥 Identity & workspace
 - ✅ Multi-tenant organisations (isolated, per-tenant branding, custom domains)
-- ✅ Users (CRUD, bulk import, sessions, recycle bin) · nested groups (SCIM sync) · invitations
+- ✅ Users (CRUD, sessions, recycle bin: soft-delete → restore/purge) · nested groups (SCIM sync) · invitations *(bulk CSV import is not built — only single-user create; see 🔭 Planned / issue #173)*
 - ✅ Domain verification (DNS TXT) · per-tenant email templates · org switcher + branding preview
 
 ### 📜 Compliance & billing
@@ -74,6 +74,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 |---|---|---|
 | CIBA grant (Client-Initiated Backchannel Auth) | 🟠 | Push/email async consent for elevated tokens |
 | Data export endpoint | 🟠 | GDPR erasure ships; a user/tenant data-export endpoint is not built (was listed shipped in error) |
+| Bulk user import (CSV) | 🟡 | Only single-user `POST /users` ships; the console import screen has no backend endpoint (issue #173, was listed shipped in error) |
 | ReBAC grant-path trace | 🟡 | RBAC `/check` explains "why"; ReBAC `/check` returns `{allowed}` only |
 | Auth-hook custom claims | 🟡 | Hooks gate allow/deny today; token claim-injection not implemented |
 | Webhook DLQ | 🟡 | Webhook retry is unbounded; wire onto the platform outbox/DLQ or add a give-up + dead state |

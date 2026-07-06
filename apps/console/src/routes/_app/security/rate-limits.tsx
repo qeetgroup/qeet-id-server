@@ -22,8 +22,10 @@ type Policy = {
   ip_denylist: string[] | null;
 };
 
-// These are the per-IP defaults baked into backend/internal/platform/ratelimit/limiter.go.
-// Per-tenant / per-client limits are P2 in GAP-ANALYSIS.
+// These are the per-IP defaults baked into platform/cache/ratelimit/limiter.go.
+// Per-tenant / per-user / per-api-key overrides now ship backend-side
+// (migration 0064_rate_limit_overrides, domains/operations/ratelimits); this
+// admin screen isn't wired to that override API yet.
 const STATIC_LIMITS: { endpoint: string; limit: string; window: string }[] = [
   { endpoint: "POST /v1/auth/login", limit: "5 req / 20 burst", window: "per IP, sliding" },
   { endpoint: "POST /v1/auth/refresh", limit: "5 req / 20 burst", window: "per IP, sliding" },
@@ -44,7 +46,7 @@ function RateLimitsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Per-endpoint rate limits and per-tenant network policy. Per-client and per-tenant tiers are still pending — see GAP-ANALYSIS P2."
+        description="Per-endpoint rate limits and per-tenant network policy. Per-tenant / per-user / per-api-key overrides are supported by the API; managing them from this screen is coming soon."
       />
 
       <Card>
@@ -112,10 +114,10 @@ function RateLimitsPage() {
         <CardContent className="flex items-start gap-3 p-4">
           <GaugeIcon className="size-5 text-amber-700 dark:text-amber-500" />
           <div className="text-sm">
-            <p className="font-medium">Per-tenant rate limits coming soon.</p>
+            <p className="font-medium">Per-tenant rate-limit controls coming to this screen.</p>
             <p className="text-muted-foreground">
-              Today every tenant shares the same global gateway limits. Tenant-tier limits (per plan)
-              are tracked as <code>P2</code> in <code>documents/GAP-ANALYSIS.md</code>.
+              The API already supports per-tenant / per-user / per-api-key overrides (migration
+              <code> 0064_rate_limit_overrides</code>); a UI to view and edit them from here is on the way.
             </p>
           </div>
         </CardContent>

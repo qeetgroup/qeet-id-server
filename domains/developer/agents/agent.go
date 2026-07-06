@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,19 +24,128 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/security/encryption"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
+// EventEmitter enqueues a webhook event for a tenant. Injected (webhook service)
+// so this package needn't import webhooks. nil = no-op.
+type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
+
 type Service struct {
-	pool   *pgxpool.Pool
-	issuer *tokens.Issuer
+	pool    *pgxpool.Pool
+	issuer  *tokens.Issuer
+	emitter EventEmitter
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, issuer: issuer}
+}
+
+// SetEmitter wires the webhook event emitter (called from cmd/server).
+func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
+
+// Pool exposes the connection pool for the handler's audit writes.
+func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) {
+	if s.emitter == nil {
+		return
+	}
+	_ = s.emitter(ctx, tenantID, eventType, payload) // best-effort
+}
+
+// AgentStatus returns an agent's current lifecycle status. Used by the auth
+// middleware to deny suspended/decommissioned agents' tokens on every request.
+func (s *Service) AgentStatus(ctx context.Context, agentID uuid.UUID) (string, error) {
+	var status string
+	err := s.pool.QueryRow(ctx, `SELECT status FROM auth.agents WHERE id = $1`, agentID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrNotFound
+	}
+	return status, err
+}
+
+// agentTransitions maps a target status to the source statuses it may come from.
+var agentTransitions = map[string][]string{
+	"suspended":      {"active"},              // suspend
+	"active":         {"suspended"},           // resume
+	"decommissioned": {"active", "suspended"}, // terminal
+}
+
+// transitionEvent maps a target status to its webhook/audit event verb.
+var transitionEvent = map[string]string{
+	"active":         "resumed",
+	"suspended":      "suspended",
+	"decommissioned": "decommissioned",
+}
+
+// validateTransition reports whether an agent may move from cur to target.
+// Pure (no I/O) so it is unit-testable. A no-op (cur == target) is allowed.
+func validateTransition(cur, target string) error {
+	froms, ok := agentTransitions[target]
+	if !ok {
+		return errs.ErrBadRequest.WithDetail("invalid target status")
+	}
+	if cur == target {
+		return nil // idempotent
+	}
+	if cur == "decommissioned" {
+		return errs.ErrConflict.WithDetail("agent is decommissioned (terminal)")
+	}
+	if slices.Contains(froms, cur) {
+		return nil
+	}
+	return errs.ErrConflict.WithDetail(fmt.Sprintf("cannot move agent from %s to %s", cur, target))
+}
+
+// transition moves an agent to target after enforcing the allowed source
+// states. Returns the previous status. Emits a webhook event (best-effort) on a
+// real change. disabled_at is kept in sync for legacy readers.
+func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target string) (string, error) {
+	var cur string
+	err := s.pool.QueryRow(ctx,
+		`SELECT status FROM auth.agents WHERE id = $1 AND tenant_id = $2`, id, tenantID).Scan(&cur)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if verr := validateTransition(cur, target); verr != nil {
+		return cur, verr
+	}
+	if cur == target {
+		return cur, nil // no-op
+	}
+	disabledAt := "NOW()"
+	if target == "active" {
+		disabledAt = "NULL"
+	}
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE auth.agents SET status = $1, disabled_at = `+disabledAt+` WHERE id = $2 AND tenant_id = $3`,
+		target, id, tenantID); err != nil {
+		return cur, err
+	}
+	s.emit(ctx, tenantID, "agent."+transitionEvent[target], map[string]any{
+		"agent_id": id.String(), "tenant_id": tenantID.String(),
+		"previous_status": cur, "status": target,
+	})
+	return cur, nil
+}
+
+// Suspend, Resume and Decommission are the public lifecycle transitions.
+func (s *Service) Suspend(ctx context.Context, id, tenantID uuid.UUID) (string, error) {
+	return s.transition(ctx, id, tenantID, "suspended")
+}
+func (s *Service) Resume(ctx context.Context, id, tenantID uuid.UUID) (string, error) {
+	return s.transition(ctx, id, tenantID, "active")
+}
+func (s *Service) Decommission(ctx context.Context, id, tenantID uuid.UUID) (string, error) {
+	return s.transition(ctx, id, tenantID, "decommissioned")
 }
 
 type Agent struct {
@@ -43,8 +153,11 @@ type Agent struct {
 	Name            string    `json:"name"`
 	Scopes          []string  `json:"scopes"`
 	TokenTTLSeconds int       `json:"token_ttl_seconds"`
-	Disabled        bool      `json:"disabled"`
-	CreatedAt       time.Time `json:"created_at"`
+	// Status is the lifecycle state: active | suspended | decommissioned.
+	Status string `json:"status"`
+	// Disabled is retained for back-compat (true when Status != "active").
+	Disabled  bool      `json:"disabled"`
+	CreatedAt time.Time `json:"created_at"`
 	// Secret is the plaintext credential, returned only once on create.
 	Secret string `json:"secret,omitempty"`
 }
@@ -96,14 +209,16 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 	if err != nil {
 		return nil, err
 	}
+	a.Status = "active" // DB default on insert
 	a.Secret = secret
 	return &a, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error) {
+	// Decommissioned agents are terminal and excluded from listings.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, scopes, token_ttl_seconds, disabled_at, created_at
-		FROM auth.agents WHERE tenant_id = $1 ORDER BY created_at DESC
+		SELECT id, name, scopes, token_ttl_seconds, status, created_at
+		FROM auth.agents WHERE tenant_id = $1 AND status <> 'decommissioned' ORDER BY created_at DESC
 	`, tenantID)
 	if err != nil {
 		return nil, err
@@ -112,11 +227,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error)
 	out := make([]Agent, 0)
 	for rows.Next() {
 		var a Agent
-		var disabledAt *time.Time
-		if err := rows.Scan(&a.ID, &a.Name, &a.Scopes, &a.TokenTTLSeconds, &disabledAt, &a.CreatedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.Scopes, &a.TokenTTLSeconds, &a.Status, &a.CreatedAt); err != nil {
 			return nil, err
 		}
-		a.Disabled = disabledAt != nil
+		a.Disabled = a.Status != "active"
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -133,39 +247,23 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 	return nil
 }
 
-// SetDisabled enables or disables a single agent by setting/clearing disabled_at.
-// Disabled agents are refused at token issuance; the record is preserved for audit.
-func (s *Service) SetDisabled(ctx context.Context, id, tenantID uuid.UUID, disabled bool) error {
-	var ct interface{ RowsAffected() int64 }
-	var err error
-	if disabled {
-		ct, err = s.pool.Exec(ctx,
-			`UPDATE auth.agents SET disabled_at = NOW() WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL`,
-			id, tenantID)
-	} else {
-		ct, err = s.pool.Exec(ctx,
-			`UPDATE auth.agents SET disabled_at = NULL WHERE id = $1 AND tenant_id = $2`,
-			id, tenantID)
-	}
-	if err != nil {
-		return err
-	}
-	if ct.RowsAffected() == 0 {
-		return errs.ErrNotFound
-	}
-	return nil
-}
-
-// KillAll disables every active agent for a tenant in one atomic transaction.
-// Returns the number of agents suspended. Used for security incident response.
+// KillAll suspends every active agent for a tenant in one statement (security
+// incident response). Returns the number suspended and emits a single
+// kill-switch webhook event.
 func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID) (int, error) {
 	ct, err := s.pool.Exec(ctx,
-		`UPDATE auth.agents SET disabled_at = NOW() WHERE tenant_id = $1 AND disabled_at IS NULL`,
+		`UPDATE auth.agents SET status = 'suspended', disabled_at = NOW() WHERE tenant_id = $1 AND status = 'active'`,
 		tenantID)
 	if err != nil {
 		return 0, err
 	}
-	return int(ct.RowsAffected()), nil
+	n := int(ct.RowsAffected())
+	if n > 0 {
+		s.emit(ctx, tenantID, "agent.kill_switch", map[string]any{
+			"tenant_id": tenantID.String(), "suspended": n,
+		})
+	}
+	return n, nil
 }
 
 type TokenResponse struct {
@@ -187,20 +285,20 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 		secretHash string
 		scopes     []string
 		ttl        int
-		disabledAt *time.Time
+		status     string
 	)
 	err = s.pool.QueryRow(ctx, `
-		SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, disabled_at
+		SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status
 		FROM auth.agents WHERE id = $1
-	`, id).Scan(&tenantID, &secretHash, &scopes, &ttl, &disabledAt)
+	`, id).Scan(&tenantID, &secretHash, &scopes, &ttl, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown agent")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if disabledAt != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("agent disabled")
+	if status != "active" {
+		return nil, errs.ErrUnauthorized.WithDetail("agent " + status)
 	}
 	if !password.Verify(secretHash, secret) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid agent secret")
@@ -260,6 +358,35 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/agents/{id}", h.del)
 	r.Patch("/tenants/{tenantID}/agents/{id}", h.patch)
 	r.Post("/tenants/{tenantID}/agents/{id}/suspend", h.suspend)
+	r.Post("/tenants/{tenantID}/agents/{id}/resume", h.resume)
+	r.Post("/tenants/{tenantID}/agents/{id}/decommission", h.decommission)
+}
+
+// auditTransition records an audit row for an agent lifecycle change.
+func (h *Handler) auditTransition(r *http.Request, tenantID, agentID uuid.UUID, action, prev, next string) {
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	var actorID *uuid.UUID
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID = p.UserID
+	}
+	tid, aid := tenantID, agentID
+	_ = audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		Action:       action,
+		ResourceType: "agent",
+		ResourceID:   &aid,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"previous_status": prev, "status": next},
+	})
+	_ = tx.Commit(ctx)
 }
 
 // MountPublic registers the agent token endpoint (agent-authenticated, no user
@@ -356,14 +483,38 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SetDisabled(r.Context(), id, tenantID, in.Disabled); err != nil {
+	// Back-compat: PATCH {disabled} maps onto the lifecycle state machine.
+	target, action, next := "active", "agent.resumed", "active"
+	if in.Disabled {
+		target, action, next = "suspended", "agent.suspended", "suspended"
+	}
+	var prev string
+	switch target {
+	case "suspended":
+		prev, err = h.Service.Suspend(r.Context(), id, tenantID)
+	case "active":
+		prev, err = h.Service.Resume(r.Context(), id, tenantID)
+	}
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.auditTransition(r, tenantID, id, action, prev, next)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) suspend(w http.ResponseWriter, r *http.Request) {
+	h.doTransition(w, r, "suspended", "agent.suspended", "suspended")
+}
+func (h *Handler) resume(w http.ResponseWriter, r *http.Request) {
+	h.doTransition(w, r, "active", "agent.resumed", "active")
+}
+func (h *Handler) decommission(w http.ResponseWriter, r *http.Request) {
+	h.doTransition(w, r, "decommissioned", "agent.decommissioned", "decommissioned")
+}
+
+// doTransition runs one lifecycle transition, audits it, and returns the new status.
+func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, target, action, next string) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -374,11 +525,21 @@ func (h *Handler) suspend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.SetDisabled(r.Context(), id, tenantID, true); err != nil {
+	var prev string
+	switch target {
+	case "suspended":
+		prev, err = h.Service.Suspend(r.Context(), id, tenantID)
+	case "active":
+		prev, err = h.Service.Resume(r.Context(), id, tenantID)
+	case "decommissioned":
+		prev, err = h.Service.Decommission(r.Context(), id, tenantID)
+	}
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	h.auditTransition(r, tenantID, id, action, prev, next)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"status": next})
 }
 
 func (h *Handler) killAll(w http.ResponseWriter, r *http.Request) {
@@ -392,7 +553,34 @@ func (h *Handler) killAll(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.auditKillSwitch(r, tenantID, n)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suspended": n})
+}
+
+// auditKillSwitch records the tenant-wide kill-switch action.
+func (h *Handler) auditKillSwitch(r *http.Request, tenantID uuid.UUID, suspended int) {
+	ctx := r.Context()
+	tx, err := h.Service.Pool().Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	var actorID *uuid.UUID
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID = p.UserID
+	}
+	tid := tenantID
+	_ = audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actorID,
+		Action:       "agent.kill_switch",
+		ResourceType: "agent",
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"suspended": suspended},
+	})
+	_ = tx.Commit(ctx)
 }
 
 func (h *Handler) token(w http.ResponseWriter, r *http.Request) {

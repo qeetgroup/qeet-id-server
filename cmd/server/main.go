@@ -61,21 +61,21 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
 	"github.com/qeetgroup/qeet-id/domains/operations/siem"
-	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id/platform/config"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres"
-	dbmigrations "github.com/qeetgroup/qeet-id/platform/database/migrations"
-	"github.com/qeetgroup/qeet-id/platform/observability/health"
-	"github.com/qeetgroup/qeet-id/platform/security/hibp"
 	httpapi "github.com/qeetgroup/qeet-id/platform/api/rest"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
+	"github.com/qeetgroup/qeet-id/platform/config"
+	dbmigrations "github.com/qeetgroup/qeet-id/platform/database/migrations"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
+	"github.com/qeetgroup/qeet-id/platform/observability/health"
 	"github.com/qeetgroup/qeet-id/platform/observability/logging"
 	"github.com/qeetgroup/qeet-id/platform/observability/metrics"
-	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
-	"github.com/qeetgroup/qeet-id/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
-	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 	"github.com/qeetgroup/qeet-id/platform/observability/tracing"
+	"github.com/qeetgroup/qeet-id/platform/security/hibp"
+	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 	"github.com/qeetgroup/qeet-id/platform/workers"
 )
 
@@ -346,6 +346,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	agentService := agent.NewService(pool, issuer) // AI-agent identities (ephemeral scoped tokens)
 	vcService := vc.NewService(pool, issuer)       // W3C verifiable credentials (JWT-VC)
 	webhookService := webhook.NewService(pool)
+	// Agent lifecycle: emit webhook events on transitions, and let the auth
+	// middleware deny suspended/decommissioned agents' tokens per request.
+	agentService.SetEmitter(webhookService.Enqueue)
+	verifier.AgentStatus = agentService.AgentStatus
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
 	auditVerifier := audit.NewVerifier(pool)

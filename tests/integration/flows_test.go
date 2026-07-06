@@ -357,7 +357,7 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatalf("authorize: %v", err)
 	}
 
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestOIDCRevokeAndIntrospect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -635,7 +635,7 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 	}
 
 	// 5) The code exchanges for tokens — proves the hosted flow produced a valid one.
-	issued, err := oidcSvc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "")
+	issued, err := oidcSvc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}

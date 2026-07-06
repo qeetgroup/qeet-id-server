@@ -176,19 +176,32 @@ func (i *Issuer) Sign(claims jwt.Claims) (string, error) {
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil)
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "")
 }
 
 // IssueAccessActor mints an access token like IssueAccess but with an RFC 8693
 // actor (act) claim, marking it a delegated token: the subject's authority is
 // being exercised by actorSubject (e.g. an AI agent acting for a user).
 func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject})
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "")
 }
 
-func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim) (string, time.Time, error) {
+// IssueAccessResource mints an access token whose audience carries an RFC 8707
+// resource indicator. The platform audience is always retained (so the token
+// still verifies on this server's own API via VerifyAccess) and the resource is
+// appended, letting a downstream resource server (e.g. an MCP server) confirm
+// the token was minted for it. An empty resource behaves like IssueAccess.
+func (i *Issuer) IssueAccessResource(userID, tenantID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource)
+}
+
+func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string) (string, time.Time, error) {
 	now := time.Now().UTC()
 	exp := now.Add(i.accessTTL)
+	aud := jwt.ClaimStrings{i.audience}
+	if resource != "" && resource != i.audience {
+		aud = append(aud, resource) // RFC 8707: bind the token to the requested resource
+	}
 	claims := Claims{
 		UserID:    userID,
 		TenantID:  tenantID,
@@ -197,7 +210,7 @@ func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 		Act:       act,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    i.issuer,
-			Audience:  jwt.ClaimStrings{i.audience},
+			Audience:  aud,
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),

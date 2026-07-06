@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -14,6 +15,11 @@ import (
 type AuthVerifier struct {
 	Tokens          *tokens.Issuer
 	DevTrustHeaders bool
+	// AgentStatus, when set, returns the current lifecycle status of an AI-agent
+	// (by agent_id). It is consulted on every agent token so that suspending or
+	// decommissioning an agent denies its already-issued (stateless) tokens
+	// within one request cycle. nil skips the check.
+	AgentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
 }
 
 // RequireAuth wraps a handler so it only sees authenticated requests.
@@ -58,6 +64,9 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				Subject:   claims.Subject,
 				Scopes:    strings.Fields(claims.Scope),
 			}
+			if claims.ActorType != "" {
+				p.ActorType = claims.ActorType
+			}
 			if claims.UserID != uuid.Nil {
 				uid := claims.UserID
 				p.UserID = &uid
@@ -69,6 +78,25 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			if claims.SessionID != uuid.Nil {
 				sid := claims.SessionID
 				p.SessionID = &sid
+			}
+			// AI-agent token: capture the agent id and enforce the agent's
+			// current lifecycle status, so a suspended/decommissioned agent's
+			// still-valid tokens are denied immediately (within one request).
+			if claims.AgentID != "" {
+				if aid, perr := uuid.Parse(claims.AgentID); perr == nil {
+					p.AgentID = &aid
+					if v.AgentStatus != nil {
+						status, serr := v.AgentStatus(r.Context(), aid)
+						if serr != nil || status != "active" {
+							detail := "revoked"
+							if serr == nil {
+								detail = status
+							}
+							WriteError(w, r, errs.ErrUnauthorized.WithDetail("agent "+detail))
+							return
+						}
+					}
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 		})
