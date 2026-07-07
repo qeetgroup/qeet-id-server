@@ -22,7 +22,7 @@ import { ButtonLink } from "@/components/marketing/button-link";
 import { Aurora } from "@/components/marketing/effects/aurora";
 import { BlurText } from "@/components/marketing/effects/blur-text";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
-import { DotPattern } from "@/components/marketing/effects/dot-pattern";
+import { ShapeGrid } from "@/components/marketing/effects/shape-grid";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import {
   MagneticButton,
@@ -275,9 +275,18 @@ function StatBadge({ children }: { children: ReactNode }) {
 export function Hero() {
   return (
     <section className="relative flex min-h-screen flex-col justify-center overflow-hidden border-b border-border/60">
-      {/* Brand-tinted background — Aurora reads --aurora-* (warm), DotPattern fades to edges. */}
+      {/* Brand-tinted background — warm Aurora glow with an animated ShapeGrid over it,
+          faded to the edges via a radial mask so it dissolves into the section. */}
       <Aurora className="opacity-90" />
-      <DotPattern className="opacity-20 mask-[radial-gradient(ellipse_at_top,black,transparent_75%)] dark:opacity-30" />
+      <div className="absolute inset-0 opacity-70 mask-[radial-gradient(ellipse_at_center,black,transparent_78%)]">
+        <ShapeGrid
+          direction="diagonal"
+          speed={0.4}
+          squareSize={44}
+          shape="square"
+          hoverTrailAmount={6}
+        />
+      </div>
 
       <div className="relative mx-auto grid max-w-7xl items-center gap-14 px-4 py-20 sm:gap-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:gap-12 lg:px-8">
         {/* Left — copy */}
