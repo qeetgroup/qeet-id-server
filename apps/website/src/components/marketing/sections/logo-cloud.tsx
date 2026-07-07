@@ -1,20 +1,20 @@
 import {
-  Brex,
   Cloudflare,
   Datadog,
   Figma,
+  Google,
   Linear,
   Loom,
+  Microsoft,
   Netlify,
-  Notion,
-  Plaid,
-  Retool,
+  Spotify,
   Sentry,
   Shopify,
+  Slack,
   Stripe,
   Supabase,
-  Vercel,
   Zapier,
+  Discord,
 } from "@thesvg/react";
 
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
@@ -22,11 +22,11 @@ import { Marquee } from "@/components/marketing/effects/marquee";
 import { Reveal } from "@/components/marketing/motion";
 
 const row1 = [
-  { name: "Vercel", icon: Vercel },
+  { name: "Google", icon: Google },
   { name: "Stripe", icon: Stripe },
   { name: "Linear", icon: Linear },
-  { name: "Notion", icon: Notion },
-  { name: "Retool", icon: Retool },
+  { name: "Microsoft", icon: Microsoft },
+  { name: "Slack", icon: Slack },
   { name: "Loom", icon: Loom },
   { name: "Datadog", icon: Datadog },
   { name: "Zapier", icon: Zapier },
@@ -38,8 +38,8 @@ const row2 = [
   { name: "Supabase", icon: Supabase },
   { name: "Cloudflare", icon: Cloudflare },
   { name: "Sentry", icon: Sentry },
-  { name: "Brex", icon: Brex },
-  { name: "Plaid", icon: Plaid },
+  { name: "Discord", icon: Discord },
+  { name: "Spotify", icon: Spotify },
 ];
 
 export function LogoCloud() {

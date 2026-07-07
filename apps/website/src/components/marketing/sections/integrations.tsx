@@ -106,7 +106,7 @@ export function Integrations() {
                       <StaggerItem key={item.name} distance={8}>
                         <span className="group flex items-center justify-between rounded-md border border-border/60 bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-foreground">
                           <span className="flex min-w-0 items-center gap-2">
-                            <item.icon aria-hidden className="size-3.5 shrink-0 opacity-60" />
+                            <item.icon aria-hidden className="size-4 shrink-0" />
                             <span className="truncate">{item.name}</span>
                           </span>
                           <ArrowRightIcon

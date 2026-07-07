@@ -1,14 +1,14 @@
 import {
-  Brex,
+  Discord,
   Datadog,
   Figma,
+  Google,
   Linear,
   Loom,
-  Notion,
+  Microsoft,
   Retool,
   Stripe,
   Supabase,
-  Vercel,
 } from "@thesvg/react";
 
 import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
@@ -52,12 +52,12 @@ const quotes = [
 ];
 
 const logoRow = [
-  { name: "Vercel", icon: Vercel },
+  { name: "Google", icon: Google },
   { name: "Linear", icon: Linear },
-  { name: "Notion", icon: Notion },
+  { name: "Microsoft", icon: Microsoft },
   { name: "Retool", icon: Retool },
   { name: "Loom", icon: Loom },
-  { name: "Brex", icon: Brex },
+  { name: "Discord", icon: Discord },
   { name: "Stripe", icon: Stripe },
   { name: "Datadog", icon: Datadog },
   { name: "Figma", icon: Figma },

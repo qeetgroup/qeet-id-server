@@ -43,11 +43,11 @@ export function LogoLockup({ name, icon: Icon, className }: LogoLockupProps) {
     <span
       className={cn(
         "inline-flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground",
-        Icon && "grayscale opacity-60 transition hover:opacity-100 hover:grayscale-0",
         className,
       )}
     >
       {Icon ? (
+        // Native brand colors, always on.
         <Icon aria-hidden className="size-6 shrink-0" />
       ) : (
         <LockupGlyph name={name} />
