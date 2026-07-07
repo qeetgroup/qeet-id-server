@@ -97,7 +97,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`h-full antialiased ${firaCode.variable}`} suppressHydrationWarning>
+    <html
+      lang="en"
+      data-scroll-behavior="smooth"
+      className={`h-full antialiased ${firaCode.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         {/* Set theme class before first paint to avoid FOUC. */}
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />

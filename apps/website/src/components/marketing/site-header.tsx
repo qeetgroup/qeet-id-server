@@ -98,7 +98,7 @@ export function SiteHeader() {
       {/* Floating glass island — detached from the top edge, compacts on scroll. */}
       <div
         className={cn(
-          "mx-auto mt-3 flex items-center gap-3 rounded-full border border-border/60 bg-background/70 px-3 py-2 backdrop-blur-xl supports-backdrop-filter:bg-background/55 sm:mt-4 sm:px-4",
+          "relative z-50 mx-auto mt-3 flex items-center gap-3 rounded-full border border-border/60 bg-background/70 px-3 py-2 backdrop-blur-xl supports-backdrop-filter:bg-background/55 sm:mt-4 sm:px-4",
           reduce
             ? ""
             : "transition-[max-width,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
@@ -136,7 +136,8 @@ export function SiteHeader() {
           </ButtonLink>
         </div>
 
-        {/* Morphing hamburger → X. Stays above the overlay (header z-50 > overlay z-45). */}
+        {/* Morphing hamburger → X. Lives in the pill (z-50), which sits above the
+            overlay (z-40) in the header's stacking context, so the X stays clickable. */}
         <button
           ref={toggleRef}
           type="button"
@@ -172,7 +173,7 @@ export function SiteHeader() {
             role="dialog"
             aria-modal="true"
             aria-label="Main menu"
-            className="fixed inset-0 z-45 flex flex-col bg-background/80 backdrop-blur-3xl md:hidden"
+            className="fixed inset-0 z-40 flex flex-col bg-background/80 backdrop-blur-3xl md:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
