@@ -14,7 +14,7 @@
   "dependencies": {
     "@qeetrix/ui": "^0.4.0",
     "@thesvg/react": "catalog:",
-    "motion": "^12.40.0",
+    "motion": "^12.42.2",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
