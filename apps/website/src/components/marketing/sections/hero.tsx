@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 
+import { ArrowCta } from "@/components/marketing/blocks/arrow-cta";
 import { ButtonLink } from "@/components/marketing/button-link";
 import { Aurora } from "@/components/marketing/effects/aurora";
 import { BlurText } from "@/components/marketing/effects/blur-text";
@@ -33,7 +34,13 @@ import {
   WordReveal,
 } from "@/components/marketing/motion";
 
-const trustNames = ["Priya Anand", "Marcus Hale", "Sofía Reyes", "Dev Patel", "Jun Park"];
+const trustPeople = [
+  { name: "Priya Anand", photo: "/avatars/priya.jpg" },
+  { name: "Marcus Hale", photo: "/avatars/marcus.jpg" },
+  { name: "Sofía Reyes", photo: "/avatars/sofia.jpg" },
+  { name: "Dev Patel", photo: "/avatars/dev.jpg" },
+  { name: "Jun Park", photo: "/avatars/jun.jpg" },
+];
 
 function GoogleGlyph() {
   return (
@@ -320,9 +327,9 @@ export function Hero() {
 
             <StaggerItem className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row sm:items-center">
               <MagneticButton strength={0.35} className="w-full sm:w-auto">
-                <ButtonLink size="lg" href={SIGN_UP_URL} className="h-11 w-full px-5 text-sm sm:w-auto">
-                  Start free <ArrowRightIcon className="size-4" />
-                </ButtonLink>
+                <ArrowCta href={SIGN_UP_URL} className="h-12 w-full justify-center sm:w-auto">
+                  Start free
+                </ArrowCta>
               </MagneticButton>
               <ButtonLink
                 size="lg"
@@ -336,10 +343,11 @@ export function Hero() {
 
             <StaggerItem className="flex items-center gap-3 pt-1">
               <div className="flex -space-x-2">
-                {trustNames.map((name) => (
+                {trustPeople.map((person) => (
                   <InitialsAvatar
-                    key={name}
-                    name={name}
+                    key={person.name}
+                    name={person.name}
+                    src={person.photo}
                     size="sm"
                     className="border-2 border-background"
                   />

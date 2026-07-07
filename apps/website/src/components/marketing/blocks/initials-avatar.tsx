@@ -1,12 +1,14 @@
-import { Avatar, AvatarFallback, cn } from "@qeetrix/ui";
+import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetrix/ui";
 
 /**
- * Deterministic monochrome initials avatar. Derives 1–2 initials and a
- * stable tone from the name so the same person always renders the same
- * way — no remote photos, no layout shift. Honest by design.
+ * Avatar that shows a real photo when `src` is given, and falls back to
+ * deterministic monochrome initials otherwise — same person always renders
+ * the same way, with no layout shift if the image is missing or fails.
  */
 export interface InitialsAvatarProps {
   name: string;
+  /** Optional photo URL; falls back to initials when absent or on load error. */
+  src?: string;
   className?: string;
   size?: "sm" | "default" | "lg";
 }
@@ -44,9 +46,10 @@ const textSize: Record<NonNullable<InitialsAvatarProps["size"]>, string> = {
   lg: "text-sm",
 };
 
-export function InitialsAvatar({ name, className, size = "default" }: InitialsAvatarProps) {
+export function InitialsAvatar({ name, src, className, size = "default" }: InitialsAvatarProps) {
   return (
     <Avatar className={cn(rootSize[size], className)} role="img" aria-label={`${name} avatar`}>
+      {src && <AvatarImage src={src} alt={name} className="object-cover" />}
       <AvatarFallback
         className={cn("font-display font-semibold tracking-tight", textSize[size], toneFor(name))}
       >

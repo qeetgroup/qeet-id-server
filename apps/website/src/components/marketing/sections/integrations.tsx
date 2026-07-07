@@ -9,14 +9,16 @@ import {
   Microsoft,
   Okta,
   Onelogin,
+  PingIdentity,
   Workday,
   X,
 } from "@thesvg/react";
 import { IconOidcConnector, IconSamlConnector, IconScimSync, type QeetIconProps } from "@qeetrix/ui/brand";
-import { ArrowRightIcon, CloudIcon, LeafIcon, NetworkIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
+import { ArrowRightIcon, NetworkIcon } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 
 import { ButtonLink } from "../button-link";
+import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
 
 type ProviderItem = { name: string; icon: ComponentType<{ className?: string } & SVGProps<SVGSVGElement>> };
@@ -50,8 +52,7 @@ const providers: Group[] = [
       { name: "Azure AD", icon: Microsoft },
       { name: "Auth0", icon: Auth0 },
       { name: "OneLogin", icon: Onelogin },
-      { name: "PingIdentity", icon: ShieldIcon },
-      { name: "JumpCloud", icon: CloudIcon },
+      { name: "PingIdentity", icon: PingIdentity },
       { name: "Generic SAML", icon: IconSamlConnector },
       { name: "Generic OIDC", icon: IconOidcConnector },
     ],
@@ -64,8 +65,6 @@ const providers: Group[] = [
       { name: "LDAP", icon: NetworkIcon },
       { name: "Active Directory", icon: Microsoft },
       { name: "Workday", icon: Workday },
-      { name: "BambooHR", icon: LeafIcon },
-      { name: "Rippling", icon: RefreshCwIcon },
       { name: "Google Workspace", icon: Google },
       { name: "Okta", icon: Okta },
     ],
@@ -78,9 +77,7 @@ export function Integrations() {
       <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
         <div className="grid gap-12 lg:grid-cols-[1fr_2fr]">
           <Reveal className="flex flex-col gap-4">
-            <p className="text-sm font-medium uppercase tracking-widest text-brand-text">
-              Integrations
-            </p>
+            <Eyebrow className="w-fit">Integrations</Eyebrow>
             <h2 className="font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
               <WordReveal text="Connect to every IdP your customers ask for" />
             </h2>

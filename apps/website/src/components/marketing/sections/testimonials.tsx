@@ -1,3 +1,17 @@
+import {
+  Brex,
+  Datadog,
+  Figma,
+  Linear,
+  Loom,
+  Notion,
+  Retool,
+  Stripe,
+  Supabase,
+  Vercel,
+} from "@thesvg/react";
+
+import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
@@ -12,6 +26,7 @@ const quotes = [
     quote:
       "We ripped out our home-grown auth in two sprints. Passkeys, SAML, MFA — all working on day one. Qeet ID paid for itself the week we shipped.",
     name: "Priya Anand",
+    photo: "/avatars/priya.jpg",
     role: "Staff Engineer",
     company: "Lattice",
     featured: true,
@@ -20,6 +35,7 @@ const quotes = [
     quote:
       "The RBAC layer is the cleanest we've used. Sub-30ms permission checks, no cache invalidation foot-guns. Our platform team got their weekends back.",
     name: "Marcus Hale",
+    photo: "/avatars/marcus.jpg",
     role: "VP Engineering",
     company: "Vercel",
     featured: false,
@@ -28,6 +44,7 @@ const quotes = [
     quote:
       "Multi-tenant isolation and per-org branding without lifting a finger. We onboarded a Fortune 100 customer in three days.",
     name: "Sofía Reyes",
+    photo: "/avatars/sofia.jpg",
     role: "CTO",
     company: "Linear",
     featured: false,
@@ -35,16 +52,16 @@ const quotes = [
 ];
 
 const logoRow = [
-  "Lattice",
-  "Vercel",
-  "Linear",
-  "Ramp",
-  "Retool",
-  "Notion",
-  "Loom",
-  "Brex",
-  "Mercury",
-  "Cron",
+  { name: "Vercel", icon: Vercel },
+  { name: "Linear", icon: Linear },
+  { name: "Notion", icon: Notion },
+  { name: "Retool", icon: Retool },
+  { name: "Loom", icon: Loom },
+  { name: "Brex", icon: Brex },
+  { name: "Stripe", icon: Stripe },
+  { name: "Datadog", icon: Datadog },
+  { name: "Figma", icon: Figma },
+  { name: "Supabase", icon: Supabase },
 ];
 
 export function Testimonials() {
@@ -52,8 +69,10 @@ export function Testimonials() {
     <section className="border-b border-border/60">
       <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
         <Reveal className="mx-auto max-w-2xl text-center">
-          <p className="text-sm font-medium uppercase tracking-widest text-brand-text">Customers</p>
-          <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+          <div className="flex justify-center">
+            <Eyebrow>Customers</Eyebrow>
+          </div>
+          <h2 className="mt-5 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl lg:text-[2.85rem] lg:leading-[1.05]">
             <WordReveal text="Loved by platform teams" />
           </h2>
         </Reveal>
@@ -101,7 +120,7 @@ export function Testimonials() {
                       {q.quote}
                     </blockquote>
                     <figcaption className="relative mt-auto flex items-center gap-3 border-t border-border/60 pt-5">
-                      <InitialsAvatar name={q.name} />
+                      <InitialsAvatar name={q.name} src={q.photo} />
                       <div className="flex flex-col">
                         <span className="text-sm font-semibold text-foreground">{q.name}</span>
                         <span className="text-xs text-muted-foreground">
@@ -122,8 +141,8 @@ export function Testimonials() {
           className="relative mt-14 mask-[linear-gradient(to_right,transparent,black_12%,black_88%,transparent)]"
         >
           <Marquee duration={55} gap="3rem" pauseOnHover>
-            {logoRow.map((name) => (
-              <LogoLockup key={name} name={name} className="text-sm" />
+            {logoRow.map((brand) => (
+              <LogoLockup key={brand.name} name={brand.name} icon={brand.icon} className="text-sm" />
             ))}
           </Marquee>
         </Reveal>

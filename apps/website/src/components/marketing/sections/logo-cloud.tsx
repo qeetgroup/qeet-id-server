@@ -1,17 +1,45 @@
+import {
+  Brex,
+  Cloudflare,
+  Datadog,
+  Figma,
+  Linear,
+  Loom,
+  Netlify,
+  Notion,
+  Plaid,
+  Retool,
+  Sentry,
+  Shopify,
+  Stripe,
+  Supabase,
+  Vercel,
+  Zapier,
+} from "@thesvg/react";
+
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
 import { Marquee } from "@/components/marketing/effects/marquee";
 import { Reveal } from "@/components/marketing/motion";
 
-const row1 = ["Acme", "Globex", "Initech", "Umbrella", "Hooli", "Pied Piper", "Stark", "Wayne"];
+const row1 = [
+  { name: "Vercel", icon: Vercel },
+  { name: "Stripe", icon: Stripe },
+  { name: "Linear", icon: Linear },
+  { name: "Notion", icon: Notion },
+  { name: "Retool", icon: Retool },
+  { name: "Loom", icon: Loom },
+  { name: "Datadog", icon: Datadog },
+  { name: "Zapier", icon: Zapier },
+];
 const row2 = [
-  "Tyrell",
-  "Massive Dynamic",
-  "Aperture",
-  "Bluebook",
-  "Cyberdyne",
-  "Soylent",
-  "Vandelay",
-  "InGen",
+  { name: "Shopify", icon: Shopify },
+  { name: "Figma", icon: Figma },
+  { name: "Netlify", icon: Netlify },
+  { name: "Supabase", icon: Supabase },
+  { name: "Cloudflare", icon: Cloudflare },
+  { name: "Sentry", icon: Sentry },
+  { name: "Brex", icon: Brex },
+  { name: "Plaid", icon: Plaid },
 ];
 
 export function LogoCloud() {
@@ -29,13 +57,13 @@ export function LogoCloud() {
           className="relative mt-8 mask-[linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]"
         >
           <Marquee duration={50} gap="3rem" pauseOnHover>
-            {row1.map((name) => (
-              <LogoLockup key={name} name={name} />
+            {row1.map((brand) => (
+              <LogoLockup key={brand.name} name={brand.name} icon={brand.icon} />
             ))}
           </Marquee>
           <Marquee duration={60} reverse gap="3rem" className="mt-6" pauseOnHover>
-            {row2.map((name) => (
-              <LogoLockup key={name} name={name} />
+            {row2.map((brand) => (
+              <LogoLockup key={brand.name} name={brand.name} icon={brand.icon} />
             ))}
           </Marquee>
         </Reveal>

@@ -1,10 +1,13 @@
-import { Architecture } from "@/components/marketing/sections/architecture";
+import { Compare } from "@/components/marketing/sections/compare";
 import { CTA } from "@/components/marketing/sections/cta";
+import { Faq } from "@/components/marketing/sections/faq";
 import { Features } from "@/components/marketing/sections/features";
 import { Hero } from "@/components/marketing/sections/hero";
 import { HowItWorks } from "@/components/marketing/sections/how-it-works";
 import { Integrations } from "@/components/marketing/sections/integrations";
 import { LogoCloud } from "@/components/marketing/sections/logo-cloud";
+import { Pricing } from "@/components/marketing/sections/pricing";
+import { Security } from "@/components/marketing/sections/security";
 import { Stats } from "@/components/marketing/sections/stats";
 import { Testimonials } from "@/components/marketing/sections/testimonials";
 import { StickyCtaBar } from "@/components/marketing/sticky-cta-bar";
@@ -18,11 +21,14 @@ export default function HomePage() {
       <Hero />
       <LogoCloud />
       <Features />
-      <Architecture />
       <HowItWorks />
       <Stats />
       <Integrations />
+      <Security />
+      <Compare />
+      <Pricing />
       <Testimonials />
+      <Faq />
       <CTA />
       <StickyCtaBar />
     </>

@@ -1,13 +1,18 @@
 import { cn } from "@qeetrix/ui";
+import type { ComponentType, SVGProps } from "react";
+
+type BrandIcon = ComponentType<{ className?: string } & SVGProps<SVGSVGElement>>;
 
 /**
- * Uniform monochrome wordmark lockup. Renders a company name as a
- * consistent text lockup with a small geometric glyph — a designed
- * system rather than a pile of mismatched fake logos. Pair many of
- * these in a grid or marquee for a calm, premium logo wall.
+ * Uniform monochrome brand lockup. With an `icon`, renders the real brand
+ * mark (desaturated to grey so mixed logos read as one calm wall, colouring
+ * in on hover); without one, falls back to a designed geometric glyph. Pair
+ * many of these in a grid or marquee for a premium logo wall.
  */
 export interface LogoLockupProps {
   name: string;
+  /** Real brand mark (e.g. from `@thesvg/react`). Falls back to a glyph when omitted. */
+  icon?: BrandIcon;
   className?: string;
 }
 
@@ -33,15 +38,20 @@ function LockupGlyph({ name }: { name: string }) {
   );
 }
 
-export function LogoLockup({ name, className }: LogoLockupProps) {
+export function LogoLockup({ name, icon: Icon, className }: LogoLockupProps) {
   return (
     <span
       className={cn(
         "inline-flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground",
+        Icon && "grayscale opacity-60 transition hover:opacity-100 hover:grayscale-0",
         className,
       )}
     >
-      <LockupGlyph name={name} />
+      {Icon ? (
+        <Icon aria-hidden className="size-6 shrink-0" />
+      ) : (
+        <LockupGlyph name={name} />
+      )}
       <span className="font-display text-lg font-semibold tracking-tight">{name}</span>
     </span>
   );
