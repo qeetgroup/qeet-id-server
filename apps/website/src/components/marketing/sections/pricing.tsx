@@ -40,24 +40,15 @@ export function Pricing() {
                 "transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-1.5",
                 t.featured && "lg:scale-[1.04]",
               )}
-              className={cn(
-                "gap-6 p-7",
-                t.featured ? "shadow-2xl shadow-brand/15" : "shadow-xl shadow-black/5",
-              )}
+              className="gap-6 p-7 shadow-xl shadow-black/5"
             >
               {t.featured && (
-                <>
-                  <BorderBeam
-                    size={280}
-                    duration={9}
-                    colorFrom="var(--brand-500)"
-                    colorTo="var(--brand-300)"
-                  />
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-x-0 top-0 h-px bg-(image:--brand-gradient)"
-                  />
-                </>
+                <BorderBeam
+                  size={280}
+                  duration={9}
+                  colorFrom="var(--brand-500)"
+                  colorTo="var(--brand-300)"
+                />
               )}
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-xl font-semibold tracking-tight">{t.name}</h3>

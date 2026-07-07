@@ -26,7 +26,7 @@ export function BezelCard({ children, className, shellClassName, featured }: Bez
       className={cn(
         "h-full rounded-[1.75rem] p-1.5 ring-1 transition-colors duration-500",
         featured
-          ? "bg-brand/7 ring-brand/25"
+          ? "bg-brand/8 ring-brand/40 shadow-lg shadow-brand/15 dark:bg-brand/12 dark:ring-brand/50"
           : "bg-foreground/3 ring-black/6 dark:bg-white/3 dark:ring-white/10",
         shellClassName,
       )}
