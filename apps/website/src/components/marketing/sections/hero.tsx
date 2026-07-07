@@ -290,7 +290,7 @@ export function Hero() {
 
       <div className="relative mx-auto grid max-w-7xl items-center gap-14 px-4 py-20 sm:gap-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:gap-12 lg:px-8">
         {/* Left — copy */}
-        <div className="flex flex-col items-start gap-7 text-center sm:text-left lg:items-start">
+        <div className="flex flex-col items-center gap-7 text-center sm:text-left lg:items-start">
           {/* Announcement pill */}
           <Reveal
             duration={0.5}
