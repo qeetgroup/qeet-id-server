@@ -11,6 +11,7 @@ import {
   Vercel,
 } from "@thesvg/react";
 
+import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
@@ -68,8 +69,10 @@ export function Testimonials() {
     <section className="border-b border-border/60">
       <div className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28">
         <Reveal className="mx-auto max-w-2xl text-center">
-          <p className="text-sm font-medium uppercase tracking-widest text-brand-text">Customers</p>
-          <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+          <div className="flex justify-center">
+            <Eyebrow>Customers</Eyebrow>
+          </div>
+          <h2 className="mt-5 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl lg:text-[2.85rem] lg:leading-[1.05]">
             <WordReveal text="Loved by platform teams" />
           </h2>
         </Reveal>

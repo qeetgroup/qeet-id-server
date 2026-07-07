@@ -1,6 +1,7 @@
 import { cn } from "@qeetrix/ui";
 import { ArrowRightIcon, CheckIcon } from "lucide-react";
 
+import { BezelCard } from "@/components/marketing/blocks/bezel-card";
 import { ButtonLink } from "@/components/marketing/button-link";
 import { tiers } from "@/components/marketing/data/pricing";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
@@ -21,13 +22,27 @@ export function Pricing() {
         subtitle="Free up to 5,000 MAU, no card required. Predictable per-MAU pricing as you grow — no tier-jump surprises."
       />
 
-      <Stagger staggerDelay={0.1} className="mt-14 grid gap-6 lg:grid-cols-3">
+      <div className="relative mt-16">
+        {/* Soft brand halo behind the featured (center) tier for depth. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 size-152 max-w-full -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,var(--color-brand)/0.12,transparent_60%)] blur-3xl"
+        />
+        <Stagger
+          staggerDelay={0.1}
+          className="relative grid gap-6 lg:grid-cols-3 lg:items-center"
+        >
         {tiers.map((t) => (
           <StaggerItem key={t.name} className="h-full">
-            <div
+            <BezelCard
+              featured={t.featured}
+              shellClassName={cn(
+                "transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-1.5",
+                t.featured && "lg:scale-[1.04]",
+              )}
               className={cn(
-                "relative flex h-full flex-col gap-6 overflow-hidden rounded-2xl border bg-background p-6",
-                t.featured ? "border-brand/40 shadow-xl shadow-brand/10" : "border-border/60",
+                "gap-6 p-7",
+                t.featured ? "shadow-2xl shadow-brand/15" : "shadow-xl shadow-black/5",
               )}
             >
               {t.featured && (
@@ -47,7 +62,7 @@ export function Pricing() {
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-xl font-semibold tracking-tight">{t.name}</h3>
                 {t.featured && (
-                  <span className="rounded-full bg-(image:--brand-gradient) px-2 py-0.5 text-xs font-medium text-brand-foreground">
+                  <span className="rounded-full bg-(image:--brand-gradient) px-2.5 py-0.5 text-xs font-medium text-brand-foreground shadow-sm shadow-brand/30">
                     Most popular
                   </span>
                 )}
@@ -80,10 +95,11 @@ export function Pricing() {
                   </li>
                 ))}
               </ul>
-            </div>
+            </BezelCard>
           </StaggerItem>
-        ))}
-      </Stagger>
+          ))}
+        </Stagger>
+      </div>
 
       <Reveal className="mt-10 text-center">
         <ButtonLink variant="ghost" href="/pricing">

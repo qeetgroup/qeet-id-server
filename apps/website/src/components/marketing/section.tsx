@@ -1,6 +1,7 @@
 import { cn } from "@qeetrix/ui";
 import type { ReactNode } from "react";
 
+import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { Reveal, WordReveal } from "@/components/marketing/motion";
 
 type SectionProps = {
@@ -37,7 +38,7 @@ export function Section({
     >
       <div
         className={cn(
-          "mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8 lg:py-28",
+          "mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8 lg:py-32",
           innerClassName,
         )}
       >
@@ -83,9 +84,11 @@ export function SectionHeader({
       )}
     >
       {eyebrow && (
-        <p className="text-sm font-medium uppercase tracking-widest text-brand-text">{eyebrow}</p>
+        <div className={cn("flex", centered ? "justify-center" : "justify-start")}>
+          <Eyebrow>{eyebrow}</Eyebrow>
+        </div>
       )}
-      <h2 className="mt-2 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+      <h2 className="mt-5 font-display text-3xl font-semibold tracking-tight text-balance sm:text-4xl lg:text-[2.85rem] lg:leading-[1.05]">
         {title}
         {titleAccent && (
           <>

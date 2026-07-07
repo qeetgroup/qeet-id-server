@@ -2,6 +2,8 @@ import { IconAuditLog, IconMfaShield } from "@qeetrix/ui/brand";
 import { FileCheckIcon, GlobeIcon, LockIcon, ShieldCheckIcon } from "lucide-react";
 import type { ComponentType } from "react";
 
+import { BezelCard } from "@/components/marketing/blocks/bezel-card";
+import { SpotlightCard } from "@/components/marketing/effects/spotlight-card";
 import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { Section, SectionHeader } from "@/components/marketing/section";
 
@@ -62,13 +64,24 @@ export function Security() {
           const Icon = item.icon;
           return (
             <StaggerItem key={item.title} className="h-full">
-              <div className="flex h-full flex-col gap-3 rounded-2xl border border-border/60 bg-background p-6">
-                <span className="grid size-10 place-items-center rounded-lg bg-brand/10 text-brand ring-1 ring-brand/20">
-                  <Icon className="size-5" />
-                </span>
-                <h3 className="font-display text-base font-semibold tracking-tight">{item.title}</h3>
-                <p className="text-sm text-muted-foreground">{item.body}</p>
-              </div>
+              <SpotlightCard
+                className="h-full rounded-[1.75rem]"
+                spotlightColor="rgba(242,109,14,0.14)"
+                spotlightSize={340}
+              >
+                <BezelCard
+                  shellClassName="transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-1"
+                  className="gap-3 p-6 shadow-xl shadow-black/5"
+                >
+                  <span className="grid size-11 place-items-center rounded-xl bg-brand/10 text-brand ring-1 ring-inset ring-brand/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.4)]">
+                    <Icon className="size-5" />
+                  </span>
+                  <h3 className="mt-1 font-display text-base font-semibold tracking-tight">
+                    {item.title}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">{item.body}</p>
+                </BezelCard>
+              </SpotlightCard>
             </StaggerItem>
           );
         })}

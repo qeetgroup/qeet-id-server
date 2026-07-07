@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 
+import { ArrowCta } from "@/components/marketing/blocks/arrow-cta";
 import { ButtonLink } from "@/components/marketing/button-link";
 import { Aurora } from "@/components/marketing/effects/aurora";
 import { BlurText } from "@/components/marketing/effects/blur-text";
@@ -326,9 +327,9 @@ export function Hero() {
 
             <StaggerItem className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row sm:items-center">
               <MagneticButton strength={0.35} className="w-full sm:w-auto">
-                <ButtonLink size="lg" href={SIGN_UP_URL} className="h-11 w-full px-5 text-sm sm:w-auto">
-                  Start free <ArrowRightIcon className="size-4" />
-                </ButtonLink>
+                <ArrowCta href={SIGN_UP_URL} className="h-12 w-full justify-center sm:w-auto">
+                  Start free
+                </ArrowCta>
               </MagneticButton>
               <ButtonLink
                 size="lg"

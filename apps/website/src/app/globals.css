@@ -251,9 +251,15 @@ h3 {
   font-family: var(--font-display), sans-serif;
 }
 
-/* Give nav-linked sections room to breathe under the sticky header. */
+/* Native smooth scrolling for in-page anchor links (e.g. #pricing). The
+   prefers-reduced-motion block below overrides this back to `auto`. */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Give nav-linked sections room to breathe under the floating nav. */
 section[id] {
-  scroll-margin-top: 5rem;
+  scroll-margin-top: 6rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
