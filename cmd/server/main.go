@@ -37,6 +37,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/developer/api-keys"
 	"github.com/qeetgroup/qeet-id/domains/developer/auth-hooks"
 	"github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id/domains/developer/credentials/vc"
 	"github.com/qeetgroup/qeet-id/domains/developer/service-accounts"
 	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
@@ -384,6 +385,13 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		slog.Error("init secrets vault", "err", err)
 		os.Exit(1)
 	}
+	// Token Vault reuses the same key provider as the secrets vault above —
+	// one KMS/static-key setup backs both encrypted stores.
+	tokenVaultService, err := tokenvault.NewService(rootCtx, pool, keyProvider)
+	if err != nil {
+		slog.Error("init token vault", "err", err)
+		os.Exit(1)
+	}
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
 
 	// SAML IdP signing identity: configured RSA key+cert in prod, or an
@@ -493,6 +501,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		Group:         &group.Handler{Service: groupService},
 		SCIM:          &scim.Handler{Service: scimService},
 		Secret:        &secret.Handler{Service: secretService},
+		TokenVault:    &tokenvault.Handler{Service: tokenVaultService},
 		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},

@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
 	"github.com/qeetgroup/qeet-id/domains/access/mfa"
 	"github.com/qeetgroup/qeet-id/domains/access/passkeys"
+	secret "github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
 	"github.com/qeetgroup/qeet-id/domains/federation/oidc"
 	"github.com/qeetgroup/qeet-id/domains/federation/social"
@@ -251,10 +254,10 @@ func TestHostedLoginSession(t *testing.T) {
 	}
 
 	// Wrong password is rejected by the shared credential check.
-	if _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
+	if _, _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
 		t.Error("CheckPassword must reject a wrong password")
 	}
-	u, err := svc.CheckPassword(ctx, email, "Kx7mQ2vLp9Wz")
+	u, _, err := svc.CheckPassword(ctx, email, "Kx7mQ2vLp9Wz")
 	if err != nil {
 		t.Fatalf("CheckPassword: %v", err)
 	}
@@ -365,7 +368,7 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatal("authorization_code exchange should return a refresh_token")
 	}
 
-	rotated, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken)
+	rotated, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, "")
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
@@ -377,12 +380,141 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 	}
 
 	// Replaying the consumed refresh token is theft → revoke the chain.
-	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken); err == nil {
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); err == nil {
 		t.Fatal("reusing a consumed refresh token should fail")
 	}
 	// ...so the freshly-rotated token is dead too.
-	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken); err == nil {
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken, ""); err == nil {
 		t.Fatal("rotated token must fail after reuse revokes the chain")
+	}
+}
+
+// RFC 8707: a resource indicator bound at authorization_code exchange must
+// survive a refresh_token rotation (the access token's audience keeps
+// carrying it) rather than silently reverting to the platform-only audience.
+// An explicit resource on the refresh call overrides the originally-bound one.
+func TestOIDCRefreshTokenPreservesResourceBinding(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc-res"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	issuer := mustIssuer()
+	svc := oidc.NewService(testPool, issuer)
+
+	redirectURI := "https://app.example/cb"
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID:     tenantID,
+		Name:         "RP",
+		RedirectURIs: []string{redirectURI},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	const mcpResource = "https://mcp.example.com"
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	if err != nil {
+		t.Fatalf("authorize: %v", err)
+	}
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", mcpResource)
+	if err != nil {
+		t.Fatalf("exchange code: %v", err)
+	}
+	claims, err := issuer.VerifyAccess(issued.AccessToken)
+	if err != nil || !slices.Contains([]string(claims.Audience), mcpResource) {
+		t.Fatalf("initial access token audience = %v (err %v), want to include %q", claims, err, mcpResource)
+	}
+
+	// Refresh with no resource param — the originally-bound resource carries forward.
+	rotated, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, "")
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	claims, err = issuer.VerifyAccess(rotated.AccessToken)
+	if err != nil || !slices.Contains([]string(claims.Audience), mcpResource) {
+		t.Fatalf("rotated access token audience = %v (err %v), want to still include %q", claims, err, mcpResource)
+	}
+
+	// An explicit resource on the refresh call switches the bound resource.
+	const otherResource = "https://other.example.com"
+	rotated2, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken, otherResource)
+	if err != nil {
+		t.Fatalf("refresh (explicit resource): %v", err)
+	}
+	claims, err = issuer.VerifyAccess(rotated2.AccessToken)
+	if err != nil || !slices.Contains([]string(claims.Audience), otherResource) || slices.Contains([]string(claims.Audience), mcpResource) {
+		t.Fatalf("re-refreshed access token audience = %v (err %v), want only %q", claims, err, otherResource)
+	}
+}
+
+// RFC 8693 token-exchange also supports an RFC 8707 resource indicator — the
+// MCP delegation case: an agent-delegated (act-claim) token scoped to one
+// specific downstream resource server.
+func TestOIDCTokenExchangeBindsResource(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("oidc-te"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	issuer := mustIssuer()
+	svc := oidc.NewService(testPool, issuer)
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID:     tenantID,
+		Name:         "Agent client",
+		RedirectURIs: []string{"https://app.example/cb"},
+		GrantTypes:   []string{"authorization_code", "refresh_token", "urn:ietf:params:oauth:grant-type:token-exchange"},
+	})
+	if err != nil {
+		t.Fatalf("register client: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	subjectAccess, _, err := issuer.IssueAccess(userID, tenantID, uuid.New(), "doc.read")
+	if err != nil {
+		t.Fatalf("issue subject token: %v", err)
+	}
+
+	const mcpResource = "https://mcp.example.com"
+	resp, err := svc.TokenExchange(ctx, client.ClientID, secret, subjectAccess, "", "", "", "agent-123", "", mcpResource)
+	if err != nil {
+		t.Fatalf("token exchange: %v", err)
+	}
+	claims, err := issuer.VerifyAccess(resp.AccessToken)
+	if err != nil {
+		t.Fatalf("verify exchanged token: %v", err)
+	}
+	if !slices.Contains([]string(claims.Audience), mcpResource) {
+		t.Fatalf("exchanged access token audience = %v, want to include %q", claims.Audience, mcpResource)
+	}
+	if claims.Act == nil || claims.Act.Subject != "agent-123" {
+		t.Fatalf("exchanged access token should carry the act claim, got %+v", claims.Act)
 	}
 }
 
@@ -449,7 +581,7 @@ func TestOIDCRevokeAndIntrospect(t *testing.T) {
 	if r, err := svc.Introspect(ctx, client.ClientID, secret, issued.RefreshToken, "refresh_token"); err != nil || r["active"] != false {
 		t.Errorf("revoked refresh token should be inactive: %+v err=%v", r, err)
 	}
-	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken); err == nil {
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); err == nil {
 		t.Error("a revoked refresh token must not be redeemable")
 	}
 	// Revoking an unknown token is still a success (RFC 7009).
@@ -908,6 +1040,180 @@ func TestPasskeyBeginCeremonies(t *testing.T) {
 	}
 }
 
+// Passkey-first signup: BeginSignup stores a pending 'signup' session (no user
+// row exists yet), rejects an email already registered tenant-less, and
+// BeginTenantSignup is forbidden when the tenant has no self-registration
+// policy wired — the same gate RegisterInTenant uses. (The signed finish path,
+// like TestPasskeyBeginCeremonies, needs a real authenticator and is covered
+// manually in the browser.)
+func TestPasskeySignupBegin(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	authSvc, _ := newAuth()
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID: "localhost", RPDisplayName: "Qeet ID", RPOrigins: []string{"http://localhost:3000"},
+	})
+	if err != nil {
+		t.Fatalf("webauthn new: %v", err)
+	}
+	svc := passkey.NewService(testPool, wa, authSvc)
+
+	email := uniqueSlug("pksignup") + "@example.com"
+	sid, options, err := svc.BeginSignup(ctx, email, "New User")
+	if err != nil {
+		t.Fatalf("begin signup: %v", err)
+	}
+	if len(options.Response.Challenge) == 0 {
+		t.Fatal("signup options missing a challenge")
+	}
+	var kind, pendingEmail string
+	var subjectID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		SELECT kind, pending_email, subject_id FROM auth.webauthn_sessions WHERE id = $1
+	`, sid).Scan(&kind, &pendingEmail, &subjectID); err != nil {
+		t.Fatalf("query signup session: %v", err)
+	}
+	if kind != "signup" || pendingEmail != email || subjectID == uuid.Nil {
+		t.Fatalf("signup session = kind=%q email=%q subject=%v, want signup/%q/non-nil", kind, pendingEmail, subjectID, email)
+	}
+
+	// A second signup for the same (tenant-less) email must conflict.
+	_, _, err = svc.BeginSignup(ctx, email, "")
+	if e := errs.As(err); e == nil || e.Code != errs.ErrConflict.Code {
+		t.Fatalf("begin signup (dup email): err = %v, want ErrConflict", err)
+	}
+
+	// Tenant-scoped signup with no self-registration policy wired must be
+	// forbidden — same gate as auth.Service.RegisterInTenant.
+	tenantID := createTenant(t, ctx, uniqueSlug("pksignup"))
+	_, _, err = svc.BeginTenantSignup(ctx, tenantID, uniqueSlug("pksignup")+"@example.com", "")
+	if e := errs.As(err); e == nil || e.Code != errs.ErrForbidden.Code {
+		t.Fatalf("begin tenant signup (no policy): err = %v, want ErrForbidden", err)
+	}
+}
+
+// End-to-end Token Vault: register a provider, connect (authorization_code
+// exchange), fetch a live access token (no refresh needed), then — once the
+// stored token is fast-forwarded past expiry — fetch again and confirm it
+// transparently refreshed via the stored refresh_token. Disconnect then
+// makes the account unreachable again.
+func TestTokenVaultConnectRefreshDisconnect(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("tv"))
+	var userID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email) VALUES ($1, $2) RETURNING id
+	`, tenantID, uniqueSlug("tv")+"@example.com").Scan(&userID); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	var refreshCount int
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("mock provider: parse form: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Form.Get("grant_type") {
+		case "authorization_code":
+			if r.Form.Get("code") != "test-code" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-1", "refresh_token": "refresh-1",
+				"token_type": "Bearer", "expires_in": 3600,
+			})
+		case "refresh_token":
+			refreshCount++
+			if r.Form.Get("refresh_token") != "refresh-1" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-2", "token_type": "Bearer", "expires_in": 3600,
+			})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer mock.Close()
+
+	kp := secret.StaticKeyProvider{Key: []byte("01234567890123456789012345678901")}
+	svc, err := tokenvault.NewService(ctx, testPool, kp)
+	if err != nil {
+		t.Fatalf("new token vault service: %v", err)
+	}
+
+	if _, err := svc.RegisterProvider(ctx, tenantID, tokenvault.RegisterProviderInput{
+		Provider: "mock", ClientID: "cid", ClientSecret: "csecret",
+		AuthorizeURL: mock.URL + "/authorize", TokenURL: mock.URL + "/token", Scopes: "read",
+	}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+
+	authorizeURL, err := svc.BeginConnect(ctx, tenantID, userID, "mock", "https://id.example.com")
+	if err != nil {
+		t.Fatalf("begin connect: %v", err)
+	}
+	u, err := url.Parse(authorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorize url: %v", err)
+	}
+	state := u.Query().Get("state")
+	if state == "" {
+		t.Fatal("authorize_url missing state")
+	}
+	if redirect := u.Query().Get("redirect_uri"); redirect != "https://id.example.com/v1/vault/tokens/callback" {
+		t.Errorf("redirect_uri = %q, want the vault's own fixed callback", redirect)
+	}
+
+	if err := svc.FinishConnect(ctx, state, "test-code", "https://id.example.com"); err != nil {
+		t.Fatalf("finish connect: %v", err)
+	}
+	// The state is single-use — replaying it must fail.
+	if err := svc.FinishConnect(ctx, state, "test-code", "https://id.example.com"); err == nil {
+		t.Fatal("reusing a consumed connect state should fail")
+	}
+
+	token, err := svc.GetAccessToken(ctx, tenantID, userID, "mock")
+	if err != nil {
+		t.Fatalf("get access token: %v", err)
+	}
+	if token != "access-1" {
+		t.Fatalf("access token = %q, want access-1 (no refresh should have happened yet)", token)
+	}
+	if refreshCount != 0 {
+		t.Fatalf("refresh happened %d times before expiry — should be 0", refreshCount)
+	}
+
+	// Fast-forward the stored token past expiry, then fetch again.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE tenant.token_vault_grants SET expires_at = NOW() - INTERVAL '1 hour'
+		WHERE tenant_id = $1 AND user_id = $2 AND provider = 'mock'
+	`, tenantID, userID); err != nil {
+		t.Fatalf("fast-forward expiry: %v", err)
+	}
+	token, err = svc.GetAccessToken(ctx, tenantID, userID, "mock")
+	if err != nil {
+		t.Fatalf("get access token (post-expiry): %v", err)
+	}
+	if token != "access-2" {
+		t.Fatalf("access token after expiry = %q, want access-2 (refreshed)", token)
+	}
+	if refreshCount != 1 {
+		t.Fatalf("refresh happened %d times, want exactly 1", refreshCount)
+	}
+
+	if err := svc.Disconnect(ctx, tenantID, userID, "mock"); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	if _, err := svc.GetAccessToken(ctx, tenantID, userID, "mock"); err == nil {
+		t.Fatal("GetAccessToken should fail after disconnect")
+	}
+}
+
 // CreateWithOwner creates the tenant, an owner role granted all permissions, a
 // membership row, and adopts the tenant as the creator's home.
 func TestTenantCreateWithOwner(t *testing.T) {
@@ -975,6 +1281,78 @@ func TestWebhookTenantIsolation(t *testing.T) {
 	}
 	if _, err := svc.Get(ctx, sub.ID, tenantB); !errors.Is(err, errs.ErrNotFound) {
 		t.Fatalf("foreign tenant Get should be NotFound, got %v", err)
+	}
+}
+
+// A permanently-failing endpoint must stop retrying once it exhausts its
+// attempt budget (dead_at set), not retry forever; RetryDelivery clears
+// dead_at for a manual re-send, and Sweep picks it back up.
+func TestWebhookDeliveryGivesUpAfterMaxAttempts(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("wh-dlq"))
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failing.Close()
+
+	svc := webhook.NewService(testPool)
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	sub, err := svc.Create(ctx, tx, webhook.CreateInput{TenantID: tenantID, URL: failing.URL, Events: []string{}})
+	if err != nil {
+		t.Fatalf("create subscription: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if err := svc.Enqueue(ctx, tenantID, "test.event", map[string]any{"k": "v"}); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	// Fast-forward attempt to one below the give-up threshold so the next
+	// Sweep is the one that gives up, instead of looping 60 times here.
+	if _, err := testPool.Exec(ctx, `
+		UPDATE tenant.webhook_deliveries SET attempt = 59, next_attempt_at = NOW()
+		WHERE subscription_id = $1
+	`, sub.ID); err != nil {
+		t.Fatalf("fast-forward attempt: %v", err)
+	}
+	if err := svc.Sweep(ctx); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+
+	deliveries, err := svc.ListDeliveries(ctx, sub.ID, tenantID, 10)
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("list deliveries: %v (err %v), want 1", deliveries, err)
+	}
+	d := deliveries[0]
+	if d.DeadAt == nil {
+		t.Fatal("delivery should be dead-lettered after exhausting attempts")
+	}
+	if d.Attempt != 60 {
+		t.Fatalf("attempt = %d, want 60", d.Attempt)
+	}
+
+	// A second sweep must not touch a dead delivery.
+	if err := svc.Sweep(ctx); err != nil {
+		t.Fatalf("sweep (dead, no-op): %v", err)
+	}
+	deliveries, _ = svc.ListDeliveries(ctx, sub.ID, tenantID, 10)
+	if deliveries[0].Attempt != 60 {
+		t.Fatalf("dead delivery must not be retried by Sweep; attempt = %d", deliveries[0].Attempt)
+	}
+
+	// RetryDelivery clears dead_at and re-queues it for the next Sweep.
+	if err := svc.RetryDelivery(ctx, d.ID, tenantID); err != nil {
+		t.Fatalf("retry delivery: %v", err)
+	}
+	deliveries, _ = svc.ListDeliveries(ctx, sub.ID, tenantID, 10)
+	if deliveries[0].DeadAt != nil {
+		t.Fatal("RetryDelivery should clear dead_at")
 	}
 }
 

@@ -398,7 +398,9 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 	}
 	refresh := ""
 	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, clientID, *userID, tenantID, scopes)
+		// Device grant doesn't collect a resource indicator today (RFC 8707
+		// support there is unscoped work) — issued with no bound resource.
+		refresh, err = s.issueRefreshToken(ctx, clientID, *userID, tenantID, scopes, "")
 		if err != nil {
 			return nil, err
 		}

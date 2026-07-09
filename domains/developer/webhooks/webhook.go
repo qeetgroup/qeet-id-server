@@ -143,7 +143,11 @@ type Delivery struct {
 	ResponseBody  *string    `json:"response_body,omitempty"`
 	DeliveredAt   *time.Time `json:"delivered_at,omitempty"`
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	// DeadAt is set once the delivery exhausted maxDeliveryAttempts without
+	// succeeding — a dead-lettered delivery the dispatcher no longer retries.
+	// Retryable via RetryDelivery, which clears it.
+	DeadAt    *time.Time `json:"dead_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // ListDeliveries returns recent deliveries for a subscription, newest first.
@@ -155,7 +159,7 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT d.id, d.event_type, d.attempt, d.status_code, d.error,
-		       d.payload::text, d.response_body, d.delivered_at, d.next_attempt_at, d.created_at
+		       d.payload::text, d.response_body, d.delivered_at, d.next_attempt_at, d.dead_at, d.created_at
 		FROM tenant.webhook_deliveries d
 		JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
 		WHERE d.subscription_id = $1 AND sub.tenant_id = $2
@@ -170,7 +174,7 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 	for rows.Next() {
 		var d Delivery
 		if err := rows.Scan(&d.ID, &d.EventType, &d.Attempt, &d.StatusCode, &d.Error,
-			&d.Payload, &d.ResponseBody, &d.DeliveredAt, &d.NextAttemptAt, &d.CreatedAt); err != nil {
+			&d.Payload, &d.ResponseBody, &d.DeliveredAt, &d.NextAttemptAt, &d.DeadAt, &d.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -184,7 +188,7 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
 	ct, err := s.pool.Exec(ctx, `
 		UPDATE tenant.webhook_deliveries d
-		SET delivered_at = NULL, error = NULL, next_attempt_at = NOW()
+		SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW()
 		FROM tenant.webhook_subscriptions sub
 		WHERE d.id = $1 AND d.subscription_id = sub.id AND sub.tenant_id = $2
 	`, deliveryID, tenantID)
@@ -251,12 +255,17 @@ func (s *Service) RunDispatcher(ctx context.Context) {
 	}
 }
 
+// Sweep runs a single dispatch pass over due deliveries — the same work
+// RunDispatcher does on each tick. Exposed for ops-triggered sweeps and tests.
+func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
+
 func (s *Service) tick(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `
 		SELECT d.id, d.subscription_id, d.event_type, d.payload, d.attempt, sub.url, sub.secret
 		FROM tenant.webhook_deliveries d
 		JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
 		WHERE d.delivered_at IS NULL
+		  AND d.dead_at IS NULL
 		  AND d.next_attempt_at <= NOW()
 		  AND sub.disabled_at IS NULL
 		ORDER BY d.created_at
@@ -295,13 +304,25 @@ func (s *Service) tick(ctx context.Context) error {
 			`, status, truncate(respBody, 4000), it.ID)
 			continue
 		}
-		backoff := time.Duration(1<<min(it.Attempt, 8)) * 30 * time.Second
-		if backoff > time.Hour {
-			backoff = time.Hour
-		}
 		errStr := ""
 		if derr != nil {
 			errStr = derr.Error()
+		}
+		// Give up after maxDeliveryAttempts: a permanently-failing endpoint
+		// (dead domain, 404, decommissioned integration) would otherwise retry
+		// forever at the 1h backoff ceiling. dead_at marks it dead-lettered;
+		// RetryDelivery clears it for a manual re-send.
+		if it.Attempt+1 >= maxDeliveryAttempts {
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE tenant.webhook_deliveries
+				SET attempt = attempt + 1, status_code = $1, response_body = $2, error = $3, dead_at = NOW()
+				WHERE id = $4
+			`, status, truncate(respBody, 4000), errStr, it.ID)
+			continue
+		}
+		backoff := time.Duration(1<<min(it.Attempt, 8)) * 30 * time.Second
+		if backoff > time.Hour {
+			backoff = time.Hour
 		}
 		_, _ = s.pool.Exec(ctx, `
 			UPDATE tenant.webhook_deliveries
@@ -315,6 +336,12 @@ func (s *Service) tick(ctx context.Context) error {
 	}
 	return nil
 }
+
+// maxDeliveryAttempts bounds retry so a permanently-failing endpoint doesn't
+// retry forever. With the backoff schedule above (~30s doubling to a 1h cap
+// after the 7th attempt), 60 attempts spans a little over 2 days of retrying
+// before giving up — in line with common webhook-retry conventions.
+const maxDeliveryAttempts = 60
 
 func (s *Service) deliver(ctx context.Context, url, secret, eventType string, body []byte) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

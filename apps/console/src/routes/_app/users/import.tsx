@@ -28,7 +28,7 @@ import {
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app/users/import")({ component: ImportUsersPage });
@@ -152,33 +152,18 @@ function ImportUsersPage() {
   const [result, setResult] = useState<ImportResult | null>(null)
 
   const importM = useMutation({
-    mutationFn: async (toSubmit: Row[]): Promise<ImportResult> => {
-      // The POST /v1/users/bulk endpoint isn't built yet (only single-user
-      // create ships) — tracked in issue #173. Until it ships, surface a
-      // friendly fallback instead of a generic 404.
-      try {
-        return await api<ImportResult>("/v1/users/bulk", {
-          method: "POST",
-          body: {
-            tenant_id: tenantId,
-            users: toSubmit.map(({ _line, _error, ...rest }) => {
-              void _line
-              void _error
-              return rest
-            }),
-          },
-        })
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) {
-          throw new ApiError(
-            404,
-            "endpoint_unavailable",
-            "Bulk import endpoint is not enabled on this instance yet (tracked in issue #173).",
-          )
-        }
-        throw err
-      }
-    },
+    mutationFn: async (toSubmit: Row[]): Promise<ImportResult> =>
+      api<ImportResult>("/v1/users/bulk", {
+        method: "POST",
+        body: {
+          tenant_id: tenantId,
+          users: toSubmit.map(({ _line, _error, ...rest }) => {
+            void _line
+            void _error
+            return rest
+          }),
+        },
+      }),
     onSuccess: (res) => setResult(res),
     meta: { successMessage: "Bulk import queued" },
   })

@@ -22,6 +22,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/access/risk/ipallow"
 	"github.com/qeetgroup/qeet-id/domains/developer/api-keys"
 	"github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id/domains/developer/service-accounts"
 	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
 	"github.com/qeetgroup/qeet-id/domains/federation/ldap"
@@ -84,6 +85,7 @@ func testDeps() Deps {
 		Group:          &group.Handler{},
 		SCIM:           &scim.Handler{},
 		Secret:         &secret.Handler{},
+		TokenVault:     &tokenvault.Handler{},
 		SAML:           &saml.Handler{IdP: &saml.IdP{}},
 		LDAP:           &ldap.Handler{},
 		IPAllow:        &ipallow.Handler{},

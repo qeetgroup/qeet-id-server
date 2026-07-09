@@ -21,9 +21,9 @@
 
 <div align="center">
 
-| 🏗 Single deployable | 🔌 ~190 API routes | 🖥 3 React frontends | 📦 5 SDKs | 🗄 62 migrations |
+| 🏗 Single deployable | 🔌 ~190 API routes | 🖥 3 React frontends | 📦 6 SDKs | 🗄 65 migrations |
 |:---:|:---:|:---:|:---:|:---:|
-| Go modular monolith | 5 OpenAPI 3.1 specs | Admin · Login · Website | TS · React · Next · Go · Py | 6 Postgres schemas |
+| Go modular monolith | 5 OpenAPI 3.1 specs | Admin · Login · Website | TS (browser+node) · React · Next · Go · Py | 6 Postgres schemas |
 
 </div>
 
@@ -126,7 +126,7 @@ Deep dives: [`docs/architecture/`](./docs/architecture/) · Decision records: [`
 - 🔑 **Authentication** — email+password (Argon2id), passkeys/WebAuthn, magic links, email/SMS OTP, social, MFA (TOTP + recovery codes), HIBP breach check
 - 🏢 **Enterprise SSO** — OIDC/OAuth 2.0 provider, Device grant (RFC 8628), Token Exchange (RFC 8693), SAML SP+IdP, SCIM 2.0, LDAP/AD
 - 🛡️ **Authorization** — RBAC, ABAC policies, ReBAC (Zanzibar relation tuples + recursive `/check`), IP allow/deny, Auth Hooks
-- 🤖 **Developer & AI-agent** — scoped API keys, M2M service accounts, secrets vault (AES-256-GCM), HMAC webhooks, AI-agent identity, MCP introspection, W3C Verifiable Credentials
+- 🤖 **Developer & AI-agent** — scoped API keys, M2M service accounts, secrets + Token Vault (AES-256-GCM), HMAC webhooks, AI-agent identity, MCP introspection, W3C Verifiable Credentials
 - 👥 **Identity & workspace** — multi-tenant orgs, users/groups/invitations, domain verification, per-tenant branding + email templates
 - 📜 **Compliance & billing** — hash-chained audit, GDPR erasure + export, data retention, SIEM streaming, multi-currency billing (Stripe + Razorpay)
 
@@ -135,17 +135,17 @@ Deep dives: [`docs/architecture/`](./docs/architecture/) · Decision records: [`
 
 <br>
 
-**🔑 Authentication & sessions** — email+password (Argon2id, lockout, enumeration-safe) · passkeys/WebAuthn (FIDO2, cross-device) · magic links · email/SMS OTP · TOTP + 8 recovery codes · MFA step-up · session mgmt (refresh rotation + theft detection) · HIBP breach detection · password reset.
+**🔑 Authentication & sessions** — email+password (Argon2id, lockout, enumeration-safe) · passkeys/WebAuthn (FIDO2, cross-device), **including passkey-first signup** (a passkey founds the account directly — no password required) · magic links · email/SMS OTP · TOTP + 8 recovery codes · MFA step-up · session mgmt (refresh rotation + theft detection) · HIBP breach detection · password reset.
 
 **🏢 Enterprise SSO & provisioning** — OIDC/OAuth 2.0 provider (discovery, JWKS, PKCE, `/userinfo`, refresh, revoke, introspect, logout) · Device Authorization Grant (RFC 8628) · Token Exchange (RFC 8693, downscope + delegation) · SAML 2.0 SP **and** IdP · SCIM 2.0 (users + groups + PatchOp) · LDAP/AD · social login · account linking · SSO test-connection.
 
-**🛡️ Authorization** — RBAC · ABAC policy engine (explainable) · **ReBAC** (`relation_tuples`, recursive `/check` with cycle guard, grant-path trace) · IP allow/deny (CIDR) · Auth Hooks/Actions (post-login allow/deny + custom claims).
+**🛡️ Authorization** — RBAC (`?explain=true` grant-path trace) · per-tenant policy (IP allow/deny CIDR, password/login-method rules — not a general ABAC engine) · **ReBAC** (`relation_tuples`, recursive `/check` with cycle guard, **`?explain=true` grant-path trace**) · Auth Hooks/Actions (post-login allow/deny **+ custom-claim injection**, HMAC-signed).
 
-**🤖 Developer & AI-agent platform** — scoped API keys (`qk_`, hashed, audited) · service accounts (`client_credentials`) · secrets vault (AES-256-GCM, scoped `vault:<name>`) · HMAC webhooks (backoff + DLQ) · **AI-agent identity** (ephemeral scoped revocable tokens, `actor_type=agent`) · **MCP introspection** · **token delegation** (RFC 8693 `act` claim) · **W3C JWT-VC** (issue/verify/revoke) · analytics · SIEM streaming.
+**🤖 Developer & AI-agent platform** — scoped API keys (`qk_`, hashed, audited) · service accounts (`client_credentials`) · secrets vault (AES-256-GCM, scoped `vault:<name>`) · **Token Vault** (per-tenant encrypted 3rd-party OAuth tokens — Slack/GitHub/Google/custom — with auto-refresh; callers never see the raw refresh token) · HMAC webhooks (backoff retry with a dead-letter give-up state after `maxDeliveryAttempts`) · **AI-agent identity** (ephemeral scoped revocable tokens, `actor_type=agent`, tenant-wide kill-switch, lifecycle state machine) · **MCP introspection** · **token delegation** (RFC 8693 `act` claim) · **W3C JWT-VC** (issue/verify/revoke) · analytics · SIEM streaming.
 
-**👥 Identity & workspace** — multi-tenant orgs (isolated, branded, custom domains) · users (CRUD, bulk import, sessions, recycle bin) · nested groups (SCIM sync) · invitations · domain verification (DNS TXT) · per-tenant email templates · org switcher + branding preview.
+**👥 Identity & workspace** — multi-tenant orgs (isolated, branded, custom domains) · users (CRUD, sessions, recycle bin, bulk CSV/NDJSON import, **IdP migration import from Auth0/Cognito/Azure AD B2C**) · nested groups (SCIM sync) · invitations · domain verification (DNS TXT) · per-tenant email templates · org switcher + branding preview.
 
-**📜 Compliance & billing** — SHA-256 hash-chained audit (`/verify`) · GDPR erasure + grace-period purge · data export · retention auto-purge · SOC 2 / ISO 27001 / GDPR evidence · multi-currency billing (ISO-4217) · card payments via Stripe (global) + Razorpay (India), webhook-verified (env-gated).
+**📜 Compliance & billing** — SHA-256 hash-chained audit (`/verify`) · GDPR erasure + grace-period purge · GDPR data export (async, profile/sessions/passkeys/roles/MFA status) · retention auto-purge · SOC 2 / ISO 27001 compliance screens (static templates, not generated evidence) · multi-currency billing (ISO-4217) · card payments via Stripe (global) + Razorpay (India), webhook-verified (env-gated).
 
 </details>
 
@@ -155,14 +155,11 @@ Deep dives: [`docs/architecture/`](./docs/architecture/) · Decision records: [`
 <br>
 
 **🛠 Product roadmap**
-- CIBA grant · prebuilt `<SignIn/>` / `<OrgSwitcher/>` SDK components (`<UserButton/>` already ships)
+- CIBA grant
 - i18n catalogs + WCAG 2.2 AA across remaining legacy screens
 - Ops hardening (not code): AWS KMS BYOK, OpenID conformance run, deliverability (SPF/DKIM/DMARC), RDS PITR, external pentest
 
-**🤖 AI-agent identity & governance** *(surfaced by the competitive-research `product-manager` agent — 🟠 high · 🟡 medium · 🟢 later)*
-- 🟠 **Token Vault** — per-tenant encrypted store for third-party OAuth tokens (agent outbound calls)
-- 🟠 **MCP AS compliance** — RFC 9728 Protected Resource Metadata + RFC 8707 Resource Indicators
-- 🟠 **Agent lifecycle + kill switch** — suspend/decommission state machine with instant authz denial
+**🤖 AI-agent identity & governance** *(surfaced by the competitive-research `product-manager` agent — 🟠 high · 🟡 medium · 🟢 later; agent lifecycle state machine + kill-switch already ship)*
 - 🟡 **Agent-as-Principal** — first-class non-human OIDC principal (`sub_type=agent`)
 - 🟡 **Shadow-AI discovery** — flag unmanaged OAuth clients holding live grants · 🟡 **Agent sponsor model** — named owner + auto-transfer on offboarding
 - 🟡 **AuthZEN PDP/PEP** — OpenID-standard `/evaluation` endpoint + COAZ MCP profile · 🟡 **SSF/CAEP** — real-time revocation signals to downstream gateways
@@ -209,9 +206,9 @@ make dev
 
 | Command | App | URL |
 |:---|:---|:---|
-| `pnpm --filter @qeetid/admin dev` | Admin console | <http://localhost:3002> |
-| `pnpm --filter @qeetid/login dev` | Hosted login | <http://localhost:3004> |
-| `pnpm --filter @qeetid/web dev` | Marketing site | <http://localhost:3001> |
+| `pnpm --filter @qeet-id/console dev` | Admin console | <http://localhost:3002> |
+| `pnpm --filter @qeet-id/login dev` | Hosted login | <http://localhost:3004> |
+| `pnpm --filter @qeet-id/web dev` | Marketing site | <http://localhost:3001> |
 
 Sanity check: `curl localhost:4001/healthz` · Demo login: **`saibabu@qeet.in`** / **`Password123!`**
 
@@ -219,18 +216,19 @@ Sanity check: `curl localhost:4001/healthz` · Demo login: **`saibabu@qeet.in`**
 
 ## 📦 SDKs
 
-Five first-party SDKs authenticate via `Authorization: ApiKey` + ES256/JWKS verification.
+Six first-party SDKs authenticate via `Authorization: ApiKey` + ES256/JWKS verification.
 
 | SDK | Install |
 |:---|:---|
-| TypeScript | `npm install @qeetid/sdk` |
-| React (`<UserButton/>` + hooks) | `npm install @qeetid/react` |
-| Next.js (sealed-cookie sessions) | `npm install @qeetid/nextjs` |
+| TypeScript (browser) | `npm install @qeet-id/client` |
+| TypeScript (server/node) | `npm install @qeet-id/node` |
+| React (`<SignIn/>`, `<UserButton/>`, `<OrgSwitcher/>`, `<SignUp/>`, `<CreateOrganization/>`, `<OrganizationProfile/>`, `<UserProfile/>` + hooks) | `npm install @qeet-id/react` |
+| Next.js (sealed-cookie sessions) | `npm install @qeet-id/nextjs` |
 | Go | `go get github.com/qeetgroup/qeet-id/sdk/go` |
 | Python | `pip install qeetid` |
 
 ```ts
-import { useSession, UserButton } from '@qeetid/react';
+import { useSession, UserButton } from '@qeet-id/react';
 
 export function Navbar() {
   const { user } = useSession();
@@ -257,16 +255,16 @@ Release image is cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-i
 
 ## 🧪 Testing & quality
 
-Every push runs the full gate in [CI](./.github/workflows/ci.yml); all are reproducible locally.
+Every push runs the full gate in [CI](./.github/workflows/ci.yml); the same checks are reproducible locally.
 
 ```bash
-make test                # backend (go test ./...) + frontend (Turbo)
-make cover               # unit coverage + enforce the regression floor
-make lint                # Go (golangci-lint) + frontend ESLint
-make test-integration    # real Postgres via testcontainers (needs Docker)
+make test                            # backend unit + arch-fitness tests (go test ./...)
+go test -tags integration ./tests/integration/...   # real Postgres via testcontainers (needs Docker)
+make lint                            # go vet — CI additionally runs golangci-lint
+pnpm lint && pnpm typecheck && pnpm build && pnpm test   # frontend (Turbo, all 3 apps)
 ```
 
-Gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, a coverage floor, `govulncheck`, `gitleaks`, Spectral spec-lint, and Postman/Newman contract tests.
+CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `golangci-lint`, `govulncheck`, and `gitleaks`. Coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired yet — tracked in [ROADMAP.md](./ROADMAP.md).
 
 ---
 

@@ -25,7 +25,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 ### 🔑 Authentication & sessions
 - ✅ Email + password (Argon2id, OWASP params, per-account lockout, enumeration-safe)
-- ✅ Passkeys / WebAuthn (FIDO2, resident credentials, cross-device)
+- ✅ Passkeys / WebAuthn (FIDO2, resident credentials, cross-device) · **passkey-first signup** — a passkey can found a new account directly, no password required (`/signup/passkey/*` tenant-less, `/register/passkey/*` hosted signup UI; password stays available as an alternative)
 - ✅ Magic links · email OTP · SMS OTP
 - ✅ TOTP (RFC 6238) + 8 recovery codes · MFA step-up (per-operation elevation)
 - ✅ Adaptive / risk-based MFA — per-tenant risk thresholds drive step-up / force-MFA (`0063_risk_settings`)
@@ -33,37 +33,38 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 - ✅ Breached-password detection (HIBP k-anonymity, env-gated) · password reset
 
 ### 🏢 Enterprise SSO & provisioning
-- ✅ OIDC / OAuth 2.0 provider — discovery, JWKS, Auth Code + PKCE, `/userinfo`, refresh, revoke, introspect, logout, signing-key rotation, RFC 9728 PRM + RFC 8707 resource indicators (partial)
+- ✅ OIDC / OAuth 2.0 provider — discovery, JWKS, Auth Code + PKCE, `/userinfo`, refresh, revoke, introspect, logout, signing-key rotation, RFC 9728 PRM + **RFC 8707 resource indicators bound into the token audience** across authorization_code, refresh_token (preserved across rotation, or switched via an explicit `resource`), and token-exchange · RFC 9207 `iss` on the authorize redirect (success and error) *(device grant doesn't collect a resource indicator yet)*
 - ✅ Device Authorization Grant (RFC 8628) · Token Exchange (RFC 8693 — downscope + `act` delegation)
 - ✅ SAML 2.0 — **SP and IdP** modes · SCIM 2.0 (users + groups + PatchOp) · LDAP / Active Directory
 - ✅ Social login (Google, GitHub, Microsoft, Apple, custom) · account linking · SSO test-connection
 
 ### 🛡️ Authorization
 - ✅ RBAC (roles, group-derived perms, single-call `/check`, **explainable `?explain=true` grant-path trace**) · per-tenant policy (IP allow/deny CIDR, password/login-method rules) *(this is tenant policy — not a general attribute-condition ABAC engine)*
-- ✅ **ReBAC** (Zanzibar-style `relation_tuples`, recursive `/check` with cycle guard) *(grant-path trace is RBAC-only; ReBAC `/check` returns `{allowed}` today)*
-- ✅ IP allow/deny (CIDR) · Auth Hooks / Actions (post-login **allow/deny**, HMAC-signed) *(custom-claim injection not yet implemented)*
+- ✅ **ReBAC** (Zanzibar-style `relation_tuples`, recursive `/check` with cycle guard, **`?explain=true` grant-path trace** — root-to-leaf chain of tuples, mirrors RBAC's explain shape)
+- ✅ IP allow/deny (CIDR) · Auth Hooks / Actions (post-login **allow/deny + custom-claim injection**, HMAC-signed) *(claims flow into the direct API-token login path, incl. MFA; the hosted-login SSO cookie → OIDC ID-token path doesn't carry them yet)*
 
 ### 🤖 Developer & AI-agent platform
 - ✅ Scoped API keys (`qk_`, hashed, audited) · service accounts (`client_credentials` M2M)
-- ✅ Secrets vault (AES-256-GCM, scoped `vault:<name>`, **real AWS KMS provider** wired + tested) · HMAC-SHA256 webhooks (backoff retry)
-- ✅ **AI-agent identity** — ephemeral scoped revocable tokens (`actor_type=agent`) + tenant-wide **kill-switch** (`/agents/kill-all`)
+- ✅ Secrets vault (AES-256-GCM, scoped `vault:<name>`, **real AWS KMS provider** wired + tested) · **Token Vault** — per-tenant encrypted store for third-party OAuth tokens (any registered provider — Slack/GitHub/Google/custom), a standard authorization-code connect ceremony, and a `GetAccessToken` API that transparently refreshes and never exposes the raw refresh token to the caller — an agent holding an RFC 8693-delegated token reaches the delegating user's own connected account · HMAC-SHA256 webhooks (backoff retry + dead-letter give-up after `maxDeliveryAttempts`)
+- ✅ **AI-agent identity** — ephemeral scoped revocable tokens (`actor_type=agent`) + tenant-wide **kill-switch** (`/agents/kill-all`) + **lifecycle state machine** (`active`/`suspended`/`decommissioned`, `0065_agent_lifecycle`)
 - ✅ **MCP introspection** (`actor_type`/`agent_id`/`act` on `/oauth/introspect`) · token delegation (RFC 8693 `act`)
 - ✅ **W3C Verifiable Credentials** (JWT-VC issue / verify / revoke) · analytics · SIEM streaming
 
 ### 👥 Identity & workspace
 - ✅ Multi-tenant organisations (isolated, per-tenant branding, custom domains)
-- ✅ Users (CRUD, sessions, recycle bin: soft-delete → restore/purge) · nested groups (SCIM sync) · invitations *(bulk CSV import is not built — only single-user create; see 🔭 Planned / issue #173)*
+- ✅ Users (CRUD, sessions, recycle bin: soft-delete → restore/purge) · nested groups (SCIM sync) · invitations · bulk import (console parses CSV/NDJSON client-side, posts to `POST /users/bulk`; per-row partial-success reporting) · **IdP migration import** (`POST /users/bulk/import?source=auth0|cognito|azure_b2c` — converts that vendor's own export file, no portable password carried over)
 - ✅ Domain verification (DNS TXT) · per-tenant email templates · org switcher + branding preview
 
 ### 📜 Compliance & billing
 - ✅ SHA-256 hash-chained audit log (`/verify` integrity walk) · GDPR erasure + grace-period purge · retention auto-purge
+- ✅ GDPR data export — async job (`user.export_requests`), payload covers profile/sessions/passkeys/roles/MFA status, `/gdpr/export` + `/gdpr/export/{id}` download
 - ✅ Multi-currency billing (ISO-4217) · card payments — Stripe (global) + Razorpay (India), webhook-verified (env-gated)
-- 🟡 Data export endpoint **not built**; SOC 2 / ISO 27001 compliance screens are **static templates**, not generated evidence
+- 🟡 SOC 2 / ISO 27001 compliance screens are **static templates**, not generated evidence
 
 ### 🧰 Platform & delivery
 - ✅ 3 React frontends (admin console ~80 screens, hosted login, marketing site) · **6 SDK packages** (TS server + browser, React w/ full `<SignIn/>`/`<OrgSwitcher/>`/… component suite, Next.js, Go, Python) · per-tenant rate-limit overrides (`0064`)
-- ✅ Transactional outbox **+ DLQ** · webhook dispatcher (HMAC, backoff retry) · Prometheus/OTel observability · `config.Validate()` boot-gate *(webhooks don't yet ride the outbox/DLQ — retry is unbounded)*
-- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, 100% OpenAPI route coverage, **CodeQL** *(Helm/Terraform/kustomize are in git history, not the tree — see 🚢 Deployment above; govulncheck/gitleaks are not wired)*
+- ✅ Transactional outbox **+ DLQ** · webhook dispatcher (HMAC, backoff retry, own dead-letter `dead_at` state — not yet unified with the platform outbox's DLQ, but no longer unbounded) · Prometheus/OTel observability · `config.Validate()` boot-gate
+- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, 100% OpenAPI route coverage, **CodeQL**, `golangci-lint`, `govulncheck`, `gitleaks`, gated integration suite (testcontainers), frontend pnpm lint/typecheck/build/test *(Helm/Terraform/kustomize are in git history, not the tree — see 🚢 Deployment above; coverage-floor enforcement, Spectral spec-lint, Postman/Newman contract tests are not wired)*
 
 ---
 
@@ -73,11 +74,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | Feature | Priority | Notes |
 |---|---|---|
 | CIBA grant (Client-Initiated Backchannel Auth) | 🟠 | Push/email async consent for elevated tokens |
-| Data export endpoint | 🟠 | GDPR erasure ships; a user/tenant data-export endpoint is not built (was listed shipped in error) |
-| Bulk user import (CSV) | 🟡 | Only single-user `POST /users` ships; the console import screen has no backend endpoint (issue #173, was listed shipped in error) |
-| ReBAC grant-path trace | 🟡 | RBAC `/check` explains "why"; ReBAC `/check` returns `{allowed}` only |
-| Auth-hook custom claims | 🟡 | Hooks gate allow/deny today; token claim-injection not implemented |
-| Webhook DLQ | 🟡 | Webhook retry is unbounded; wire onto the platform outbox/DLQ or add a give-up + dead state |
+| Auth-hook claims in the OIDC ID-token path | 🟢 | Custom claims already flow into direct API-token login (incl. MFA); threading them through the hosted-login cookie → OIDC authorize/ID-token pipeline is separate, larger work |
 | i18n — remaining coverage | 🟡 | 8 console catalogs (en+7) exist w/ partial namespaces; remaining screens + locale-aware emails + login app pending |
 | WCAG 2.2 AA — a11y gate + legacy screens | 🟡 | ⚠️ the a11y eslint globs point at renamed `qeetid-admin`/`qeetid-login` dirs (gate matches 0 files today); fix globs, then audit ~70 older screens |
 | SOC 2 / ISO 27001 evidence generation | 🟡 | Compliance screens are static templates; generated evidence pending |
@@ -88,9 +85,6 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 | Feature | Priority | What it adds |
 |---|---|---|
-| **Token Vault** | 🟠 | Per-tenant encrypted store for third-party OAuth refresh tokens, so agents call Slack/GitHub/Google on a user's behalf without handling tokens |
-| **MCP AS compliance (finish)** | 🟠 | RFC 9728 PRM + RFC 8707 are **live but shallow** (resource validated, not bound into token audience); add audience-binding + RFC 9207 `iss` |
-| **Agent lifecycle state machine** | 🟠 | `active`/`suspended`/`decommissioned` states + sponsor auto-transfer; *bulk kill-switch (`/agents/kill-all`) + single-agent revoke already ship* |
 | **Agent-as-Principal** | 🟡 | First-class non-human OIDC principal (`sub_type=agent`, separate `sub` namespace, discovery metadata) |
 | **Shadow-AI discovery** | 🟡 | Flag OAuth clients holding live grants but not registered as managed principals |
 | **Agent sponsor model** | 🟡 | Every agent tied to a named human owner; auto-transfer on offboarding (no orphaned agents) |
@@ -145,10 +139,10 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | `client_credentials` / M2M | ✅ | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Device Authorization Grant (RFC 8628) | ✅ | ✅ | ❌ | 🟡 | 🟡 | ✅ | ✅ | 🟡 | ✅ |
 | **Token Exchange (RFC 8693) + delegation** | ✅ | ✅ | ❌ | 🟡 | 🟡 | ✅ | ✅ | 🟡 | ✅ |
-| MCP AS metadata (RFC 9728 + 8707) | 🟡⁴ | ⏳ | ❌ | 🟡 | ❌ | ❌ | ❌ | ❌ | 🟡 |
+| MCP AS metadata (RFC 9728 + 8707) | ✅⁴ | ⏳ | ❌ | 🟡 | ❌ | ❌ | ❌ | ❌ | 🟡 |
 | CIBA (backchannel) | ⏳ | ✅ | ❌ | 🟡 | 🟡 | ✅ | 🟡 | 🟡 | 🟡 |
 
-<sub>⁴ RFC 9728 Protected Resource Metadata + RFC 8707 resource indicators are advertised and validated, but the `resource` is not yet bound into the token audience (shallow); RFC 9207 `iss` pending.</sub>
+<sub>⁴ RFC 9728 Protected Resource Metadata + RFC 8707 resource indicators are advertised, validated, and bound into the token audience across authorization_code/refresh_token/token-exchange; RFC 9207 `iss` ships on the authorize redirect. Device grant doesn't collect a resource indicator yet.</sub>
 
 ### Enterprise (B2B)
 | Capability | **Qeet ID** | Auth0/Okta | Clerk | WorkOS | Stytch | Keycloak | FusionAuth | Zitadel | Ory |
@@ -171,7 +165,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | **Fine-grained / ReBAC (Zanzibar)** | ✅ | ✅ FGA | 🟡 | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ Keto |
 | **Explainable authz ("why?")** | ✅⁶ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 🟡 |
 
-<sub>⁵ Per-tenant IP allow/deny (CIDR) + password/login-method policy, not a general attribute-condition engine. ⁶ Explainable trace is on **RBAC** `/check` (`?explain=true`); the ReBAC `/check` returns `{allowed}` only.</sub>
+<sub>⁵ Per-tenant IP allow/deny (CIDR) + password/login-method policy, not a general attribute-condition engine. ⁶ `?explain=true` returns a full grant-path trace on **both** RBAC and ReBAC `/check`.</sub>
 
 ### Security & operations
 | Capability | **Qeet ID** | Auth0/Okta | Clerk | WorkOS | Stytch | Keycloak | FusionAuth | Zitadel | Ory |
@@ -181,7 +175,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | Webhooks (HMAC, backoff retry) | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 |
 | **SIEM streaming (push to sinks)** | ✅ | 🟡 | ✅ | 🟡 | 🟡 | ❌ | 🟡 | 🟡 | ❌ |
 | GDPR erasure | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | 🟡 |
-| Data export | ⏳ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | 🟡 |
+| Data export | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | 🟡 |
 | Distributed rate limiting (Redis) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Metrics + distributed tracing (OTel) | ✅ | ✅ | 🟡 | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ |
 | Adaptive / risk-based MFA | 🟡³ | ✅ | 🟡 | 🟡 | ✅ | 🟡 | ✅ | 🟡 | 🟡 |
@@ -217,7 +211,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 <sub>² Stripe + Razorpay checkout code complete & webhook-verified; go-live needs env keys.</sub>
 
-**Where Qeet ID wins:** both an OIDC **and** SAML IdP with SCIM Users+Groups (open-source, not paywalled); tamper-evident hash-chained audit with `/verify`; a full agentic-identity stack (AI-agent identities + RFC 8693 delegation + MCP introspection + token vaulting + W3C VCs); ReBAC + explainable RBAC authz; and security-on-by-default (theft detection, lockout, prod boot-gate, bot detection). **Closest peer:** Zitadel. **Remaining gaps vs. the field:** CIBA, data export, ReBAC grant-path explainability, richer adaptive-MFA signals, and KMS BYOK go-live (ops).
+**Where Qeet ID wins:** both an OIDC **and** SAML IdP with SCIM Users+Groups (open-source, not paywalled); tamper-evident hash-chained audit with `/verify`; a full agentic-identity stack (AI-agent identities + RFC 8693 delegation + MCP introspection + token vaulting + W3C VCs); ReBAC **and** RBAC both explainable (`?explain=true` on both `/check` endpoints — no other researched platform, including OpenFGA/SpiceDB, ships ReBAC explainability at all); and security-on-by-default (theft detection, lockout, prod boot-gate, bot detection). **Closest peer:** Zitadel. **Remaining gaps vs. the field:** CIBA, richer adaptive-MFA signals, and KMS BYOK go-live (ops).
 
 <details><summary>Competitive research sources (2025–2026)</summary>
 

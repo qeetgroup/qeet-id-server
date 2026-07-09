@@ -68,42 +68,72 @@ type tuple struct {
 // fetcher returns the subjects directly granted `relation` on object type/id.
 type fetcher func(objectType, objectID, relation string) ([]tuple, error)
 
+// ExplainStep is one hop in a ReBAC grant path: the tuple that was walked to
+// move the resolution one step closer to the user, in root-to-leaf order.
+type ExplainStep struct {
+	Object   string `json:"object"`
+	Relation string `json:"relation"`
+	Subject  string `json:"subject"`
+	Depth    int    `json:"depth"`
+}
+
+// Explanation is the structured "why?" for a single Check: the same boolean
+// Check returns, plus the chain of relation tuples that produced it (empty on
+// denial). Mirrors RBAC's Explanation shape (see rbac.Explanation).
+type Explanation struct {
+	Allowed bool          `json:"allowed"`
+	Path    []ExplainStep `json:"path,omitempty"`
+}
+
 // resolve answers "does user `userID` have `relation` on objType:objID?" by
-// expanding direct + userset tuples. Pure given the fetcher, so it's unit-tested
+// expanding direct + userset tuples, and — when found — the root-to-leaf chain
+// of tuples that granted it. Pure given the fetcher, so it's unit-tested
 // independently of the database.
-func resolve(fetch fetcher, objType, objID, relation, userID string, visited map[string]bool, depth int) (bool, error) {
+func resolve(fetch fetcher, objType, objID, relation, userID string, visited map[string]bool, depth int) (bool, []ExplainStep, error) {
 	if depth > maxDepth {
-		return false, nil
+		return false, nil, nil
 	}
 	key := objType + ":" + objID + "#" + relation
 	if visited[key] {
-		return false, nil
+		return false, nil, nil
 	}
 	visited[key] = true
 
 	tuples, err := fetch(objType, objID, relation)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	for _, t := range tuples {
 		if t.subjectRelation == "" {
 			// Direct subject.
 			if t.subjectType == "user" && t.subjectID == userID {
-				return true, nil
+				step := ExplainStep{
+					Object:   objType + ":" + objID,
+					Relation: relation,
+					Subject:  subjectString(t.subjectType, t.subjectID, ""),
+					Depth:    depth,
+				}
+				return true, []ExplainStep{step}, nil
 			}
 			continue
 		}
 		// Userset: the user qualifies if they hold subjectRelation on the
 		// referenced object.
-		ok, err := resolve(fetch, t.subjectType, t.subjectID, t.subjectRelation, userID, visited, depth+1)
+		ok, path, err := resolve(fetch, t.subjectType, t.subjectID, t.subjectRelation, userID, visited, depth+1)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if ok {
-			return true, nil
+			step := ExplainStep{
+				Object:   objType + ":" + objID,
+				Relation: relation,
+				Subject:  subjectString(t.subjectType, t.subjectID, t.subjectRelation),
+				Depth:    depth,
+			}
+			return true, append([]ExplainStep{step}, path...), nil
 		}
 	}
-	return false, nil
+	return false, nil, nil
 }
 
 type Service struct {
@@ -197,13 +227,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 	return out, rows.Err()
 }
 
-// Check answers whether userID has relation on object (type:id) for a tenant.
-func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error) {
-	o, ok := parseObject(object)
-	if !ok {
-		return false, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
-	}
-	fetch := func(objectType, objectID, rel string) ([]tuple, error) {
+// tupleFetcher returns a fetcher scoped to one tenant, backed by the database.
+func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher {
+	return func(objectType, objectID, rel string) ([]tuple, error) {
 		rows, err := s.pool.Query(ctx, `
 			SELECT subject_type, subject_id, subject_relation
 			FROM auth.relation_tuples
@@ -223,7 +249,31 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relatio
 		}
 		return ts, rows.Err()
 	}
-	return resolve(fetch, o.Type, o.ID, relation, userID, map[string]bool{}, 0)
+}
+
+// Check answers whether userID has relation on object (type:id) for a tenant.
+func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error) {
+	o, ok := parseObject(object)
+	if !ok {
+		return false, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+	}
+	allowed, _, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]bool{}, 0)
+	return allowed, err
+}
+
+// CheckExplain resolves the same decision as Check but also returns the
+// root-to-leaf chain of relation tuples that granted it (empty on denial) —
+// the ReBAC counterpart to rbac.Repository.Explain.
+func (s *Service) CheckExplain(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (*Explanation, error) {
+	o, ok := parseObject(object)
+	if !ok {
+		return nil, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+	}
+	allowed, path, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]bool{}, 0)
+	if err != nil {
+		return nil, err
+	}
+	return &Explanation{Allowed: allowed, Path: path}, nil
 }
 
 // --- handlers ---
@@ -331,6 +381,15 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.UserID == "" || in.Relation == "" {
 		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("user_id and relation are required"))
+		return
+	}
+	if r.URL.Query().Get("explain") == "true" {
+		exp, err := h.Service.CheckExplain(r.Context(), tenantID, in.Object, in.Relation, in.UserID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, exp)
 		return
 	}
 	allowed, err := h.Service.Check(r.Context(), tenantID, in.Object, in.Relation, in.UserID)

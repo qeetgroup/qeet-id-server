@@ -955,6 +955,251 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/vault/tokens/providers:
+    post:
+      operationId: post_v1_tenants_ByTenantID_vault_tokens_providers
+      summary: Register a Token Vault OAuth2 provider
+      tags:
+        - Token Vault
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - provider
+                - client_id
+                - client_secret
+                - authorize_url
+                - token_url
+              properties:
+                provider:
+                  type: string
+                  description: A short key naming the third-party service, e.g. "slack", "github", "google", or any custom name.
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                authorize_url:
+                  type: string
+                  format: uri
+                token_url:
+                  type: string
+                  format: uri
+                scopes:
+                  type: string
+        description: Registers (or updates) the OAuth2 endpoints + client credentials for one third-party provider, tenant-wide.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    get:
+      operationId: get_v1_tenants_ByTenantID_vault_tokens_providers
+      summary: List Token Vault providers
+      tags:
+        - Token Vault
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Client secrets are never included in the response.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/vault/tokens/providers/{provider}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_vault_tokens_providers_ByProvider
+      summary: Delete a Token Vault provider
+      tags:
+        - Token Vault
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/vault/tokens:
+    get:
+      operationId: get_v1_vault_tokens
+      summary: List the caller's connected third-party accounts
+      tags:
+        - Token Vault
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Non-secret metadata only (provider, external account id, scope, expiry) for the calling user's own connected accounts.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/vault/tokens/{provider}/connect:
+    get:
+      operationId: get_v1_vault_tokens_ByProvider_connect
+      summary: Begin connecting a third-party account
+      tags:
+        - Token Vault
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Returns the authorize_url to redirect the user's browser to, starting a standard OAuth2 authorization-code ceremony against the tenant's registered provider config.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorize_url:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/vault/tokens/callback:
+    get:
+      operationId: get_v1_vault_tokens_callback
+      summary: Token Vault OAuth2 redirect target
+      tags:
+        - Token Vault
+      security: []
+      description: The fixed, non-caller-supplied redirect_uri registered with the third-party provider. Completes the code exchange and renders a minimal HTML confirmation page — never redirects to a caller-supplied URL.
+      responses:
+        '200':
+          description: HTML confirmation page
+        '400':
+          description: HTML error page (invalid/expired state, or the provider returned an error)
+  /v1/vault/tokens/{provider}/access-token:
+    get:
+      operationId: get_v1_vault_tokens_ByProvider_access_token
+      summary: Get a live access token for a connected account
+      tags:
+        - Token Vault
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: The "agent-safe" fetch — transparently refreshes the token if it's expired (or about to be) and hands back only a short-lived access token, never the refresh token. Requires a vault:<provider> or vault:read scope; every access is audited. userID is resolved from the caller's own token subject, so an agent holding a token delegated (RFC 8693) from a user gets that user's connected account.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/vault/tokens/{provider}:
+    delete:
+      operationId: delete_v1_vault_tokens_ByProvider
+      summary: Disconnect a third-party account
+      tags:
+        - Token Vault
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/webhooks:
     get:
       operationId: get_v1_tenants_ByTenantID_webhooks

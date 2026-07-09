@@ -39,6 +39,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/users/deleted", h.listDeleted)
 	r.Post("/users", h.create)
 	r.Post("/users/bulk", h.bulkCreate)
+	r.Post("/users/bulk/import", h.bulkImportFromVendor)
 	r.Get("/users/{id}", h.get)
 	r.Patch("/users/{id}", h.update)
 	r.Delete("/users/{id}", h.delete)

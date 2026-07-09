@@ -1291,6 +1291,151 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/signup/passkey/begin:
+    post:
+      operationId: post_v1_signup_passkey_begin
+      summary: Passkey-first signup begin (tenant-less)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                display_name:
+                  type: string
+        description: Starts a passwordless counterpart to POST /auth/signup — no password is created.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/signup/passkey/finish:
+    post:
+      operationId: post_v1_signup_passkey_finish
+      summary: Passkey-first signup finish (tenant-less)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session_id
+                - credential
+              properties:
+                session_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                name:
+                  type: string
+        description: Verifies the attestation, creates the tenant-less user with the passkey as its founding credential, and returns a token pair.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/register/passkey/begin:
+    post:
+      operationId: post_v1_register_passkey_begin
+      summary: Passkey-first signup begin (tenant-scoped hosted signup)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tenant_id
+                - email
+              properties:
+                tenant_id:
+                  type: string
+                email:
+                  type: string
+                display_name:
+                  type: string
+        description: Starts a passwordless counterpart to POST /auth/register — gated by the tenant's self_registration_enabled policy.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/register/passkey/finish:
+    post:
+      operationId: post_v1_register_passkey_finish
+      summary: Passkey-first signup finish (tenant-scoped hosted signup)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session_id
+                - credential
+              properties:
+                session_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                name:
+                  type: string
+        description: Verifies the attestation, creates the user in the ceremony's tenant, and sets the hosted-login SSO cookie.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/passkeys/{id}:
     delete:
       operationId: delete_v1_passkeys_ById
@@ -1980,6 +2125,13 @@ paths:
           required: true
           schema:
             type: string
+        - name: explain
+          in: query
+          required: false
+          description: When "true", returns the root-to-leaf chain of relation tuples that granted (or would grant) access instead of just the boolean.
+          schema:
+            type: string
+            enum: ['true', 'false']
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2002,7 +2154,7 @@ paths:
                   type: string
       responses:
         '200':
-          description: '{ allowed: bool }'
+          description: '{ allowed: bool } by default; with explain=true, { allowed, path } where each path step is { object, relation, subject, depth }'
           content:
             application/json:
               schema:
@@ -2010,6 +2162,19 @@ paths:
                 properties:
                   allowed:
                     type: boolean
+                  path:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        object:
+                          type: string
+                        relation:
+                          type: string
+                        subject:
+                          type: string
+                        depth:
+                          type: integer
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

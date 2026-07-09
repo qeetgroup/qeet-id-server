@@ -262,7 +262,7 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 // narrowed-down credential to a less-trusted component. The client must be
 // granted "token_exchange". Only access tokens are supported as subject and
 // requested token type.
-func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope, actorToken, actorTokenType string) (*TokenResponse, error) {
+func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope, actorToken, actorTokenType, resource string) (*TokenResponse, error) {
 	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
@@ -316,9 +316,14 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		access string
 		exp    time.Time
 	)
-	if actorSubject != "" {
+	switch {
+	case actorSubject != "" && resource != "":
+		access, exp, err = s.issuer.IssueAccessActorResource(userID, claims.TenantID, sid, scopeStr, actorSubject, resource)
+	case actorSubject != "":
 		access, exp, err = s.issuer.IssueAccessActor(userID, claims.TenantID, sid, scopeStr, actorSubject)
-	} else {
+	case resource != "":
+		access, exp, err = s.issuer.IssueAccessResource(userID, claims.TenantID, sid, scopeStr, resource)
+	default:
 		access, exp, err = s.issuer.IssueAccess(userID, claims.TenantID, sid, scopeStr)
 	}
 	if err != nil {
@@ -438,7 +443,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 	refresh := ""
 	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, clientID, userID, tenantID, scopes)
+		refresh, err = s.issueRefreshToken(ctx, clientID, userID, tenantID, scopes, resource)
 		if err != nil {
 			return nil, err
 		}
@@ -453,26 +458,37 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}, nil
 }
 
-// issueRefreshToken persists a refresh token bound to the client+user and returns the raw value.
-func (s *Service) issueRefreshToken(ctx context.Context, clientID string, userID, tenantID uuid.UUID, scopes []string) (string, error) {
+// issueRefreshToken persists a refresh token bound to the client+user and
+// returns the raw value. resource (may be empty) is the RFC 8707 resource
+// indicator, if any, bound to the access token this refresh token accompanies
+// — persisted so a later rotation can re-bind the same resource.
+func (s *Service) issueRefreshToken(ctx context.Context, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
 	}
+	var resourceArg any
+	if resource != "" {
+		resourceArg = resource
+	}
 	exp := time.Now().UTC().Add(s.issuer.RefreshTTL())
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, hash, clientID, userID, tenantID, scopes, exp)
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, hash, clientID, userID, tenantID, scopes, exp, resourceArg)
 	if err != nil {
 		return "", err
 	}
 	return raw, nil
 }
 
-// RefreshToken handles the refresh_token grant: it rotates the presented token and re-issues
-// tokens scoped to the original grant. Replay of a used token revokes every live token for the (client, user).
-func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawRefresh string) (*TokenResponse, error) {
+// RefreshToken handles the refresh_token grant: it rotates the presented
+// token and re-issues tokens scoped to the original grant. Replay of a used
+// token revokes every live token for the (client, user). resource (RFC 8707,
+// may be empty) lets the caller explicitly switch the bound resource on the
+// reissued access token; when empty, the resource originally bound at
+// issuance (if any) carries forward unchanged.
+func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawRefresh, resource string) (*TokenResponse, error) {
 	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
 		return nil, err
 	}
@@ -488,21 +504,22 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	defer tx.Rollback(ctx)
 
 	var (
-		id          uuid.UUID
-		rowClientID string
-		userID      uuid.UUID
-		tenantID    uuid.UUID
-		scopes      []string
-		expiresAt   time.Time
-		usedAt      *time.Time
-		revokedAt   *time.Time
+		id            uuid.UUID
+		rowClientID   string
+		userID        uuid.UUID
+		tenantID      uuid.UUID
+		scopes        []string
+		expiresAt     time.Time
+		usedAt        *time.Time
+		revokedAt     *time.Time
+		boundResource *string
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT id, client_id, user_id, tenant_id, scopes, expires_at, used_at, revoked_at
+		SELECT id, client_id, user_id, tenant_id, scopes, expires_at, used_at, revoked_at, resource
 		FROM auth.oidc_refresh_tokens
 		WHERE token_hash = $1
 		FOR UPDATE
-	`, hash).Scan(&id, &rowClientID, &userID, &tenantID, &scopes, &expiresAt, &usedAt, &revokedAt)
+	`, hash).Scan(&id, &rowClientID, &userID, &tenantID, &scopes, &expiresAt, &usedAt, &revokedAt, &boundResource)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown refresh token")
 	}
@@ -529,18 +546,25 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	if time.Now().After(expiresAt) {
 		return nil, errs.ErrUnauthorized.WithDetail("refresh token expired")
 	}
+	if resource == "" && boundResource != nil {
+		resource = *boundResource
+	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return nil, err
 	}
+	var newResourceArg any
+	if resource != "" {
+		newResourceArg = resource
+	}
 	newExp := time.Now().UTC().Add(s.issuer.RefreshTTL())
 	var newID uuid.UUID
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
-	`, newHash, clientID, userID, tenantID, scopes, newExp).Scan(&newID); err != nil {
+	`, newHash, clientID, userID, tenantID, scopes, newExp, newResourceArg).Scan(&newID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -552,7 +576,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		return nil, err
 	}
 
-	access, _, err := s.issuer.IssueAccess(userID, tenantID, uuid.New(), strings.Join(scopes, " "))
+	access, _, err := s.issuer.IssueAccessResource(userID, tenantID, uuid.New(), strings.Join(scopes, " "), resource)
 	if err != nil {
 		return nil, err
 	}
@@ -1057,13 +1081,13 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 			r.Form.Get("code"), r.Form.Get("redirect_uri"), r.Form.Get("code_verifier"), resource)
 	case "refresh_token":
 		resp, err = h.Service.RefreshToken(r.Context(),
-			clientID, clientSecret, r.Form.Get("refresh_token"))
+			clientID, clientSecret, r.Form.Get("refresh_token"), resource)
 	case grantTypeTokenExchange:
 		resp, err = h.Service.TokenExchange(r.Context(),
 			clientID, clientSecret,
 			r.Form.Get("subject_token"), r.Form.Get("subject_token_type"),
 			r.Form.Get("requested_token_type"), r.Form.Get("scope"),
-			r.Form.Get("actor_token"), r.Form.Get("actor_token_type"))
+			r.Form.Get("actor_token"), r.Form.Get("actor_token_type"), resource)
 	case "urn:ietf:params:oauth:grant-type:device_code":
 		// RFC 8628 §3.4 polling. The device authenticates with its client_id +
 		// device_code; the device_code itself is the proof, so a client_secret is

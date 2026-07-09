@@ -24,6 +24,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/developer/api-keys"
 	"github.com/qeetgroup/qeet-id/domains/developer/auth-hooks"
 	"github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id/domains/developer/credentials/vc"
 	"github.com/qeetgroup/qeet-id/domains/developer/service-accounts"
 	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
@@ -89,6 +90,7 @@ type Deps struct {
 	Group         *group.Handler
 	SCIM          *scim.Handler
 	Secret        *secret.Handler
+	TokenVault    *tokenvault.Handler
 	SAML          *saml.Handler
 	LDAP          *ldap.Handler
 	IPAllow       *ipallow.Handler
@@ -232,6 +234,7 @@ func NewRouter(d Deps) http.Handler {
 			d.VC.MountPublic(r)        // /credentials/verify: verify a presented JWT-VC (any relying party)
 			d.Passkey.MountPublic(r)   // passwordless passkey login
 			d.OIDC.MountBrowser(r)     // /oauth/authorize (SSO cookie) + decision + token-code
+			d.TokenVault.MountPublic(r) // /vault/tokens/callback: 3rd-party OAuth2 redirect target
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.
@@ -272,6 +275,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Group.Mount(r)
 			d.SCIM.Mount(r)         // /tenants/{id}/scim admin: token rotate/revoke/status
 			d.Secret.Mount(r)       // /tenants/{id}/secrets: encrypted secrets vault
+			d.TokenVault.Mount(r)   // /vault/tokens: 3rd-party OAuth token vault (connect/refresh/disconnect)
 			d.SAML.Mount(r)         // /tenants/{id}/saml admin: connection CRUD
 			d.LDAP.Mount(r)         // /tenants/{id}/ldap admin: connection CRUD + test bind
 			d.IPAllow.Mount(r)      // /tenants/{id}/ip-rules: allow/deny CIDR rules + check

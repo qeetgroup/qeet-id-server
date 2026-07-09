@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -81,6 +82,17 @@ type RegistrationPolicy interface {
 // policy. Called from cmd/server/main.go.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
 
+// SelfRegistrationEnabled reports whether tenantID allows hosted self-service
+// signup. Exposed so other access-domain services (e.g. the passkey-first
+// signup ceremony) can gate on the same policy without duplicating it or
+// requiring a password to validate. false, nil when no policy is wired.
+func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	if s.regPolicy == nil {
+		return false, nil
+	}
+	return s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)
+}
+
 // AnomalyRecorder receives security signals from the auth flow (nil = recording
 // off). Currently notified when an account crosses the brute-force lockout
 // threshold. Kept as an interface so auth doesn't import the threat package;
@@ -118,10 +130,12 @@ type RiskAssessor interface {
 func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
 
 // LoginHook is a synchronous policy gate run after credentials verify: it
-// returns a non-nil error to DENY the sign-in, or nil to allow. nil hook = no
-// gate. Satisfied by *authhook.Service; an interface so auth doesn't import it.
+// returns a non-nil error to DENY the sign-in, or nil to allow — in which case
+// the returned map (possibly nil) carries custom claims to inject into the
+// issued access token. nil hook = no gate. Satisfied by *authhook.Service; an
+// interface so auth doesn't import it.
 type LoginHook interface {
-	Run(ctx context.Context, tenantID, userID uuid.UUID, email string) error
+	Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error)
 }
 
 // SetLoginHook wires the post-credential Actions/Hooks gate. Called from
@@ -317,7 +331,7 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 // returns an MFA challenge instead of tokens (complete it via CompleteMFALogin).
 // Otherwise it returns a full token pair.
 func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
-	u, err := s.CheckPassword(ctx, in.Email, in.Password)
+	u, claims, err := s.CheckPassword(ctx, in.Email, in.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -327,14 +341,14 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 			return nil, err
 		}
 		if enrolled {
-			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
+			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, claims)
 			if err != nil {
 				return nil, err
 			}
 			return &LoginResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
 		}
 	}
-	pair, err := s.IssuePair(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password")
+	pair, err := s.IssuePairWithClaims(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password", claims)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +362,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 // Without this check the cookie flow would bypass MFA that the token flow
 // enforces.
 func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua, trustedToken string) (*LoginSessionResult, error) {
-	u, err := s.CheckPassword(ctx, email, password)
+	// Hook-issued claims aren't threaded into the hosted-login cookie flow: the
+	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
+	// flow for a specific client, decoupled from this call — a separate,
+	// larger integration than the direct API-token login this powers.
+	u, _, err := s.CheckPassword(ctx, email, password)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +376,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 			return nil, err
 		}
 		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, ua) {
-			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID)
+			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -464,17 +482,27 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 }
 
 // createMFAChallenge records a single-use, short-lived pending login that
-// CompleteMFALogin later exchanges for tokens. Returns the opaque token id.
-func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.UUID) (string, error) {
+// CompleteMFALogin later exchanges for tokens. claims (nilable) are any
+// Auth-Hook-issued custom claims to carry across the MFA step into the
+// eventual access token. Returns the opaque token id.
+func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any) (string, error) {
 	var tid any
 	if tenantID != uuid.Nil {
 		tid = tenantID
 	}
+	var claimsArg any
+	if len(claims) > 0 {
+		raw, err := json.Marshal(claims)
+		if err != nil {
+			return "", err
+		}
+		claimsArg = raw
+	}
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at)
-		VALUES ($1, $2, $3) RETURNING id
-	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL)).Scan(&id)
+		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims)
+		VALUES ($1, $2, $3, $4) RETURNING id
+	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg).Scan(&id)
 	if err != nil {
 		return "", err
 	}
@@ -482,41 +510,43 @@ func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.
 }
 
 // verifyAndConsumeMFAChallenge validates a pending MFA login challenge and its
-// second-factor code. On a correct code it consumes (deletes) the challenge and
-// returns the user and its tenant (uuid.Nil for a tenant-less challenge). A
-// wrong code is rejected WITHOUT consuming the challenge so the user can retry
-// within the TTL. Shared by the token flow (CompleteMFALogin) and the hosted
-// cookie flow (CompleteMFALoginSession).
-func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, code string) (uuid.UUID, uuid.UUID, error) {
+// second-factor code. On a correct code it consumes (deletes) the challenge
+// and returns the user, its tenant (uuid.Nil for a tenant-less challenge), and
+// any claims stashed by createMFAChallenge. A wrong code is rejected WITHOUT
+// consuming the challenge so the user can retry within the TTL. Shared by the
+// token flow (CompleteMFALogin) and the hosted cookie flow
+// (CompleteMFALoginSession).
+func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, code string) (uuid.UUID, uuid.UUID, map[string]any, error) {
 	if s.mfa == nil {
-		return uuid.Nil, uuid.Nil, errs.ErrNotImplemented
+		return uuid.Nil, uuid.Nil, nil, errs.ErrNotImplemented
 	}
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid mfa_token")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrBadRequest.WithDetail("invalid mfa_token")
 	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
 	var expiresAt time.Time
+	var rawClaims []byte
 	err = s.pool.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at FROM auth.mfa_login_challenges WHERE id = $1
-	`, id).Scan(&userID, &tenantID, &expiresAt)
+		SELECT user_id, tenant_id, expires_at, claims FROM auth.mfa_login_challenges WHERE id = $1
+	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge not found")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge not found")
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if time.Now().After(expiresAt) {
 		_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge expired")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge expired")
 	}
 	ok, err := s.mfa.VerifyForLogin(ctx, userID, code)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if !ok {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized.WithMessage("Invalid verification code.").WithDetail("invalid mfa code")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Invalid verification code.").WithDetail("invalid mfa code")
 	}
 	// Consume the challenge only on success.
 	_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
@@ -524,17 +554,21 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 	if tenantID != nil {
 		tid = *tenantID
 	}
-	return userID, tid, nil
+	var claims map[string]any
+	if len(rawClaims) > 0 {
+		_ = json.Unmarshal(rawClaims, &claims)
+	}
+	return userID, tid, claims, nil
 }
 
 // CompleteMFALogin verifies the second-factor code for a pending token-flow
 // login and, on success, issues the token pair.
 func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua string) (*TokenPair, error) {
-	userID, tid, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	userID, tid, claims, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
 	if err != nil {
 		return nil, err
 	}
-	return s.IssuePair(ctx, userID, tid, ip, ua, "password_mfa")
+	return s.IssuePairWithClaims(ctx, userID, tid, ip, ua, "password_mfa", claims)
 }
 
 // CompleteMFALoginSession verifies the second-factor code for a pending
@@ -543,7 +577,9 @@ func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua s
 // tenant (uuid.Nil when tenant-less), and the raw cookie value to write via
 // SetLoginSessionCookie.
 func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, uuid.UUID, string, error) {
-	userID, tid, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	// Any hook claims stashed on the challenge are discarded here — see the
+	// note in BeginLoginSession on why this cookie flow doesn't carry them.
+	userID, tid, _, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, "", err
 	}
@@ -556,13 +592,15 @@ func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, i
 
 // CheckPassword runs the full credential check — brute-force lockout, user
 // lookup, password verify, transparent Argon2id rehash-on-login, and
-// clear-on-success — returning the authenticated user. Shared by API login
+// clear-on-success — returning the authenticated user plus any custom claims
+// a wired Auth Hook asked to be injected into the eventual access token
+// (nil when no hook is wired, or the hook returned none). Shared by API login
 // (which then issues tokens) and the hosted-login SSO session (which sets a
 // cookie). It deliberately does not mint tokens or sessions itself.
-func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*user.User, error) {
+func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*user.User, map[string]any, error) {
 	email := strings.ToLower(strings.TrimSpace(rawEmail))
 	if _, locked := s.loginLockedUntil(ctx, email); locked {
-		return nil, errs.ErrTooManyRequests.
+		return nil, nil, errs.ErrTooManyRequests.
 			WithMessage("Too many failed attempts. Your account is temporarily locked — please try again later.").
 			WithDetail("account temporarily locked")
 	}
@@ -572,20 +610,20 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 			// Throttle unknown emails identically so probing can't distinguish
 			// "no such account" from "wrong password" by behaviour.
 			s.recordFailedLogin(ctx, email)
-			return nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
+			return nil, nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	if u.Status != "active" && u.Status != "invited" {
-		return nil, errs.ErrForbidden.WithDetail("account " + u.Status)
+		return nil, nil, errs.ErrForbidden.WithDetail("account " + u.Status)
 	}
 	hash, err := s.users.PasswordHash(ctx, u.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if hash == "" || !password.Verify(hash, plain) {
 		s.recordFailedLogin(ctx, email)
-		return nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
+		return nil, nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
 	}
 	s.clearLoginAttempts(ctx, email)
 	// Transparently upgrade legacy bcrypt / weak-param hashes to current
@@ -599,14 +637,17 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 			}
 		}
 	}
-	// Actions/Hooks gate: a tenant policy endpoint may deny the sign-in. No-op
-	// when no hook is wired/configured, so the common path is untouched.
+	// Actions/Hooks gate: a tenant policy endpoint may deny the sign-in, or
+	// supply claims to carry into the token. No-op when no hook is wired, so
+	// the common path is untouched.
 	if s.loginHook != nil {
-		if err := s.loginHook.Run(ctx, u.TenantID, u.ID, u.Email); err != nil {
-			return nil, err
+		claims, err := s.loginHook.Run(ctx, u.TenantID, u.ID, u.Email)
+		if err != nil {
+			return nil, nil, err
 		}
+		return u, claims, nil
 	}
-	return u, nil
+	return u, nil, nil
 }
 
 // IssuePair creates a session, mints an access+refresh pair, and records
@@ -615,6 +656,16 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 // inside the session-insert transaction so analytics never see a session
 // without its provenance event.
 func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*TokenPair, error) {
+	return s.issuePair(ctx, userID, tenantID, ip, ua, method, nil)
+}
+
+// IssuePairWithClaims is IssuePair plus custom claims (typically sourced from
+// an Auth Hook's decision, see LoginHook) to inject into the access token.
+func (s *Service) IssuePairWithClaims(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
+	return s.issuePair(ctx, userID, tenantID, ip, ua, method, claims)
+}
+
+func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string, claims map[string]any) (*TokenPair, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -640,7 +691,7 @@ func (s *Service) IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 	`, sessionID, userID, tenantArg, ipArg, ua); err != nil {
 		return nil, err
 	}
-	access, exp, err := s.tokens.IssueAccess(userID, tenantID, sessionID, "")
+	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
 	if err != nil {
 		return nil, err
 	}

@@ -49,12 +49,14 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 // Run implements auth.LoginHook. It returns a non-nil (ErrForbidden) error to
-// DENY the sign-in, or nil to allow. A missing/disabled hook allows. Safe by
+// DENY the sign-in, or nil to allow — in which case the returned map (possibly
+// nil) carries any custom claims the hook asked to be injected into the
+// issued access token. A missing/disabled hook allows with no claims. Safe by
 // construction: any path that can't reach a definite "deny" allows (subject to
 // the hook's fail_open when the call itself fails).
-func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) error {
+func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error) {
 	if tenantID == uuid.Nil {
-		return nil
+		return nil, nil
 	}
 	var url, secret string
 	var failOpen bool
@@ -64,7 +66,7 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		ORDER BY created_at LIMIT 1
 	`, tenantID).Scan(&url, &secret, &failOpen)
 	if errors.Is(err, pgx.ErrNoRows) || err != nil {
-		return nil // no hook (or can't load it) → never block login on infra
+		return nil, nil // no hook (or can't load it) → never block login on infra
 	}
 
 	payload, _ := json.Marshal(map[string]any{
@@ -75,11 +77,11 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 	body, callErr := s.call(ctx, url, secret, payload)
-	msg, denied := decide(failOpen, callErr, body)
+	msg, denied, claims := decide(failOpen, callErr, body)
 	if denied {
-		return errs.ErrForbidden.WithMessage(msg).WithDetail("blocked by auth hook")
+		return nil, errs.ErrForbidden.WithMessage(msg).WithDetail("blocked by auth hook")
 	}
-	return nil
+	return claims, nil
 }
 
 // call POSTs the signed payload, returning the response body and a non-nil
@@ -112,18 +114,21 @@ func sign(secret string, body []byte) string {
 }
 
 // decide turns a hook call's outcome into an allow (denied=false) or deny
-// decision. Pure, so it's unit-tested. On a call error it honours fail_open;
-// on success it denies only when the body explicitly says decision="deny".
-func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied bool) {
+// decision, plus any custom claims the hook asked to inject on allow. Pure, so
+// it's unit-tested. On a call error it honours fail_open; on success it denies
+// only when the body explicitly says decision="deny", and otherwise carries
+// through an optional "claims" object verbatim.
+func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied bool, claims map[string]any) {
 	if callErr != nil {
 		if failOpen {
-			return "", false
+			return "", false, nil
 		}
-		return "Sign-in is temporarily unavailable. Please try again later.", true
+		return "Sign-in is temporarily unavailable. Please try again later.", true, nil
 	}
 	var r struct {
-		Decision string `json:"decision"`
-		Message  string `json:"message"`
+		Decision string         `json:"decision"`
+		Message  string         `json:"message"`
+		Claims   map[string]any `json:"claims"`
 	}
 	_ = json.Unmarshal(body, &r)
 	if strings.EqualFold(strings.TrimSpace(r.Decision), "deny") {
@@ -131,9 +136,9 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 		if msg == "" {
 			msg = "Sign-in was blocked by your organization's policy."
 		}
-		return msg, true
+		return msg, true, nil
 	}
-	return "", false
+	return "", false, r.Claims
 }
 
 // --- CRUD ---

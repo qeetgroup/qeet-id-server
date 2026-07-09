@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/developer/webhooks/$id")({
   component: WebhookDetailPage,
@@ -55,6 +55,7 @@ type Delivery = {
   response_body?: string | null;
   next_attempt_at?: string | null;
   delivered_at?: string | null;
+  dead_at?: string | null;
   created_at: string;
 };
 
@@ -68,20 +69,9 @@ function WebhookDetailPage() {
     queryFn: () => api<Webhook>(`/v1/webhooks/${id}`),
   });
 
-  // Delivery history isn't a guaranteed-shipped endpoint yet (planned in
-  // §1.5 / future webhook-history work). 404/501 graceful-degrade.
   const deliveriesQ = useQuery({
     queryKey: ["webhook-deliveries", id],
-    queryFn: async (): Promise<{ items: Delivery[] }> => {
-      try {
-        return await api<{ items: Delivery[] }>(`/v1/webhooks/${id}/deliveries`);
-      } catch (err) {
-        if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
-          return { items: [] };
-        }
-        throw err;
-      }
-    },
+    queryFn: () => api<{ items: Delivery[] }>(`/v1/webhooks/${id}/deliveries`),
     meta: { silent: true },
     retry: false,
   });
@@ -234,15 +224,17 @@ function WebhookDetailPage() {
                           kind={
                             d.delivered_at
                               ? "success"
-                              : d.status_code && d.status_code >= 500
+                              : d.dead_at
                                 ? "danger"
-                                : d.status_code
-                                  ? "warning"
-                                  : "muted"
+                                : d.status_code && d.status_code >= 500
+                                  ? "danger"
+                                  : d.status_code
+                                    ? "warning"
+                                    : "muted"
                           }
                           dot
                         >
-                          {d.delivered_at ? "Delivered" : `${d.status_code ?? "Pending"}`}
+                          {d.delivered_at ? "Delivered" : d.dead_at ? "Dead" : `${d.status_code ?? "Pending"}`}
                         </StatusPill>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{d.attempt}</TableCell>

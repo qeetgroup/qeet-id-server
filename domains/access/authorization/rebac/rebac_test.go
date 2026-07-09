@@ -10,7 +10,7 @@ func (m memStore) fetch(objType, objID, relation string) ([]tuple, error) {
 }
 
 func check(m memStore, objType, objID, relation, userID string) bool {
-	ok, _ := resolve(m.fetch, objType, objID, relation, userID, map[string]bool{}, 0)
+	ok, _, _ := resolve(m.fetch, objType, objID, relation, userID, map[string]bool{}, 0)
 	return ok
 }
 
@@ -61,6 +61,69 @@ func TestResolve_CycleGuard(t *testing.T) {
 	}
 	if check(m, "group", "a", "member", "nobody") {
 		t.Error("cycle must resolve to false, not loop")
+	}
+}
+
+func TestResolve_ExplainPath_Direct(t *testing.T) {
+	m := memStore{
+		"document:readme#editor": {{subjectType: "user", subjectID: "alice"}},
+	}
+	ok, path, err := resolve(m.fetch, "document", "readme", "editor", "alice", map[string]bool{}, 0)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !ok {
+		t.Fatal("alice should be a direct editor")
+	}
+	if len(path) != 1 {
+		t.Fatalf("path = %+v, want 1 step", path)
+	}
+	if path[0].Object != "document:readme" || path[0].Relation != "editor" || path[0].Subject != "user:alice" || path[0].Depth != 0 {
+		t.Errorf("unexpected step: %+v", path[0])
+	}
+}
+
+func TestResolve_ExplainPath_NestedUserset(t *testing.T) {
+	m := memStore{
+		"document:readme#viewer": {{subjectType: "group", subjectID: "all", subjectRelation: "member"}},
+		"group:all#member":       {{subjectType: "group", subjectID: "eng", subjectRelation: "member"}},
+		"group:eng#member":       {{subjectType: "user", subjectID: "erin"}},
+	}
+	ok, path, err := resolve(m.fetch, "document", "readme", "viewer", "erin", map[string]bool{}, 0)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !ok {
+		t.Fatal("erin should resolve through nested usersets")
+	}
+	// Root-to-leaf: document:readme#viewer -> group:all#member -> group:eng#member.
+	if len(path) != 3 {
+		t.Fatalf("path = %+v, want 3 steps", path)
+	}
+	wantObjects := []string{"document:readme", "group:all", "group:eng"}
+	for i, w := range wantObjects {
+		if path[i].Object != w {
+			t.Errorf("path[%d].Object = %q, want %q", i, path[i].Object, w)
+		}
+	}
+	if path[2].Subject != "user:erin" {
+		t.Errorf("path[2].Subject = %q, want user:erin", path[2].Subject)
+	}
+}
+
+func TestResolve_ExplainPath_Denial(t *testing.T) {
+	m := memStore{
+		"document:readme#editor": {{subjectType: "user", subjectID: "alice"}},
+	}
+	ok, path, err := resolve(m.fetch, "document", "readme", "editor", "bob", map[string]bool{}, 0)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if ok {
+		t.Fatal("bob is not an editor")
+	}
+	if len(path) != 0 {
+		t.Errorf("path = %+v, want empty on denial", path)
 	}
 }
 

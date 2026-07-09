@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -291,6 +292,280 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 	return nil
 }
 
+// --- Passkey-first signup (no existing user/password required) ---
+//
+// BeginSignup/FinishSignup and BeginTenantSignup/FinishTenantSignup let a
+// brand-new account be founded on a passkey instead of a password. Since no
+// user row exists yet at Begin time, the ceremony carries an ephemeral
+// "subject" WebAuthn ID plus the pending account details in
+// auth.webauthn_sessions (subject_id/pending_*) rather than a real user_id —
+// the real user row (and its passkey credential) is only created once
+// FinishSignup verifies the attestation.
+
+// signupSession is a decoded pending-signup ceremony.
+type signupSession struct {
+	subjectID   uuid.UUID
+	email       string
+	displayName string
+	tenantID    uuid.UUID
+	data        *webauthn.SessionData
+}
+
+// storeSignupSession persists an in-flight pre-account registration ceremony.
+// tenantID is uuid.Nil for a tenant-less (direct) signup.
+func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, email, displayName string, tenantID uuid.UUID, data *webauthn.SessionData) (uuid.UUID, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	var tenantArg any
+	if tenantID != uuid.Nil {
+		tenantArg = tenantID
+	}
+	var dnArg any
+	if displayName != "" {
+		dnArg = displayName
+	}
+	var id uuid.UUID
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id)
+		VALUES ('signup', $1, $2, $3, $4, $5, $6) RETURNING id
+	`, raw, time.Now().UTC().Add(sessionTTL), subjectID, email, dnArg, tenantArg).Scan(&id)
+	return id, err
+}
+
+// takeSignupSession reads and deletes a pending-signup ceremony (single-use).
+func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupSession, error) {
+	var raw []byte
+	var expiresAt time.Time
+	var kind string
+	var subjectID *uuid.UUID
+	var email, displayName *string
+	var tenantID *uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		DELETE FROM auth.webauthn_sessions WHERE id = $1
+		RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id
+	`, id).Scan(&kind, &raw, &expiresAt, &subjectID, &email, &displayName, &tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrBadRequest.WithDetail("invalid or used session")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if kind != "signup" || subjectID == nil || email == nil {
+		return nil, errs.ErrBadRequest.WithDetail("not a signup session")
+	}
+	if time.Now().After(expiresAt) {
+		return nil, errs.ErrBadRequest.WithDetail("session expired")
+	}
+	var sd webauthn.SessionData
+	if err := json.Unmarshal(raw, &sd); err != nil {
+		return nil, err
+	}
+	sess := &signupSession{subjectID: *subjectID, email: *email, data: &sd}
+	if displayName != nil {
+		sess.displayName = *displayName
+	}
+	if tenantID != nil {
+		sess.tenantID = *tenantID
+	}
+	return sess, nil
+}
+
+// BeginSignup starts a passkey-founded registration ceremony for a brand-new,
+// tenant-less account — the passwordless counterpart to auth.Service.Signup.
+func (s *Service) BeginSignup(ctx context.Context, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+	return s.beginSignup(ctx, uuid.Nil, email, displayName)
+}
+
+// BeginTenantSignup starts the same ceremony scoped to a tenant's hosted
+// signup flow — the passwordless counterpart to auth.Service.RegisterInTenant.
+// Gated by the same self_registration_enabled policy.
+func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+	enabled, err := s.auth.SelfRegistrationEnabled(ctx, tenantID)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if !enabled {
+		return uuid.Nil, nil, errs.ErrForbidden.
+			WithMessage("Self-registration is not enabled for this application.").
+			WithDetail("self-registration disabled")
+	}
+	return s.beginSignup(ctx, tenantID, email, displayName)
+}
+
+func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return uuid.Nil, nil, errs.ErrUnprocessable.WithDetail("email is required")
+	}
+	var exists bool
+	var err error
+	if tenantID == uuid.Nil {
+		err = s.pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM "user".users WHERE LOWER(email) = LOWER($1) AND tenant_id IS NULL AND deleted_at IS NULL)
+		`, email).Scan(&exists)
+	} else {
+		err = s.pool.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM "user".users WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND deleted_at IS NULL)
+		`, email, tenantID).Scan(&exists)
+	}
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if exists {
+		return uuid.Nil, nil, errs.ErrConflict.WithDetail("email already exists")
+	}
+
+	// subjectID only correlates this ceremony's challenge with its attestation
+	// response — it is never written to user_id (no row exists yet) and is
+	// discarded once the real user is created in finishSignup.
+	subjectID := uuid.New()
+	dn := displayName
+	if dn == "" {
+		dn = email
+	}
+	u := &webauthnUser{id: subjectID, name: email, displayName: dn}
+	options, sessionData, err := s.wa.BeginRegistration(u,
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			ResidentKey:      protocol.ResidentKeyRequirementRequired,
+			UserVerification: protocol.VerificationPreferred,
+		}),
+	)
+	if err != nil {
+		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+	}
+	id, err := s.storeSignupSession(ctx, subjectID, email, displayName, tenantID, sessionData)
+	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	return id, options, nil
+}
+
+// FinishSignup verifies the attestation, creates the tenant-less user with the
+// passkey as its founding credential (no password), and signs them in.
+func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, uuid.UUID, error) {
+	sess, cred, err := s.verifySignupAttestation(ctx, sessionID, credential)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	userID, err := s.createUserFromSignup(ctx, sess, cred, name)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	pair, err := s.auth.IssuePair(ctx, userID, uuid.Nil, ip, ua, "passkey")
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	return pair, userID, nil
+}
+
+// FinishTenantSignup is FinishSignup's tenant-scoped counterpart: it creates
+// the user inside sess's tenant and returns a hosted-login SSO cookie value
+// (via auth.Service.CreateLoginSession) instead of a bearer token pair,
+// mirroring auth.Service.RegisterInTenant.
+func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (uuid.UUID, string, error) {
+	sess, cred, err := s.verifySignupAttestation(ctx, sessionID, credential)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	if sess.tenantID == uuid.Nil {
+		return uuid.Nil, "", errs.ErrBadRequest.WithDetail("not a tenant signup session")
+	}
+	userID, err := s.createUserFromSignup(ctx, sess, cred, name)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	raw, err := s.auth.CreateLoginSession(ctx, userID, ip, ua)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	return userID, raw, nil
+}
+
+// verifySignupAttestation takes the ceremony session and verifies the
+// attestation against the ephemeral subject used at Begin time.
+func (s *Service) verifySignupAttestation(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage) (*signupSession, *webauthn.Credential, error) {
+	sess, err := s.takeSignupSession(ctx, sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	dn := sess.displayName
+	if dn == "" {
+		dn = sess.email
+	}
+	u := &webauthnUser{id: sess.subjectID, name: sess.email, displayName: dn}
+	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(credential))
+	if err != nil {
+		return nil, nil, errs.ErrBadRequest.WithDetail("invalid attestation")
+	}
+	cred, err := s.wa.CreateCredential(u, *sess.data, parsed)
+	if err != nil {
+		return nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+	}
+	return sess, cred, nil
+}
+
+// createUserFromSignup inserts the user row (no password credential) and
+// attaches the verified passkey as its founding credential, atomically.
+func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession, cred *webauthn.Credential, name string) (uuid.UUID, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var tenantArg, dnArg any
+	if sess.tenantID != uuid.Nil {
+		tenantArg = sess.tenantID
+	}
+	if sess.displayName != "" {
+		dnArg = sess.displayName
+	}
+	var userID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		INSERT INTO "user".users (tenant_id, email, display_name)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, tenantArg, sess.email, dnArg).Scan(&userID)
+	if err != nil {
+		if pgxerr.IsUnique(err) {
+			return uuid.Nil, errs.ErrConflict.WithDetail("email already exists")
+		}
+		return uuid.Nil, err
+	}
+
+	var aaguid *uuid.UUID
+	if len(cred.Authenticator.AAGUID) == 16 {
+		if g, gerr := uuid.FromBytes(cred.Authenticator.AAGUID); gerr == nil && g != uuid.Nil {
+			aaguid = &g
+		}
+	}
+	transports := make([]string, 0, len(cred.Transport))
+	for _, t := range cred.Transport {
+		transports = append(transports, string(t))
+	}
+	var namePtr any
+	if name != "" {
+		namePtr = name
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, userID, cred.ID, cred.PublicKey, int64(cred.Authenticator.SignCount), aaguid, transports, namePtr); err != nil {
+		if pgxerr.IsUnique(err) {
+			return uuid.Nil, errs.ErrConflict.WithDetail("passkey already registered")
+		}
+		return uuid.Nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return userID, nil
+}
+
 // BeginLogin starts a login ceremony. An empty email triggers a discoverable
 // (usernameless) flow; otherwise the user's registered credentials scope it.
 func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *protocol.CredentialAssertion, error) {
@@ -472,11 +747,15 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/passkeys/register/finish", h.registerFinish)
 }
 
-// MountPublic mounts the passwordless login ceremony (no JWT — the user isn't
-// authenticated yet).
+// MountPublic mounts the passwordless login and signup ceremonies (no JWT —
+// the caller isn't authenticated yet).
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/passkeys/login/begin", h.loginBegin)
 	r.Post("/passkeys/login/finish", h.loginFinish)
+	r.Post("/signup/passkey/begin", h.signupBegin)
+	r.Post("/signup/passkey/finish", h.signupFinish)
+	r.Post("/register/passkey/begin", h.tenantSignupBegin)
+	r.Post("/register/passkey/finish", h.tenantSignupFinish)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -599,4 +878,120 @@ func (h *Handler) loginFinish(w http.ResponseWriter, r *http.Request) {
 		auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+type signupBeginInput struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+}
+
+// signupBegin starts a tenant-less passkey-first signup (the passwordless
+// counterpart to POST /auth/signup). Enumeration-safe via the same 250ms
+// timing floor + neutral-conflict pattern as the password signup endpoints.
+func (h *Handler) signupBegin(w http.ResponseWriter, r *http.Request) {
+	const signupFloor = 250 * time.Millisecond
+	start := time.Now()
+	defer httpx.ConstantTimeFloor(r.Context(), start, signupFloor)
+
+	var in signupBeginInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	sessionID, options, err := h.Service.BeginSignup(r.Context(), in.Email, in.DisplayName)
+	if err != nil {
+		writeSignupError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"session_id": sessionID,
+		"publicKey":  options.Response,
+	})
+}
+
+type signupFinishInput struct {
+	SessionID  uuid.UUID       `json:"session_id"`
+	Credential json.RawMessage `json:"credential"`
+	Name       string          `json:"name"`
+}
+
+func (h *Handler) signupFinish(w http.ResponseWriter, r *http.Request) {
+	var in signupFinishInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pair, userID, err := h.Service.FinishSignup(r.Context(), in.SessionID, in.Credential, in.Name, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		writeSignupError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"user_id":       userID,
+		"access_token":  pair.AccessToken,
+		"token_type":    pair.TokenType,
+		"expires_at":    pair.ExpiresAt,
+		"refresh_token": pair.RefreshToken,
+		"session_id":    pair.SessionID,
+	})
+}
+
+type tenantSignupBeginInput struct {
+	TenantID    uuid.UUID `json:"tenant_id"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"display_name"`
+}
+
+// tenantSignupBegin starts a tenant-scoped passkey-first signup — the
+// passwordless counterpart to POST /auth/register (hosted self-registration).
+func (h *Handler) tenantSignupBegin(w http.ResponseWriter, r *http.Request) {
+	const signupFloor = 250 * time.Millisecond
+	start := time.Now()
+	defer httpx.ConstantTimeFloor(r.Context(), start, signupFloor)
+
+	var in tenantSignupBeginInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.TenantID == uuid.Nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("tenant_id is required"))
+		return
+	}
+	sessionID, options, err := h.Service.BeginTenantSignup(r.Context(), in.TenantID, in.Email, in.DisplayName)
+	if err != nil {
+		writeSignupError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"session_id": sessionID,
+		"publicKey":  options.Response,
+	})
+}
+
+func (h *Handler) tenantSignupFinish(w http.ResponseWriter, r *http.Request) {
+	var in signupFinishInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	userID, raw, err := h.Service.FinishTenantSignup(r.Context(), in.SessionID, in.Credential, in.Name, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		writeSignupError(w, r, err)
+		return
+	}
+	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": userID})
+}
+
+// writeSignupError neutralises an email-conflict into the same generic 422
+// the password signup endpoints use, so the response can't be used to probe
+// whether an email is already registered.
+func writeSignupError(w http.ResponseWriter, r *http.Request, err error) {
+	if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
+		httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
+			"We couldn't complete your signup. If you already have an account, try signing in or resetting your password."))
+		return
+	}
+	httpx.WriteError(w, r, err)
 }

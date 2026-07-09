@@ -13,8 +13,18 @@
     "idle": "Create account",
     "busy": "Creating account…"
   },
+  "passkey": {
+    "idle": "Create account with a passkey",
+    "busy": "Waiting for passkey…"
+  },
+  "usePassword": "Use a password instead",
+  "usePasskey": "Use a passkey instead",
   "mismatch": "Those passwords don't match.",
   "haveAccount": "Already have an account?",
   "signIn": "Sign in",
-  "disabled": "Sign-ups aren't open for this application. Ask an administrator for an invite."
+  "disabled": "Sign-ups aren't open for this application. Ask an administrator for an invite.",
+  "errors": {
+    "passkeyUnsupported": "Passkeys aren't supported in this browser.",
+    "passkeyFailed": "We couldn't create your account with a passkey."
+  }
 }

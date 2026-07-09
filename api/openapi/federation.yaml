@@ -2966,6 +2966,7 @@ components:
             - authorization_code
             - refresh_token
             - urn:ietf:params:oauth:grant-type:device_code
+            - urn:ietf:params:oauth:grant-type:token-exchange
         code:
           type: string
         redirect_uri:
@@ -2978,6 +2979,25 @@ components:
         device_code:
           type: string
           description: Present when grant_type is the RFC 8628 device_code grant.
+        resource:
+          type: string
+          format: uri
+          description: RFC 8707 resource indicator. Grant-agnostic — accepted on authorization_code, refresh_token, and token-exchange — and binds the issued access token's audience to this resource (e.g. an MCP server) in addition to the platform's own audience. On refresh_token, omitting it preserves the resource bound at the original grant; supplying it switches the bound resource.
+        subject_token:
+          type: string
+          description: RFC 8693 token-exchange grant only — the token identifying the party whose authority is being exercised.
+        subject_token_type:
+          type: string
+          description: RFC 8693 token-exchange grant only. Only "urn:ietf:params:oauth:token-type:access_token" is supported.
+        actor_token:
+          type: string
+          description: RFC 8693 token-exchange grant only (optional) — names the delegate acting on the subject's behalf (e.g. an AI agent); the issued token carries an "act" claim.
+        actor_token_type:
+          type: string
+        requested_token_type:
+          type: string
+        scope:
+          type: string
         client_id:
           type: string
         client_secret:

@@ -234,11 +234,11 @@ func TestOIDCRefreshClientMismatch(t *testing.T) {
 		t.Fatal("expected a refresh token")
 	}
 	// Client B (valid creds) trying to redeem client A's refresh token is rejected.
-	if _, err := svc.RefreshToken(ctx, clientB.ClientID, secretB, issued.RefreshToken); err == nil {
+	if _, err := svc.RefreshToken(ctx, clientB.ClientID, secretB, issued.RefreshToken, ""); err == nil {
 		t.Fatal("a refresh token must be bound to its issuing client")
 	}
 	// And client A can still use it (mismatch check didn't consume it).
-	if _, err := svc.RefreshToken(ctx, clientA.ClientID, secretA, issued.RefreshToken); err != nil {
+	if _, err := svc.RefreshToken(ctx, clientA.ClientID, secretA, issued.RefreshToken, ""); err != nil {
 		t.Fatalf("issuing client should still redeem its refresh token: %v", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestOIDCRefreshExpired(t *testing.T) {
 		tokens.HashRefresh(issued.RefreshToken)); err != nil {
 		t.Fatalf("expire refresh: %v", err)
 	}
-	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken); err == nil {
+	if _, err := svc.RefreshToken(ctx, client.ClientID, secret, issued.RefreshToken, ""); err == nil {
 		t.Fatal("an expired refresh token must be rejected")
 	}
 }

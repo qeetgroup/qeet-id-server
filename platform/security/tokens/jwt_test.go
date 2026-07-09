@@ -186,6 +186,37 @@ func TestIssueAccessActor_CarriesActClaim(t *testing.T) {
 	}
 }
 
+func TestIssueAccessClaims_RoundTrips(t *testing.T) {
+	i, _ := testIssuer(t)
+	custom := map[string]any{"plan": "enterprise", "seats": float64(25)}
+	tok, _, err := i.IssueAccessClaims(uuid.New(), uuid.New(), uuid.New(), "", custom)
+	if err != nil {
+		t.Fatalf("IssueAccessClaims: %v", err)
+	}
+	c, err := i.VerifyAccess(tok)
+	if err != nil {
+		t.Fatalf("VerifyAccess: %v", err)
+	}
+	if c.Custom["plan"] != "enterprise" || c.Custom["seats"] != float64(25) {
+		t.Errorf("custom claims did not round-trip, got %+v", c.Custom)
+	}
+}
+
+func TestIssueAccess_NoCustomClaimsByDefault(t *testing.T) {
+	i, _ := testIssuer(t)
+	tok, _, err := i.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "")
+	if err != nil {
+		t.Fatalf("IssueAccess: %v", err)
+	}
+	c, err := i.VerifyAccess(tok)
+	if err != nil {
+		t.Fatalf("VerifyAccess: %v", err)
+	}
+	if c.Custom != nil {
+		t.Errorf("ordinary access token must not carry custom claims, got %+v", c.Custom)
+	}
+}
+
 func TestVerifyAccess_SurfacesActorClaims(t *testing.T) {
 	// Agent/service tokens carry actor_type/agent_id (custom claims); verify they
 	// round-trip into Claims so introspection can surface them.
