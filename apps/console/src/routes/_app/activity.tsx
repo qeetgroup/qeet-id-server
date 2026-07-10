@@ -57,8 +57,9 @@ function ActivityPage() {
   const seenSinceRef = useRef<string | null>(null);
   // Backend may return `{ items: null }` for empty result sets (Go nil
   // slice → JSON null); coerce before indexing so we don't crash on
-  // null[0]. The `?? []` further down handles the same case at render.
-  const items = eventsQ.data?.items ?? [];
+  // null[0]. Memoized so the identity is stable across renders (avoids
+  // `useMemo` dep churn below).
+  const items = useMemo(() => eventsQ.data?.items ?? [], [eventsQ.data?.items]);
   if (eventsQ.data && seenSinceRef.current === null) {
     const newest = items[0]?.created_at;
     if (newest) seenSinceRef.current = newest;

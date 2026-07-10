@@ -17,7 +17,8 @@ export const options = {
   },
 };
 
-const CREDS = { email: "member@demo.id.qeet.in", password: "Password123!" };
+// Seeded via `make seed` (cmd/seed/main.go) — memberRole in Qeet Group (qeet.in).
+const CREDS = { email: "sneha@qeet.in", password: "Password123!" };
 
 let accessToken = null;
 let refreshToken = null;

@@ -1,5 +1,5 @@
 {
-  "projectName": "qeetid-admin",
+  "projectName": "console",
   "mode": "file-router",
   "typescript": true,
   "packageManager": "npm",

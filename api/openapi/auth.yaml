@@ -1994,6 +1994,10 @@ paths:
     get:
       operationId: get_v1_tenants_ByTenantID_relation_tuples
       summary: List relation tuples
+      description: |
+        List tuples anchored on one side of the relationship. Supply exactly one of:
+        - **object** — all tuples where this is the object ("type:id"); returns who has a relation on it.
+        - **subject** — all tuples where this is the subject ("type:id" or "type:id#relation"); reverse-lookup of what a principal can reach.
       tags:
         - ReBAC
       parameters:
@@ -2004,16 +2008,22 @@ paths:
             type: string
         - name: object
           in: query
-          required: true
+          required: false
           schema:
             type: string
-          description: 'Object ref "type:id", e.g. document:readme'
+          description: 'Object ref "type:id", e.g. document:readme. Mutually exclusive with subject.'
+        - name: subject
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 'Subject ref "type:id" or "type:id#relation", e.g. user:abc123. Returns all objects the subject appears on. Mutually exclusive with object.'
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Tuples on the object
+          description: Tuples anchored on the given object or subject
           content:
             application/json:
               schema:
@@ -2024,6 +2034,8 @@ paths:
                     items:
                       type: object
                       additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2166,6 +2178,97 @@ paths:
                           type: string
                         depth:
                           type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/relation-tuples/graph:
+    get:
+      operationId: get_v1_tenants_ByTenantID_relation_tuples_graph
+      summary: Expand identity graph
+      description: |
+        Builds a node+edge graph of all subject identities reachable from a
+        given object+relation, up to `depth` hops. Answers the question:
+        "who/what can reach this resource, and through which chain of
+        relationships?"
+
+        Each **node** is a `"type:id"` identity (user, group, agent, document,
+        or any other modeled entity). Each **edge** is a named relation between
+        two nodes, following userset references recursively. The result is
+        suitable for graph visualization (e.g. a security-posture or privilege-path
+        view) or as input to further investigation queries.
+
+        This is the ReBAC analogue of a privilege-path graph: it is explicit about
+        the boundaries of what Qeet ID's own relation-tuple store covers (only
+        tuples modeled here, not external RBAC or cloud IAM), and never
+        over-claims coverage.
+      tags:
+        - ReBAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: object
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Root object ref "type:id", e.g. document:security-runbook'
+        - name: relation
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Relation to expand from the root, e.g. viewer'
+        - name: depth
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 10
+          description: Maximum hops to follow (default and max 10)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Graph of all nodes and directed edges reachable from the root
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          description: '"type:id"'
+                        type:
+                          type: string
+                        label:
+                          type: string
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        from:
+                          type: string
+                        to:
+                          type: string
+                        relation:
+                          type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

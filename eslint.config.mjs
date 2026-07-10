@@ -8,34 +8,48 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 const nextFiles = [
-  "apps/qeetid-web/**/*.{js,jsx,ts,tsx,mjs,cjs}",
-  "apps/qeetid-login/**/*.{js,jsx,ts,tsx,mjs,cjs}",
+  "apps/website/**/*.{js,jsx,ts,tsx,mjs,cjs}",
+  "apps/login/**/*.{js,jsx,ts,tsx,mjs,cjs}",
 ];
 
 // WCAG 2.2 AA guardrail — jsx-a11y/recommended is enforced (as errors) ONLY on
 // the new screens + critical flows below, so repo-wide lint stays green while
 // the remaining ~70 screens migrate incrementally. To onboard more screens,
-// add their glob to this array (see apps/qeetid-admin/A11Y.md).
-const a11yFiles = [
+// add their glob to this array (see apps/console/A11Y.md).
+// Console isn't a Next app (not in nextFiles), so it needs the jsx-a11y
+// plugin registered here. Login IS a Next app: eslint-config-next/core-web-vitals
+// already registers its own jsx-a11y plugin instance for nextFiles below —
+// re-registering a second instance for the same files throws ESLint flat
+// config's "Cannot redefine plugin" error, so loginA11yFiles gets rules only.
+const consoleA11yFiles = [
   // Admin — new screens
-  "apps/qeetid-admin/src/routes/_app/auth/connections/oidc.tsx",
-  "apps/qeetid-admin/src/routes/_app/auth/connections/oidc.$clientId.tsx",
-  "apps/qeetid-admin/src/routes/_app/auth/connections/saml-idp.tsx",
-  "apps/qeetid-admin/src/routes/_app/auth/api/consent-grants.tsx",
-  "apps/qeetid-admin/src/routes/_app/auth/api/signing-keys.tsx",
-  "apps/qeetid-admin/src/routes/_app/access/check.tsx",
-  "apps/qeetid-admin/src/routes/_app/security/device-authorizations.tsx",
-  "apps/qeetid-admin/src/routes/_app/groups.$groupId.tsx",
+  "apps/console/src/routes/_app/auth/connections/oidc.tsx",
+  "apps/console/src/routes/_app/auth/connections/oidc.$clientId.tsx",
+  "apps/console/src/routes/_app/auth/connections/saml-idp.tsx",
+  "apps/console/src/routes/_app/auth/api/consent-grants.tsx",
+  "apps/console/src/routes/_app/auth/api/signing-keys.tsx",
+  "apps/console/src/routes/_app/access/check.tsx",
+  "apps/console/src/routes/_app/security/device-authorizations.tsx",
+  "apps/console/src/routes/_app/groups.$groupId.tsx",
   // Admin — critical flows + app shell
-  "apps/qeetid-admin/src/routes/_app/users/**/*.{ts,tsx}",
-  "apps/qeetid-admin/src/routes/_app/auth/login-methods/**/*.{ts,tsx}",
-  "apps/qeetid-admin/src/routes/_app.tsx",
-  "apps/qeetid-admin/src/features/dashboard/components/app-sidebar.tsx",
-  "apps/qeetid-admin/src/features/dashboard/components/nav-main.tsx",
-  "apps/qeetid-admin/src/features/dashboard/components/language-switcher.tsx",
-  // Login app (Next.js) — every screen
-  "apps/qeetid-login/src/app/**/*.tsx",
+  "apps/console/src/routes/_app/users/**/*.{ts,tsx}",
+  "apps/console/src/routes/_app/auth/login-methods/**/*.{ts,tsx}",
+  "apps/console/src/routes/_app.tsx",
+  "apps/console/src/features/dashboard/components/app-sidebar.tsx",
+  "apps/console/src/features/dashboard/components/nav-main.tsx",
+  "apps/console/src/features/dashboard/components/language-switcher.tsx",
 ];
+
+// Login app (Next.js) — every screen.
+const loginA11yFiles = ["apps/login/src/app/**/*.tsx"];
+
+const a11yRules = Object.fromEntries(
+  Object.entries(jsxA11y.flatConfigs.recommended.rules).map(([rule, setting]) => {
+    const severity = Array.isArray(setting) ? setting[0] : setting;
+    const isOff = severity === "off" || severity === 0;
+    return [rule, isOff ? setting : "error"];
+  }),
+);
 
 const forNextApps = (configs) =>
   configs.map((config) => (config.ignores ? config : { ...config, files: nextFiles }));
@@ -88,18 +102,16 @@ export default [
     },
   },
   {
-    files: a11yFiles,
-    plugins: jsxA11y.flatConfigs.recommended.plugins,
-    languageOptions: jsxA11y.flatConfigs.recommended.languageOptions,
     // Elevate every rule jsx-a11y/recommended ENABLES to "error" so it gates the
     // target files. Rules recommended deliberately disables (label-has-for is
     // deprecated, etc.) stay off — don't resurrect them.
-    rules: Object.fromEntries(
-      Object.entries(jsxA11y.flatConfigs.recommended.rules).map(([rule, setting]) => {
-        const severity = Array.isArray(setting) ? setting[0] : setting;
-        const isOff = severity === "off" || severity === 0;
-        return [rule, isOff ? setting : "error"];
-      }),
-    ),
+    files: consoleA11yFiles,
+    plugins: jsxA11y.flatConfigs.recommended.plugins,
+    languageOptions: jsxA11y.flatConfigs.recommended.languageOptions,
+    rules: a11yRules,
+  },
+  {
+    files: loginA11yFiles,
+    rules: a11yRules,
   },
 ];

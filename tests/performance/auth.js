@@ -31,9 +31,11 @@ export const options = {
   },
 };
 
+// Seeded via `make seed` (cmd/seed/main.go) — Qeet Group (qeet.in) leadership
+// accounts: sneha is memberRole (read-only), aarav is adminRole.
 const CREDENTIALS = [
-  { email: "member@demo.id.qeet.in", password: "Password123!" },
-  { email: "org-admin@demo.id.qeet.in", password: "Password123!" },
+  { email: "sneha@qeet.in", password: "Password123!" },
+  { email: "aarav@qeet.in", password: "Password123!" },
 ];
 
 export default function () {

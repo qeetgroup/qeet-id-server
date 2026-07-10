@@ -37,6 +37,7 @@ import { useTenantId } from "@/lib/auth";
 // keeps every field optional + string so a malformed URL never crashes
 // the route.
 type AuditSearch = {
+  q?: string;
   action?: string;
   resource_type?: string;
   actor_user_id?: string;
@@ -48,6 +49,7 @@ function validateAuditSearch(raw: Record<string, unknown>): AuditSearch {
     return typeof v === "string" && v.trim() !== "" ? v : undefined;
   };
   return {
+    q: pick("q"),
     action: pick("action"),
     resource_type: pick("resource_type"),
     actor_user_id: pick("actor_user_id"),
@@ -135,6 +137,7 @@ function AuditLogsPage() {
   // <Input> tracks "unfiltered" — the validateSearch normalises both
   // directions so the URL doesn't accumulate trailing `?action=`.
   const filters = {
+    q: search.q ?? "",
     action: search.action ?? "",
     resource_type: search.resource_type ?? "",
     actor_user_id: search.actor_user_id ?? "",
@@ -143,6 +146,7 @@ function AuditLogsPage() {
     const next = updater(filters);
     navigate({
       search: () => ({
+        q: next.q || undefined,
         action: next.action || undefined,
         resource_type: next.resource_type || undefined,
         actor_user_id: next.actor_user_id || undefined,
@@ -170,6 +174,7 @@ function AuditLogsPage() {
             query: {
               limit: 200,
               cursor: next,
+              q: filters.q || undefined,
               action: filters.action || undefined,
               resource_type: filters.resource_type || undefined,
               actor_user_id: filters.actor_user_id || undefined,
@@ -210,6 +215,7 @@ function AuditLogsPage() {
         query: {
           limit: 50,
           cursor,
+          q: filters.q || undefined,
           action: filters.action || undefined,
           resource_type: filters.resource_type || undefined,
           actor_user_id: filters.actor_user_id || undefined,
@@ -219,6 +225,7 @@ function AuditLogsPage() {
   });
 
   const hasFilters = Object.values(filters).some(Boolean);
+  const [searchDraft, setSearchDraft] = useState(filters.q);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -263,41 +270,65 @@ function AuditLogsPage() {
 
       {/* Filter bar */}
       <Card>
-        <CardContent className="grid gap-3 p-4 md:grid-cols-4">
-          <Input
-            placeholder="Filter by action (e.g. user.create)"
-            value={filters.action}
-            onChange={(e) => {
-              setFilters((f) => ({ ...f, action: e.target.value }));
+        <CardContent className="flex flex-col gap-3 p-4">
+          {/* Free-text search — committed on Enter; supports quoted phrases, -exclusions, OR */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setFilters((f) => ({ ...f, q: searchDraft }));
               setCursor(undefined);
             }}
-          />
-          <Input
-            placeholder="Filter by resource type"
-            value={filters.resource_type}
-            onChange={(e) => {
-              setFilters((f) => ({ ...f, resource_type: e.target.value }));
-              setCursor(undefined);
-            }}
-          />
-          <Input
-            placeholder="Filter by actor user_id"
-            value={filters.actor_user_id}
-            onChange={(e) => {
-              setFilters((f) => ({ ...f, actor_user_id: e.target.value }));
-              setCursor(undefined);
-            }}
-          />
-          <Button
-            variant="outline"
-            disabled={!hasFilters}
-            onClick={() => {
-              setFilters(() => ({ action: "", resource_type: "", actor_user_id: "" }));
-              setCursor(undefined);
-            }}
+            className="flex gap-2"
           >
-            <XIcon /> Clear
-          </Button>
+            <Input
+              className="flex-1"
+              placeholder='Search events — e.g. "failed login", user.delete, -saml'
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              aria-label="Free-text event search"
+            />
+            <Button type="submit" variant="outline" size="sm">
+              Search
+            </Button>
+          </form>
+          {/* Exact-match filters + clear */}
+          <div className="grid gap-3 md:grid-cols-4">
+            <Input
+              placeholder="Filter by action (e.g. user.create)"
+              value={filters.action}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, action: e.target.value }));
+                setCursor(undefined);
+              }}
+            />
+            <Input
+              placeholder="Filter by resource type"
+              value={filters.resource_type}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, resource_type: e.target.value }));
+                setCursor(undefined);
+              }}
+            />
+            <Input
+              placeholder="Filter by actor user_id"
+              value={filters.actor_user_id}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, actor_user_id: e.target.value }));
+                setCursor(undefined);
+              }}
+            />
+            <Button
+              variant="outline"
+              disabled={!hasFilters}
+              onClick={() => {
+                setFilters(() => ({ q: "", action: "", resource_type: "", actor_user_id: "" }));
+                setSearchDraft("");
+                setCursor(undefined);
+              }}
+            >
+              <XIcon /> Clear
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

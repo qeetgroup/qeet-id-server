@@ -42,6 +42,10 @@ type ListFilter struct {
 	Action       string
 	ResourceType string
 	ActorUserID  uuid.UUID
+	// Search is applied as a PostgreSQL websearch_to_tsquery against the
+	// stored search_vector column. Supports "quoted phrases", -exclusions,
+	// and OR. Empty string disables FTS.
+	Search string
 }
 
 func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, filter ListFilter) ([]Row, string, error) {
@@ -66,6 +70,10 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	if filter.ActorUserID != uuid.Nil {
 		args = append(args, filter.ActorUserID)
 		q += ` AND actor_user_id = $` + strconv.Itoa(len(args))
+	}
+	if filter.Search != "" {
+		args = append(args, filter.Search)
+		q += ` AND search_vector @@ websearch_to_tsquery('simple', $` + strconv.Itoa(len(args)) + `)`
 	}
 	if cursor != "" {
 		cid, err := uuid.Parse(cursor)
@@ -131,6 +139,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		filter.ActorUserID = actorID
 	}
+	filter.Search = r.URL.Query().Get("q")
 	out, next, err := h.Reader.List(r.Context(), tid, limit, r.URL.Query().Get("cursor"), filter)
 	if err != nil {
 		httpx.WriteError(w, r, err)

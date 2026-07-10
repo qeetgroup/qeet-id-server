@@ -119,7 +119,7 @@ export function LoginForm({
   // cookie on the provider callback and returns to the authorize URL.
   function socialStart(provider: string) {
     const q = new URLSearchParams({ tenant_id: tenantId, return_to: returnTo });
-    window.location.href = `${API_BASE_URL}/v1/social/${provider}/start?${q.toString()}`;
+    window.location.assign(`${API_BASE_URL}/v1/social/${provider}/start?${q.toString()}`);
   }
 
   async function passkeyLogin() {
@@ -340,6 +340,7 @@ function MfaChallenge({
               id="mfa-code"
               type="text"
               autoComplete="one-time-code"
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- MFA step is a single-task challenge; focus on the code field is intentional and expected
               autoFocus
               required
               value={code}
@@ -351,6 +352,7 @@ function MfaChallenge({
               value={code}
               onChange={setCode}
               onComplete={(v) => void verify(v)}
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- MFA step is a single-task challenge; focus on the code field is intentional and expected
               autoFocus
               disabled={loading}
               aria-label={t("mfa.label")}

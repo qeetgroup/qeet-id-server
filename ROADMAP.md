@@ -78,8 +78,10 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 |---|---|---|
 | Auth-hook claims in the OIDC ID-token path | 🟢 | Custom claims already flow into direct API-token login (incl. MFA); threading them through the hosted-login cookie → OIDC authorize/ID-token pipeline is separate, larger work |
 | i18n — remaining coverage | 🟡 | 8 console catalogs (en+7) exist w/ partial namespaces; remaining screens + locale-aware emails + login app pending |
-| WCAG 2.2 AA — a11y gate + legacy screens | 🟡 | ⚠️ the a11y eslint globs point at renamed `qeetid-admin`/`qeetid-login` dirs (gate matches 0 files today); fix globs, then audit ~70 older screens |
+| WCAG 2.2 AA — a11y gate + legacy screens | 🟡 | Gate fixed (`eslint.config.mjs` globs updated from `qeetid-admin`/`qeetid-login` → `console`/`login` + `qeetid-web` → `website`; also split plugin registration to avoid Next.js flat-config conflict); 6 newly-exposed violations resolved. ~70 older console screens still carry hardcoded English — not a11y violations per se, but gating them incrementally remains the backlog |
 | SOC 2 / ISO 27001 evidence generation | 🟡 | Compliance screens are static templates; generated evidence pending |
+| Published performance benchmarks (p95/p99) | 🟡 | `tests/performance/` k6 scripts now cover the authz hot path too (`authz.js` — RBAC `/check` + ReBAC recursive group-membership `/check`), not just auth/CRUD; still no externally-published numbers or CI wiring — pending representative post-GA traffic, not an engineering blocker |
+| Audit free-text search | ✅ | `GET /audit?q=` — PostgreSQL `websearch_to_tsquery('simple', ...)` over a generated `search_vector` column on `audit.events` (action, resource_type, actor_type, user_agent, metadata); GIN-indexed (migration 0079). Console filter bar adds a Search input above the exact-match filters; exported pages pass `q` through. Supports quoted phrases, `-exclusions`, OR |
 
 ### 🤖 AI-agent identity & governance
 *Surfaced by the `product-manager` agent from live competitive research (Auth0 / Okta / WorkOS / Descope / Microsoft Entra).*

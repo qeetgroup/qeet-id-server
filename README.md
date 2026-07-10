@@ -260,7 +260,7 @@ make lint                            # go vet — CI additionally runs golangci-
 pnpm lint && pnpm typecheck && pnpm build && pnpm test   # frontend (Turbo, all 3 apps)
 ```
 
-CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `golangci-lint`, `govulncheck`, and `gitleaks`. Coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired yet — tracked in [ROADMAP.md](./ROADMAP.md).
+CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `golangci-lint`, `govulncheck`, and `gitleaks`. Coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired yet — tracked in [ROADMAP.md](./ROADMAP.md). [`tests/performance/`](./tests/performance/) has k6 load scripts (auth, user CRUD, RBAC/ReBAC `/check`) for manual local runs — not wired into CI, no published numbers yet.
 
 ---
 

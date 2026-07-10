@@ -43,7 +43,7 @@ export function ResetForm({ token }: { token: string }) {
           <p role="status" className="text-muted-foreground text-sm">
             {t("reset.done")}
           </p>
-          <Button render={<a href="/login" />} size="lg" className="w-full">
+          <Button render={<a href="/login" aria-label={t("reset.goToLogin")} />} size="lg" className="w-full">
             {t("reset.goToLogin")}
           </Button>
         </div>
@@ -59,6 +59,7 @@ export function ResetForm({ token }: { token: string }) {
               id="password"
               type="password"
               autoComplete="new-password"
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- single-task form; autofocus guides users to the only interactive element without disorienting them
               autoFocus
               required
               minLength={8}

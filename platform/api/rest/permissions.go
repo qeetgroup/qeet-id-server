@@ -49,6 +49,13 @@ func permissionMap() map[string]string {
 		"GET /v1/users/{userID}/tenants/{tenantID}/permissions":       "role.read",
 		"GET /v1/check": "role.read",
 		"GET /v1/tenants/{tenantID}/groups/{groupID}/roles":             "role.read",
+
+		// ReBAC: relationship tuples + identity graph.
+		// Reads are gated on role.read (structural authz data). Writes/deletes
+		// and the /check endpoint are ungated beyond tenant scope (they gate
+		// themselves via requirePathTenant + the relation-tuple payload).
+		"GET /v1/tenants/{tenantID}/relation-tuples":       "role.read",
+		"GET /v1/tenants/{tenantID}/relation-tuples/graph": "role.read",
 		"POST /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}":   "role.write",
 		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}": "role.write",
 

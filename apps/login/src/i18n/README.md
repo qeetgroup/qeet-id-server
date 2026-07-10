@@ -1,9 +1,9 @@
-# i18n (qeetid-login)
+# i18n (apps/login)
 
-English-only internationalization scaffold built on
+Internationalization scaffold built on
 [`i18next`](https://www.i18next.com/) + [`react-i18next`](https://react.i18next.com/),
 with language detection via `i18next-browser-languagedetector`. It mirrors the
-[`qeetid-admin` i18n setup](../../../qeetid-admin/src/i18n/README.md) — same
+[console i18n setup](../../../console/src/i18n/README.md) — same
 libraries, same init options (`fallbackLng: "en"`, `supportedLngs: ["en"]`,
 `defaultNS: "common"`, `escapeValue: false`, detector `localStorage` key
 `qeetid.lang`) — so the two apps stay consistent. It is designed so that adding
@@ -84,7 +84,7 @@ crosses the client boundary.
    - add a label to `LANGUAGE_LABELS`,
    - register the namespaces under `resources.<lng>`.
 
-The detector persists the choice to `localStorage` under `qeetid.lang`.
+The detector persists the choice to `localStorage` under `qeetid.lang`. Currently only `en` is shipped; adding more locales is a drop-in JSON change (see "Adding a new locale" above) — the login app has broader `t()` adoption (~50% of screens) than the console's incremental retrofit, so extending it to additional locales is lower effort.
 
 Do **not** localize IDs, developer/debug strings, or values that come from the
 API (e.g. `client_id`, the user code) — only human-facing UI copy.

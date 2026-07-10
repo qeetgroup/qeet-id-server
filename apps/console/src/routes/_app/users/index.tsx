@@ -55,7 +55,7 @@ import {
   UploadCloudIcon,
   UserIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
@@ -548,7 +548,7 @@ type CreateUserSheetProps = {
 function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUserSheetProps) {
   const { t } = useTranslation("users");
   const rolesQ = useRoles();
-  const roles = rolesQ.data?.items ?? [];
+  const roles = useMemo(() => rolesQ.data?.items ?? [], [rolesQ.data?.items]);
   const [roleId, setRoleId] = useState("");
 
   // Default to a "member"-type role (else the least-privileged/last one) so a

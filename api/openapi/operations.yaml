@@ -420,6 +420,15 @@ paths:
           required: true
           schema:
             type: string
+        - name: q
+          in: query
+          required: false
+          description: >
+            Free-text search over action, resource_type, actor_type, user_agent,
+            and metadata. Evaluated as a PostgreSQL websearch_to_tsquery expression —
+            supports quoted phrases ("failed login"), exclusions (-saml), and OR.
+          schema:
+            type: string
         - name: action
           in: query
           required: false

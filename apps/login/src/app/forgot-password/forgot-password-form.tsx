@@ -58,6 +58,7 @@ export function ForgotPasswordForm({ returnTo, tenantId, branding }: ForgotPassw
               id="email"
               type="email"
               autoComplete="email"
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- single-task form; autofocus guides users to the only interactive element without disorienting them
               autoFocus
               required
               value={email}

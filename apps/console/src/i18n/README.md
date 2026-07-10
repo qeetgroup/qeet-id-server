@@ -1,6 +1,6 @@
-# i18n (qeetid-admin)
+# i18n (apps/console)
 
-English-only internationalization scaffold built on
+Internationalization scaffold built on
 [`i18next`](https://www.i18next.com/) + [`react-i18next`](https://react.i18next.com/),
 with language detection via `i18next-browser-languagedetector`. It is designed
 so that adding a locale later is a drop-in JSON change — no code edits to the
