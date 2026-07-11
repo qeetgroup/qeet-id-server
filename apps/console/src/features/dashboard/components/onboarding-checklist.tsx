@@ -72,8 +72,12 @@ function useSteps(): Step[] {
   });
   const users = useQuery({
     queryKey: ["onboarding", "users", tenantId],
+    // Tenant is scoped via the JWT principal, not the URL — there is no
+    // /v1/tenants/{tenantId}/users route (QID-02: the checklist previously
+    // called that nonexistent path, so "Invite your team" could never
+    // check itself off).
     queryFn: () =>
-      api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/users`, {
+      api<{ items: unknown[] }>(`/v1/users`, {
         query: { limit: 2 },
       }),
     enabled,

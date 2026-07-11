@@ -24,6 +24,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/roles", h.listRoles)
 	r.Post("/tenants/{tenantID}/roles", h.createRole)
 
+	r.Get("/roles/{roleID}/permissions", h.listRolePermissions)
 	r.Post("/roles/{roleID}/permissions/{permID}", h.grant)
 	r.Delete("/roles/{roleID}/permissions/{permID}", h.revoke)
 
@@ -36,6 +37,50 @@ func (h *Handler) Mount(r chi.Router) {
 
 	r.Get("/users/{userID}/tenants/{tenantID}/permissions", h.effective)
 	r.Get("/check", h.check)
+}
+
+// requirePathTenant enforces that the {tenantID} in the path matches the
+// caller's own JWT tenant scope, returning 403 on mismatch (QID-18). Mirrors
+// the identical guard in the rebac/authpolicy/threat/ipallow handlers — the
+// RBAC handlers previously parsed the path tenant and trusted it unverified,
+// letting a tenant admin read/write another tenant's roles and assignments.
+func requirePathTenant(r *http.Request) (uuid.UUID, error) {
+	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+	}
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if pathTenant != scope {
+		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+	}
+	return scope, nil
+}
+
+// scopedRole parses the {roleID} path param and enforces the role belongs to
+// the caller's own tenant, returning ErrNotFound on cross-tenant access. The
+// role-permission routes carry only a roleID (no tenantID), so without this a
+// tenant admin could grant/revoke/read another tenant's role permissions if
+// they knew the role id (QID-18).
+func (h *Handler) scopedRole(r *http.Request) (uuid.UUID, error) {
+	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	if err != nil {
+		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid roleID")
+	}
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	owner, err := h.Repo.RoleTenant(r.Context(), roleID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if owner != scope {
+		return uuid.Nil, errs.ErrNotFound
+	}
+	return roleID, nil
 }
 
 // actorOf captures the request's audit provenance from the principal + headers.
@@ -61,9 +106,9 @@ func (h *Handler) listPermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	out, err := h.Repo.ListRoles(r.Context(), tid)
@@ -80,9 +125,9 @@ type createRoleInput struct {
 }
 
 func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var in createRoleInput
@@ -102,10 +147,24 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, role)
 }
 
-func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
-	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
+func (h *Handler) listRolePermissions(w http.ResponseWriter, r *http.Request) {
+	roleID, err := h.scopedRole(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Repo.ListRolePermissions(r.Context(), roleID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
+	roleID, err := h.scopedRole(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	permID, err := uuid.Parse(chi.URLParam(r, "permID"))
@@ -121,9 +180,9 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	roleID, err := uuid.Parse(chi.URLParam(r, "roleID"))
+	roleID, err := h.scopedRole(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid roleID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	permID, err := uuid.Parse(chi.URLParam(r, "permID"))
@@ -144,9 +203,9 @@ func (h *Handler) assign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
@@ -168,9 +227,9 @@ func (h *Handler) unassign(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	rid, err := uuid.Parse(chi.URLParam(r, "roleID"))
@@ -191,9 +250,9 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
 		return
 	}
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	keys, err := h.Repo.EffectivePermissions(r.Context(), uid, tid)
@@ -220,6 +279,16 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
+	// The tenant_id is caller-supplied via query; verify it matches the caller's
+	// own JWT tenant so /check can't be used as a cross-tenant permission oracle
+	// (QID-18).
+	if scope, serr := httpx.RequireTenant(r); serr != nil {
+		httpx.WriteError(w, r, serr)
+		return
+	} else if tid != scope {
+		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
+		return
+	}
 	perm := q.Get("permission")
 	if perm == "" {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("permission required"))
@@ -243,9 +312,9 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
@@ -262,9 +331,9 @@ func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))
@@ -286,9 +355,9 @@ func (h *Handler) assignGroupRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) unassignGroupRole(w http.ResponseWriter, r *http.Request) {
-	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	tid, err := requirePathTenant(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	gid, err := uuid.Parse(chi.URLParam(r, "groupID"))

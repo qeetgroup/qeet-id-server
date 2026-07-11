@@ -17,10 +17,13 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { CheckIcon, CopyIcon, FingerprintIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react";
+import { toast } from "sonner";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
+import { StepUpDialog } from "@/components/step-up-dialog";
 import { ApiError, api } from "@/lib/api";
+import { isStepUpRequired } from "@/lib/mfa";
 
 export const Route = createFileRoute("/_app/auth/mfa/totp")({ component: MfaTotpPage });
 
@@ -52,6 +55,8 @@ function MfaTotpPage() {
     },
   });
 
+  const [stepUpOpen, setStepUpOpen] = useState(false);
+
   const disableM = useMutation({
     mutationFn: () => api<void>("/v1/mfa/totp", { method: "DELETE" }),
     onSuccess: () => {
@@ -59,7 +64,21 @@ function MfaTotpPage() {
       setEnrollment(null);
       setRecoveryCodes(null);
     },
+    // silent: a 403 step_up_required opens the step-up dialog instead of a
+    // dead-end toast (QID-17); success/other errors are toasted below.
+    meta: { silent: true },
   });
+
+  // Disabling TOTP is RequireRecentMFA-gated — retry after step-up on a 403.
+  function disableTotp() {
+    disableM.mutate(undefined, {
+      onSuccess: () => toast.success("TOTP disabled"),
+      onError: (err) => {
+        if (isStepUpRequired(err)) setStepUpOpen(true);
+        else toast.error(err instanceof ApiError ? err.message : "Could not disable TOTP");
+      },
+    });
+  }
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -188,7 +207,7 @@ function MfaTotpPage() {
                   variant="outline"
                   onClick={() => {
                     if (confirm("Disable TOTP for your account? Recovery codes will be wiped.")) {
-                      disableM.mutate();
+                      disableTotp();
                     }
                   }}
                   disabled={disableM.isPending}
@@ -203,6 +222,13 @@ function MfaTotpPage() {
       )}
 
       {stage === "confirmed" && <CheckIcon className="hidden" />}
+
+      <StepUpDialog
+        open={stepUpOpen}
+        onOpenChange={setStepUpOpen}
+        actionLabel="disable TOTP"
+        onVerified={disableTotp}
+      />
     </div>
   );
 }

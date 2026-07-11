@@ -79,7 +79,12 @@ type Provider = {
 // iconClass handles dark-mode legibility: black-only marks (GitHub, X) invert in
 // dark, white-only marks (Apple, Notion) invert in light. `fill` is set only for
 // icons that ship without a baked color (Facebook) so they take currentColor.
-// discovery is pre-filled for providers with a stable OIDC well-known endpoint.
+// discovery is pre-filled for providers with a stable, tenant-independent OIDC
+// well-known endpoint. The backend (domains/federation/social/social.go)
+// requires a discovery_url on every provider unconditionally — there is no
+// plain-OAuth2 fallback path (QID-03) — so a blank `discovery` here always
+// means the admin must supply one themselves before sign-in will work, not
+// that the provider works without one.
 type KnownProvider = {
   id: string;
   label: string;
@@ -90,24 +95,28 @@ type KnownProvider = {
   iconClass: string;
   fill?: string;
   discovery: string;
+  // True only for vendors confirmed to have no OIDC discovery document at
+  // all (plain OAuth 2.0-only APIs) — no discovery_url an admin could type
+  // in will ever make these work against this backend today.
+  oauth2Only?: boolean;
 };
 
 const KNOWN_PROVIDERS: KnownProvider[] = [
   { id: "qeet", label: "Qeet", logoLight: "/qeet-logo-on-light.svg", logoDark: "/qeet-logo-on-dark.svg", iconClass: "", discovery: "" },
   { id: "google", label: "Google", Icon: Google, iconClass: "", discovery: "https://accounts.google.com/.well-known/openid-configuration" },
-  { id: "github", label: "GitHub", Icon: Github, iconClass: "dark:invert", discovery: "" },
+  { id: "github", label: "GitHub", Icon: Github, iconClass: "dark:invert", discovery: "", oauth2Only: true },
   { id: "microsoft", label: "Microsoft", Icon: Microsoft, iconClass: "", discovery: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" },
   { id: "apple", label: "Apple", Icon: Apple, iconClass: "invert dark:invert-0", discovery: "https://appleid.apple.com/.well-known/openid-configuration" },
-  { id: "facebook", label: "Facebook", Icon: Facebook, iconClass: "text-[#1877F2]", fill: "currentColor", discovery: "" },
-  { id: "x", label: "X (Twitter)", Icon: X, iconClass: "dark:invert", discovery: "" },
+  { id: "facebook", label: "Facebook", Icon: Facebook, iconClass: "text-[#1877F2]", fill: "currentColor", discovery: "", oauth2Only: true },
+  { id: "x", label: "X (Twitter)", Icon: X, iconClass: "dark:invert", discovery: "", oauth2Only: true },
   { id: "linkedin", label: "LinkedIn", Icon: Linkedin, iconClass: "", discovery: "https://www.linkedin.com/oauth/.well-known/openid-configuration" },
   { id: "gitlab", label: "GitLab", Icon: Gitlab, iconClass: "", discovery: "https://gitlab.com/.well-known/openid-configuration" },
-  { id: "bitbucket", label: "Bitbucket", Icon: Bitbucket, iconClass: "", discovery: "" },
-  { id: "discord", label: "Discord", Icon: Discord, iconClass: "", discovery: "" },
+  { id: "bitbucket", label: "Bitbucket", Icon: Bitbucket, iconClass: "", discovery: "", oauth2Only: true },
+  { id: "discord", label: "Discord", Icon: Discord, iconClass: "", discovery: "", oauth2Only: true },
   { id: "slack", label: "Slack", Icon: Slack, iconClass: "", discovery: "https://slack.com/.well-known/openid-configuration" },
   { id: "twitch", label: "Twitch", Icon: Twitch, iconClass: "", discovery: "https://id.twitch.tv/oauth2/.well-known/openid-configuration" },
   { id: "spotify", label: "Spotify", Icon: Spotify, iconClass: "", discovery: "" },
-  { id: "reddit", label: "Reddit", Icon: Reddit, iconClass: "", discovery: "" },
+  { id: "reddit", label: "Reddit", Icon: Reddit, iconClass: "", discovery: "", oauth2Only: true },
   { id: "atlassian", label: "Atlassian", Icon: Atlassian, iconClass: "", discovery: "" },
   { id: "salesforce", label: "Salesforce", Icon: Salesforce, iconClass: "", discovery: "https://login.salesforce.com/.well-known/openid-configuration" },
   { id: "okta", label: "Okta", Icon: Okta, iconClass: "", discovery: "" },
@@ -181,7 +190,9 @@ function SocialPage() {
                       <CardDescription>{cfg ? "Configured" : "Not configured"}</CardDescription>
                     </div>
                   </div>
-                  {cfg ? (
+                  {p.oauth2Only ? (
+                    <Badge variant="outline">Not supported yet</Badge>
+                  ) : cfg ? (
                     cfg.enabled ? <Badge variant="success">Enabled</Badge> : <Badge variant="muted">Disabled</Badge>
                   ) : (
                     <Badge variant="outline">Off</Badge>
@@ -189,16 +200,31 @@ function SocialPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-2">
-                {listQ.isLoading ? (
+                {p.oauth2Only ? (
+                  <p className="text-xs text-muted-foreground">
+                    {p.label} doesn&apos;t publish an OIDC discovery document — sign-in requires a
+                    discovery URL, so this provider can&apos;t work until a plain-OAuth-2.0 adapter
+                    ships.
+                  </p>
+                ) : listQ.isLoading ? (
                   <Skeleton className="h-12 w-full" />
                 ) : cfg ? (
                   <code className="block break-all text-xs text-muted-foreground">
                     client_id={cfg.client_id.slice(0, 20)}…
                   </code>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No credentials saved.</p>
+                  <p className="text-xs text-muted-foreground">
+                    No credentials saved.
+                    {!p.discovery && " Requires your own OIDC discovery URL."}
+                  </p>
                 )}
-                <Button variant="outline" size="sm" className="w-full" onClick={() => setEditingProvider(p.id)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={p.oauth2Only}
+                  onClick={() => setEditingProvider(p.id)}
+                >
                   <PlusIcon /> {cfg ? "Update" : "Configure"}
                 </Button>
               </CardContent>
@@ -315,10 +341,15 @@ function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved
                   id="discovery_url"
                   name="discovery_url"
                   type="url"
+                  required
                   defaultValue={existing?.discovery_url ?? meta?.discovery}
                   placeholder="https://provider.example/.well-known/openid-configuration"
                 />
-                <FieldDescription>Optional. Used for OIDC providers; leave blank for plain OAuth 2.0.</FieldDescription>
+                <FieldDescription>
+                  Required — sign-in fails without it. Some providers (Okta, Auth0, self-hosted
+                  GitLab, …) don&apos;t have a fixed URL; find yours in the provider&apos;s own
+                  OIDC/SSO settings, usually {"{your-domain}"}/.well-known/openid-configuration.
+                </FieldDescription>
               </Field>
               {upsertM.error && <Field><FieldError>{(upsertM.error as ApiError).message}</FieldError></Field>}
             </FieldGroup>

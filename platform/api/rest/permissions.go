@@ -42,6 +42,7 @@ func permissionMap() map[string]string {
 		"GET /v1/permissions":                                         "role.read",
 		"GET /v1/tenants/{tenantID}/roles":                            "role.read",
 		"POST /v1/tenants/{tenantID}/roles":                           "role.write",
+		"GET /v1/roles/{roleID}/permissions":                          "role.read",
 		"POST /v1/roles/{roleID}/permissions/{permID}":                "role.write",
 		"DELETE /v1/roles/{roleID}/permissions/{permID}":              "role.write",
 		"POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}":   "role.write",

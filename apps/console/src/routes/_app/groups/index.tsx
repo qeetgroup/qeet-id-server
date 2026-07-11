@@ -40,7 +40,7 @@ import { useTenantId } from "@/lib/auth";
 import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/groups")({ component: GroupsPage });
+export const Route = createFileRoute("/_app/groups/")({ component: GroupsPage });
 
 type Group = {
   id: string;

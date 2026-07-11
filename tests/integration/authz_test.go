@@ -95,6 +95,85 @@ func TestRBACDecisionMatrix(t *testing.T) {
 	}
 }
 
+// TestRBACListRolePermissions covers the console's Access → Roles detail
+// screen (GET /v1/roles/{roleID}/permissions), which previously 404'd for
+// every admin who opened it — the route was never registered (QID-01): only
+// the single-permission grant/revoke endpoints existed. Verifies granted
+// permissions are returned, revoked ones disappear, and roles never leak
+// another tenant's permission set.
+func TestRBACListRolePermissions(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	repo := rbac.NewRepository(testPool)
+
+	tenantA := createTenant(t, ctx, uniqueSlug("rolelist-a"))
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	permA, err := repo.UpsertPermission(ctx, tx, "widget:read", "read widgets")
+	if err != nil {
+		t.Fatalf("permission a: %v", err)
+	}
+	permB, err := repo.UpsertPermission(ctx, tx, "widget:write", "write widgets")
+	if err != nil {
+		t.Fatalf("permission b: %v", err)
+	}
+	role, err := repo.CreateRole(ctx, tx, tenantA, "widget-admin-"+uniqueSlug("r"), "", false)
+	if err != nil {
+		t.Fatalf("role: %v", err)
+	}
+	otherRole, err := repo.CreateRole(ctx, tx, tenantA, "widget-viewer-"+uniqueSlug("r"), "", false)
+	if err != nil {
+		t.Fatalf("other role: %v", err)
+	}
+	if err := repo.GrantPermission(ctx, tx, role.ID, permA.ID); err != nil {
+		t.Fatalf("grant a: %v", err)
+	}
+	if err := repo.GrantPermission(ctx, tx, role.ID, permB.ID); err != nil {
+		t.Fatalf("grant b: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	got, err := repo.ListRolePermissions(ctx, role.ID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("granted permissions = %d, want 2 (%+v)", len(got), got)
+	}
+
+	empty, err := repo.ListRolePermissions(ctx, otherRole.ID)
+	if err != nil {
+		t.Fatalf("list other role: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ungranted role should list 0 permissions, got %d", len(empty))
+	}
+
+	tx2, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin 2: %v", err)
+	}
+	if err := repo.RevokePermission(ctx, tx2, role.ID, permB.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatalf("commit 2: %v", err)
+	}
+
+	afterRevoke, err := repo.ListRolePermissions(ctx, role.ID)
+	if err != nil {
+		t.Fatalf("list after revoke: %v", err)
+	}
+	if len(afterRevoke) != 1 || afterRevoke[0].Key != "widget:read" {
+		t.Errorf("after revoke = %+v, want only widget:read", afterRevoke)
+	}
+}
+
 // createGroup inserts a bare group row and returns its id.
 func createGroup(t *testing.T, ctx context.Context, tenantID uuid.UUID, name string) uuid.UUID {
 	t.Helper()

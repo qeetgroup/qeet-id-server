@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -101,6 +102,35 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 		})
 	}
+}
+
+// EnforceTenantScope rejects any request whose matched route carries a
+// {tenantID} path param that isn't the authenticated caller's own tenant.
+// Mounted once on the authed route group, it closes the entire class of
+// cross-tenant "trust the path tenant" bugs (QID-18) centrally, so a handler
+// physically cannot serve another tenant's data even if it forgets to check.
+// Routes without a {tenantID} param (e.g. /users/{id}, /roles/{roleID}) pass
+// through untouched — those are scoped by their own handlers.
+func EnforceTenantScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if pathTenant := chi.URLParam(r, "tenantID"); pathTenant != "" {
+			want, err := RequireTenant(r)
+			if err != nil {
+				WriteError(w, r, err)
+				return
+			}
+			got, perr := uuid.Parse(pathTenant)
+			if perr != nil {
+				WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+				return
+			}
+			if got != want {
+				WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RequireTenant returns the principal's tenant id — the only trustworthy

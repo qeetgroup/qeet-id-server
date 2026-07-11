@@ -55,7 +55,7 @@ import {
   useOidcClients,
 } from "@/lib/oidc-clients";
 
-export const Route = createFileRoute("/_app/auth/connections/oidc")({ component: OidcPage });
+export const Route = createFileRoute("/_app/auth/connections/oidc/")({ component: OidcPage });
 
 function OidcPage() {
   const { t } = useTranslation("oidc");

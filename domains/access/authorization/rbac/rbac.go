@@ -116,6 +116,44 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 	return out, nil
 }
 
+// RoleTenant returns the tenant a role belongs to, or ErrNotFound. The
+// role-permission routes carry only a {roleID} (no {tenantID}), so handlers use
+// this to enforce the role belongs to the caller's own tenant (QID-18).
+func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
+	var tid uuid.UUID
+	err := r.pool.QueryRow(ctx, `SELECT tenant_id FROM rbac.roles WHERE id = $1`, roleID).Scan(&tid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return tid, nil
+}
+
+func (r *Repository) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]Permission, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.key, p.description
+		FROM rbac.permissions p
+		JOIN rbac.role_permissions rp ON rp.permission_id = p.id
+		WHERE rp.role_id = $1
+		ORDER BY p.key
+	`, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Permission
+	for rows.Next() {
+		var p Permission
+		if err := rows.Scan(&p.ID, &p.Key, &p.Description); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 func (r *Repository) GrantPermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO rbac.role_permissions (role_id, permission_id)

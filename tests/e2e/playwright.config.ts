@@ -26,24 +26,33 @@ export default defineConfig({
     },
   ],
 
+  // Commands run from the repo root (two levels up from tests/e2e). These match
+  // the real Makefile / package.json targets — the previous `make dev-backend`
+  // / `make dev-login` / `make dev-admin` targets never existed (QID-08), so the
+  // harness could not start a stack on its own. `reuseExistingServer` means a
+  // stack already up via `make dev` + `pnpm dev:login` + `pnpm dev:admin` is
+  // reused locally; CI starts them fresh.
   webServer: [
     {
-      command: "make dev-backend",
+      command: "make dev",
+      cwd: "../..",
       url: "http://localhost:4001/healthz",
       reuseExistingServer: !process.env.CI,
-      timeout: 30_000,
+      timeout: 60_000,
     },
     {
-      command: "make dev-login",
+      command: "pnpm dev:login",
+      cwd: "../..",
       url: "http://localhost:3004",
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      timeout: 120_000,
     },
     {
-      command: "make dev-admin",
+      command: "pnpm dev:admin",
+      cwd: "../..",
       url: "http://localhost:3002",
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
+      timeout: 120_000,
     },
   ],
 });

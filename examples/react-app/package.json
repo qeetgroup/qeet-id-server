@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@qeet-id/react": "workspace:*",
+    "@qeet-id/react": "link:../../../qeet-sdks/qeet-id-react",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

@@ -49,15 +49,35 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/users/{id}/purge", h.purge)
 }
 
+// scopedID parses the {id} path param AND enforces that the target user belongs
+// to the caller's own tenant, returning ErrNotFound on any cross-tenant access
+// (QID-18 — previously every by-id user handler operated on the raw id with no
+// tenant scoping, so a tenant admin could read/modify/delete another tenant's
+// users by id). ErrNotFound (not Forbidden) is deliberate: it doesn't leak
+// whether the id exists in some other tenant.
+func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) {
+	id, err = uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+	}
+	tenantID, err = httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	owner, err := h.Repo.TenantOf(r.Context(), id)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if owner != tenantID {
+		return uuid.Nil, uuid.Nil, errs.ErrNotFound
+	}
+	return id, tenantID, nil
+}
+
 // resetMFA clears a user's MFA factors so a locked-out user can re-enroll.
 // Admin-only (gated on user.write by the RBAC enforcer); audited.
 func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
-		return
-	}
-	tenantID, err := httpx.RequireTenant(r)
+	id, tenantID, err := h.scopedID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -150,9 +170,9 @@ func (h *Handler) auditUserAction(r *http.Request, action string, target uuid.UU
 }
 
 func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, _, err := h.scopedID(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Repo.Restore(r.Context(), id); err != nil {
@@ -169,9 +189,9 @@ func (h *Handler) restore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) purge(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, _, err := h.scopedID(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Repo.Purge(r.Context(), id); err != nil {
@@ -263,9 +283,9 @@ func (h *Handler) publishCreated(r *http.Request, u *User) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, _, err := h.scopedID(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	u, err := h.Repo.Get(r.Context(), id)
@@ -277,9 +297,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, _, err := h.scopedID(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var in UpdateInput
@@ -300,9 +320,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, _, err := h.scopedID(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Repo.SoftDelete(r.Context(), id); err != nil {
@@ -317,9 +337,9 @@ type setPasswordInput struct {
 }
 
 func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, tenantID, err := h.scopedID(r)
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, err)
 		return
 	}
 	var in setPasswordInput
@@ -333,11 +353,9 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// Enforce the tenant's password-complexity policy when set.
 	if h.PasswordPolicy != nil {
-		if tenantID, terr := httpx.RequireTenant(r); terr == nil {
-			if perr := h.PasswordPolicy(r.Context(), tenantID, in.Password); perr != nil {
-				httpx.WriteError(w, r, perr)
-				return
-			}
+		if perr := h.PasswordPolicy(r.Context(), tenantID, in.Password); perr != nil {
+			httpx.WriteError(w, r, perr)
+			return
 		}
 	}
 	hash, err := password.Hash(in.Password)

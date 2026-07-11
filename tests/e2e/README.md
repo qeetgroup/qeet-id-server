@@ -45,7 +45,7 @@ pnpm --filter @qeetid/e2e exec playwright test --debug
 | File | Covers |
 |---|---|
 | `login/email-password.spec.ts` | Login with email+password, MFA, lockout |
-| `login/passkeys.spec.ts` | Passkey registration and authentication |
+| `login/passkeys.spec.ts` | Passkey registration and authentication — ⚠️ not yet written. The security-critical WebAuthn ceremony (full register + login + forged-assertion rejection) is covered at the more robust, CI-wired Go layer in `tests/integration/passkey_ceremony_test.go` (virtual authenticator); this browser-level spec (exercising the login app's `navigator.credentials` JS) is a P2 follow-up. |
 | `login/magic-link.spec.ts` | Magic-link and OTP flows |
 | `login/social.spec.ts` | Social OAuth (Google stub) |
 | `admin/dashboard.spec.ts` | Admin app login + dashboard landing |
@@ -62,10 +62,18 @@ Shared page objects, auth helpers, and test data are in `fixtures/`:
 - `fixtures/pages.ts` — Page Object Model wrappers
 - `fixtures/data.ts` — seed user/org constants (matches `cmd/seed/main.go`)
 
-## Seed credentials (matches demo seed)
+## Seed credentials (verified live against `cmd/seed/main.go`, 2026-07-11 — QID-11)
+
+All three belong to the "Qeet Group" tenant (`saibabu@qeet.in` is the founder/owner).
 
 | Role | Email | Password |
 |---|---|---|
-| Super-admin | `admin@demo.id.qeet.in` | `Password123!` |
-| Org admin | `org-admin@demo.id.qeet.in` | `Password123!` |
-| Member | `member@demo.id.qeet.in` | `Password123!` |
+| Super-admin (owner) | `saibabu@qeet.in` | `Password123!` |
+| Org admin | `aarav@qeet.in` | `Password123!` |
+| Member | `sneha@qeet.in` | `Password123!` |
+
+The seed also provisions 7 separate customer workspaces (northwind/meridian/lumen/aster/vertex/cobalt/fjord) for cross-tenant isolation testing, each with a generated owner email — query the DB rather than hardcoding them, since they're derived from a name pool:
+```sql
+select u.email from "user".users u join tenant.tenants t on t.id = u.tenant_id
+where t.slug = 'northwind' order by u.created_at limit 1;
+```

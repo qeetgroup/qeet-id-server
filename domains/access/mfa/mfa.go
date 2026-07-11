@@ -83,6 +83,14 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	if _, err := tx.Exec(ctx, `UPDATE auth.mfa_totp SET confirmed_at = NOW() WHERE user_id = $1`, userID); err != nil {
 		return nil, err
 	}
+	// Completing enrollment is itself a successful factor verification (the user
+	// just proved possession of the authenticator), so it refreshes the step-up
+	// window — otherwise the very next sensitive action (regenerate recovery
+	// codes, disable TOTP), which is RequireRecentMFA-gated, would 403 with no
+	// way to satisfy it (QID-17).
+	if err := s.RecordVerification(ctx, tx, userID, "totp"); err != nil {
+		return nil, err
+	}
 	// Wipe old recovery codes, mint a fresh batch.
 	return s.mintRecoveryCodes(ctx, tx, userID)
 }

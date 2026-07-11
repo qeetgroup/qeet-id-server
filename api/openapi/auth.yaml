@@ -1490,6 +1490,39 @@ paths:
                       $ref: '#/components/schemas/Permission'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/roles/{roleID}/permissions:
+    get:
+      operationId: get_v1_roles_ByRoleID_permissions
+      summary: List permissions granted to a role
+      tags:
+        - RBAC
+      parameters:
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Permissions granted to the role
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Permission'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/roles/{roleID}/permissions/{permID}:
     delete:
       operationId: delete_v1_roles_ByRoleID_permissions_ByPermID

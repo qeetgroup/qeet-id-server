@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { QeetIDProvider, SignedIn, SignedOut, SignInWithQeet, UserButton } from "@qeet-id/react";
+import { QeetIDProvider, SignedIn, SignedOut, SignInButton, UserButton } from "@qeet-id/react";
 
 import {
   fetchUserInfo,
@@ -111,7 +111,7 @@ function Home() {
         <SignedOut>
           <p>You are signed out. Click below to sign in with Qeet.</p>
           <div className="btn-wrap">
-            <SignInWithQeet />
+            <SignInButton className="link-btn">Sign in with Qeet</SignInButton>
           </div>
         </SignedOut>
 

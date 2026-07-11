@@ -5,7 +5,7 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:4001}"
-EMAIL="${SMOKE_EMAIL:-member@demo.id.qeet.in}"
+EMAIL="${SMOKE_EMAIL:-sneha@qeet.in}"
 PASSWORD="${SMOKE_PASSWORD:-Password123!}"
 
 echo "Smoke test against ${BASE_URL}"
@@ -21,6 +21,7 @@ login_response=$(curl -sf --max-time 10 -X POST "${BASE_URL}/v1/auth/login" \
 
 access_token=$(echo "$login_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])" 2>/dev/null || echo "")
 refresh_token=$(echo "$login_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['refresh_token'])" 2>/dev/null || echo "")
+user_id=$(echo "$login_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['user_id'])" 2>/dev/null || echo "")
 
 if [ -z "$access_token" ]; then
   echo "FAIL: no access_token in login response"
@@ -30,10 +31,14 @@ fi
 echo "   OK — got access_token"
 
 # 2. Authenticated request
+# There is no GET /v1/users/me endpoint (QID-10) — the backend routes
+# /v1/users/{id} and would try to parse the literal "me" as a UUID, returning
+# 400 "invalid id". Use the user_id from the login response instead, matching
+# the workaround the console's own lib/auth.ts already uses.
 echo "2. Authenticated profile fetch..."
-curl -sf --max-time 5 "${BASE_URL}/v1/users/me" \
+curl -sf --max-time 5 "${BASE_URL}/v1/users/${user_id}" \
   -H "Authorization: Bearer ${access_token}" >/dev/null || {
-  echo "FAIL: /v1/users/me failed"
+  echo "FAIL: /v1/users/{id} failed"
   exit 1
 }
 echo "   OK"

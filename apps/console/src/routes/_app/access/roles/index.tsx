@@ -41,7 +41,7 @@ import { useTenantId } from "@/lib/auth";
 import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/access/roles")({ component: RolesPage });
+export const Route = createFileRoute("/_app/access/roles/")({ component: RolesPage });
 
 type Permission = { id: string; key: string; description: string };
 type Role = {
