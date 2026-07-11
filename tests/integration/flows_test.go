@@ -35,6 +35,7 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/operations/analytics"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
@@ -530,6 +531,13 @@ func TestCIBABackchannelFlow(t *testing.T) {
 	if err := svc.DecideBackchannel(ctx, userID, pending[0].ID, true); err != nil {
 		t.Fatalf("decide: %v", err)
 	}
+	// Bypass the CIBA interval throttle: the pre-decision poll above just set
+	// last_polled_at, so a poll now (well under the 5s interval) correctly
+	// returns slow_down (QID-16 — the test previously failed here because it
+	// polled back-to-back). Push last_polled_at into the past, mirroring the
+	// device grant's resetPollClock, so this test can poll without waiting out
+	// the real interval. The slow_down behavior itself is exercised separately.
+	resetCIBAPollClock(t, ctx, authResp.AuthReqID)
 	resp, err := svc.BackchannelToken(ctx, client.ClientID, authResp.AuthReqID)
 	if err != nil {
 		t.Fatalf("token poll after approval: %v", err)
@@ -543,8 +551,22 @@ func TestCIBABackchannelFlow(t *testing.T) {
 	}
 
 	// The auth_req_id is one-time.
+	resetCIBAPollClock(t, ctx, authResp.AuthReqID)
 	if _, err := svc.BackchannelToken(ctx, client.ClientID, authResp.AuthReqID); err == nil {
 		t.Fatal("reusing a consumed auth_req_id should fail")
+	}
+}
+
+// resetCIBAPollClock pushes a CIBA request's last_polled_at into the past so a
+// test can poll BackchannelToken back-to-back without tripping the interval
+// throttle (slow_down). Mirrors device_test.go's resetPollClock; keyed on the
+// auth_req_id hash the same way BackchannelToken looks the row up.
+func resetCIBAPollClock(t *testing.T, ctx context.Context, rawAuthReqID string) {
+	t.Helper()
+	if _, err := testPool.Exec(ctx,
+		`UPDATE auth.oidc_ciba_requests SET last_polled_at = NOW() - INTERVAL '1 hour' WHERE auth_req_id_hash = $1`,
+		codes.Hash(rawAuthReqID)); err != nil {
+		t.Fatalf("reset CIBA poll clock: %v", err)
 	}
 }
 
@@ -642,8 +664,19 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 		t.Fatalf("issue subject token: %v", err)
 	}
 
+	// RFC 8693 delegation: the actor_token is a real, verifiable access token
+	// representing the acting party (the agent). Its subject flows into the
+	// exchanged token's `act.sub`. Passing a bare identifier string here fails
+	// VerifyAccess (QID-15 — the test previously passed the literal "agent-123",
+	// which the actor-token verification correctly rejected as not-a-token).
+	agentID := uuid.New()
+	actorAccess, _, err := issuer.IssueAccess(agentID, tenantID, uuid.New(), "")
+	if err != nil {
+		t.Fatalf("issue actor token: %v", err)
+	}
+
 	const mcpResource = "https://mcp.example.com"
-	resp, err := svc.TokenExchange(ctx, client.ClientID, secret, subjectAccess, "", "", "", "agent-123", "", mcpResource)
+	resp, err := svc.TokenExchange(ctx, client.ClientID, secret, subjectAccess, "", "", "", actorAccess, "", mcpResource)
 	if err != nil {
 		t.Fatalf("token exchange: %v", err)
 	}
@@ -654,8 +687,8 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	if !slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("exchanged access token audience = %v, want to include %q", claims.Audience, mcpResource)
 	}
-	if claims.Act == nil || claims.Act.Subject != "agent-123" {
-		t.Fatalf("exchanged access token should carry the act claim, got %+v", claims.Act)
+	if claims.Act == nil || claims.Act.Subject != agentID.String() {
+		t.Fatalf("exchanged access token should carry the act claim with the actor's subject %q, got %+v", agentID, claims.Act)
 	}
 }
 

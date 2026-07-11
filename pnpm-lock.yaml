@@ -351,48 +351,11 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
-  examples/nextjs-app:
-    dependencies:
-      '@qeet-id/nextjs':
-        specifier: workspace:*
-        version: link:../../sdk/js/nextjs
-      '@qeet-id/node':
-        specifier: workspace:*
-        version: link:../../sdk/js/node
-      '@qeet-id/react':
-        specifier: workspace:*
-        version: link:../../sdk/js/react
-      next:
-        specifier: 'catalog:'
-        version: 16.2.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      react:
-        specifier: 'catalog:'
-        version: 19.2.6
-      react-dom:
-        specifier: 'catalog:'
-        version: 19.2.6(react@19.2.6)
-    devDependencies:
-      '@qeet-id/tsconfig':
-        specifier: workspace:*
-        version: link:../../packages/qeetid-tsconfig
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.15
-      '@types/react-dom':
-        specifier: 'catalog:'
-        version: 19.2.3(@types/react@19.2.15)
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-
   examples/react-app:
     dependencies:
       '@qeet-id/react':
-        specifier: workspace:*
-        version: link:../../sdk/js/react
+        specifier: link:../../../qeet-sdks/qeet-id-react
+        version: link:../../../qeet-sdks/qeet-id-react
       react:
         specifier: 'catalog:'
         version: 19.2.6
@@ -420,65 +383,6 @@ importers:
         version: 8.0.16(@types/node@22.19.19)(esbuild@0.28.0)(jiti@2.7.0)
 
   packages/qeetid-tsconfig: {}
-
-  sdk/js/client:
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-
-  sdk/js/nextjs:
-    dependencies:
-      '@qeet-id/node':
-        specifier: workspace:*
-        version: link:../node
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.15
-      next:
-        specifier: 'catalog:'
-        version: 16.2.6(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      react:
-        specifier: 'catalog:'
-        version: 19.2.6
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-
-  sdk/js/node:
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
-
-  sdk/js/react:
-    dependencies:
-      '@qeet-id/client':
-        specifier: workspace:*
-        version: link:../client
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 22.19.19
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.15
-      react:
-        specifier: 'catalog:'
-        version: 19.2.6
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.3
 
 packages:
 
@@ -6761,7 +6665,7 @@ snapshots:
       - '@types/react'
       - immer
 
-  '@reduxjs/toolkit@2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6))(react@19.2.6)':
+  '@reduxjs/toolkit@2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6)(redux@5.0.1))(react@19.2.6)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@standard-schema/utils': 0.3.0
@@ -10249,7 +10153,7 @@ snapshots:
 
   recharts@3.8.1(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react-is@17.0.2)(react@19.2.6)(redux@5.0.1):
     dependencies:
-      '@reduxjs/toolkit': 2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6))(react@19.2.6)
+      '@reduxjs/toolkit': 2.12.0(react-redux@9.3.0(@types/react@19.2.15)(react@19.2.6)(redux@5.0.1))(react@19.2.6)
       clsx: 2.1.1
       decimal.js-light: 2.5.1
       es-toolkit: 1.47.0

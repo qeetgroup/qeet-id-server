@@ -249,6 +249,16 @@ func NewRouter(d Deps) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(d.APIKeyService.Middleware)
 			r.Use(httpx.RequireAuth(d.AuthVerifier))
+			// Central cross-tenant guard: any route with a {tenantID} path param
+			// must match the caller's own tenant (QID-18). Belt to the individual
+			// handlers' suspenders. NOTE: this relies on the nested Route("/v1")
+			// + Group structure — chi only exposes the {tenantID} param to a
+			// group-level middleware when routes are matched by the nested
+			// subrouter. Do NOT flatten these routes onto the top mux, or this
+			// guard stops seeing the param and silently fails open. (rbac + users
+			// also self-scope in-handler, so those two survive a refactor; the
+			// other tenant-scoped resources rely on this middleware.)
+			r.Use(httpx.EnforceTenantScope)
 			r.Use(tenantLimiter.MiddlewareBy("tenant", ratelimit.PerTenant))
 			r.Use(userLimiter.MiddlewareBy("user", ratelimit.PerUser))
 			r.Use(apiKeyLimiter.MiddlewareBy("apikey", ratelimit.PerAPIKey))

@@ -755,6 +755,65 @@ func TestMFAWebAuthnFinishRejectsMismatch(t *testing.T) {
 // mfa — step-up: record/recent window, gate middleware, gated endpoints
 // =====================================================================
 
+// TestMFAEnrollSatisfiesStepUp locks in the QID-17 backend fix: completing TOTP
+// enrollment records a verification, so the recent-MFA (step-up) window is fresh
+// immediately afterward. Before the fix, ConfirmEnroll recorded nothing, so the
+// very next RequireRecentMFA-gated action (regenerate recovery codes, disable
+// TOTP) 403'd with no way for the console to satisfy it.
+func TestMFAEnrollSatisfiesStepUp(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("mfa-stepup"))
+	userID := createUserInTenant(t, ctx, tenantID)
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+
+	// No verification before enrollment.
+	ok, _, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("recently verified (pre): %v", err)
+	}
+	if ok {
+		t.Fatal("a user who has done nothing must not read as recently verified")
+	}
+
+	// Enroll: start + confirm with a real code.
+	tx, _ := testPool.Begin(ctx)
+	enr, err := svc.StartEnroll(ctx, tx, userID, "stepup@example.com")
+	if err != nil {
+		t.Fatalf("start enroll: %v", err)
+	}
+	tx.Commit(ctx)
+	code, err := totp.Code(enr.Secret, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("totp code: %v", err)
+	}
+	tx, _ = testPool.Begin(ctx)
+	if _, err := svc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+		t.Fatalf("confirm enroll: %v", err)
+	}
+	tx.Commit(ctx)
+
+	// The fix: enrollment itself counts as a recent verification.
+	ok, at, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("recently verified (post): %v", err)
+	}
+	if !ok || at == nil {
+		t.Fatalf("completing enrollment must satisfy the step-up window, got (%v, %v)", ok, at)
+	}
+
+	// And a step-up-gated action (regenerate) works right after enroll.
+	tx, _ = testPool.Begin(ctx)
+	fresh, err := svc.Regenerate(ctx, tx, userID)
+	if err != nil {
+		t.Fatalf("regenerate right after enroll should succeed: %v", err)
+	}
+	tx.Commit(ctx)
+	if len(fresh) != 10 {
+		t.Fatalf("regenerate should mint 10 codes, got %d", len(fresh))
+	}
+}
+
 // TestMFAStepUpWindow exercises RecordVerification + RecentlyVerified: a missing
 // row reads as not-verified, a just-recorded verification is fresh within the
 // window, and the same verification reads as stale against a zero window.
@@ -908,6 +967,14 @@ func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
 		t.Fatalf("confirm: %v", err)
 	}
 	tx.Commit(ctx)
+
+	// Enrollment now records a verification (QID-17 fix), which satisfies the
+	// step-up window. Clear it so the "without step-up" assertions below still
+	// genuinely exercise the gate (simulating a session whose last verification
+	// has aged out of the window).
+	if _, err := testPool.Exec(ctx, `DELETE FROM auth.mfa_verifications WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("clear verification: %v", err)
+	}
 
 	h := &mfa.Handler{Service: svc}
 	r := chi.NewRouter()

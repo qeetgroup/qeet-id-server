@@ -11,10 +11,13 @@ import {
 } from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, DownloadIcon, KeyRoundIcon, RefreshCwIcon } from "lucide-react";
+import { toast } from "sonner";
 import { useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
-import { useRecoveryStatus, useRegenerateRecoveryCodes } from "@/lib/mfa";
+import { StepUpDialog } from "@/components/step-up-dialog";
+import { ApiError } from "@/lib/api";
+import { isStepUpRequired, useRecoveryStatus, useRegenerateRecoveryCodes } from "@/lib/mfa";
 
 export const Route = createFileRoute("/_app/auth/mfa/recovery-codes")({ component: RecoveryCodesPage });
 
@@ -22,6 +25,20 @@ function RecoveryCodesPage() {
   const statusQ = useRecoveryStatus();
   const regenM = useRegenerateRecoveryCodes();
   const [copied, setCopied] = useState(false);
+  const [stepUpOpen, setStepUpOpen] = useState(false);
+
+  // Regenerating recovery codes is RequireRecentMFA-gated. On a 403
+  // step_up_required, open the step-up dialog and retry after re-verification
+  // (QID-17) instead of dead-ending on a toast.
+  function regenerate() {
+    regenM.mutate(undefined, {
+      onSuccess: () => toast.success("New recovery codes generated"),
+      onError: (err) => {
+        if (isStepUpRequired(err)) setStepUpOpen(true);
+        else toast.error(err instanceof ApiError ? err.message : "Could not generate codes");
+      },
+    });
+  }
 
   const status = statusQ.data;
   const fresh = regenM.data?.recovery_codes;
@@ -94,7 +111,7 @@ function RecoveryCodesPage() {
                 <CardDescription>This invalidates any existing codes.</CardDescription>
               </CardHeader>
               <CardContent>
-                <Button size="sm" onClick={() => regenM.mutate()} disabled={regenM.isPending}>
+                <Button size="sm" onClick={regenerate} disabled={regenM.isPending}>
                   <RefreshCwIcon className={regenM.isPending ? "animate-spin" : ""} />
                   {status.total > 0 ? "Regenerate codes" : "Generate codes"}
                 </Button>
@@ -133,6 +150,13 @@ function RecoveryCodesPage() {
           </Card>
         )}
       </DataState>
+
+      <StepUpDialog
+        open={stepUpOpen}
+        onOpenChange={setStepUpOpen}
+        actionLabel="regenerate your recovery codes"
+        onVerified={regenerate}
+      />
     </div>
   );
 }

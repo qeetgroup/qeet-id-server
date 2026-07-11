@@ -3,7 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "./api";
+import { ApiError, api } from "./api";
 
 // ---- Recovery codes ----
 
@@ -28,8 +28,30 @@ export function useRegenerateRecoveryCodes() {
         method: "POST",
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["mfa", "recovery-codes"] }),
-    meta: { successMessage: "New recovery codes generated" },
+    // silent: a 403 step_up_required is handled locally by opening the step-up
+    // dialog rather than surfacing a dead-end toast (QID-17). The success toast
+    // is emitted by the screen after the (possibly re-run) mutation resolves.
+    meta: { silent: true },
   });
+}
+
+// ---- Step-up verification ----
+//
+// Sensitive MFA actions (regenerate recovery codes, disable TOTP) are gated
+// server-side by RequireRecentMFA and return 403 `step_up_required` when the
+// session hasn't verified a factor recently. useStepUpVerify re-verifies a
+// TOTP or recovery code (refreshing that window) so the caller can retry.
+export function useStepUpVerify() {
+  return useMutation({
+    mutationFn: (code: string) =>
+      api<{ verified: boolean }>("/v1/mfa/totp/verify", { method: "POST", body: { code } }),
+    meta: { silent: true },
+  });
+}
+
+/** True when an error is the backend's step-up-required signal. */
+export function isStepUpRequired(err: unknown): boolean {
+  return err instanceof ApiError && err.code === "step_up_required";
 }
 
 // ---- Email / SMS OTP factors ----

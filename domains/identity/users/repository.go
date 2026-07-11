@@ -157,6 +157,25 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
 	return &u, nil
 }
 
+// TenantOf returns the tenant a user belongs to, regardless of soft-delete
+// state (so it also guards restore/purge). Returns ErrNotFound for a missing
+// user or a tenant-less one. Used to enforce that admin by-id operations never
+// cross tenants (QID-18) — callers compare it to the requester's own tenant.
+func (r *Repository) TenantOf(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	var tid *uuid.UUID
+	err := r.pool.QueryRow(ctx, `SELECT tenant_id FROM "user".users WHERE id = $1`, id).Scan(&tid)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if tid == nil {
+		return uuid.Nil, errs.ErrNotFound
+	}
+	return *tid, nil
+}
+
 func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT `+userCols+`

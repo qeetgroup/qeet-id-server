@@ -1,8 +1,13 @@
 packages:
   - "apps/*"
   - "packages/*"
-  - "sdk/js/*"
   - "examples/*"
+  # QID-06: excluded until @qeet-id/nextjs is resurrected (the 2026-07-10 SDK
+  # extraction moved Go/Node/React to qeet-sdks/ as standalone repos but left
+  # Next.js with no replacement anywhere) — this example can't resolve its
+  # @qeet-id/nextjs dependency and would otherwise fail `pnpm install` for the
+  # whole workspace. See qa/TESTING-FINDINGS.md.
+  - "!examples/nextjs-app"
 
 onlyBuiltDependencies:
   - esbuild

@@ -399,15 +399,24 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 	if email == "" {
 		return uuid.Nil, nil, errs.ErrUnprocessable.WithDetail("email is required")
 	}
+	// Conflict if the email is already taken by a real user, OR if a passkey
+	// signup is already in flight for it (a non-expired pending session). The
+	// two-phase begin→finish ceremony means no "user".users row exists until
+	// FinishSignup, so without the second check a duplicate/rival signup for
+	// an in-progress email would slip through (QID-14) — password signup, which
+	// creates the row synchronously, has no such window. Scoped to non-expired
+	// sessions (5-min TTL) so an abandoned ceremony can't lock the email out.
 	var exists bool
 	var err error
 	if tenantID == uuid.Nil {
 		err = s.pool.QueryRow(ctx, `
 			SELECT EXISTS (SELECT 1 FROM "user".users WHERE LOWER(email) = LOWER($1) AND tenant_id IS NULL AND deleted_at IS NULL)
+			    OR EXISTS (SELECT 1 FROM auth.webauthn_sessions WHERE kind = 'signup' AND LOWER(pending_email) = LOWER($1) AND pending_tenant_id IS NULL AND expires_at > now())
 		`, email).Scan(&exists)
 	} else {
 		err = s.pool.QueryRow(ctx, `
 			SELECT EXISTS (SELECT 1 FROM "user".users WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND deleted_at IS NULL)
+			    OR EXISTS (SELECT 1 FROM auth.webauthn_sessions WHERE kind = 'signup' AND LOWER(pending_email) = LOWER($1) AND pending_tenant_id = $2 AND expires_at > now())
 		`, email, tenantID).Scan(&exists)
 	}
 	if err != nil {
