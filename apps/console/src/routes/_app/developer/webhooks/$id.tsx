@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { Fragment, useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/_app/developer/webhooks/$id")({
@@ -63,6 +64,7 @@ function WebhookDetailPage() {
   const { id } = Route.useParams();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [confirmDialog, openConfirm] = useConfirmDialog();
 
   const webhookQ = useQuery({
     queryKey: ["webhook", id],
@@ -99,6 +101,7 @@ function WebhookDetailPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <Link
         to="/developer/webhooks"
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
@@ -154,9 +157,15 @@ function WebhookDetailPage() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => {
-                    if (confirm(`Disable webhook ${w.url}?`)) disableM.mutate();
-                  }}
+                  onClick={() =>
+                    openConfirm({
+                      title: "Disable webhook?",
+                      description: `Disable ${w.url}?`,
+                      variant: "destructive",
+                      confirmLabel: "Disable",
+                      onConfirm: () => disableM.mutate(),
+                    })
+                  }
                   disabled={disableM.isPending}
                 >
                   <Trash2Icon /> Disable

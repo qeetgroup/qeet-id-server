@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useMemo } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api, tokenStore } from "@/lib/api";
 
 export const Route = createFileRoute("/account/sessions")({ component: SessionsPage });
@@ -98,6 +99,7 @@ function SessionsPage() {
   const userId = tokenStore.getUserId();
   const qc = useQueryClient();
   const currentSessionId = useMemo(() => getCurrentSessionId(), []);
+  const [confirmDialog, openConfirm] = useConfirmDialog();
 
   const sessionsQ = useQuery({
     queryKey: ["account-sessions", userId],
@@ -163,7 +165,9 @@ function SessionsPage() {
   const otherActive = items.filter((s) => !s.revoked_at && s.id !== currentSessionId);
 
   return (
-    <Card>
+    <>
+      {confirmDialog}
+      <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div>
           <CardTitle className="text-base">Active sessions</CardTitle>
@@ -177,15 +181,15 @@ function SessionsPage() {
             variant="outline"
             size="sm"
             disabled={revokeAllOtherM.isPending}
-            onClick={() => {
-              if (
-                confirm(
-                  `Sign out all ${otherActive.length} other session${otherActive.length === 1 ? "" : "s"}? This won't sign you out of this browser.`,
-                )
-              ) {
-                revokeAllOtherM.mutate(otherActive);
-              }
-            }}
+            onClick={() =>
+              openConfirm({
+                title: `Sign out ${otherActive.length} other session${otherActive.length === 1 ? "" : "s"}?`,
+                description: "This won't sign you out of this browser.",
+                variant: "destructive",
+                confirmLabel: "Sign out elsewhere",
+                onConfirm: () => revokeAllOtherM.mutate(otherActive),
+              })
+            }
           >
             Sign out elsewhere ({otherActive.length})
           </Button>
@@ -261,13 +265,15 @@ function SessionsPage() {
                             ? "Use the sign-out menu to end the session you're currently using."
                             : undefined
                         }
-                        onClick={() => {
-                          if (
-                            confirm("Revoke this session? Whoever holds it will be signed out.")
-                          ) {
-                            revokeM.mutate(s.id);
-                          }
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: "Revoke this session?",
+                            description: "Whoever holds it will be signed out.",
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(s.id),
+                          })
+                        }
                       >
                         Revoke
                       </Button>
@@ -280,5 +286,6 @@ function SessionsPage() {
         </DataState>
       </CardContent>
     </Card>
+    </>
   );
 }

@@ -19,6 +19,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MonitorSmartphoneIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
@@ -36,6 +37,7 @@ type Session = {
 };
 
 function SessionsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const qc = useQueryClient();
 
   const sessionsQ = useQuery({
@@ -50,6 +52,7 @@ function SessionsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="Every active and revoked session for your account. Revoking a session terminates the refresh token immediately."
         actions={
@@ -116,9 +119,14 @@ function SessionsPage() {
                         variant="ghost"
                         size="sm"
                         disabled={!!s.revoked_at || revokeM.isPending}
-                        onClick={() => {
-                          if (confirm("Revoke this session?")) revokeM.mutate(s.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: "Revoke this session?",
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(s.id),
+                          })
+                        }
                       >
                         Revoke
                       </Button>

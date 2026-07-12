@@ -34,6 +34,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlayIcon, PlusIcon, RefreshCwIcon, Trash2Icon, WebhookIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
@@ -74,6 +75,7 @@ const webhookCsvColumns: CsvColumn<Webhook>[] = [
 ];
 
 function WebhooksPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
@@ -119,6 +121,7 @@ function WebhooksPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="HTTP endpoints we POST events to. Every delivery is HMAC-SHA256 signed via the X-Signature header and retried with exponential backoff."
         actions={
@@ -239,9 +242,15 @@ function WebhooksPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (confirm(`Disable webhook ${w.url}?`)) disableM.mutate(w.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: "Disable webhook?",
+                            description: `Disable ${w.url}?`,
+                            variant: "destructive",
+                            confirmLabel: "Disable",
+                            onConfirm: () => disableM.mutate(w.id),
+                          })
+                        }
                         disabled={!!w.disabled_at || disableM.isPending}
                       >
                         <Trash2Icon /> Disable

@@ -4,6 +4,7 @@ import { Slider } from "@qeetrix/ui";
 import { useMemo, useState } from "react";
 
 import { ButtonLink } from "@/components/marketing/button-link";
+import { SIGN_UP_URL } from "@/lib/links";
 
 // Pricing knobs — keep aligned with the static tier cards on this page.
 // We hard-code them so the marketing site stays deployable without
@@ -55,7 +56,7 @@ function computePlan(mau: number): ComputedPlan {
       name: "Free",
       blurb: "Your usage fits in the free tier — no card required.",
       monthly: 0,
-      cta: { label: "Start free", href: "/sign-up" },
+      cta: { label: "Start free", href: SIGN_UP_URL },
     };
   }
   if (mau > ENTERPRISE_THRESHOLD) {
@@ -77,7 +78,7 @@ function computePlan(mau: number): ComputedPlan {
     blurb: "Predictable per-MAU pricing.",
     monthly,
     breakdown,
-    cta: { label: "Start 14-day trial", href: "/sign-up?plan=pro" },
+    cta: { label: "Start 14-day trial", href: `${SIGN_UP_URL}?plan=pro` },
   };
 }
 

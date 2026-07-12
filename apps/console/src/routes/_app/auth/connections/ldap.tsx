@@ -38,6 +38,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, PlugIcon, PlusIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -52,6 +53,7 @@ import {
 export const Route = createFileRoute("/_app/auth/connections/ldap")({ component: LdapPage });
 
 function LdapPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useLdapConnections();
   const updateM = useUpdateLdapConnection();
   const deleteM = useDeleteLdapConnection();
@@ -62,6 +64,7 @@ function LdapPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader
         description="Bridge on-prem Active Directory or generic LDAPv3 directories. Users authenticate with their directory credentials and are provisioned on first login."
         actions={
@@ -139,9 +142,14 @@ function LdapPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (confirm(`Delete LDAP connection "${c.name}"?`)) deleteM.mutate(c.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Delete LDAP connection "${c.name}"?`,
+                            variant: "destructive",
+                            confirmLabel: "Delete",
+                            onConfirm: () => deleteM.mutate(c.id),
+                          })
+                        }
                         disabled={deleteM.isPending}
                       >
                         <Trash2Icon /> Delete

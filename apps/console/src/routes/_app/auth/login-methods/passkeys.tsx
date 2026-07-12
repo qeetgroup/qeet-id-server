@@ -19,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { startRegistration } from "@simplewebauthn/browser";
 import { FingerprintIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
@@ -34,6 +35,7 @@ type Passkey = {
 };
 
 function PasskeysPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const qc = useQueryClient();
 
   const listQ = useQuery({
@@ -67,6 +69,7 @@ function PasskeysPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="WebAuthn / FIDO2 credentials registered against your account. Biometric, hardware key, and synced passkeys are all stored here."
         actions={
@@ -127,9 +130,14 @@ function PasskeysPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (confirm(`Remove passkey "${p.name}"?`)) deleteM.mutate(p.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Remove passkey "${p.name}"?`,
+                            variant: "destructive",
+                            confirmLabel: "Remove",
+                            onConfirm: () => deleteM.mutate(p.id),
+                          })
+                        }
                         disabled={deleteM.isPending}
                       >
                         <Trash2Icon /> Remove

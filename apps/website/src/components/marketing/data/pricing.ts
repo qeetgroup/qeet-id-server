@@ -1,3 +1,5 @@
+import { SIGN_UP_URL } from "@/lib/links";
+
 /**
  * Shared pricing tiers — the single source of truth for both the full
  * `/pricing` page and the condensed homepage Pricing section.
@@ -18,7 +20,7 @@ export const tiers: PricingTier[] = [
     description: "For developers and side projects.",
     price: "$0",
     period: "forever",
-    cta: { label: "Start free", href: "/sign-up" },
+    cta: { label: "Start free", href: SIGN_UP_URL },
     features: [
       "Up to 5,000 monthly active users",
       "Unlimited social providers",
@@ -33,7 +35,7 @@ export const tiers: PricingTier[] = [
     description: "For teams shipping to real customers.",
     price: "$99",
     period: "/ month + $0.02 / MAU",
-    cta: { label: "Start 14-day trial", href: "/sign-up?plan=pro" },
+    cta: { label: "Start 14-day trial", href: `${SIGN_UP_URL}?plan=pro` },
     featured: true,
     features: [
       "Up to 50,000 MAU included",

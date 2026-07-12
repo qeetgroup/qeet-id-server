@@ -24,6 +24,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, KeyRoundIcon, RefreshCwIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import {
   SCIM_BASE_URL,
@@ -36,6 +37,7 @@ import {
 export const Route = createFileRoute("/_app/auth/connections/scim")({ component: ScimPage });
 
 function ScimPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const cfgQ = useScimConfig();
   const usersQ = useScimProvisionedUsers();
   const rotateM = useRotateScimToken();
@@ -57,13 +59,13 @@ function ScimPage() {
       if (!enabled) rotateM.mutate();
       return;
     }
-    if (
-      window.confirm(
-        "Disable SCIM provisioning? The current token is revoked and your IdP will stop syncing.",
-      )
-    ) {
-      revokeM.mutate();
-    }
+    openConfirm({
+      title: "Disable SCIM provisioning?",
+      description: "The current token is revoked and your IdP will stop syncing.",
+      variant: "destructive",
+      confirmLabel: "Disable",
+      onConfirm: () => revokeM.mutate(),
+    });
   };
 
   const users = usersQ.data?.items ?? [];
@@ -71,6 +73,7 @@ function ScimPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader
         description="SCIM 2.0 endpoint for automated provisioning and deprovisioning from your IdP."
         actions={

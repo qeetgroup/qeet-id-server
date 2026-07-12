@@ -16,6 +16,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import {
   type RetentionPolicy,
@@ -46,6 +47,7 @@ function RetentionPage() {
 }
 
 function RetentionForm({ initial }: { initial: RetentionPolicy }) {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const updateM = useUpdateRetentionPolicy();
   const previewM = useRetentionPreview();
   const runM = useRunRetention();
@@ -56,6 +58,7 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
 
   return (
     <>
+      {confirmDialog}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -102,15 +105,15 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
             </Button>
             <Button
               variant="outline"
-              onClick={() => {
-                if (
-                  confirm(
-                    "Permanently purge all soft-deleted users older than the retention window? This cannot be undone.",
-                  )
-                ) {
-                  runM.mutate();
-                }
-              }}
+              onClick={() =>
+                openConfirm({
+                  title: "Permanently purge soft-deleted users?",
+                  description: "This purges all soft-deleted users older than the retention window. This cannot be undone.",
+                  variant: "destructive",
+                  confirmLabel: "Run purge now",
+                  onConfirm: () => runM.mutate(),
+                })
+              }
               disabled={runM.isPending}
             >
               Run purge now

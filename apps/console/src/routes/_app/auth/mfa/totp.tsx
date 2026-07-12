@@ -20,6 +20,7 @@ import { CheckIcon, CopyIcon, FingerprintIcon, Loader2Icon, ShieldCheckIcon } fr
 import { toast } from "sonner";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { StepUpDialog } from "@/components/step-up-dialog";
 import { ApiError, api } from "@/lib/api";
@@ -33,6 +34,7 @@ type ConfirmResult = { recovery_codes: string[] };
 type Stage = "idle" | "enrolling" | "confirmed";
 
 function MfaTotpPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const [stage, setStage] = useState<Stage>("idle");
   const [enrollment, setEnrollment] = useState<EnrollStart | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
@@ -82,6 +84,7 @@ function MfaTotpPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader description="Time-based One-Time Password (RFC 6238). Use any TOTP authenticator: 1Password, Authy, Google Authenticator, Microsoft Authenticator, etc." />
 
       {stage === "idle" && (
@@ -205,11 +208,15 @@ function MfaTotpPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    if (confirm("Disable TOTP for your account? Recovery codes will be wiped.")) {
-                      disableTotp();
-                    }
-                  }}
+                  onClick={() =>
+                    openConfirm({
+                      title: "Disable TOTP for your account?",
+                      description: "Recovery codes will be wiped.",
+                      variant: "destructive",
+                      confirmLabel: "Disable TOTP",
+                      onConfirm: disableTotp,
+                    })
+                  }
                   disabled={disableM.isPending}
                 >
                   {disableM.isPending && <Loader2Icon className="animate-spin" />}

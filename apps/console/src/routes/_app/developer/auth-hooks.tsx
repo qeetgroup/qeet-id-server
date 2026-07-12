@@ -18,6 +18,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, Trash2Icon, ZapIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -30,6 +31,7 @@ import {
 export const Route = createFileRoute("/_app/developer/auth-hooks")({ component: AuthHooksPage });
 
 function AuthHooksPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const hooksQ = useAuthHooks();
   const createM = useCreateAuthHook();
   const updateM = useUpdateAuthHook();
@@ -43,6 +45,7 @@ function AuthHooksPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader description="Run a synchronous policy endpoint during sign-in. After credentials verify, Qeet POSTs a signed event to your hook (X-Qeet-Signature, HMAC-SHA256); the hook returns {decision:'allow'|'deny'}. Hooks are bounded by a 3s timeout." />
 
       <Card>
@@ -157,9 +160,14 @@ function AuthHooksPage() {
                       variant="ghost"
                       size="sm"
                       disabled={deleteM.isPending}
-                      onClick={() => {
-                        if (confirm("Remove this hook?")) deleteM.mutate(h.id);
-                      }}
+                      onClick={() =>
+                        openConfirm({
+                          title: "Remove this hook?",
+                          variant: "destructive",
+                          confirmLabel: "Remove",
+                          onConfirm: () => deleteM.mutate(h.id),
+                        })
+                      }
                     >
                       <Trash2Icon /> Remove
                     </Button>

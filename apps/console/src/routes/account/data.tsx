@@ -10,11 +10,14 @@ import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { DownloadIcon, Trash2Icon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ApiError, api } from "@/lib/api";
 
 export const Route = createFileRoute("/account/data")({ component: DataPage });
 
 function DataPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
+
   // Both endpoints below are part of the GDPR roadmap (§B9 data export
   // and §B10 self-service erasure). They aren't deployed yet — these
   // mutations are 404-tolerant so the buttons stay visible and the user
@@ -54,6 +57,7 @@ function DataPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {confirmDialog}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
@@ -92,15 +96,15 @@ function DataPage() {
           <Button
             variant="outline"
             className="border-rose-500/40 text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
-            onClick={() => {
-              if (
-                confirm(
-                  "Schedule your account for deletion? You can cancel within 30 days by signing back in.",
-                )
-              ) {
-                deleteM.mutate();
-              }
-            }}
+            onClick={() =>
+              openConfirm({
+                title: "Schedule account for deletion?",
+                description: "You can cancel within 30 days by signing back in.",
+                variant: "destructive",
+                confirmLabel: "Delete my account",
+                onConfirm: () => deleteM.mutate(),
+              })
+            }
             disabled={deleteM.isPending}
           >
             <Trash2Icon /> Delete my account
