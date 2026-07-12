@@ -32,6 +32,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BotIcon, CopyIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -51,6 +52,7 @@ type Principal = {
 };
 
 function MachineIdentitiesPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
@@ -69,6 +71,7 @@ function MachineIdentitiesPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="Service accounts for server-to-server calls. Authenticate via POST /v1/oauth/token with grant_type=client_credentials."
         actions={
@@ -167,11 +170,15 @@ function MachineIdentitiesPage() {
                         variant="ghost"
                         size="sm"
                         disabled={!!p.disabled_at || disableM.isPending}
-                        onClick={() => {
-                          if (confirm(`Disable "${p.name}"? Token issuance will be blocked immediately.`)) {
-                            disableM.mutate(p.id);
-                          }
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Disable "${p.name}"?`,
+                            description: "Token issuance will be blocked immediately.",
+                            variant: "destructive",
+                            confirmLabel: "Disable",
+                            onConfirm: () => disableM.mutate(p.id),
+                          })
+                        }
                       >
                         <Trash2Icon /> Disable
                       </Button>

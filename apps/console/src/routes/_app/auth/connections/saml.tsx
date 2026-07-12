@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -64,6 +65,7 @@ import {
 export const Route = createFileRoute("/_app/auth/connections/saml")({ component: SamlPage });
 
 function SamlPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useSamlConnections();
   const updateM = useUpdateSamlConnection();
   const deleteM = useDeleteSamlConnection();
@@ -79,6 +81,7 @@ function SamlPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader
         description="Service-provider–initiated SAML 2.0 connections to enterprise IdPs. Assertions are validated against the IdP signing certificate; users are provisioned on first login."
         actions={
@@ -194,9 +197,14 @@ function SamlPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (confirm(`Delete SAML connection "${c.name}"?`)) deleteM.mutate(c.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Delete SAML connection "${c.name}"?`,
+                            variant: "destructive",
+                            confirmLabel: "Delete",
+                            onConfirm: () => deleteM.mutate(c.id),
+                          })
+                        }
                         disabled={deleteM.isPending}
                       >
                         <Trash2Icon /> Delete

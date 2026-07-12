@@ -22,6 +22,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
@@ -51,6 +52,7 @@ type AuditEvent = {
 };
 
 function UserDetailPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const { userId } = Route.useParams();
   const tenantId = useTenantId();
 
@@ -84,6 +86,7 @@ function UserDetailPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <Link
         to="/users"
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
@@ -239,15 +242,16 @@ function UserDetailPage() {
             variant="outline"
             size="sm"
             disabled={resetMfa.isPending}
-            onClick={() => {
-              if (
-                window.confirm(
-                  "Reset this user's MFA? Their authenticator (TOTP), recovery codes, and email/SMS OTP factors will be removed, and they'll re-enroll at next sign-in.",
-                )
-              ) {
-                resetMfa.mutate();
-              }
-            }}
+            onClick={() =>
+              openConfirm({
+                title: "Reset this user's MFA?",
+                description:
+                  "Their authenticator (TOTP), recovery codes, and email/SMS OTP factors will be removed, and they'll re-enroll at next sign-in.",
+                variant: "destructive",
+                confirmLabel: "Reset MFA",
+                onConfirm: () => resetMfa.mutate(),
+              })
+            }
           >
             {resetMfa.isPending ? "Resetting…" : "Reset MFA"}
           </Button>

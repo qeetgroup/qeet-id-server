@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GaugeIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -110,6 +111,7 @@ function LimitRow({
 }
 
 function RateLimitsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const limitsQ = useRateLimits();
   const update = useUpdateRateLimits();
   const reset = useResetRateLimits();
@@ -143,6 +145,7 @@ function RateLimitsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader description="Configure per-tenant rate limits. Rate is tokens per second; burst is the maximum burst capacity. These override the platform defaults for this tenant." />
 
       <Card>
@@ -160,9 +163,14 @@ function RateLimitsPage() {
             variant="outline"
             size="sm"
             disabled={reset.isPending}
-            onClick={() => {
-              if (confirm("Reset all rate limits to platform defaults?")) reset.mutate();
-            }}
+            onClick={() =>
+              openConfirm({
+                title: "Reset all rate limits to platform defaults?",
+                variant: "destructive",
+                confirmLabel: "Reset to defaults",
+                onConfirm: () => reset.mutate(),
+              })
+            }
           >
             {reset.isPending ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
             Reset to defaults

@@ -60,6 +60,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { BulkBar, ListToolbar, MasterCheckbox, RowCheckbox, SortHeader } from "@/components/data-table";
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api, tokenStore } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -94,6 +95,7 @@ const userCsvColumns: CsvColumn<User>[] = [
 ];
 
 function UsersPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const { t } = useTranslation("users");
   const tenantId = useTenantId();
   const currentUserId = tokenStore.getUserId();
@@ -196,19 +198,22 @@ function UsersPage() {
   function runBulkDelete() {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    if (!confirm(t("bulk.confirm", { count: ids.length }))) {
-      return;
-    }
-    bulkDeleteM.mutate(ids, {
-      onSuccess: (res) => {
-        if (res.failed === 0) {
-          toast.success(t("bulk.deletedOk", { count: res.ok }));
-        } else if (res.ok === 0) {
-          toast.error(t("bulk.deletedFail", { count: res.failed }));
-        } else {
-          toast.warning(t("bulk.deletedPartial", { ok: res.ok, failed: res.failed }));
-        }
-      },
+    openConfirm({
+      title: t("bulk.confirm", { count: ids.length }),
+      variant: "destructive",
+      confirmLabel: "Delete",
+      onConfirm: () =>
+        bulkDeleteM.mutate(ids, {
+          onSuccess: (res) => {
+            if (res.failed === 0) {
+              toast.success(t("bulk.deletedOk", { count: res.ok }));
+            } else if (res.ok === 0) {
+              toast.error(t("bulk.deletedFail", { count: res.failed }));
+            } else {
+              toast.warning(t("bulk.deletedPartial", { ok: res.ok, failed: res.failed }));
+            }
+          },
+        }),
     });
   }
 
@@ -216,6 +221,7 @@ function UsersPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description={t("list.description")}
         actions={

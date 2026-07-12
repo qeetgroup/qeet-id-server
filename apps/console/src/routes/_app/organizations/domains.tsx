@@ -16,6 +16,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2Icon, GlobeIcon, Loader2Icon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -96,9 +97,12 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
   const verifyM = useVerifyDomain();
   const removeM = useRemoveDomain();
   const verified = !!domain.verified_at;
+  const [confirmDialog, openConfirm] = useConfirmDialog();
 
   return (
-    <Card>
+    <>
+      {confirmDialog}
+      <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -118,9 +122,14 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
             variant="ghost"
             size="sm"
             disabled={removeM.isPending}
-            onClick={() => {
-              if (confirm(`Remove ${domain.domain}?`)) removeM.mutate(domain.id);
-            }}
+            onClick={() =>
+              openConfirm({
+                title: `Remove ${domain.domain}?`,
+                variant: "destructive",
+                confirmLabel: "Remove",
+                onConfirm: () => removeM.mutate(domain.id),
+              })
+            }
           >
             <Trash2Icon /> Remove
           </Button>
@@ -152,5 +161,6 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
         </CardContent>
       )}
     </Card>
+    </>
   );
 }

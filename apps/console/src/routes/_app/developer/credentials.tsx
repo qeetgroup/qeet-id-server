@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -39,6 +40,7 @@ import {
 export const Route = createFileRoute("/_app/developer/credentials")({ component: CredentialsPage });
 
 function CredentialsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useCredentials();
   const issueM = useIssueCredential();
   const revokeM = useRevokeCredential();
@@ -54,6 +56,7 @@ function CredentialsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader description="Issue W3C Verifiable Credentials as ES256-signed JWT-VCs (verifiable via the same JWKS) and revoke them. Relying parties verify a presented credential at POST /v1/credentials/verify." />
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -196,9 +199,14 @@ function CredentialsPage() {
                       variant="ghost"
                       size="sm"
                       disabled={revokeM.isPending}
-                      onClick={() => {
-                        if (confirm("Revoke this credential?")) revokeM.mutate(c.id);
-                      }}
+                      onClick={() =>
+                        openConfirm({
+                          title: "Revoke this credential?",
+                          variant: "destructive",
+                          confirmLabel: "Revoke",
+                          onConfirm: () => revokeM.mutate(c.id),
+                        })
+                      }
                     >
                       <Trash2Icon /> Revoke
                     </Button>

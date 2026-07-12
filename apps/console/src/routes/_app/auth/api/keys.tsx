@@ -34,6 +34,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -56,6 +57,7 @@ type ApiKey = {
 type ApiKeysResponse = { items: ApiKey[] };
 
 function ApiKeysPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
@@ -94,6 +96,7 @@ function ApiKeysPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="Long-lived secrets your apps and scripts use to call the Qeet ID API. Send as Authorization: ApiKey <raw>."
         actions={
@@ -204,15 +207,15 @@ function ApiKeysPage() {
                         variant="ghost"
                         size="sm"
                         disabled={!!k.revoked_at || revokeM.isPending}
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Revoke "${k.name}"? Any service using it will lose access immediately.`,
-                            )
-                          ) {
-                            revokeM.mutate(k.id);
-                          }
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Revoke "${k.name}"?`,
+                            description: "Any service using it will lose access immediately.",
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(k.id),
+                          })
+                        }
                       >
                         <Trash2Icon /> Revoke
                       </Button>

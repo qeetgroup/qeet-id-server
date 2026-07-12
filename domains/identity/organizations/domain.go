@@ -21,7 +21,7 @@ type Tenant struct {
 type CreateInput struct {
 	Slug     string         `json:"slug" validate:"required,min=2,max=64"`
 	Name     string         `json:"name" validate:"required,min=1,max=200"`
-	Plan     string         `json:"plan" validate:"omitempty,oneof=free pro enterprise"`
+	Plan     string         `json:"plan" validate:"omitempty,oneof=free starter pro enterprise"`
 	Region   string         `json:"region" validate:"omitempty,max=64"`
 	Metadata map[string]any `json:"metadata"`
 }
@@ -29,7 +29,7 @@ type CreateInput struct {
 type UpdateInput struct {
 	Name     *string        `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
 	Status   *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
-	Plan     *string        `json:"plan,omitempty" validate:"omitempty,oneof=free pro enterprise"`
+	Plan     *string        `json:"plan,omitempty" validate:"omitempty,oneof=free starter pro enterprise"`
 	Region   *string        `json:"region,omitempty" validate:"omitempty,max=64"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }

@@ -23,6 +23,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, RadioTowerIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -44,6 +45,7 @@ const TYPE_LABELS: Record<SinkType, string> = {
 };
 
 function LogStreamingPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const sinksQ = useLogSinks();
   const createM = useCreateLogSink();
   const toggleM = useToggleLogSink();
@@ -57,6 +59,7 @@ function LogStreamingPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader description="Stream this tenant's audit events to your SIEM or log platform. New events are forwarded from when a sink is added (no history backfill); delivery is at-least-once." />
 
       <Card>
@@ -179,9 +182,14 @@ function LogStreamingPage() {
                       variant="ghost"
                       size="sm"
                       disabled={deleteM.isPending}
-                      onClick={() => {
-                        if (confirm("Remove this sink?")) deleteM.mutate(s.id);
-                      }}
+                      onClick={() =>
+                        openConfirm({
+                          title: "Remove this sink?",
+                          variant: "destructive",
+                          confirmLabel: "Remove",
+                          onConfirm: () => deleteM.mutate(s.id),
+                        })
+                      }
                     >
                       <Trash2Icon /> Remove
                     </Button>

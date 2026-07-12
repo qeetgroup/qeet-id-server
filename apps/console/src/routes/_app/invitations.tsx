@@ -39,6 +39,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
@@ -65,6 +66,7 @@ function InvitationsPage() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [confirmDialog, openConfirm] = useConfirmDialog();
 
   const listQ = useQuery({
     queryKey: ["invites", tenantId],
@@ -107,6 +109,7 @@ function InvitationsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="Invite teammates by email. They get a one-time link that creates their account and assigns the chosen role on acceptance."
         actions={
@@ -230,9 +233,14 @@ function InvitationsPage() {
                         variant="ghost"
                         size="sm"
                         disabled={i.status !== "pending" || revokeM.isPending}
-                        onClick={() => {
-                          if (confirm(`Revoke invitation for ${i.email}?`)) revokeM.mutate(i.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Revoke invitation for ${i.email}?`,
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(i.id),
+                          })
+                        }
                       >
                         <Trash2Icon /> Revoke
                       </Button>

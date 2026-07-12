@@ -33,6 +33,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, ScrollTextIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -52,6 +53,7 @@ type PurgeRequest = {
 };
 
 function GdprPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
@@ -69,6 +71,7 @@ function GdprPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="GDPR Article 17 (right-to-erasure) requests. Each request enters a 30-day grace window before the background purge job redacts PII while preserving audit references."
         actions={
@@ -144,9 +147,14 @@ function GdprPage() {
                           variant="ghost"
                           size="sm"
                           disabled={r.status !== "pending" || cancelM.isPending}
-                          onClick={() => {
-                            if (confirm("Cancel this erasure request?")) cancelM.mutate(r.id);
-                          }}
+                          onClick={() =>
+                            openConfirm({
+                              title: "Cancel this erasure request?",
+                              variant: "default",
+                              confirmLabel: "Cancel request",
+                              onConfirm: () => cancelM.mutate(r.id),
+                            })
+                          }
                         >
                           Cancel
                         </Button>

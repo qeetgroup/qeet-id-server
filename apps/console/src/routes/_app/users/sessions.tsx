@@ -22,6 +22,7 @@ import {
 } from "@qeetrix/ui";
 import { MonitorSmartphoneIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
@@ -39,6 +40,7 @@ type Session = {
 };
 
 function UserSessionsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const qc = useQueryClient();
   const sessionsQ = useQuery({
     queryKey: ["sessions"],
@@ -51,6 +53,7 @@ function UserSessionsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="Active sign-in sessions tracked under your user. The backend stores IP, User-Agent, and last-seen-at for each."
         actions={
@@ -107,9 +110,14 @@ function UserSessionsPage() {
                         variant="ghost"
                         size="sm"
                         disabled={!!s.revoked_at || revokeM.isPending}
-                        onClick={() => {
-                          if (confirm("Revoke this session?")) revokeM.mutate(s.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: "Revoke this session?",
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(s.id),
+                          })
+                        }
                       >
                         Revoke
                       </Button>

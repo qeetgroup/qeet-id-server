@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { RotateCcwIcon, Trash2Icon, UserMinusIcon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -33,6 +34,7 @@ type DeletedUser = {
 };
 
 function DeletedUsersPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
 
@@ -58,6 +60,7 @@ function DeletedUsersPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader description="Soft-deleted users. Restore brings an account back; permanent deletion removes it and its sessions for good." />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -118,15 +121,15 @@ function DeletedUsersPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Permanently delete ${u.email}? This removes the account and its sessions and cannot be undone.`,
-                            )
-                          ) {
-                            purgeM.mutate(u.id);
-                          }
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Permanently delete ${u.email}?`,
+                            description: "This removes the account and its sessions and cannot be undone.",
+                            variant: "destructive",
+                            confirmLabel: "Delete forever",
+                            onConfirm: () => purgeM.mutate(u.id),
+                          })
+                        }
                         disabled={purgeM.isPending}
                       >
                         <Trash2Icon /> Delete forever

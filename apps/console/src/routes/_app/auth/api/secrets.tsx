@@ -32,6 +32,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -45,6 +46,7 @@ import {
 export const Route = createFileRoute("/_app/auth/api/secrets")({ component: SecretsPage });
 
 function SecretsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useSecrets();
   const revealM = useRevealSecret();
   const rotateM = useRotateSecret();
@@ -80,6 +82,7 @@ function SecretsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader
         description="Encrypted vault for integration secrets — 3rd-party API keys, tokens and signing material. Values are AES-256-GCM encrypted at rest and only shown via an audited reveal."
         actions={
@@ -158,9 +161,15 @@ function SecretsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => {
-                            if (confirm(`Delete secret "${s.name}"? Anything using it will break.`)) deleteM.mutate(s.id);
-                          }}
+                          onClick={() =>
+                            openConfirm({
+                              title: `Delete secret "${s.name}"?`,
+                              description: "Anything using it will break.",
+                              variant: "destructive",
+                              confirmLabel: "Delete",
+                              onConfirm: () => deleteM.mutate(s.id),
+                            })
+                          }
                           disabled={deleteM.isPending}
                         >
                           <Trash2Icon /> Delete

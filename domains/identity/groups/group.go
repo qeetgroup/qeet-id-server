@@ -48,6 +48,12 @@ type CreateInput struct {
 	Description string     `json:"description"`
 }
 
+type UpdateInput struct {
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	ParentID    *uuid.UUID `json:"parent_id"`
+}
+
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Group, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -122,6 +128,37 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Group, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var g Group
+	err = tx.QueryRow(ctx, `
+		UPDATE tenant.groups
+		SET name = $1, description = $2, parent_id = $3
+		WHERE id = $4 AND tenant_id = $5
+		RETURNING id, tenant_id, parent_id, name, description, created_at
+	`, in.Name, in.Description, in.ParentID, id, tenantID).
+		Scan(&g.ID, &g.TenantID, &g.ParentID, &g.Name, &g.Description, &g.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.updated", "group", id,
+		map[string]any{"name": in.Name, "parent_id": in.ParentID})); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "group.events", EventType: "group.updated", Payload: g}); err != nil {
+		return nil, err
+	}
+	return &g, tx.Commit(ctx)
 }
 
 func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.UUID, actor audit.Actor) error {
@@ -217,6 +254,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/groups", h.create)
 	r.Get("/tenants/{tenantID}/groups", h.list)
 	r.Delete("/groups/{id}", h.delete)
+	r.Patch("/groups/{id}", h.update)
 	r.Post("/groups/{id}/members/{userID}", h.addMember)
 	r.Delete("/groups/{id}/members/{userID}", h.removeMember)
 	r.Get("/groups/{id}/members", h.listMembers)
@@ -293,6 +331,30 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in UpdateInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	g, err := h.Service.Update(r.Context(), id, tenantID, in, actorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, g)
 }
 
 func (h *Handler) addMember(w http.ResponseWriter, r *http.Request) {

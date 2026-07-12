@@ -30,10 +30,11 @@ import {
 } from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon, UsersRoundIcon } from "lucide-react";
+import { Loader2Icon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon, UsersRoundIcon } from "lucide-react";
 import { useState } from "react";
 
 import { ListToolbar, SortHeader } from "@/components/data-table";
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -62,9 +63,11 @@ const groupCsvColumns: CsvColumn<Group>[] = [
 ];
 
 function GroupsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<Group | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const groupsQ = useQuery({
@@ -103,6 +106,7 @@ function GroupsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         description="Hierarchical groups inside this tenant. Use them to organise members; group-based RBAC inheritance is on the v1.0 roadmap."
         actions={
@@ -210,13 +214,21 @@ function GroupsPage() {
                       <Button variant="ghost" size="sm" onClick={() => setExpandedId(g.id)}>
                         <UserPlusIcon /> Members
                       </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditing(g)}>
+                        <PencilIcon /> Edit
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         disabled={deleteM.isPending}
-                        onClick={() => {
-                          if (confirm(`Delete group "${g.name}"?`)) deleteM.mutate(g.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Delete group "${g.name}"?`,
+                            variant: "destructive",
+                            confirmLabel: "Delete",
+                            onConfirm: () => deleteM.mutate(g.id),
+                          })
+                        }
                       >
                         <Trash2Icon /> Delete
                       </Button>
@@ -235,6 +247,16 @@ function GroupsPage() {
         tenantId={tenantId}
         groups={groupsQ.data?.items ?? []}
         onCreated={() => qc.invalidateQueries({ queryKey: ["groups"] })}
+      />
+
+      <EditGroupSheet
+        group={editing}
+        onOpenChange={(o) => !o && setEditing(null)}
+        groups={groupsQ.data?.items ?? []}
+        onSaved={() => {
+          setEditing(null);
+          qc.invalidateQueries({ queryKey: ["groups"] });
+        }}
       />
 
       {expandedId && (
@@ -316,6 +338,103 @@ function CreateGroupSheet({ open, onOpenChange, tenantId, groups, onCreated }: C
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? "Creating…" : "Create"}
+            </Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+type EditGroupSheetProps = {
+  group: Group | null;
+  onOpenChange: (o: boolean) => void;
+  groups: Group[];
+  onSaved: () => void;
+};
+
+function EditGroupSheet({ group, onOpenChange, groups, onSaved }: EditGroupSheetProps) {
+  const updateM = useMutation({
+    mutationFn: (body: { name: string; description: string; parent_id: string | null }) =>
+      api<Group>(`/v1/groups/${group?.id}`, { method: "PATCH", body }),
+    onSuccess: () => {
+      onSaved();
+    },
+    meta: { successMessage: "Group updated" },
+  });
+
+  return (
+    <Sheet open={!!group} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-md">
+        <form
+          className="flex h-full flex-col"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!group) return;
+            const data = new FormData(e.currentTarget);
+            const parentId = String(data.get("parent_id") ?? "");
+            updateM.mutate({
+              name: String(data.get("name") ?? "").trim(),
+              description: String(data.get("description") ?? "").trim(),
+              parent_id: parentId || null,
+            });
+          }}
+        >
+          <SheetHeader>
+            <SheetTitle>Edit group</SheetTitle>
+            <SheetDescription>Update the group name, description, or parent.</SheetDescription>
+          </SheetHeader>
+          <div className="flex-1 overflow-y-auto p-4">
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="edit-name">Name</FieldLabel>
+                <Input
+                  id="edit-name"
+                  name="name"
+                  defaultValue={group?.name ?? ""}
+                  key={group?.id + "-name"}
+                  required
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="edit-description">Description</FieldLabel>
+                <Textarea
+                  id="edit-description"
+                  name="description"
+                  rows={3}
+                  defaultValue={group?.description ?? ""}
+                  key={group?.id + "-desc"}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="edit-parent_id">Parent group</FieldLabel>
+                <select
+                  id="edit-parent_id"
+                  name="parent_id"
+                  key={group?.id + "-parent"}
+                  defaultValue={group?.parent_id ?? ""}
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                >
+                  <option value="">— None (top-level)</option>
+                  {groups
+                    .filter((g) => g.id !== group?.id)
+                    .map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                </select>
+              </Field>
+              {updateM.error && (
+                <Field>
+                  <FieldError>{(updateM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
+            </FieldGroup>
+          </div>
+          <SheetFooter className="flex-row justify-end gap-2 border-t">
+            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <Button type="submit" disabled={updateM.isPending}>
+              {updateM.isPending && <Loader2Icon className="animate-spin" />}
+              {updateM.isPending ? "Saving…" : "Save"}
             </Button>
           </SheetFooter>
         </form>

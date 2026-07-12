@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowLeftIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
@@ -37,6 +38,7 @@ type Role = {
 type Permission = { id: string; key: string; description: string };
 
 function RoleDetailPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const { roleId } = Route.useParams();
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -81,6 +83,7 @@ function RoleDetailPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <Link
         to="/access/roles"
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
@@ -146,9 +149,14 @@ function RoleDetailPage() {
                         variant="ghost"
                         size="sm"
                         disabled={role?.is_system || revokeM.isPending}
-                        onClick={() => {
-                          if (confirm(`Revoke "${p.key}" from this role?`)) revokeM.mutate(p.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Revoke "${p.key}" from this role?`,
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(p.id),
+                          })
+                        }
                       >
                         <Trash2Icon /> Revoke
                       </Button>

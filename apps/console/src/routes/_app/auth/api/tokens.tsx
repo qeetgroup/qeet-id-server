@@ -18,18 +18,21 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { KeyRoundIcon, Trash2Icon } from "lucide-react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { useOAuthGrants, useRevokeOAuthGrant } from "@/lib/oauth-grants";
 
 export const Route = createFileRoute("/_app/auth/api/tokens")({ component: TokensPage });
 
 function TokensPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useOAuthGrants();
   const revokeM = useRevokeOAuthGrant();
   const items = listQ.data?.items ?? [];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader description="Active OAuth / OIDC grants. Access tokens are short-lived JWTs that expire on their own; revoking a grant invalidates its refresh-token chain so it can't be renewed." />
 
       <Card>
@@ -84,11 +87,14 @@ function TokensPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (confirm(`Revoke ${g.user_email || "this user"}'s grant for ${g.client_id}?`)) {
-                            revokeM.mutate(g.id);
-                          }
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Revoke ${g.user_email || "this user"}'s grant for ${g.client_id}?`,
+                            variant: "destructive",
+                            confirmLabel: "Revoke",
+                            onConfirm: () => revokeM.mutate(g.id),
+                          })
+                        }
                         disabled={revokeM.isPending}
                       >
                         <Trash2Icon /> Revoke

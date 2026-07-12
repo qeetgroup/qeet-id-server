@@ -21,6 +21,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { KeyRoundIcon, LinkIcon, Loader2Icon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -80,6 +81,7 @@ function ConnectionCard({
 }
 
 function AdminPortalCard() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const linksQ = useAdminPortalLinks();
   const generateM = useGenerateAdminPortalLink();
   const revokeM = useRevokeAdminPortalLink();
@@ -102,7 +104,9 @@ function AdminPortalCard() {
   const generated = generateM.data;
 
   return (
-    <Card>
+    <>
+      {confirmDialog}
+      <Card>
       <CardHeader>
         <CardTitle className="text-base">Self-serve Admin Portal</CardTitle>
         <CardDescription>
@@ -195,10 +199,15 @@ function AdminPortalCard() {
               <AdminPortalLinkRow
                 key={l.id}
                 link={l}
-                onRevoke={() => {
-                  if (window.confirm("Revoke this admin portal link? It will stop working immediately."))
-                    revokeM.mutate(l.id);
-                }}
+                onRevoke={() =>
+                  openConfirm({
+                    title: "Revoke this admin portal link?",
+                    description: "It will stop working immediately.",
+                    variant: "destructive",
+                    confirmLabel: "Revoke",
+                    onConfirm: () => revokeM.mutate(l.id),
+                  })
+                }
                 busy={revokeM.isPending}
               />
             ))}
@@ -206,6 +215,7 @@ function AdminPortalCard() {
         </DataState>
       </CardContent>
     </Card>
+    </>
   );
 }
 

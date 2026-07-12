@@ -160,6 +160,7 @@ function TenantsPage() {
                 value: lv.filters.plan ?? "",
                 options: [
                   { label: "Free", value: "free" },
+                  { label: "Starter", value: "starter" },
                   { label: "Pro", value: "pro" },
                   { label: "Enterprise", value: "enterprise" },
                 ],
@@ -407,6 +408,7 @@ function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetP
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="free">Free</SelectItem>
+                    <SelectItem value="starter">Starter</SelectItem>
                     <SelectItem value="pro">Pro</SelectItem>
                     <SelectItem value="enterprise">Enterprise</SelectItem>
                   </SelectContent>
@@ -441,7 +443,7 @@ type EditTenantSheetProps = {
 type UpdateBody = {
   name?: string;
   status?: "active" | "suspended";
-  plan?: "free" | "pro" | "enterprise";
+  plan?: "free" | "starter" | "pro" | "enterprise";
   region?: string;
 };
 
@@ -514,6 +516,7 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="free">Free</SelectItem>
+                      <SelectItem value="starter">Starter</SelectItem>
                       <SelectItem value="pro">Pro</SelectItem>
                       <SelectItem value="enterprise">Enterprise</SelectItem>
                     </SelectContent>

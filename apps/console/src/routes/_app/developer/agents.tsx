@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api, ApiError } from "@/lib/api";
 import { useMe, useTenantId } from "@/lib/auth";
@@ -45,6 +46,7 @@ import { useReviewShadowAIClient, useShadowAICandidates } from "@/lib/oidc-clien
 export const Route = createFileRoute("/_app/developer/agents")({ component: AgentsPage });
 
 function AgentsPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const meQ = useMe();
   const agentsQ = useAgents();
   const createM = useCreateAgent();
@@ -63,6 +65,7 @@ function AgentsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      {confirmDialog}
       <PageHeader
         title="Agent Governance"
         description="First-class identities for AI agents / MCP clients, and the primitives that keep them accountable to a human: sponsorship, Shadow-AI discovery, ephemeral tokens, and a tenant-wide kill-switch. An agent authenticates with its secret at POST /v1/agents/token and gets a short-lived, scoped token marked actor_type=&ldquo;agent&rdquo; — ephemeral by design (re-mint, no refresh). Token Vault (3rd-party OAuth on an agent's behalf) and CIBA (backchannel auth) are part of the same governance surface but are API-only today — see the docs."
@@ -169,15 +172,15 @@ function AgentsPage() {
               variant="destructive"
               size="sm"
               disabled={killAllM.isPending}
-              onClick={() => {
-                if (
-                  confirm(
-                    `Suspend all ${activeCount} active agent(s)? Their tokens will stop working immediately.`,
-                  )
-                ) {
-                  killAllM.mutate();
-                }
-              }}
+              onClick={() =>
+                openConfirm({
+                  title: `Suspend all ${activeCount} active agent(s)?`,
+                  description: "Their tokens will stop working immediately.",
+                  variant: "destructive",
+                  confirmLabel: "Suspend All",
+                  onConfirm: () => killAllM.mutate(),
+                })
+              }
             >
               {killAllM.isPending ? (
                 <Loader2Icon className="animate-spin" />
@@ -205,9 +208,14 @@ function AgentsPage() {
                   key={a.id}
                   agent={a}
                   onToggle={() => disableM.mutate({ id: a.id, disabled: !a.disabled })}
-                  onDelete={() => {
-                    if (confirm(`Delete agent "${a.name}"?`)) deleteM.mutate(a.id);
-                  }}
+                  onDelete={() =>
+                    openConfirm({
+                      title: `Delete agent "${a.name}"?`,
+                      variant: "destructive",
+                      confirmLabel: "Delete",
+                      onConfirm: () => deleteM.mutate(a.id),
+                    })
+                  }
                   busy={disableM.isPending || deleteM.isPending}
                 />
               ))}
@@ -244,6 +252,7 @@ function useTenantUserOptions() {
 }
 
 function SponsorTransferCard() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const usersQ = useTenantUserOptions();
   const [fromUserId, setFromUserId] = useState<string | null>(null);
   const [toUserId, setToUserId] = useState<string | null>(null);
@@ -253,7 +262,9 @@ function SponsorTransferCard() {
   const sponsoredCount = sponsoredQ.data?.items.length ?? 0;
 
   return (
-    <Card>
+    <>
+      {confirmDialog}
+      <Card>
       <CardHeader>
         <CardTitle className="text-base">Sponsor transfer</CardTitle>
         <CardDescription>
@@ -295,16 +306,17 @@ function SponsorTransferCard() {
             }
             onClick={() => {
               if (!fromUserId || !toUserId) return;
-              if (
-                confirm(
-                  `Transfer ${sponsoredCount} agent(s) to the new sponsor? This can't be undone.`,
-                )
-              ) {
-                transferM.mutate(
-                  { fromUserId, toUserId },
-                  { onSuccess: () => { setFromUserId(null); setToUserId(null); } },
-                );
-              }
+              openConfirm({
+                title: `Transfer ${sponsoredCount} agent(s) to the new sponsor?`,
+                description: "This can't be undone.",
+                variant: "destructive",
+                confirmLabel: "Transfer",
+                onConfirm: () =>
+                  transferM.mutate(
+                    { fromUserId, toUserId },
+                    { onSuccess: () => { setFromUserId(null); setToUserId(null); } },
+                  ),
+              });
             }}
           >
             {transferM.isPending && <Loader2Icon className="animate-spin" />}
@@ -326,6 +338,7 @@ function SponsorTransferCard() {
         )}
       </CardContent>
     </Card>
+    </>
   );
 }
 

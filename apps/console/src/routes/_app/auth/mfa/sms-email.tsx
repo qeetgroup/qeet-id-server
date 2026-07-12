@@ -36,6 +36,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, MailIcon, MessageSquareIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
+import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
 import {
@@ -50,6 +51,7 @@ import {
 export const Route = createFileRoute("/_app/auth/mfa/sms-email")({ component: SmsEmailPage });
 
 function SmsEmailPage() {
+  const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useOtpFactors();
   const challengeM = useChallengeOtpFactor();
   const deleteM = useDeleteOtpFactor();
@@ -59,6 +61,7 @@ function SmsEmailPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {confirmDialog}
       <PageHeader
         description="One-time passcodes delivered to a verified email address or phone number, used as a second factor."
         actions={
@@ -125,9 +128,14 @@ function SmsEmailPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (confirm(`Remove this ${f.channel} factor?`)) deleteM.mutate(f.id);
-                        }}
+                        onClick={() =>
+                          openConfirm({
+                            title: `Remove this ${f.channel} factor?`,
+                            variant: "destructive",
+                            confirmLabel: "Remove",
+                            onConfirm: () => deleteM.mutate(f.id),
+                          })
+                        }
                         disabled={deleteM.isPending}
                       >
                         <Trash2Icon /> Remove
