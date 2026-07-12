@@ -12,7 +12,6 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
-  LogoUploader,
   Skeleton,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
@@ -20,6 +19,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { LogoField } from "@/components/logo-field";
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
@@ -112,7 +112,7 @@ function BrandingPage() {
                   <FieldGroup>
                     <Field>
                       <FieldLabel>Logo</FieldLabel>
-                      <LogoUploader
+                      <LogoField
                         value={draft.logo_url ?? ""}
                         onChange={(next) => set("logo_url", next)}
                         hint="Square SVG or PNG, at least 64×64. Drag a file or paste a URL."
