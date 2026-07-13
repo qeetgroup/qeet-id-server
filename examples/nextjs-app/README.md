@@ -12,7 +12,7 @@ A minimal Next.js (App Router) app that authenticates users with **Qeet ID** usi
 
 ## Prerequisites
 
-- Node ≥ 24 (`nvm use`) and the repo's `pnpm` (run `pnpm install` from `frontend/`).
+- Node ≥ 24 (`nvm use`) and the repo's `bun` (run `bun install` from `frontend/`).
 - The Qeet ID backend running locally **with the dev seed applied** (the seed creates the
   `qci_example_app` OAuth client this example uses).
 
@@ -33,11 +33,11 @@ Then, in `frontend/examples/nextjs-app/`:
 
 ```bash
 cp .env.example .env.local        # values already match the seeded demo client
-make -C ../../.. dev-example      # or: pnpm --filter @qeetid/example-nextjs dev
+make -C ../../.. dev-example      # or: bun run --filter @qeetid/example-nextjs dev
 ```
 
 > First run only: build the SDK packages once so the workspace imports resolve —
-> `pnpm --filter @qeetid/react --filter @qeetid/nextjs --filter @qeetid/sdk build` (from `frontend/`).
+> `bun run --filter @qeetid/react --filter @qeetid/nextjs --filter @qeetid/sdk build` (from `frontend/`).
 
 Open **http://localhost:3010** and click **Sign in with Qeet**. You'll be sent to the hosted login
 (:3004); sign in with a seeded account:

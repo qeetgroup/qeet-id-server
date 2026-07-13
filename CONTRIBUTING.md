@@ -37,8 +37,8 @@ See the [Quickstart in the root README](./README.md#quickstart). In short:
 # Backend (from the repo root — single Go module)
 make db-up && make migrate-up && make dev-backend
 
-# Frontend (from the repo root — pnpm workspace)
-pnpm install && pnpm dev
+# Frontend (from the repo root — Bun workspace)
+bun install && bun run dev
 ```
 
 ---
@@ -96,7 +96,7 @@ Why this matters: commit history feeds the changelog. Vague commits → vague re
    make test-backend && go vet ./...
 
    # Frontend (from the repo root)
-   pnpm typecheck && pnpm lint && pnpm test
+   bun run typecheck && bun run lint && bun run test
    ```
 
 4. **Open the PR** against `develop`. Fill in the template (`.github/PULL_REQUEST_TEMPLATE.md`).

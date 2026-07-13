@@ -8,7 +8,7 @@ Get Qeet ID running locally in about 10 minutes.
 |---|---|---|
 | Go | 1.25+ | [go.dev/dl](https://go.dev/dl) |
 | Node.js | ≥24 | `nvm install` (reads `.nvmrc`) |
-| pnpm | 9.15.4 | `npm install -g pnpm@9.15.4` |
+| Bun | 1.3.14 | `brew install bun` |
 | Docker | any recent | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | golang-migrate | any | `brew install golang-migrate` |
 

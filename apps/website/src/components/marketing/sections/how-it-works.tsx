@@ -34,7 +34,7 @@ function Prompt({ pm, pkg }: { pm: string; pkg: string }) {
 const installCode: Record<Lang, ReactNode> = {
   TypeScript: (
     <>
-      <Prompt pm="pnpm add" pkg="@qeet-id/react" />
+      <Prompt pm="bun add" pkg="@qeet-id/react" />
       {"\n\n"}
       <Tok.c>{"✓ Resolved 1 package\n"}</Tok.c>
       <Tok.c>{"✓ Added "}</Tok.c>
@@ -46,7 +46,7 @@ const installCode: Record<Lang, ReactNode> = {
   ),
   "Next.js": (
     <>
-      <Prompt pm="pnpm add" pkg="@qeet-id/nextjs" />
+      <Prompt pm="bun add" pkg="@qeet-id/nextjs" />
       {"\n\n"}
       <Tok.c>{"✓ Resolved 1 package\n"}</Tok.c>
       <Tok.c>{"✓ Added "}</Tok.c>
@@ -88,7 +88,7 @@ const configCode: Record<Lang, ReactNode> = {
       {" } "}
       <Tok.k>from</Tok.k>
       {" "}
-      <Tok.s>"@qeet-id/node"</Tok.s>
+      <Tok.s>{'"@qeet-id/node"'}</Tok.s>
       {";\n\n"}
       <Tok.k>const</Tok.k>
       {" "}
@@ -101,16 +101,16 @@ const configCode: Record<Lang, ReactNode> = {
       {"  "}
       <Tok.p>tenant</Tok.p>
       {": "}
-      <Tok.s>"acme"</Tok.s>
+      <Tok.s>{'"acme"'}</Tok.s>
       {",\n"}
       {"  "}
       <Tok.p>providers</Tok.p>
       {": ["}
-      <Tok.s>"google"</Tok.s>
+      <Tok.s>{'"google"'}</Tok.s>
       {", "}
-      <Tok.s>"passkey"</Tok.s>
+      <Tok.s>{'"passkey"'}</Tok.s>
       {", "}
-      <Tok.s>"saml"</Tok.s>
+      <Tok.s>{'"saml"'}</Tok.s>
       {"],\n"}
       {"});"}
     </>
@@ -123,7 +123,7 @@ const configCode: Record<Lang, ReactNode> = {
       {" } "}
       <Tok.k>from</Tok.k>
       {" "}
-      <Tok.s>"@qeet-id/nextjs"</Tok.s>
+      <Tok.s>{'"@qeet-id/nextjs"'}</Tok.s>
       {";\n\n"}
       <Tok.k>export const</Tok.k>
       {" { "}
@@ -138,16 +138,16 @@ const configCode: Record<Lang, ReactNode> = {
       {"  "}
       <Tok.p>tenant</Tok.p>
       {": "}
-      <Tok.s>"acme"</Tok.s>
+      <Tok.s>{'"acme"'}</Tok.s>
       {",\n"}
       {"  "}
       <Tok.p>providers</Tok.p>
       {": ["}
-      <Tok.s>"google"</Tok.s>
+      <Tok.s>{'"google"'}</Tok.s>
       {", "}
-      <Tok.s>"passkey"</Tok.s>
+      <Tok.s>{'"passkey"'}</Tok.s>
       {", "}
-      <Tok.s>"saml"</Tok.s>
+      <Tok.s>{'"saml"'}</Tok.s>
       {"],\n"}
       {"});"}
     </>
@@ -163,7 +163,7 @@ const configCode: Record<Lang, ReactNode> = {
       {"    "}
       <Tok.p>Tenant</Tok.p>
       {":    "}
-      <Tok.s>"acme"</Tok.s>
+      <Tok.s>{'"acme"'}</Tok.s>
       {",\n"}
       {"    "}
       <Tok.p>Providers</Tok.p>
@@ -171,11 +171,11 @@ const configCode: Record<Lang, ReactNode> = {
       <Tok.t>string</Tok.t>
       {"{\n"}
       {"        "}
-      <Tok.s>"google"</Tok.s>
+      <Tok.s>{'"google"'}</Tok.s>
       {", "}
-      <Tok.s>"passkey"</Tok.s>
+      <Tok.s>{'"passkey"'}</Tok.s>
       {", "}
-      <Tok.s>"saml"</Tok.s>
+      <Tok.s>{'"saml"'}</Tok.s>
       {",\n"}
       {"    },\n"}
       {"})"}
@@ -198,16 +198,16 @@ const configCode: Record<Lang, ReactNode> = {
       {"    "}
       <Tok.p>tenant</Tok.p>
       {"="}
-      <Tok.s>"acme"</Tok.s>
+      <Tok.s>{'"acme"'}</Tok.s>
       {",\n"}
       {"    "}
       <Tok.p>providers</Tok.p>
       {"=["}
-      <Tok.s>"google"</Tok.s>
+      <Tok.s>{'"google"'}</Tok.s>
       {", "}
-      <Tok.s>"passkey"</Tok.s>
+      <Tok.s>{'"passkey"'}</Tok.s>
       {", "}
-      <Tok.s>"saml"</Tok.s>
+      <Tok.s>{'"saml"'}</Tok.s>
       {"],\n"}
       {")"}
     </>
@@ -224,7 +224,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {" } "}
       <Tok.k>from</Tok.k>
       {" "}
-      <Tok.s>"@qeet-id/react"</Tok.s>
+      <Tok.s>{'"@qeet-id/react"'}</Tok.s>
       {";\n\n"}
       <Tok.k>export default function</Tok.k>
       {" "}
@@ -237,7 +237,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {" "}
       <Tok.p>redirectTo</Tok.p>
       {"="}
-      <Tok.s>"/dashboard"</Tok.s>
+      <Tok.s>{'"/dashboard"'}</Tok.s>
       {" />;\n}"}
     </>
   ),
@@ -249,7 +249,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {" } "}
       <Tok.k>from</Tok.k>
       {" "}
-      <Tok.s>"@qeet-id/nextjs"</Tok.s>
+      <Tok.s>{'"@qeet-id/nextjs"'}</Tok.s>
       {";\n\n"}
       <Tok.k>export default function</Tok.k>
       {" "}
@@ -262,7 +262,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {" "}
       <Tok.p>redirectTo</Tok.p>
       {"="}
-      <Tok.s>"/dashboard"</Tok.s>
+      <Tok.s>{'"/dashboard"'}</Tok.s>
       {" />;\n}"}
     </>
   ),
@@ -272,7 +272,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {"."}
       <Tok.f>Handle</Tok.f>
       {"("}
-      <Tok.s>"/signin"</Tok.s>
+      <Tok.s>{'"/signin"'}</Tok.s>
       {",\n"}
       {"    "}
       <Tok.f>qeetid.SignInHandler</Tok.f>
@@ -282,7 +282,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {"        "}
       <Tok.p>RedirectTo</Tok.p>
       {": "}
-      <Tok.s>"/dashboard"</Tok.s>
+      <Tok.s>{'"/dashboard"'}</Tok.s>
       {",\n"}
       {"    }),\n"}
       {")"}
@@ -294,7 +294,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {"."}
       <Tok.f>get</Tok.f>
       {"("}
-      <Tok.s>"/signin"</Tok.s>
+      <Tok.s>{'"/signin"'}</Tok.s>
       {")\n"}
       <Tok.k>def</Tok.k>
       {" "}
@@ -309,7 +309,7 @@ const shipCode: Record<Lang, ReactNode> = {
       {"(\n        "}
       <Tok.p>redirect_to</Tok.p>
       {"="}
-      <Tok.s>"/dashboard"</Tok.s>
+      <Tok.s>{'"/dashboard"'}</Tok.s>
       {"\n    )"}
     </>
   ),

@@ -14,7 +14,7 @@ You are the **QA / test engineer for Qeet ID**. After a feature is implemented, 
 - **API (Postman/Newman)** — `api/postman/`; scope with `make test-api FOLDER=<name>` (backend must be running).
 - **OpenAPI coverage** — the `chi.Walk` test in `platform/api/rest` fails if any mounted route is undocumented. Keep it green.
 - **Arch fitness** — `go test -count=1 ./tests/architecture/...` (platform ⊥ domains). Must pass (use `-count=1`; it reads the import graph at runtime and is cache-sensitive).
-- **Frontend** — Vitest + Testing Library. `pnpm test` (Node from the repo `.nvmrc` — default toolchain).
+- **Frontend** — Vitest + Testing Library. `bun run test` (Node from the repo `.nvmrc` — default toolchain).
 
 ## What good coverage means here
 - **Multi-tenancy:** add a test proving a tenant cannot read/write another tenant's data (cross-tenant isolation) for any new query/route.
@@ -29,4 +29,4 @@ You are the **QA / test engineer for Qeet ID**. After a feature is implemented, 
 - Run the full relevant suite before declaring done; paste the results. **Do not commit or push.**
 
 ## Definition of done
-`make test-backend` + (if Docker) `make test-integration` + `go test -count=1 ./tests/architecture/...` + `pnpm test` all green, with new tests covering the feature's tenant-isolation, authz, and core behavior. End with a short coverage summary and any flagged gaps.
+`make test-backend` + (if Docker) `make test-integration` + `go test -count=1 ./tests/architecture/...` + `bun run test` all green, with new tests covering the feature's tenant-isolation, authz, and core behavior. End with a short coverage summary and any flagged gaps.

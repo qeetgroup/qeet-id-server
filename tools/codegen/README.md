@@ -19,4 +19,4 @@ The contract is split into five bounded-context files under `api/openapi/`. The 
 ./tools/codegen/openapi-gen.sh
 ```
 
-Requires `openapi-typescript` (`pnpm add -g openapi-typescript`).
+Requires `openapi-typescript` (`bun add -g openapi-typescript`).
