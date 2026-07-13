@@ -4,28 +4,23 @@
 
 Qeet ID operates with the following trust levels:
 
-```
-Untrusted (internet)
-  │
-  ├─ Public endpoints  (/v1/auth/login, /v1/auth/signup, /v1/recovery/*)
-  │  → Rate-limited, HIBP-checked, bot-scored
-  │
-Authenticated (valid Bearer JWT or API key)
-  │
-  ├─ End users         (actor_type=user, tenant-scoped)
-  │  → RBAC-enforced, per-user rate limit
-  │
-  ├─ Org admins        (actor_type=user, elevated role)
-  │  → Full tenant management permissions
-  │
-  ├─ API keys          (actor_type=service, scope-limited)
-  │  → Bypass RBAC; own rate limit; no refresh
-  │
-  ├─ Service accounts  (actor_type=service, client_credentials)
-  │  → Machine-to-machine; scope-limited JWT
-  │
-  └─ AI agents         (actor_type=agent, ephemeral)
-     → Short-lived (≤1h), scoped, re-minted per task
+```mermaid
+flowchart TB
+    untrusted(["Untrusted (internet)"])
+    public["Public endpoints<br/>(/v1/auth/login, /v1/auth/signup, /v1/recovery/*)<br/>Rate-limited, HIBP-checked, bot-scored"]
+    untrusted --> public
+
+    authenticated["Authenticated<br/>(valid Bearer JWT or API key)"]
+    endusers["End users (actor_type=user, tenant-scoped)<br/>RBAC-enforced, per-user rate limit"]
+    orgadmins["Org admins (actor_type=user, elevated role)<br/>Full tenant management permissions"]
+    apikeys["API keys (actor_type=service, scope-limited)<br/>Bypass RBAC; own rate limit; no refresh"]
+    serviceaccts["Service accounts (actor_type=service, client_credentials)<br/>Machine-to-machine; scope-limited JWT"]
+    aiagents["AI agents (actor_type=agent, ephemeral)<br/>Short-lived (≤1h), scoped, re-minted per task"]
+    authenticated --> endusers
+    authenticated --> orgadmins
+    authenticated --> apikeys
+    authenticated --> serviceaccts
+    authenticated --> aiagents
 ```
 
 ## Attack surface

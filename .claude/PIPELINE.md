@@ -21,28 +21,35 @@ How a competitive proposal becomes shipped, tested, security-reviewed code. The
 **Reuse (don't duplicate):** `/code-review` (general correctness), `/verify` (run it & confirm it works), `/simplify` (cleanup), `code-architect` (general design), `/security-review` (generic pass; `security-reviewer` goes deeper on IAM).
 
 ## The flow
-```
-FEATURE-PROPOSALS.md
-        │  pick one (e.g. FP-013)
-        ▼
-feature-architect ──► docs/specs/<slug>.md
-        │
-        ├─► issue-tracker ──► GitHub Issue on the roadmap board (Project #24)
-        │
-        ├─► backend-engineer  ─┐
-        └─► frontend-engineer ─┤  (implement from the spec; design-reviewer checks UI craft + Qeetrix + WCAG 2.2 AA)
-                               ▼
-                       qa-test-engineer   (suite green: build + vet + go test + arch + coverage + bun run test)
-                               ▼
-                       security-reviewer  (IAM audit of the diff → engineers fix findings)
-                               ▼
-                       /code-review + /verify   (general correctness + does-it-run)
-                               ▼
-                       docs-writer        (docs + flip proposal to Status: done, update ROADMAP.md (✅ Shipped section))
-                               ▼
-                       YOU: review the diff and commit
-                               ▼
-                       devops-engineer    (at release time: Helm/Compose/CI/migration rollout — validated, never deployed)
+```mermaid
+flowchart TB
+    proposals["FEATURE-PROPOSALS.md"]
+    architect["feature-architect"]
+    spec["docs/specs/&lt;slug&gt;.md"]
+    tracker["issue-tracker"]
+    issue["GitHub Issue on the roadmap board (Project #24)"]
+    backend["backend-engineer"]
+    frontend["frontend-engineer"]
+    qa["qa-test-engineer<br/>(suite green: build + vet + go test + arch + coverage + bun run test)"]
+    security["security-reviewer<br/>(IAM audit of the diff → engineers fix findings)"]
+    review["/code-review + /verify<br/>(general correctness + does-it-run)"]
+    docs["docs-writer<br/>(docs + flip proposal to Status: done,<br/>update ROADMAP.md ✅ Shipped section)"]
+    you["YOU: review the diff and commit"]
+    devops["devops-engineer<br/>(at release time: Helm/Compose/CI/migration rollout — validated, never deployed)"]
+
+    proposals -->|"pick one (e.g. FP-013)"| architect
+    architect --> spec
+    architect --> tracker
+    tracker --> issue
+    architect --> backend
+    architect --> frontend
+    backend --> qa
+    frontend -->|"implement from the spec; design-reviewer checks UI craft + Qeetrix + WCAG 2.2 AA"| qa
+    qa --> security
+    security --> review
+    review --> docs
+    docs --> you
+    you --> devops
 ```
 
 ## How to run it

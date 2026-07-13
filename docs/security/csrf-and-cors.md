@@ -79,9 +79,11 @@ Cross-Origin Resource Sharing (CORS) is configured in `platform/api/rest/router.
 
 CORS middleware is applied **before CSRF** in the middleware chain. This ensures that preflight (OPTIONS) responses carry CORS headers even when the CSRF check would fail for a cross-origin mutation (OPTIONS requests are not mutations).
 
-```
-CSRF middleware
-  └─ CORS middleware  ← CORS must be inside CSRF so OPTIONS gets CORS headers
+```mermaid
+flowchart TB
+    subgraph csrf["CSRF middleware"]
+        cors["CORS middleware<br/>(inside CSRF so OPTIONS gets CORS headers)"]
+    end
 ```
 
 ### Development

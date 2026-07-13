@@ -21,9 +21,9 @@
 
 <div align="center">
 
-| 🏗 Single deployable | 🔌 ~190 API routes | 🖥 3 React frontends | 📦 6 SDKs | 🗄 65 migrations |
+| 🏗 Single deployable | 🔌 ~200 API routes | 🖥 3 React frontends | 📦 3 SDKs | 🗄 81 migrations |
 |:---:|:---:|:---:|:---:|:---:|
-| Go modular monolith | 5 OpenAPI 3.1 specs | Admin · Login · Website | TS (browser+node) · React · Next · Go · Py | 6 Postgres schemas |
+| Go modular monolith | 5 OpenAPI 3.1 specs | Admin · Login · Website | TS (Node) · React · Go | 6 Postgres schemas |
 
 </div>
 
@@ -42,7 +42,7 @@
 | 📜 **Tamper-evident audit** | SHA-256 hash-chained log with a `/verify` integrity walk |
 | 💳 **Billing built-in** | Multi-currency, Stripe (global) + Razorpay (India) |
 | 🌍 **Open & self-hostable** | MIT-licensed, single Go binary — no vendor lock-in |
-| 🧰 **Batteries included** | 3 frontends + 5 first-party SDKs + hosted login |
+| 🧰 **Batteries included** | 3 frontends + 3 first-party SDKs + hosted login |
 
 <details>
 <summary><b>📊 Full comparison vs Auth0 · Okta · Clerk · Supabase · better-auth</b></summary>
@@ -139,13 +139,13 @@ Deep dives: [`docs/architecture/`](./docs/architecture/) · Decision records: [`
 
 **🏢 Enterprise SSO & provisioning** — OIDC/OAuth 2.0 provider (discovery, JWKS, PKCE, `/userinfo`, refresh, revoke, introspect, logout) · Device Authorization Grant (RFC 8628) · Token Exchange (RFC 8693, downscope + delegation) · CIBA backchannel auth · SAML 2.0 SP **and** IdP · SCIM 2.0 (users + groups + PatchOp) · LDAP/AD · social login · account linking · SSO test-connection · **self-serve Admin Portal** (a capability-scoped, time-limited link lets a tenant's *own* IT admin configure SAML/SCIM directly — no Qeet ID account, no console login).
 
-**🛡️ Authorization** — RBAC (`?explain=true` grant-path trace) · per-tenant policy (IP allow/deny CIDR, password/login-method rules — not a general ABAC engine) · **ReBAC** (`relation_tuples`, recursive `/check` with cycle guard, **`?explain=true` grant-path trace**) · Auth Hooks/Actions (post-login allow/deny **+ custom-claim injection**, HMAC-signed).
+**🛡️ Authorization** — RBAC (`?explain=true` grant-path trace) · per-tenant policy (IP allow/deny CIDR, password/login-method rules) · **ABAC** — general attribute-condition engine (`all`/`any`/`not` trees over `subject`/`resource`/`context` attributes, 13 operators, deny-overrides, explainable `POST /evaluate`) · **ReBAC** (`relation_tuples`, recursive `/check` with cycle guard, **`?explain=true` grant-path trace**) · Auth Hooks/Actions (post-login allow/deny **+ custom-claim injection**, HMAC-signed).
 
 **🤖 Developer & AI-agent platform** — scoped API keys (`qk_`, hashed, audited) · service accounts (`client_credentials`) · secrets vault (AES-256-GCM, scoped `vault:<name>`) · **Token Vault** (per-tenant encrypted 3rd-party OAuth tokens — Slack/GitHub/Google/custom — with auto-refresh; callers never see the raw refresh token; API-only, no console UI) · HMAC webhooks (backoff retry with a dead-letter give-up state after `maxDeliveryAttempts`) · **Agent Governance** — one named console section (`/developer/agents`), not scattered settings: ephemeral scoped revocable tokens (`actor_type=agent`), tenant-wide kill-switch, lifecycle state machine, a sponsor-transfer tool (search-select, previews affected count), and a Shadow-AI review queue (unreviewed OIDC clients holding machine grants) · **Agent-as-Principal** (`actor_types_supported` discovery metadata) · **CIBA** backchannel auth (poll mode, API-only) · **AuthZEN PDP/PEP** (`POST /tenants/{id}/access/v1/evaluation`, standard facade over RBAC/ReBAC) · **MCP introspection** · **token delegation** (RFC 8693 `act` claim) · **W3C JWT-VC** (issue/verify/revoke) · analytics · SIEM streaming.
 
 **👥 Identity & workspace** — multi-tenant orgs (isolated, branded, custom domains) · users (CRUD, sessions, recycle bin, bulk CSV/NDJSON import, **IdP migration import from Auth0/Cognito/Azure AD B2C**) · nested groups (SCIM sync) · invitations · domain verification (DNS TXT) · per-tenant email templates · org switcher + branding preview.
 
-**📜 Compliance & billing** — SHA-256 hash-chained audit (`/verify`) · **audit intelligence** (behavioral-baseline anomaly detection over the audit log — first-time action types, unusual hours, new IPs — with per-tenant tuning) · GDPR erasure + grace-period purge · GDPR data export (async, profile/sessions/passkeys/roles/MFA status) · retention auto-purge · SOC 2 / ISO 27001 compliance screens (static templates, not generated evidence) · multi-currency billing (ISO-4217) · card payments via Stripe (global) + Razorpay (India), webhook-verified (env-gated).
+**📜 Compliance & billing** — SHA-256 hash-chained audit (`/verify`) · **audit intelligence** (behavioral-baseline anomaly detection over the audit log — first-time action types, unusual hours, new IPs — with per-tenant tuning) · GDPR erasure + grace-period purge · GDPR data export (async, profile/sessions/passkeys/roles/MFA status) · retention auto-purge · **SOC 2 / ISO 27001 evidence generation** (per-framework control catalog evaluated against live tenant state — MFA/password policy, audit hash-chain, retention, KMS/secrets, RBAC, IP rules, SIEM — persisted as pass/fail/na evidence runs with console + JSON export) · multi-currency billing (ISO-4217) · card payments via Stripe (global) + Razorpay (India), webhook-verified (env-gated).
 
 </details>
 
@@ -212,16 +212,13 @@ Sanity check: `curl localhost:4001/healthz` · Demo login: **`saibabu@qeet.in`**
 
 ## 📦 SDKs
 
-Six first-party SDKs authenticate via `Authorization: ApiKey` + ES256/JWKS verification.
+Three first-party SDKs — each maintained in its own repo under `qeet-sdks/` — authenticate via `Authorization: ApiKey` + ES256/JWKS verification.
 
 | SDK | Install |
 |:---|:---|
-| TypeScript (browser) | `npm install @qeet-id/client` |
-| TypeScript (server/node) | `npm install @qeet-id/node` |
+| TypeScript (server/Node) | `npm install @qeet-id/node` |
 | React (`<SignIn/>`, `<UserButton/>`, `<OrgSwitcher/>`, `<SignUp/>`, `<CreateOrganization/>`, `<OrganizationProfile/>`, `<UserProfile/>` + hooks) | `npm install @qeet-id/react` |
-| Next.js (sealed-cookie sessions) | `npm install @qeet-id/nextjs` |
-| Go | `go get github.com/qeetgroup/qeet-id/sdk/go` |
-| Python | `pip install qeetid` |
+| Go | `go get github.com/qeetgroup/qeet-id-go` |
 
 ```ts
 import { useSession, UserButton } from '@qeet-id/react';
@@ -238,14 +235,19 @@ export function Navbar() {
 
 Ships as a **distroless nonroot** container; migrations run as a separate one-shot image **before** the app starts. Both build with the repo root as context.
 
-```
-EC2 instance  ←  Caddy (TLS)  ←  qeet-id app  ←  AWS RDS (Postgres 16)
-                                  Redis (rate-limit)
+```mermaid
+flowchart LR
+    net(["Internet"]) --> caddy
+    subgraph ec2["EC2 instance · ap-south-2"]
+        caddy["Caddy · auto-TLS"] --> app["qeet-id app<br/>distroless nonroot container"]
+        app --> redis[("Redis<br/>rate-limit")]
+    end
+    app --> rds[("AWS RDS<br/>Postgres 16")]
 ```
 
 Release image is cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id`. Migrations run automatically on startup — no separate image needed.
 
-> Kubernetes (Helm), Terraform, and multi-env staging configs are available in git history and tracked in [ROADMAP.md](./ROADMAP.md) for when you're ready to scale.
+> Kubernetes (Helm), Terraform (RDS/ECR/KMS), kustomize overlays, and Prometheus/Grafana/OTel configs live in [`deploy/base/`](./deploy/) + [`deploy/environments/`](./deploy/) for when you're ready to scale to Kubernetes.
 
 ---
 
@@ -267,7 +269,7 @@ CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `g
 ## 🛠 Tech stack
 
 - **Backend** — Go 1.25 · chi v5 · pgx v5 (hand-written SQL, no ORM — [ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) · ES256 JWTs + JWKS rotation · Argon2id · AES-256-GCM vault · transactional outbox + DLQ
-- **Frontend** — React 19 · admin on Vite + TanStack · web/login on Next.js 16 · Tailwind 4 + the shared [`@qeetrix/*`](../qeetrix/) design system · Bun workspaces
+- **Frontend** — React 19 · admin on Vite + TanStack · web/login on Next.js 16 · Tailwind 4 + the shared [`@qeetrix/*`](../qeetrix/) design system · Bun workspaces (`bun run --filter`) · Biome (lint + format) · TypeScript 7 (Next.js apps pinned to 6)
 - **Data** — PostgreSQL (`tenant`/`user`/`auth`/`rbac`/`audit`/`platform` schemas), multi-tenant by `tenant_id` · optional Redis for cross-replica rate limiting
 
 ---

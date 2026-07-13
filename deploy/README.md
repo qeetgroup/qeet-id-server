@@ -8,19 +8,18 @@ over **SSH**. No Terraform, no Kubernetes.
 One container is the whole backend: the server **embeds the background workers**
 and **auto-applies DB migrations on startup**, so there's nothing else to run.
 
-```
-Internet
-   │ 80/443   DNS: api.id.qeet.in ── A ──► 16.112.237.163  (GoDaddy, zone qeet.in)
-   ▼
-┌──────────────── EC2  ap-south-2 (Hyderabad), t3.medium, AL2023 ────────────────┐
-│  caddy  ──auto-TLS (Let's Encrypt)──►  reverse_proxy app:4001                   │
-│    │  (docker compose network, project dir /opt/qeet-id)                        │
-│    ▼                                                                            │
-│  qeet-id app  ── single container :4001, embeds workers, auto-runs migrations   │
-└────────────────────────────────────────────────────────────────────────────────┘
-   │ 5432  (private, SG-locked: only the EC2 SG may connect)
-   ▼
-RDS Postgres 16  qeet-id-postgres.ctsgcomag80l.ap-south-2.rds.amazonaws.com / db "postgres"
+```mermaid
+flowchart TB
+    internet(["Internet"])
+    dns(["DNS: api.id.qeet.in — A → 16.112.237.163<br/>(GoDaddy, zone qeet.in)"])
+    dns -.-> internet
+    internet -->|"80 / 443"| caddy
+    subgraph ec2["EC2 · ap-south-2 (Hyderabad) · t3.medium · AL2023"]
+        caddy["caddy<br/>auto-TLS (Let's Encrypt)<br/>reverse_proxy to app:4001"]
+        app["qeet-id app<br/>single container :4001<br/>embeds workers, auto-runs migrations"]
+        caddy -->|"docker compose network<br/>project dir /opt/qeet-id"| app
+    end
+    app -->|"5432 — private, SG-locked<br/>(only the EC2 SG may connect)"| rds[("RDS Postgres 16<br/>qeet-id-postgres...ap-south-2.rds.amazonaws.com<br/>db postgres")]
 ```
 
 ---

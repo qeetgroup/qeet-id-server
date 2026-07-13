@@ -63,12 +63,12 @@ type auditLogger interface {
 
 **Key design:** `authentication.Service` uses injected interfaces for MFA gating, login hooks, and anomaly recording — enabling the access context to call into other contexts without circular imports.
 
-```
-auth.Service
-  SetMFA(MFAEnroller)           ← domains/access/mfa
-  SetLoginHook(LoginHook)       ← domains/developer/auth-hooks
-  SetAnomalyRecorder(...)       ← domains/access/threat-detection/threat
-  SetRegistrationPolicy(...)    ← domains/access/authorization/authpolicy
+```mermaid
+flowchart LR
+    mfa["domains/access/mfa"] -->|"SetMFA(MFAEnroller)"| authsvc["auth.Service"]
+    hooks["domains/developer/auth-hooks"] -->|"SetLoginHook(LoginHook)"| authsvc
+    threat["domains/access/threat-detection/threat"] -->|"SetAnomalyRecorder(...)"| authsvc
+    authpolicy["domains/access/authorization/authpolicy"] -->|"SetRegistrationPolicy(...)"| authsvc
 ```
 
 ---
@@ -133,28 +133,22 @@ auth.Service
 
 ## Dependency topology
 
-```
-                    ┌──────────────┐
-                    │  operations  │  ← audit, notifications used by all contexts
-                    └──────┬───────┘
-                           │ (interface)
-    ┌──────────────────────┼───────────────────────────┐
-    │                      │                           │
-┌───▼───────┐   ┌──────────▼──────┐   ┌───────────────▼───┐
-│  identity │   │     access      │   │    federation     │
-│  users,   │   │  auth, rbac,    │   │ oidc, saml, scim  │
-│  orgs,    │←──│  passkeys, mfa  │   │  ldap, social     │
-│  groups   │   └────────┬────────┘   └───────────────────┘
-└───────────┘            │
-                ┌────────▼────────┐
-                │    developer    │
-                │  api-keys,      │
-                │  webhooks,      │
-                │  agents, vc     │
-                └─────────────────┘
+```mermaid
+flowchart TB
+    operations["operations<br/>audit, notifications<br/>used by all contexts"]
+    identity["identity<br/>users, orgs, groups"]
+    access["access<br/>auth, rbac, passkeys, mfa"]
+    federation["federation<br/>oidc, saml, scim, ldap, social"]
+    developer["developer<br/>api-keys, webhooks, agents, vc"]
 
-platform/* (db, tokens, httpx, logger, config, …) ← imported by all
-cmd/server/main.go ← wires everything together via buildDeps()
+    operations -->|interface| identity
+    operations -->|interface| access
+    operations -->|interface| federation
+    access --> identity
+    access --> developer
+
+    platform["platform/* (db, tokens, httpx, logger, config, …)<br/>imported by all"]
+    cmd["cmd/server/main.go<br/>wires everything together via buildDeps()"]
 ```
 
 All arrows represent interface-mediated calls (not package imports of concrete types across context boundaries).

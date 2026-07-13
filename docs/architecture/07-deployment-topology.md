@@ -6,16 +6,19 @@ Qeet ID deploys as a **single Go binary** in a Docker container, with PostgreSQL
 
 Current production topology: **EC2 + Docker Compose + AWS RDS**.
 
-```
-Internet
-   │  443 / 80
-   ▼
-EC2 instance
-   ├── Caddy         (TLS termination, reverse proxy)  ← ports 80 + 443
-   ├── qeet-id app   (Go binary, distroless container)  ← :4001, internal only
-   └── Redis         (rate limiting, ephemeral)         ← :6379, internal only
-
-AWS RDS (PostgreSQL 16)   ← accessible only from EC2 security group
+```mermaid
+flowchart TB
+    internet(["Internet"])
+    subgraph ec2["EC2 instance"]
+        caddy["Caddy<br/>(TLS termination, reverse proxy)<br/>ports 80 + 443"]
+        app["qeet-id app<br/>(Go binary, distroless container)<br/>:4001, internal only"]
+        redis["Redis<br/>(rate limiting, ephemeral)<br/>:6379, internal only"]
+    end
+    rds[("AWS RDS (PostgreSQL 16)<br/>accessible only from EC2 security group")]
+    internet -->|443 / 80| caddy
+    caddy --> app
+    app --> redis
+    app --> rds
 ```
 
 ---

@@ -4,24 +4,13 @@ All authentication flows are implemented in `domains/access/authentication` (`pa
 
 ## Email + password login
 
-```
-Client                     API (auth.Service.Login)
-  │                               │
-  ├─ POST /v1/auth/login ─────────►
-  │  { email, password, tenant }  │
-  │                               ├─ 1. Look up user + credential hash
-  │                               ├─ 2. Verify bcrypt password
-  │                               ├─ 3. Check account lockout state
-  │                               ├─ 4. HIBP breach check (fail-open)
-  │                               ├─ 5. Bot detection signal recording
-  │                               ├─ 6. MFA gate (if enrolled)
-  │                               │      └─ Return mfa_required challenge
-  │                               ├─ 7. Auth hook (if configured) — signed POST
-  │                               │      └─ fail-open or fail-closed per tenant
-  │                               ├─ 8. Anomaly recording (threat-detection)
-  │                               ├─ 9. Mint access token + refresh token (ES256)
-  │◄──────────────────────────────┤
-     { access_token, refresh_token, expires_in }
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API (auth.Service.Login)
+    Client->>API: POST /v1/auth/login<br/>{ email, password, tenant }
+    Note over API: 1. Look up user + credential hash<br/>2. Verify bcrypt password<br/>3. Check account lockout state<br/>4. HIBP breach check (fail-open)<br/>5. Bot detection signal recording<br/>6. MFA gate (if enrolled) → return mfa_required challenge<br/>7. Auth hook (if configured) — signed POST<br/>(fail-open or fail-closed per tenant)<br/>8. Anomaly recording (threat-detection)<br/>9. Mint access token + refresh token (ES256)
+    API-->>Client: { access_token, refresh_token, expires_in }
 ```
 
 **Lockout:** After N consecutive failures (configurable per tenant, `migrations/0041_login_lockout`), the account enters a temporary lockout. Correct credentials during lockout still fail with `locked` error code.
@@ -60,65 +49,51 @@ Passkeys are hardware-bound, phish-resistant credentials. Two ceremonies: regist
 
 ### Registration (new passkey)
 
-```
-Client                         API (passkeys.Service)
-  │                                │
-  ├─ POST /v1/passkeys/register/begin ─►
-  │                                ├─ Generate challenge (32 random bytes)
-  │                                ├─ Store WebAuthn session (5-min TTL)
-  │◄── { options: PublicKeyCredentialCreationOptions }
-  │
-  │ [Browser/device: user verifies biometric/PIN]
-  │
-  ├─ POST /v1/passkeys/register/complete ─►
-  │  { credential: AuthenticatorAttestationResponse }
-  │                                ├─ Verify attestation (go-webauthn)
-  │                                ├─ Verify challenge freshness (session TTL)
-  │                                ├─ Store passkey credential
-  │◄── 201 Created
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API (passkeys.Service)
+    Client->>API: POST /v1/passkeys/register/begin
+    Note over API: Generate challenge (32 random bytes)<br/>Store WebAuthn session (5-min TTL)
+    API-->>Client: { options: PublicKeyCredentialCreationOptions }
+    Note over Client: Browser/device: user verifies biometric/PIN
+    Client->>API: POST /v1/passkeys/register/complete<br/>{ credential: AuthenticatorAttestationResponse }
+    Note over API: Verify attestation (go-webauthn)<br/>Verify challenge freshness (session TTL)<br/>Store passkey credential
+    API-->>Client: 201 Created
 ```
 
 ### Authentication (passkey login)
 
-```
-Client                         API (passkeys.Service)
-  │                                │
-  ├─ POST /v1/passkeys/login/begin ─►
-  │  { email? }                    ├─ Generate assertion challenge
-  │                                ├─ Store WebAuthn session (5-min TTL)
-  │◄── { options: PublicKeyCredentialRequestOptions }
-  │
-  │ [Browser/device: user verifies biometric/PIN]
-  │
-  ├─ POST /v1/passkeys/login/complete ─►
-  │  { credential: AuthenticatorAssertionResponse }
-  │                                ├─ Verify assertion (go-webauthn)
-  │                                ├─ Verify challenge freshness
-  │                                ├─ Update last_used on credential
-  │                                ├─ Apply same auth hook + anomaly gates as password login
-  │◄── { access_token, refresh_token }
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API (passkeys.Service)
+    Client->>API: POST /v1/passkeys/login/begin<br/>{ email? }
+    Note over API: Generate assertion challenge<br/>Store WebAuthn session (5-min TTL)
+    API-->>Client: { options: PublicKeyCredentialRequestOptions }
+    Note over Client: Browser/device: user verifies biometric/PIN
+    Client->>API: POST /v1/passkeys/login/complete<br/>{ credential: AuthenticatorAssertionResponse }
+    Note over API: Verify assertion (go-webauthn)<br/>Verify challenge freshness<br/>Update last_used on credential<br/>Apply same auth hook + anomaly gates as password login
+    API-->>Client: { access_token, refresh_token }
 ```
 
 The 5-minute session TTL on WebAuthn challenges defends against replay attacks.
 
 ## Social OAuth
 
-```
-Client                    API                    Social Provider
-  │                        │                           │
-  ├─ GET /v1/social/:provider/start ─►
-  │                        ├─ Generate state + PKCE verifier
-  │                        ├─ Store OAuth session
-  │◄── 302 → provider auth URL
-  │                        │                           │
-  │                        │◄── callback with code ────┤
-  │                        ├─ Exchange code for tokens
-  ├─ GET /v1/social/:provider/callback ─► (redirected by provider)
-  │                        ├─ Fetch profile from provider
-  │                        ├─ JIT provision user (if new)
-  │                        ├─ Link social account to user
-  │                        ├─ Mint Qeet ID tokens
-  │◄── 302 → login app with tokens
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Provider as Social Provider
+    Client->>API: GET /v1/social/:provider/start
+    Note over API: Generate state + PKCE verifier<br/>Store OAuth session
+    API-->>Client: 302 → provider auth URL
+    Provider->>API: callback with code
+    Note over API: Exchange code for tokens
+    Client->>API: GET /v1/social/:provider/callback<br/>(redirected by provider)
+    Note over API: Fetch profile from provider<br/>JIT provision user (if new)<br/>Link social account to user<br/>Mint Qeet ID tokens
+    API-->>Client: 302 → login app with tokens
 ```
 
 Supported providers: Google, GitHub, and any OAuth 2.0-compatible provider. Provider credentials stored in `auth.social_providers` per tenant.
@@ -146,19 +121,19 @@ In development, OTP codes and magic-link tokens are printed to the backend log (
 
 Auth hooks are synchronous, tenant-configured webhooks that gate login completion. After credential verification and MFA, the hook is called before tokens are minted:
 
-```
-auth.Service.Login()
-  │
-  └─► authhook.Service.Run(event)
-        ├─ POST <hook_url> with HMAC-signed payload
-        │  { user_id, tenant_id, email, ip, user_agent }
-        ├─ Wait for response (configurable timeout)
-        │
-        ├─ Response { allow: true }  → login proceeds
-        ├─ Response { allow: false, reason: "..." } → 403 Forbidden
-        └─ Timeout / error:
-             ├─ FailOpen = true (default) → login proceeds
-             └─ FailOpen = false → 503 Service Unavailable
+```mermaid
+flowchart TB
+    login["auth.Service.Login()"]
+    run["authhook.Service.Run(event)"]
+    post["POST &lt;hook_url&gt; with HMAC-signed payload<br/>{ user_id, tenant_id, email, ip, user_agent }"]
+    wait["Wait for response (configurable timeout)"]
+    login --> run
+    run --> post
+    post --> wait
+    wait -->|"Response { allow: true }"| proceed1["login proceeds"]
+    wait -->|"Response { allow: false, reason: &quot;...&quot; }"| forbidden["403 Forbidden"]
+    wait -->|"Timeout / error — FailOpen = true (default)"| proceed2["login proceeds"]
+    wait -->|"Timeout / error — FailOpen = false"| unavailable["503 Service Unavailable"]
 ```
 
 Auth hooks are configured in the admin console under Developer → Auth Hooks.

@@ -14,53 +14,51 @@ Qeet ID is a passkeys-first, multi-tenant identity platform — a self-hostable 
 
 ## Actors
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              Qeet ID                                    │
-│                                                                         │
-│  End Users       ─► apps/login  (Next.js, :3004)  ─►  /v1/auth/*       │
-│  Org Admins      ─► apps/console (Vite, :3002)    ─►  /v1/users/*      │
-│  Developers      ─►  api/openapi/                  ─►  /v1/api-keys/*   │
-│  Service Accts   ─►  Bearer JWT (client_credentials) ─► /v1/...        │
-│  AI Agents       ─►  POST /v1/agents/token  ─►  ephemeral actor token  │
-│  IdPs / SPs      ─►  /.well-known/*, /saml/*, /scim/v2/...             │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph qeetid["Qeet ID"]
+        eu(["End Users"]) --> login["apps/login (Next.js, :3004)"] --> authp["/v1/auth/*"]
+        oa(["Org Admins"]) --> console["apps/console (Vite, :3002)"] --> usersp["/v1/users/*"]
+        dev(["Developers"]) --> openapi["api/openapi/"] --> keysp["/v1/api-keys/*"]
+        sa(["Service Accts"]) --> bearer["Bearer JWT (client_credentials)"] --> v1p["/v1/..."]
+        agents(["AI Agents"]) --> agtok["POST /v1/agents/token"] --> ephem["ephemeral actor token"]
+        idp(["IdPs / SPs"]) --> proto["/.well-known/*, /saml/*, /scim/v2/..."]
+    end
 ```
 
 ## Component map
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  Frontends (Bun workspaces)                                              │
-│  ┌───────────────┐  ┌────────────────┐  ┌──────────────────────────┐   │
-│  │ @qeetid/admin │  │  @qeetid/login │  │     @qeetid/web          │   │
-│  │  Vite :3002   │  │  Next.js :3004 │  │   Next.js :3001          │   │
-│  └──────┬────────┘  └───────┬────────┘  └────────────┬─────────────┘   │
-│         └──────────────────┬┘                         │                 │
-│                            │ REST / JSON              │                 │
-│  ┌─────────────────────────▼──────────────────────────▼──────────────┐  │
-│  │               Go API  (cmd/server, chi v5, :4001)                 │  │
-│  │   platform/api/rest/router.go — mounts all domain handlers            │  │
-│  │                                                                    │  │
-│  │  ┌──────────┐  ┌────────┐  ┌───────────┐  ┌──────────────────┐  │  │
-│  │  │ identity │  │ access │  │ federation│  │    developer     │  │  │
-│  │  └──────────┘  └────────┘  └───────────┘  └──────────────────┘  │  │
-│  │                     ┌──────────────┐                              │  │
-│  │                     │  operations  │                              │  │
-│  │                     └──────────────┘                              │  │
-│  └──────────────────────────┬─────────────────────────────────────--─┘  │
-│                             │ pgx v5                                     │
-│  ┌──────────────────────────▼──────────────────────────────────────────┐ │
-│  │  PostgreSQL :5432                                                   │ │
-│  │  schemas: tenant · user · auth · rbac · audit · platform           │ │
-│  └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  Egress                                                                  │
-│  ┌──────────┐  ┌──────────┐  ┌────────────┐  ┌──────────────────────┐  │
-│  │  SMTP    │  │  HIBP    │  │  Webhooks  │  │  SIEM (Splunk/DD)   │  │
-│  │ (email)  │  │ (pwned?) │  │  + DLQ     │  │  via outbox stream  │  │
-│  └──────────┘  └──────────┘  └────────────┘  └──────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph qeetid["Qeet ID"]
+        subgraph fe["Frontends (Bun workspaces)"]
+            admin["@qeetid/admin<br/>Vite :3002"]
+            login["@qeetid/login<br/>Next.js :3004"]
+            web["@qeetid/web<br/>Next.js :3001"]
+        end
+        subgraph api["Go API (cmd/server, chi v5, :4001) — platform/api/rest/router.go mounts all domain handlers"]
+            identity["identity"]
+            access["access"]
+            federation["federation"]
+            developer["developer"]
+            operations["operations"]
+        end
+        pg[("PostgreSQL :5432<br/>schemas: tenant · user · auth · rbac · audit · platform")]
+        subgraph egress["Egress"]
+            smtp["SMTP<br/>(email)"]
+            hibp["HIBP<br/>(pwned?)"]
+            webhooks["Webhooks<br/>+ DLQ"]
+            siem["SIEM (Splunk/DD)<br/>via outbox stream"]
+        end
+        admin -->|REST / JSON| api
+        login -->|REST / JSON| api
+        web -->|REST / JSON| api
+        api -->|pgx v5| pg
+        api -.-> smtp
+        api -.-> hibp
+        api -.-> webhooks
+        api -.-> siem
+    end
 ```
 
 ## Five bounded contexts

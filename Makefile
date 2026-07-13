@@ -1,4 +1,4 @@
-.PHONY: dev build test lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev build test lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
 
 ifneq (,$(wildcard .env))
     include .env
@@ -8,6 +8,9 @@ endif
 # DB_URL comes from .env (included above); this is the fallback when .env is absent.
 DB_URL        ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
 MIGRATIONS_DIR = platform/database/migrations
+
+install:
+	go mod download
 
 dev:
 	go run ./cmd/server

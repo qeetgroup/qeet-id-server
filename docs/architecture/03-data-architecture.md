@@ -61,10 +61,12 @@ Repositories handle their own SQL. The `platform/database/postgres/dbutil` packa
 
 Every mutation that touches more than one table runs inside a single `pgx.Tx`:
 
-```
-business row  ┐
-audit row      ├── single pgx.Tx (committed or rolled back together)
-outbox row    ┘
+```mermaid
+flowchart LR
+    business["business row"] --> tx
+    audit["audit row"] --> tx
+    outbox["outbox row"] --> tx
+    tx["single pgx.Tx<br/>(committed or rolled back together)"]
 ```
 
 The service layer owns the transaction. Handlers stay thin and never manage transactions directly. This ensures:
@@ -74,21 +76,32 @@ The service layer owns the transaction. Handlers stay thin and never manage tran
 
 ## Key entity relationships
 
-```
-tenants (tenant schema)
-  └─► users (user schema) [via tenant_id]
-        ├─► user_roles (rbac schema) [M:N via roles]
-        ├─► passkey_credentials (auth schema)
-        ├─► mfa_secrets (auth schema)
-        └─► audit_events (audit schema)
+```mermaid
+flowchart TB
+    tenants["tenants (tenant schema)"]
+    users["users (user schema)<br/>via tenant_id"]
+    user_roles["user_roles (rbac schema)<br/>M:N via roles"]
+    passkeys["passkey_credentials (auth schema)"]
+    mfa["mfa_secrets (auth schema)"]
+    audit["audit_events (audit schema)"]
+    oidc["oidc_clients (auth schema)<br/>apps that use Qeet ID as IdP"]
+    saml["saml_connections (auth schema)<br/>enterprise SSO connections"]
+    apikeys["api_keys (auth schema)"]
+    agents["agents (platform schema)<br/>AI-agent definitions"]
+    billing["billing_plans (platform schema)"]
+    logsinks["log_sinks (audit schema)<br/>SIEM streaming config"]
 
-tenants
-  ├─► oidc_clients (auth schema) — apps that use Qeet ID as IdP
-  ├─► saml_connections (auth schema) — enterprise SSO connections
-  ├─► api_keys (auth schema)
-  ├─► agents (platform schema) — AI-agent definitions
-  ├─► billing_plans (platform schema)
-  └─► log_sinks (audit schema) — SIEM streaming config
+    tenants --> users
+    users --> user_roles
+    users --> passkeys
+    users --> mfa
+    users --> audit
+    tenants --> oidc
+    tenants --> saml
+    tenants --> apikeys
+    tenants --> agents
+    tenants --> billing
+    tenants --> logsinks
 ```
 
 ## Soft deletes
