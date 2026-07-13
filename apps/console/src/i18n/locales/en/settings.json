@@ -1,0 +1,187 @@
+{
+  "branding": {
+    "description": "Logo, colors, custom domain, and outgoing email identity for this tenant. Changes apply to hosted login pages and transactional emails.",
+    "visualIdentity": {
+      "title": "Visual identity",
+      "description": "Used in hosted sign-in, emails, and the admin sidebar.",
+      "logo": "Logo",
+      "primaryColor": "Primary color",
+      "primaryColorHelp": "Used for buttons, links, and accents on the sign-in page.",
+      "secondaryColor": "Secondary color",
+      "secondaryColorHelp": "Page background color behind the sign-in card."
+    },
+    "customDomain": {
+      "title": "Custom domain",
+      "description": "Where your hosted login pages are served (e.g. auth.acme.com).",
+      "label": "Domain",
+      "help": "DNS + TLS provisioning happens out-of-band today. We'll show status here once the custom-domain wizard ships.",
+      "pending": "DNS verification pending"
+    },
+    "outgoingEmail": {
+      "title": "Outgoing email",
+      "description": "Sender identity used on magic links, OTP codes, password reset, invites.",
+      "fromName": "From name",
+      "fromAddress": "From address"
+    },
+    "preview": {
+      "title": "Live preview",
+      "description": "How your hosted sign-in page will look.",
+      "signInTo": "Sign in to {{name}}",
+      "emailPlaceholder": "Email address",
+      "continue": "Continue",
+      "or": "or",
+      "continueWithGoogle": "Continue with Google",
+      "securedBy": "Secured by"
+    },
+    "palette": {
+      "title": "Color palette",
+      "primary": "Primary",
+      "background": "Background"
+    },
+    "footer": {
+      "savedAt": "Saved at {{time}}",
+      "unsaved": "Unsaved changes",
+      "reset": "Reset",
+      "save": "Save changes",
+      "saving": "Saving…"
+    },
+    "toast": {
+      "saved": "Branding saved"
+    }
+  },
+  "billing": {
+    "description": "Your subscription plan, billed in your chosen currency. Invoices are generated each period.",
+    "currency": "Currency",
+    "currentPlan": {
+      "title": "Current plan",
+      "cancels": "Cancels",
+      "renews": "Renews",
+      "cancelPlan": "Cancel plan",
+      "cancelConfirmTitle": "Cancel subscription?",
+      "cancelConfirmDescription": "Access continues until the end of the current period.",
+      "cancelConfirmLabel": "Cancel subscription"
+    },
+    "plan": {
+      "current": "Current",
+      "mostPopular": "Most popular",
+      "switchTo": "Switch to {{name}}",
+      "isCurrent": "Current plan",
+      "contactSales": "Need Enterprise?",
+      "salesEmail": "sales@qeet.in",
+      "free": {
+        "name": "Free",
+        "price": "$0",
+        "period": "forever",
+        "mau": "Up to 5,000 MAU"
+      },
+      "starter": {
+        "name": "Starter",
+        "price": "$29",
+        "period": "/ month",
+        "mau": "Up to 15,000 MAU"
+      },
+      "pro": {
+        "name": "Pro",
+        "price": "$99",
+        "period": "/ month + $0.02 / MAU",
+        "mau": "Up to 50,000 MAU included",
+        "badge": "Most popular"
+      },
+      "enterprise": {
+        "name": "Enterprise",
+        "price": "Custom",
+        "period": "annual contract",
+        "mau": "Unlimited MAU & tenants"
+      }
+    },
+    "invoices": {
+      "title": "Invoices",
+      "description": "Generated at the start of each billing period.",
+      "empty": "No invoices yet.",
+      "columns": {
+        "issued": "Issued",
+        "period": "Period",
+        "plan": "Plan",
+        "amount": "Amount",
+        "status": "Status"
+      }
+    },
+    "empty": "No plans configured."
+  },
+  "workspace": {
+    "general": {
+      "description": "The display name, plan, and region for this workspace. The slug is immutable.",
+      "profile": {
+        "title": "Profile",
+        "description": "Visible to members of this tenant.",
+        "slug": "Slug",
+        "slugHelp": "Immutable. Used in tenant URLs and SCIM/SAML metadata.",
+        "name": "Name",
+        "plan": "Plan",
+        "region": "Region",
+        "status": "Status",
+        "statusActive": "Active",
+        "statusSuspended": "Suspended",
+        "statusHelp": "Suspending blocks new logins for everyone in this tenant.",
+        "plans": {
+          "free": "Free",
+          "pro": "Pro",
+          "enterprise": "Enterprise"
+        }
+      },
+      "tenantId": {
+        "title": "Tenant ID",
+        "description": "Reference value used by SCIM, SAML and API calls.",
+        "created": "Created"
+      },
+      "footer": {
+        "savedAt": "Saved {{time}}",
+        "unsaved": "Unsaved changes",
+        "reset": "Reset",
+        "save": "Save changes",
+        "saving": "Saving…"
+      }
+    },
+    "domains": {
+      "description": "Bring your own domain for hosted login pages (e.g. auth.acme.com). The DNS + TLS provisioning wizard isn't built yet — for now we just store the hostname against the tenant's branding record.",
+      "pendingBanner": {
+        "title": "DNS + TLS automation pending.",
+        "description": "Saving here only persists the hostname. The 4-step DNS-verification + ACM-provisioning wizard is on the Phase 3 admin spec — see documents/IMPLEMENTATION-STATUS.md. Today you must front qeet-id with your own reverse proxy."
+      },
+      "custom": {
+        "title": "Custom domain",
+        "description": "One domain per tenant. Leave blank to use the default Qeet ID-hosted URL.",
+        "label": "Domain",
+        "statusConfigured": "configured · TLS not provisioned",
+        "statusNone": "none",
+        "dnsRecords": "Required DNS",
+        "dnsHelp": "Records aren't enforced yet; we'll start checking them in the DNS-verification wizard."
+      },
+      "footer": {
+        "savedAt": "Saved {{time}}",
+        "unsaved": "Unsaved changes",
+        "brandingLink": "For colors and logo, see",
+        "save": "Save",
+        "saving": "Saving…"
+      }
+    },
+    "emailTemplates": {
+      "description": "Customise the transactional emails Qeet ID sends. Unedited templates use the built-in defaults.",
+      "listTitle": "Templates",
+      "custom": "custom",
+      "editor": {
+        "customised": "Customised",
+        "default": "Default",
+        "subject": "Subject",
+        "body": "Body",
+        "variables": "Variables",
+        "variablesHelp": "Insert these placeholders; they're filled in when the email is sent.",
+        "noVariables": "No variables.",
+        "preview": "Preview",
+        "resetToDefault": "Reset to default",
+        "save": "Save template",
+        "saving": "Saving…"
+      }
+    }
+  }
+}

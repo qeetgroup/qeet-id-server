@@ -26,6 +26,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Area,
   AreaChart,
@@ -117,6 +118,7 @@ function EmptyChart({ message, height = "h-70" }: { message: string; height?: st
 }
 
 function AnalyticsPage() {
+  const { t } = useTranslation("dashboard");
   // Range selector is kept for visual parity with the future API.
   // Today the backend overview is fixed-window (24h / 7d / 14d / 30d
   // depending on the metric); the selector is a no-op until §4.8 is
@@ -128,10 +130,10 @@ function AnalyticsPage() {
   if (isError) {
     return (
       <div className="flex min-w-0 flex-col gap-6">
-        <PageHeader description="Product analytics across tenants, applications, and authentication methods." />
+        <PageHeader description={t("analytics.description")} />
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            Couldn&apos;t load analytics{error instanceof Error ? `: ${error.message}` : ""}.
+            {t("analytics.loadError")}{error instanceof Error ? `: ${error.message}` : ""}.
           </CardContent>
         </Card>
       </div>
@@ -160,17 +162,17 @@ function AnalyticsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
-        description="Product analytics across tenants, applications, and authentication methods."
+        description={t("analytics.description")}
         actions={
           <Select value={range} onValueChange={(v) => v && setRange(v)}>
             <SelectTrigger className="w-45">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="24h">Last 24 hours</SelectItem>
-              <SelectItem value="7d">Last 7 days</SelectItem>
-              <SelectItem value="30d">Last 30 days</SelectItem>
-              <SelectItem value="90d">Last 90 days</SelectItem>
+              <SelectItem value="24h">{t("analytics.range24h")}</SelectItem>
+              <SelectItem value="7d">{t("analytics.range7d")}</SelectItem>
+              <SelectItem value="30d">{t("analytics.range30d")}</SelectItem>
+              <SelectItem value="90d">{t("analytics.range90d")}</SelectItem>
             </SelectContent>
           </Select>
         }
@@ -190,28 +192,28 @@ function AnalyticsPage() {
               label="MAU"
               value={fmtInt(kpis.mau.value)}
               delta={kpis.mau.delta_pct}
-              hint="vs last 30 days"
+              hint={t("analytics.kpiHintVs30d")}
               icon={<UsersIcon className="size-4" />}
             />
             <KpiCard
               label="DAU / MAU"
               value={`${kpis.stickiness_pct.value.toFixed(1)}%`}
               delta={kpis.stickiness_pct.delta_pct}
-              hint="stickiness"
+              hint={t("analytics.kpiHintStickiness")}
               icon={<ZapIcon className="size-4" />}
             />
             <KpiCard
               label="Avg sessions / user"
               value={kpis.avg_sessions_per_user.value.toFixed(1)}
               delta={kpis.avg_sessions_per_user.delta_pct}
-              hint="last 30 days"
+              hint={t("analytics.kpiHintLast30d")}
               icon={<TrendingUpIcon className="size-4" />}
             />
             <KpiCard
               label="Total users"
               value={fmtInt(kpis.total_users.value)}
               delta={kpis.total_users.delta_pct}
-              hint="vs 30 days ago"
+              hint={t("analytics.kpiHintVs30dAgo")}
               icon={<GlobeIcon className="size-4" />}
             />
           </>
@@ -221,14 +223,14 @@ function AnalyticsPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Active users</CardTitle>
-            <CardDescription>Weekly WAU and average DAU · last 8 weeks</CardDescription>
+            <CardTitle>{t("analytics.activeUsersTitle")}</CardTitle>
+            <CardDescription>{t("analytics.activeUsersDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <div className="h-70 w-full animate-pulse rounded bg-muted/40" />
             ) : weekly.length === 0 || weekly.every((w) => w.wau === 0 && w.dau === 0) ? (
-              <EmptyChart message="No session activity recorded in the last 8 weeks." />
+              <EmptyChart message={t("analytics.emptyActivity")} />
             ) : (
               <ChartContainer config={mauConfig} className="h-70 w-full">
                 <AreaChart data={weekly}>
@@ -259,11 +261,11 @@ function AnalyticsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Geography</CardTitle>
-            <CardDescription>Users by region</CardDescription>
+            <CardTitle>{t("analytics.geoTitle")}</CardTitle>
+            <CardDescription>{t("analytics.geoDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <EmptyChart message="Requires GeoIP enrichment (roadmap §4.6)." />
+            <EmptyChart message={t("analytics.emptyGeo")} />
           </CardContent>
         </Card>
       </div>
@@ -271,22 +273,22 @@ function AnalyticsPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader>
-            <CardTitle>API volume</CardTitle>
-            <CardDescription>Requests per day</CardDescription>
+            <CardTitle>{t("analytics.apiTitle")}</CardTitle>
+            <CardDescription>{t("analytics.apiDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <EmptyChart message="Requires request-volume instrumentation." height="h-[220px]" />
+            <EmptyChart message={t("analytics.emptyApi")} height="h-[220px]" />
           </CardContent>
         </Card>
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Top applications</CardTitle>
-            <CardDescription>Ranked by logins in the selected period</CardDescription>
+            <CardTitle>{t("analytics.appsTitle")}</CardTitle>
+            <CardDescription>{t("analytics.appsDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
             <EmptyChart
-              message="Requires per-application login tagging on auth events."
+              message={t("analytics.emptyApps")}
               height="h-[220px]"
             />
           </CardContent>

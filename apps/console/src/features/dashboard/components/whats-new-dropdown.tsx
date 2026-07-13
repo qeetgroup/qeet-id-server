@@ -140,7 +140,7 @@ export function WhatsNewDropdown() {
               {CHANGELOG.length} update{CHANGELOG.length === 1 ? "" : "s"}
             </span>
           </div>
-          <ul role="list" className="max-h-[26rem] divide-y overflow-y-auto">
+          <ul className="max-h-[26rem] divide-y overflow-y-auto">
             {CHANGELOG.slice(0, 10).map((entry) => {
               const isUnseen = !lastSeen || entry.date > lastSeen;
               const Icon = entry.kind ? KIND_ICON[entry.kind] : SparklesIcon;

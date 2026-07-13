@@ -15,6 +15,7 @@ import {
   ShieldIcon,
   type LucideIcon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 
@@ -22,49 +23,21 @@ export const Route = createFileRoute("/_app/security/")({ component: SecurityOve
 
 // Each card deep-links into a real sub-page (the bare parent paths like
 // /security/threats are themselves placeholders, so we jump to a built child).
-const SECTIONS: { title: string; description: string; to: string; icon: LucideIcon }[] = [
-  {
-    title: "Threat Protection",
-    description: "Bot detection, anomalies, rate limits and IP allowlists.",
-    to: "/security/threats/bots",
-    icon: ShieldAlertIcon,
-  },
-  {
-    title: "Sessions",
-    description: "Active sessions across the workspace — revoke any you don't recognise.",
-    to: "/security/sessions",
-    icon: ShieldIcon,
-  },
-  {
-    title: "Device Authorizations",
-    description: "Devices that completed the device-authorization flow.",
-    to: "/security/device-authorizations",
-    icon: MonitorSmartphoneIcon,
-  },
-  {
-    title: "Rate Limits",
-    description: "Per-endpoint gateway limits and tenant network policy.",
-    to: "/security/rate-limits",
-    icon: GaugeIcon,
-  },
-  {
-    title: "Audit Logs",
-    description: "Hash-chained, append-only record of every security event.",
-    to: "/security/audit-logs",
-    icon: ScrollTextIcon,
-  },
-  {
-    title: "Compliance",
-    description: "SOC 2, GDPR, ISO 27001 and data-retention controls.",
-    to: "/security/compliance/soc2",
-    icon: LockKeyholeIcon,
-  },
+const SECTIONS: { key: string; to: string; icon: LucideIcon }[] = [
+  { key: "threatProtection", to: "/security/threats/bots", icon: ShieldAlertIcon },
+  { key: "sessions", to: "/security/sessions", icon: ShieldIcon },
+  { key: "deviceAuthorizations", to: "/security/device-authorizations", icon: MonitorSmartphoneIcon },
+  { key: "rateLimits", to: "/security/rate-limits", icon: GaugeIcon },
+  { key: "auditLogs", to: "/security/audit-logs", icon: ScrollTextIcon },
+  { key: "compliance", to: "/security/compliance/soc2", icon: LockKeyholeIcon },
 ];
 
 function SecurityOverviewPage() {
+  const { t } = useTranslation("security");
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="Your workspace's security posture at a glance. Jump into any area below." />
+      <PageHeader description={t("overview.description")} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {SECTIONS.map((s) => {
@@ -79,8 +52,8 @@ function SecurityOverviewPage() {
                     </span>
                     <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </div>
-                  <CardTitle className="mt-2 text-base">{s.title}</CardTitle>
-                  <CardDescription>{s.description}</CardDescription>
+                  <CardTitle className="mt-2 text-base">{t(`overview.sections.${s.key}.title`)}</CardTitle>
+                  <CardDescription>{t(`overview.sections.${s.key}.description`)}</CardDescription>
                 </CardHeader>
               </Card>
             </Link>

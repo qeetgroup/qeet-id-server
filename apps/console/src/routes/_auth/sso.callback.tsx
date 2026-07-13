@@ -2,6 +2,7 @@ import { Button, Card, CardContent, buttonVariants } from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { AlertTriangleIcon, CheckCircle2Icon, Loader2Icon, ShieldXIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { BrandHero } from "@/features/auth/components/brand-hero";
 import { ApiError } from "@/lib/api";
@@ -19,6 +20,7 @@ function readSamlCode(): string | null {
 }
 
 function SsoCallbackPage() {
+  const { t } = useTranslation("authFlow");
   const consume = useConsumeSamlCode();
   const [code] = useState(readSamlCode);
 
@@ -36,7 +38,7 @@ function SsoCallbackPage() {
       <Card className="overflow-hidden p-0">
         <CardContent className="grid p-0 md:grid-cols-2">
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
-            {renderStatus({ code, consume })}
+            {renderStatus({ code, consume, t })}
           </div>
           <BrandHero />
         </CardContent>
@@ -48,21 +50,20 @@ function SsoCallbackPage() {
 function renderStatus({
   code,
   consume,
+  t,
 }: {
   code: string | null;
   consume: ReturnType<typeof useConsumeSamlCode>;
+  t: (key: string) => string;
 }) {
   if (!code) {
     return (
       <>
         <AlertTriangleIcon className="size-10 text-amber-500" />
-        <h1 className="text-2xl font-bold">No sign-in code</h1>
-        <p className="text-balance text-muted-foreground">
-          This page completes a SAML single sign-on. Start the flow from your identity provider, or
-          sign in directly.
-        </p>
+        <h1 className="text-2xl font-bold">{t("sso.noCodeTitle")}</h1>
+        <p className="text-balance text-muted-foreground">{t("sso.noCodeText")}</p>
         <Link to="/sign-in" className={buttonVariants({ variant: "outline" }) + " mt-2"}>
-          Back to sign in
+          {t("sso.backToSignIn")}
         </Link>
       </>
     );
@@ -72,8 +73,8 @@ function renderStatus({
     return (
       <>
         <Loader2Icon className="size-10 animate-spin text-sky-500" />
-        <h1 className="text-2xl font-bold">Signing you in…</h1>
-        <p className="text-balance text-muted-foreground">Completing single sign-on.</p>
+        <h1 className="text-2xl font-bold">{t("sso.loadingTitle")}</h1>
+        <p className="text-balance text-muted-foreground">{t("sso.loadingText")}</p>
       </>
     );
   }
@@ -82,8 +83,8 @@ function renderStatus({
     return (
       <>
         <CheckCircle2Icon className="size-10 text-emerald-500" />
-        <h1 className="text-2xl font-bold">Signed in</h1>
-        <p className="text-balance text-muted-foreground">Redirecting to your dashboard…</p>
+        <h1 className="text-2xl font-bold">{t("sso.successTitle")}</h1>
+        <p className="text-balance text-muted-foreground">{t("sso.successText")}</p>
       </>
     );
   }
@@ -92,17 +93,16 @@ function renderStatus({
   return (
     <>
       <ShieldXIcon className="size-10 text-rose-500" />
-      <h1 className="text-2xl font-bold">Couldn&apos;t complete sign-in</h1>
+      <h1 className="text-2xl font-bold">{t("sso.errorTitle")}</h1>
       <p className="text-balance text-muted-foreground">
-        {detail} The code is single-use and short-lived — start the SSO flow again from your identity
-        provider.
+        {detail} {t("sso.errorTrailer")}
       </p>
       <div className="mt-4 flex gap-2">
         <Link to="/sign-in" className={buttonVariants({ variant: "outline", size: "sm" })}>
-          Back to sign in
+          {t("sso.backToSignIn")}
         </Link>
         <Button size="sm" variant="ghost" onClick={() => window.location.reload()}>
-          Try again
+          {t("sso.tryAgain")}
         </Button>
       </div>
     </>

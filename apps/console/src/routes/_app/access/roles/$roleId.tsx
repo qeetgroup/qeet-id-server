@@ -19,6 +19,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowLeftIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
@@ -38,6 +39,7 @@ type Role = {
 type Permission = { id: string; key: string; description: string };
 
 function RoleDetailPage() {
+  const { t } = useTranslation("rbac");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const { roleId } = Route.useParams();
   const tenantId = useTenantId();
@@ -88,7 +90,7 @@ function RoleDetailPage() {
         to="/access/roles"
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
       >
-        <ArrowLeftIcon className="size-3" /> Back to roles
+        <ArrowLeftIcon className="size-3" /> {t("roles.detail.backLink")}
       </Link>
 
       <Card>
@@ -101,24 +103,23 @@ function RoleDetailPage() {
                 <CardTitle className="flex items-center gap-2 text-base">
                   <ShieldCheckIcon className="size-4 text-muted-foreground" />
                   {role.name}
-                  {role.is_system && <Badge variant="muted">System</Badge>}
+                  {role.is_system && <Badge variant="muted">{t("roles.detail.systemBadge")}</Badge>}
                 </CardTitle>
-                <CardDescription>{role.description || "No description."}</CardDescription>
+                <CardDescription>{role.description || t("roles.detail.noDescription")}</CardDescription>
               </div>
               <TimeSince value={role.created_at} className="text-xs" />
             </div>
           ) : (
-            <CardTitle className="text-base text-destructive">Role not found</CardTitle>
+            <CardTitle className="text-base text-destructive">{t("roles.detail.notFound")}</CardTitle>
           )}
         </CardHeader>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Granted permissions</CardTitle>
+          <CardTitle className="text-base">{t("roles.detail.granted.title")}</CardTitle>
           <CardDescription>
-            {rolePermsQ.data?.items?.length ?? 0} permission
-            {rolePermsQ.data?.items?.length === 1 ? "" : "s"} held by this role.
+            {t("roles.detail.granted.count", { count: rolePermsQ.data?.items?.length ?? 0 })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -128,15 +129,15 @@ function RoleDetailPage() {
             error={rolePermsQ.error}
             isEmpty={!rolePermsQ.data?.items?.length}
             emptyIcon={ShieldCheckIcon}
-            emptyTitle="No permissions granted yet."
+            emptyTitle={t("roles.detail.granted.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("roles.detail.granted.colKey")}</TableHead>
+                  <TableHead>{t("roles.detail.granted.colDescription")}</TableHead>
+                  <TableHead className="text-right">{t("roles.detail.granted.colActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -151,14 +152,14 @@ function RoleDetailPage() {
                         disabled={role?.is_system || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: `Revoke "${p.key}" from this role?`,
+                            title: t("roles.detail.granted.confirmTitle", { key: p.key }),
                             variant: "destructive",
-                            confirmLabel: "Revoke",
+                            confirmLabel: t("roles.detail.granted.confirmLabel"),
                             onConfirm: () => revokeM.mutate(p.id),
                           })
                         }
                       >
-                        <Trash2Icon /> Revoke
+                        <Trash2Icon /> {t("roles.detail.granted.revokeBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -171,10 +172,8 @@ function RoleDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Available permissions</CardTitle>
-          <CardDescription>
-            Permissions you can add to this role. Granting takes effect immediately.
-          </CardDescription>
+          <CardTitle className="text-base">{t("roles.detail.available.title")}</CardTitle>
+          <CardDescription>{t("roles.detail.available.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -183,15 +182,15 @@ function RoleDetailPage() {
             error={permsQ.error}
             isEmpty={available.length === 0}
             emptyIcon={ShieldCheckIcon}
-            emptyTitle="Every permission is already granted to this role."
+            emptyTitle={t("roles.detail.available.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("roles.detail.available.colKey")}</TableHead>
+                  <TableHead>{t("roles.detail.available.colDescription")}</TableHead>
+                  <TableHead className="text-right">{t("roles.detail.available.colActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -206,7 +205,7 @@ function RoleDetailPage() {
                         disabled={role?.is_system || grantM.isPending}
                         onClick={() => grantM.mutate(p.id)}
                       >
-                        Grant
+                        {t("roles.detail.available.grantBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>

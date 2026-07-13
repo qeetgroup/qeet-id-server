@@ -15,6 +15,7 @@ import {
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useAcceptInvite } from "@/lib/auth";
 
@@ -26,6 +27,7 @@ export const Route = createFileRoute("/_auth/invite/accept")({
 });
 
 function AcceptInvitePage() {
+  const { t } = useTranslation("authFlow");
   const { token } = Route.useSearch();
   const accept = useAcceptInvite();
   const [password, setPassword] = useState("");
@@ -35,14 +37,12 @@ function AcceptInvitePage() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Invalid invite link</CardTitle>
-          <CardDescription>
-            This link is missing its token. Ask your workspace admin to resend the invite.
-          </CardDescription>
+          <CardTitle>{t("invite.invalidTitle")}</CardTitle>
+          <CardDescription>{t("invite.invalidDescription")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Link to="/sign-in" className="text-sm underline">
-            Back to sign in
+            {t("invite.backToSignIn")}
           </Link>
         </CardContent>
       </Card>
@@ -52,10 +52,8 @@ function AcceptInvitePage() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Accept your invite</CardTitle>
-        <CardDescription>
-          Set a password to finish joining the workspace — you&apos;ll be signed in afterwards.
-        </CardDescription>
+        <CardTitle>{t("invite.acceptTitle")}</CardTitle>
+        <CardDescription>{t("invite.acceptDescription")}</CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -70,17 +68,17 @@ function AcceptInvitePage() {
         >
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="display_name">Display name</FieldLabel>
+              <FieldLabel htmlFor="display_name">{t("invite.displayNameLabel")}</FieldLabel>
               <Input
                 id="display_name"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="How you'd like to be addressed"
+                placeholder={t("invite.displayNamePlaceholder")}
                 autoComplete="name"
               />
             </Field>
             <Field>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <FieldLabel htmlFor="password">{t("invite.passwordLabel")}</FieldLabel>
               <Input
                 id="password"
                 type="password"
@@ -90,13 +88,13 @@ function AcceptInvitePage() {
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="new-password"
               />
-              <FieldDescription>At least 8 characters.</FieldDescription>
+              <FieldDescription>{t("invite.passwordHelp")}</FieldDescription>
             </Field>
             {accept.error && <FieldError>{accept.error.message}</FieldError>}
             <Field>
               <Button type="submit" disabled={accept.isPending || password.length < 8}>
                 {accept.isPending && <Loader2Icon className="animate-spin" />}
-                {accept.isPending ? "Joining…" : "Accept invite"}
+                {accept.isPending ? t("invite.joiningBtn") : t("invite.acceptBtn")}
               </Button>
             </Field>
           </FieldGroup>

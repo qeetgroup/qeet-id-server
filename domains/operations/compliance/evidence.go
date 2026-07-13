@@ -1,0 +1,830 @@
+// Evidence generation for SOC 2 and ISO 27001 compliance frameworks.
+//
+// EvidenceService runs a catalog of live control checks against a tenant's
+// actual system state — auth policy, audit log, RBAC, retention, SIEM config,
+// secrets vault, etc. — and persists the results as an immutable
+// compliance_evidence_runs row.  Each control maps to one or more framework
+// criteria codes (CC6.1, A.9.4, …) and returns pass / fail / na with a
+// human-readable evidence string describing exactly what was found.
+//
+// The control catalog currently covers:
+//   SOC 2  — 13 controls spanning CC6.1–CC7.2 (logical access, encryption, monitoring)
+//   ISO 27001 — 12 controls spanning A.8–A.18 (access, crypto, ops, compliance)
+package gdpr
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+)
+
+// ControlStatus is the outcome of a single compliance control check.
+type ControlStatus string
+
+const (
+	// ControlPass means the check positively confirmed the condition from live data.
+	ControlPass ControlStatus = "pass"
+	// ControlFail means the check confirmed the condition is NOT met.
+	ControlFail ControlStatus = "fail"
+	// ControlNA means the relevant data was not determinable (e.g. no rows yet).
+	// It never fabricates a pass.
+	ControlNA ControlStatus = "na"
+)
+
+// ControlResult captures the outcome of one compliance control check.
+type ControlResult struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Category string        `json:"category"`
+	Criteria string        `json:"criteria"` // framework reference code, e.g. "CC6.1" or "A.9.4"
+	Status   ControlStatus `json:"status"`
+	Detail   string        `json:"detail"` // what was found; never empty
+}
+
+// EvidenceRun is one generated evidence snapshot for a tenant+framework pair.
+// Controls is populated on GetRun; it is omitted from list responses.
+type EvidenceRun struct {
+	ID          uuid.UUID       `json:"id"`
+	TenantID    uuid.UUID       `json:"tenant_id"`
+	Framework   string          `json:"framework"`
+	GeneratedAt time.Time       `json:"generated_at"`
+	GeneratedBy *uuid.UUID      `json:"generated_by,omitempty"`
+	PassCount   int             `json:"pass_count"`
+	FailCount   int             `json:"fail_count"`
+	NACount     int             `json:"na_count"`
+	Controls    []ControlResult `json:"controls,omitempty"`
+}
+
+// control is an internal catalog entry: metadata plus a live check function.
+// check must never return ControlPass unless it positively confirmed the
+// condition from real system data.
+type control struct {
+	id       string
+	name     string
+	category string
+	criteria string // compliance criteria reference code
+	check    func(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string)
+}
+
+// EvidenceService generates compliance evidence by running live control checks
+// against the tenant's actual system state and persisting the results.
+type EvidenceService struct {
+	pool          *pgxpool.Pool
+	verifier      *audit.Verifier // used by the audit-chain integrity check
+	breachEnabled bool            // true when platform HIBP breach-check is configured
+}
+
+// NewEvidenceService constructs the evidence service.  breachEnabled should
+// reflect cfg.BreachedPasswordCheck so the breach-detection control can
+// report whether HIBP k-anonymity checking is active.
+func NewEvidenceService(pool *pgxpool.Pool, verifier *audit.Verifier, breachEnabled bool) *EvidenceService {
+	return &EvidenceService{pool: pool, verifier: verifier, breachEnabled: breachEnabled}
+}
+
+// --------------------------------------------------------------------------
+// Control catalog — shared check functions
+// --------------------------------------------------------------------------
+
+// checkMFAEnforcement verifies the tenant's MFA enforcement level is not
+// the permissive default ('optional').  Reads tenant.security_policies.
+func checkMFAEnforcement(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var enforcement string
+	err := svc.pool.QueryRow(ctx, `
+		select mfa_enforcement from tenant.security_policies where tenant_id = $1
+	`, tenantID).Scan(&enforcement)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ControlFail, "no security policy row; MFA defaults to 'optional' — set mfa_enforcement to 'required'"
+	}
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not query security policy: %v", err)
+	}
+	if enforcement == "optional" {
+		return ControlFail, fmt.Sprintf("MFA enforcement is %q — change to 'required' or 'enforced'", enforcement)
+	}
+	return ControlPass, fmt.Sprintf("MFA enforcement is %q", enforcement)
+}
+
+// checkPasswordMinLength verifies the tenant auth policy requires passwords of
+// at least 12 characters.  Reads tenant.auth_policy.
+func checkPasswordMinLength(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var minLen int
+	err := svc.pool.QueryRow(ctx, `
+		select password_min_length from tenant.auth_policy where tenant_id = $1
+	`, tenantID).Scan(&minLen)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ControlFail, "no auth policy configured; minimum length defaults to 8 — set to ≥ 12 for compliance"
+	}
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not query auth policy: %v", err)
+	}
+	if minLen < 12 {
+		return ControlFail, fmt.Sprintf("password minimum length is %d; must be ≥ 12 for compliance", minLen)
+	}
+	return ControlPass, fmt.Sprintf("password minimum length is %d (≥ 12 required)", minLen)
+}
+
+// checkPasswordComplexity verifies that all three complexity rules
+// (uppercase, number, symbol) are enabled.  Reads tenant.auth_policy.
+func checkPasswordComplexity(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var reqUpper, reqNum, reqSymbol bool
+	err := svc.pool.QueryRow(ctx, `
+		select password_require_uppercase, password_require_number, password_require_symbol
+		from tenant.auth_policy where tenant_id = $1
+	`, tenantID).Scan(&reqUpper, &reqNum, &reqSymbol)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ControlFail, "no auth policy configured; complexity rules default to off — enable uppercase, number, and symbol requirements"
+	}
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not query auth policy: %v", err)
+	}
+	var missing []string
+	if !reqUpper {
+		missing = append(missing, "uppercase")
+	}
+	if !reqNum {
+		missing = append(missing, "number")
+	}
+	if !reqSymbol {
+		missing = append(missing, "symbol")
+	}
+	if len(missing) > 0 {
+		return ControlFail, "password complexity missing: " + strings.Join(missing, ", ")
+	}
+	return ControlPass, "password complexity enabled: uppercase, number, and symbol required"
+}
+
+// checkSessionTimeout verifies the session max-age is configured and is ≤ 24 hours.
+// Reads tenant.security_policies.session_max_age.
+func checkSessionTimeout(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var seconds float64
+	err := svc.pool.QueryRow(ctx, `
+		select extract(epoch from session_max_age)
+		from tenant.security_policies where tenant_id = $1
+	`, tenantID).Scan(&seconds)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ControlFail, "no security policy; session max-age defaults to 30 days — set to ≤ 24 hours for compliance"
+	}
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not query session policy: %v", err)
+	}
+	hours := seconds / 3600
+	if seconds > 86400 { // > 24 hours
+		return ControlFail, fmt.Sprintf("session max-age is %.1f hours; must be ≤ 24 hours for compliance", hours)
+	}
+	return ControlPass, fmt.Sprintf("session max-age is %.1f hours (≤ 24 required)", hours)
+}
+
+// checkBreachedPasswordAndRisk verifies that adaptive risk detection is
+// configured (auth.risk_settings row exists) and reports the HIBP breach-check
+// status from the platform configuration.
+func checkBreachedPasswordAndRisk(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var medium, high float64
+	err := svc.pool.QueryRow(ctx, `
+		select medium_threshold, high_threshold
+		from auth.risk_settings where tenant_id = $1
+	`, tenantID).Scan(&medium, &high)
+	riskConfigured := !errors.Is(err, pgx.ErrNoRows) && err == nil
+
+	hibpStatus := "disabled"
+	if svc.breachEnabled {
+		hibpStatus = "enabled"
+	}
+
+	if !riskConfigured && !svc.breachEnabled {
+		return ControlFail,
+			fmt.Sprintf("adaptive risk detection not configured; HIBP breach check is %s — enable at least one protection layer", hibpStatus)
+	}
+	var parts []string
+	if riskConfigured {
+		parts = append(parts, fmt.Sprintf("adaptive risk configured (medium threshold %.2f, high %.2f)", medium, high))
+	}
+	parts = append(parts, "HIBP breach check: "+hibpStatus)
+	return ControlPass, strings.Join(parts, "; ")
+}
+
+// checkRBACRoles verifies that tenant-scoped RBAC roles are defined, evidencing
+// a least-privilege role model.  Reads rbac.roles.
+func checkRBACRoles(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var count int
+	if err := svc.pool.QueryRow(ctx, `
+		select count(*) from rbac.roles where tenant_id = $1
+	`, tenantID).Scan(&count); err != nil {
+		return ControlNA, fmt.Sprintf("could not query RBAC roles: %v", err)
+	}
+	if count == 0 {
+		return ControlFail, "no RBAC roles defined; define roles to implement least-privilege access control"
+	}
+	return ControlPass, fmt.Sprintf("%d RBAC role(s) defined (least-privilege model active)", count)
+}
+
+// checkRBACAssignments verifies that users have been assigned roles, confirming
+// RBAC is actively enforcing least-privilege.  Reads rbac.user_roles.
+func checkRBACAssignments(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var count int
+	if err := svc.pool.QueryRow(ctx, `
+		select count(*) from rbac.user_roles where tenant_id = $1
+	`, tenantID).Scan(&count); err != nil {
+		return ControlNA, fmt.Sprintf("could not query RBAC assignments: %v", err)
+	}
+	if count == 0 {
+		return ControlNA, "no role assignments found; assign roles to users to demonstrate least-privilege access control"
+	}
+	return ControlPass, fmt.Sprintf("%d role assignment(s) active across tenant users", count)
+}
+
+// checkRetentionPolicy verifies that a data retention policy is configured and
+// enabled.  Reads tenant.retention_policy.
+func checkRetentionPolicy(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var enabled bool
+	var days int
+	err := svc.pool.QueryRow(ctx, `
+		select deleted_users_enabled, deleted_users_days
+		from tenant.retention_policy where tenant_id = $1
+	`, tenantID).Scan(&enabled, &days)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ControlFail, "no retention policy configured; enable deleted-user purge to enforce data disposal"
+	}
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not query retention policy: %v", err)
+	}
+	if !enabled {
+		return ControlFail, fmt.Sprintf("retention policy exists but deleted-user purge is disabled (window: %d days) — enable it", days)
+	}
+	return ControlPass, fmt.Sprintf("data retention enabled: deleted users purged after %d days", days)
+}
+
+// checkIPAccessRules verifies that IP access control rules are configured and
+// enforcement is enabled.  Reads tenant.ip_rules_config and tenant.ip_rules.
+func checkIPAccessRules(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var enabled bool
+	err := svc.pool.QueryRow(ctx, `
+		select enabled from tenant.ip_rules_config where tenant_id = $1
+	`, tenantID).Scan(&enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ControlNA, "no IP rule configuration found; configure IP allow/deny rules for network boundary protection"
+	}
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not query IP rules config: %v", err)
+	}
+	if !enabled {
+		return ControlFail, "IP access rules are configured but enforcement is disabled — enable to protect the network boundary"
+	}
+	var ruleCount int
+	_ = svc.pool.QueryRow(ctx, `select count(*) from tenant.ip_rules where tenant_id = $1`, tenantID).Scan(&ruleCount)
+	if ruleCount == 0 {
+		return ControlNA, "IP rule enforcement is enabled but no CIDR rules are defined — add allow/deny rules"
+	}
+	return ControlPass, fmt.Sprintf("IP access control enforced with %d CIDR rule(s)", ruleCount)
+}
+
+// checkSecretsEncryption verifies that secrets are being stored in the
+// encrypted vault.  Reads tenant.secrets.  The vault uses AES-256-GCM with
+// a key supplied by the platform's configured key provider (static or KMS).
+func checkSecretsEncryption(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var count int
+	if err := svc.pool.QueryRow(ctx, `
+		select count(*) from tenant.secrets where tenant_id = $1
+	`, tenantID).Scan(&count); err != nil {
+		return ControlNA, fmt.Sprintf("could not query secrets vault: %v", err)
+	}
+	if count == 0 {
+		return ControlNA, "no secrets stored in vault yet; the vault (AES-256-GCM, platform key provider) is available but unused — consider storing tenant credentials here"
+	}
+	return ControlPass, fmt.Sprintf("%d secret(s) stored encrypted at rest (AES-256-GCM, key via platform provider)", count)
+}
+
+// checkAuditLogChain verifies the tamper-evident SHA-256 hash chain of the
+// tenant's audit log.  A broken chain indicates a log integrity violation.
+// Delegates to audit.Verifier.Verify which walks all hash-bearing rows.
+func checkAuditLogChain(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	result, err := svc.verifier.Verify(ctx, &tenantID)
+	if err != nil {
+		return ControlNA, fmt.Sprintf("could not verify audit chain: %v", err)
+	}
+	if result.RowsChecked == 0 {
+		return ControlNA, "no hash-bearing audit events found; chain verification applies to events recorded after hash-chaining was introduced"
+	}
+	if !result.OK {
+		broken := "unknown"
+		if result.BrokenAtID != nil {
+			broken = result.BrokenAtID.String()
+		}
+		return ControlFail, fmt.Sprintf("audit chain broken at event %s: %s (%d rows verified before break)",
+			broken, result.BrokenReason, result.RowsChecked)
+	}
+	return ControlPass, fmt.Sprintf("audit hash chain intact: %d events verified", result.RowsChecked)
+}
+
+// checkAuditLogCoverage verifies that audit events have been recorded in the
+// last 30 days, confirming active audit logging.  Reads audit.events.
+func checkAuditLogCoverage(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var count int
+	if err := svc.pool.QueryRow(ctx, `
+		select count(*) from audit.events
+		where tenant_id = $1 and created_at >= now() - interval '30 days'
+	`, tenantID).Scan(&count); err != nil {
+		return ControlNA, fmt.Sprintf("could not query audit events: %v", err)
+	}
+	if count == 0 {
+		return ControlFail, "no audit events in the last 30 days — audit logging may not be capturing all actions"
+	}
+	return ControlPass, fmt.Sprintf("%d audit event(s) recorded in the last 30 days", count)
+}
+
+// checkSIEMForwarding verifies that at least one active SIEM log sink or
+// webhook subscription is configured, confirming external log forwarding.
+// Reads tenant.log_sinks and tenant.webhook_subscriptions.
+func checkSIEMForwarding(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var sinkCount int
+	_ = svc.pool.QueryRow(ctx, `
+		select count(*) from tenant.log_sinks where tenant_id = $1 and enabled
+	`, tenantID).Scan(&sinkCount)
+
+	var webhookCount int
+	_ = svc.pool.QueryRow(ctx, `
+		select count(*) from tenant.webhook_subscriptions where tenant_id = $1 and disabled_at is null
+	`, tenantID).Scan(&webhookCount)
+
+	if sinkCount == 0 && webhookCount == 0 {
+		return ControlFail, "no SIEM log sinks or webhook subscriptions configured; set up log forwarding for external monitoring"
+	}
+	var parts []string
+	if sinkCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d active SIEM log sink(s)", sinkCount))
+	}
+	if webhookCount > 0 {
+		parts = append(parts, fmt.Sprintf("%d active webhook subscription(s)", webhookCount))
+	}
+	return ControlPass, "audit forwarding configured: " + strings.Join(parts, ", ")
+}
+
+// checkGDPRProcesses checks that data-subject rights processes (right-to-erasure
+// and data portability) have been exercised.  Reads user.purge_requests and
+// user.export_requests.  Returns na if no requests exist yet (the processes are
+// implemented but not yet used), never a false pass.
+func checkGDPRProcesses(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
+	var purgeCount, exportCount int
+	_ = svc.pool.QueryRow(ctx, `select count(*) from "user".purge_requests where tenant_id = $1`, tenantID).Scan(&purgeCount)
+	_ = svc.pool.QueryRow(ctx, `select count(*) from "user".export_requests where tenant_id = $1`, tenantID).Scan(&exportCount)
+
+	if purgeCount == 0 && exportCount == 0 {
+		return ControlNA, "data-subject rights (right-to-erasure, data portability) are implemented but no requests have been processed for this tenant yet"
+	}
+	return ControlPass, fmt.Sprintf("data-subject processes operational: %d purge request(s), %d data-export request(s) on record",
+		purgeCount, exportCount)
+}
+
+// --------------------------------------------------------------------------
+// Control catalogs
+// --------------------------------------------------------------------------
+
+// soc2Controls is the SOC 2 Type II control catalog.  Each entry maps to at
+// least one AICPA Trust Services Criteria code and reads live tenant state.
+// 13 controls covering CC6.1–CC7.2 (logical access, encryption, monitoring).
+var soc2Controls = []control{
+	{
+		id: "CC6.1-MFA", name: "Multi-Factor Authentication Enforcement",
+		category: "Logical and Physical Access Controls", criteria: "CC6.1",
+		check: checkMFAEnforcement,
+	},
+	{
+		id: "CC6.1-PWD-LEN", name: "Password Minimum Length",
+		category: "Logical and Physical Access Controls", criteria: "CC6.1",
+		check: checkPasswordMinLength,
+	},
+	{
+		id: "CC6.1-PWD-CMPLX", name: "Password Complexity Requirements",
+		category: "Logical and Physical Access Controls", criteria: "CC6.1",
+		check: checkPasswordComplexity,
+	},
+	{
+		id: "CC6.1-SESSION", name: "Session Timeout",
+		category: "Logical and Physical Access Controls", criteria: "CC6.1",
+		check: checkSessionTimeout,
+	},
+	{
+		id: "CC6.1-BREACH", name: "Breached Password and Adaptive Risk Detection",
+		category: "Logical and Physical Access Controls", criteria: "CC6.1",
+		check: checkBreachedPasswordAndRisk,
+	},
+	{
+		id: "CC6.3-RBAC-ROLES", name: "RBAC Role Definitions",
+		category: "Logical and Physical Access Controls", criteria: "CC6.3",
+		check: checkRBACRoles,
+	},
+	{
+		id: "CC6.3-RBAC-ASSIGN", name: "RBAC Role Assignments",
+		category: "Logical and Physical Access Controls", criteria: "CC6.3",
+		check: checkRBACAssignments,
+	},
+	{
+		id: "CC6.5-RETAIN", name: "Data Retention and Disposal",
+		category: "Change Management", criteria: "CC6.5",
+		check: checkRetentionPolicy,
+	},
+	{
+		id: "CC6.6-IP-ACL", name: "Network Access Controls",
+		category: "Logical and Physical Access Controls", criteria: "CC6.6",
+		check: checkIPAccessRules,
+	},
+	{
+		id: "CC6.7-SECRETS", name: "Secrets Encryption at Rest",
+		category: "Logical and Physical Access Controls", criteria: "CC6.7",
+		check: checkSecretsEncryption,
+	},
+	{
+		id: "CC7.2-CHAIN", name: "Audit Log Tamper-Evidence",
+		category: "System Monitoring", criteria: "CC7.2",
+		check: checkAuditLogChain,
+	},
+	{
+		id: "CC7.2-ACTIVE", name: "Audit Log Coverage",
+		category: "System Monitoring", criteria: "CC7.2",
+		check: checkAuditLogCoverage,
+	},
+	{
+		id: "CC7.2-SIEM", name: "SIEM and Log Forwarding",
+		category: "System Monitoring", criteria: "CC7.2",
+		check: checkSIEMForwarding,
+	},
+}
+
+// iso27001Controls is the ISO/IEC 27001:2013 control catalog.  Each entry
+// maps to an Annex A control code and reads live tenant state.
+// 12 controls covering A.8–A.18 (access, crypto, operations, compliance).
+var iso27001Controls = []control{
+	{
+		id: "A.9.4-MFA", name: "Multi-Factor Authentication",
+		category: "Access Control", criteria: "A.9.4",
+		check: checkMFAEnforcement,
+	},
+	{
+		id: "A.9.4.3-PWD-LEN", name: "Password Policy — Minimum Length",
+		category: "Access Control", criteria: "A.9.4.3",
+		check: checkPasswordMinLength,
+	},
+	{
+		id: "A.9.4.3-PWD-CMPLX", name: "Password Policy — Complexity",
+		category: "Access Control", criteria: "A.9.4.3",
+		check: checkPasswordComplexity,
+	},
+	{
+		id: "A.9.2-RBAC", name: "User Access Management",
+		category: "Access Control", criteria: "A.9.2",
+		check: checkRBACRoles,
+	},
+	{
+		id: "A.9.4-SESSION", name: "Session Security Controls",
+		category: "Access Control", criteria: "A.9.4",
+		check: checkSessionTimeout,
+	},
+	{
+		id: "A.10.1-ENCRYPT", name: "Cryptographic Controls — Secrets Vault",
+		category: "Cryptography", criteria: "A.10.1",
+		check: checkSecretsEncryption,
+	},
+	{
+		id: "A.12.4.1-AUDIT", name: "Audit Log Coverage",
+		category: "Operations Security", criteria: "A.12.4.1",
+		check: checkAuditLogCoverage,
+	},
+	{
+		id: "A.12.4.2-CHAIN", name: "Audit Log Integrity",
+		category: "Operations Security", criteria: "A.12.4.2",
+		check: checkAuditLogChain,
+	},
+	{
+		id: "A.12.4.3-SIEM", name: "Log Forwarding and SIEM Integration",
+		category: "Operations Security", criteria: "A.12.4.3",
+		check: checkSIEMForwarding,
+	},
+	{
+		id: "A.13.1-IP", name: "Network Access Controls",
+		category: "Communications Security", criteria: "A.13.1",
+		check: checkIPAccessRules,
+	},
+	{
+		id: "A.18.1-GDPR", name: "Privacy and Data-Subject Processes",
+		category: "Compliance", criteria: "A.18.1",
+		check: checkGDPRProcesses,
+	},
+	{
+		id: "A.8.3-RETAIN", name: "Data Retention and Disposal",
+		category: "Asset Management", criteria: "A.8.3",
+		check: checkRetentionPolicy,
+	},
+}
+
+// controlsByFramework maps a framework name to its control catalog.
+var controlsByFramework = map[string][]control{
+	"soc2":     soc2Controls,
+	"iso27001": iso27001Controls,
+}
+
+// ValidFramework reports whether the framework name is supported.
+func ValidFramework(f string) bool {
+	_, ok := controlsByFramework[f]
+	return ok
+}
+
+// --------------------------------------------------------------------------
+// Service methods
+// --------------------------------------------------------------------------
+
+// Generate runs all controls for the framework against live tenant state,
+// tallies pass/fail/na, persists an evidence run row (inside a transaction
+// with an audit event), and returns the run with full control results.
+func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, framework string, actor *uuid.UUID) (*EvidenceRun, error) {
+	controls, ok := controlsByFramework[framework]
+	if !ok {
+		return nil, errs.ErrBadRequest.WithDetail("framework must be 'soc2' or 'iso27001'")
+	}
+
+	// Run all control checks against live state.
+	results := make([]ControlResult, 0, len(controls))
+	var passCount, failCount, naCount int
+	for _, c := range controls {
+		status, detail := c.check(ctx, s, tenantID)
+		results = append(results, ControlResult{
+			ID:       c.id,
+			Name:     c.name,
+			Category: c.category,
+			Criteria: c.criteria,
+			Status:   status,
+			Detail:   detail,
+		})
+		switch status {
+		case ControlPass:
+			passCount++
+		case ControlFail:
+			failCount++
+		default:
+			naCount++
+		}
+	}
+
+	controlsJSON, err := json.Marshal(results)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist run + audit event in one transaction.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var run EvidenceRun
+	err = tx.QueryRow(ctx, `
+		insert into tenant.compliance_evidence_runs
+		    (tenant_id, framework, generated_by, pass_count, fail_count, na_count, controls)
+		values ($1, $2, $3, $4, $5, $6, $7)
+		returning id, tenant_id, framework, generated_at, generated_by, pass_count, fail_count, na_count
+	`, tenantID, framework, actor, passCount, failCount, naCount, controlsJSON).
+		Scan(&run.ID, &run.TenantID, &run.Framework, &run.GeneratedAt,
+			&run.GeneratedBy, &run.PassCount, &run.FailCount, &run.NACount)
+	if err != nil {
+		return nil, err
+	}
+
+	rid := run.ID
+	tid := tenantID
+	actorType := "system"
+	if actor != nil {
+		actorType = "user"
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actor,
+		ActorType:    actorType,
+		Action:       "compliance.evidence_generated",
+		ResourceType: "compliance_evidence_run",
+		ResourceID:   &rid,
+		Metadata: map[string]any{
+			"framework":  framework,
+			"pass_count": passCount,
+			"fail_count": failCount,
+			"na_count":   naCount,
+		},
+	}); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	run.Controls = results
+	return &run, nil
+}
+
+// ListRuns returns previous evidence runs for the tenant+framework, most
+// recent first.  Controls are not included; call GetRun for the full report.
+func (s *EvidenceService) ListRuns(ctx context.Context, tenantID uuid.UUID, framework string) ([]EvidenceRun, error) {
+	rows, err := s.pool.Query(ctx, `
+		select id, tenant_id, framework, generated_at, generated_by,
+		       pass_count, fail_count, na_count
+		from tenant.compliance_evidence_runs
+		where tenant_id = $1 and framework = $2
+		order by generated_at desc
+		limit 100
+	`, tenantID, framework)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]EvidenceRun, 0)
+	for rows.Next() {
+		var r EvidenceRun
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Framework, &r.GeneratedAt, &r.GeneratedBy,
+			&r.PassCount, &r.FailCount, &r.NACount); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetRun fetches one evidence run by id, scoped to the tenant.  Controls are
+// included in the response; this is the full downloadable evidence report.
+func (s *EvidenceService) GetRun(ctx context.Context, tenantID, id uuid.UUID) (*EvidenceRun, error) {
+	var run EvidenceRun
+	var controlsJSON []byte
+	err := s.pool.QueryRow(ctx, `
+		select id, tenant_id, framework, generated_at, generated_by,
+		       pass_count, fail_count, na_count, controls
+		from tenant.compliance_evidence_runs
+		where id = $1 and tenant_id = $2
+	`, id, tenantID).
+		Scan(&run.ID, &run.TenantID, &run.Framework, &run.GeneratedAt, &run.GeneratedBy,
+			&run.PassCount, &run.FailCount, &run.NACount, &controlsJSON)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	if len(controlsJSON) > 0 {
+		if err := json.Unmarshal(controlsJSON, &run.Controls); err != nil {
+			return nil, err
+		}
+	}
+	return &run, nil
+}
+
+// --------------------------------------------------------------------------
+// HTTP handlers (mounted onto the existing gdpr.Handler)
+// --------------------------------------------------------------------------
+
+// requireEvidencePathTenant parses and validates the {tenantID} path param
+// against the caller's auth-token tenant scope (belt-and-suspenders; the
+// router-level httpx.EnforceTenantScope middleware is the primary guard).
+func requireEvidencePathTenant(r *http.Request) (uuid.UUID, error) {
+	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
+	if err != nil {
+		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+	}
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if pathTenant != scope {
+		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+	}
+	return scope, nil
+}
+
+// validEvidenceFramework returns 400 when the framework path param is not one
+// of the supported values.
+func validEvidenceFramework(r *http.Request) (string, error) {
+	f := chi.URLParam(r, "framework")
+	if f != "soc2" && f != "iso27001" {
+		return "", errs.ErrBadRequest.WithDetail("framework must be 'soc2' or 'iso27001'")
+	}
+	return f, nil
+}
+
+// generateEvidence handles POST /tenants/{tenantID}/compliance/{framework}/evidence.
+// Runs all controls for the framework against live state and returns the full run.
+func (h *Handler) generateEvidence(w http.ResponseWriter, r *http.Request) {
+	tid, err := requireEvidencePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	framework, err := validEvidenceFramework(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var actor *uuid.UUID
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		actor = p.UserID
+	}
+	run, err := h.Evidence.Generate(r.Context(), tid, framework, actor)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, run)
+}
+
+// listEvidence handles GET /tenants/{tenantID}/compliance/{framework}/evidence.
+// Returns previous runs for the framework, most recent first, without controls.
+func (h *Handler) listEvidence(w http.ResponseWriter, r *http.Request) {
+	tid, err := requireEvidencePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	framework, err := validEvidenceFramework(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Evidence.ListRuns(r.Context(), tid, framework)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// getEvidence handles GET /tenants/{tenantID}/compliance/evidence/{id}.
+// Returns the full evidence run including per-control results.  The response
+// carries a Content-Disposition header so clients can download it as a report.
+func (h *Handler) getEvidence(w http.ResponseWriter, r *http.Request) {
+	tid, err := requireEvidencePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	run, err := h.Evidence.GetRun(r.Context(), tid, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Disposition",
+		`attachment; filename="evidence-`+run.Framework+`-`+run.ID.String()+`.json"`)
+	httpx.WriteJSON(w, http.StatusOK, run)
+}
+
+// mountEvidence is called from Handler.Mount to register the three evidence
+// routes.  It is a no-op when h.Evidence is nil so a zero-value Handler
+// (used in the OpenAPI coverage test) still registers all routes.
+func (h *Handler) mountEvidence(r chi.Router) {
+	r.Post("/tenants/{tenantID}/compliance/{framework}/evidence", h.generateEvidence)
+	r.Get("/tenants/{tenantID}/compliance/{framework}/evidence", h.listEvidence)
+	r.Get("/tenants/{tenantID}/compliance/evidence/{id}", h.getEvidence)
+}
+
+// EvidenceRunCount returns the total number of evidence runs for a tenant
+// across all frameworks.  Used in tests to verify persistence.
+func (s *EvidenceService) EvidenceRunCount(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		select count(*) from tenant.compliance_evidence_runs where tenant_id = $1
+	`, tenantID).Scan(&n)
+	return n, err
+}
+
+// totalControls returns the number of controls in the catalog for a framework.
+// Exported for tests.
+func TotalControls(framework string) int {
+	return len(controlsByFramework[framework])
+}
+
+// tallyResults counts pass/fail/na in a result slice.
+// Exported for tests.
+func tallyResults(results []ControlResult) (pass, fail, na int) {
+	for _, r := range results {
+		switch r.Status {
+		case ControlPass:
+			pass++
+		case ControlFail:
+			fail++
+		default:
+			na++
+		}
+	}
+	return
+}

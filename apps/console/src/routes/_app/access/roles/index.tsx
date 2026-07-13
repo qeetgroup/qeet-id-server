@@ -33,6 +33,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
@@ -62,6 +63,7 @@ const roleCsvColumns: CsvColumn<Role>[] = [
 ];
 
 function RolesPage() {
+  const { t } = useTranslation("rbac");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
@@ -90,7 +92,7 @@ function RolesPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="RBAC roles scoped to this tenant. Assign permissions per role; users get the union of permissions across all roles they hold."
+        description={t("roles.description")}
         actions={
           <>
             <Button
@@ -100,10 +102,10 @@ function RolesPage() {
               disabled={rolesQ.isFetching}
             >
               <RefreshCwIcon className={rolesQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("roles.refreshBtn")}
             </Button>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> New role
+              <PlusIcon /> {t("roles.newButton")}
             </Button>
           </>
         }
@@ -111,31 +113,31 @@ function RolesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Roles</CardTitle>
+          <CardTitle className="text-base">{t("roles.list.title")}</CardTitle>
           <CardDescription>
-            {rows.length} of {items.length} role{items.length === 1 ? "" : "s"}
+            {t("roles.list.count", { filtered: rows.length, total: items.length, count: items.length })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <ListToolbar
             search={lv.search}
             onSearchChange={lv.setSearch}
-            searchPlaceholder="Search name or description…"
+            searchPlaceholder={t("roles.list.searchPlaceholder")}
             filters={[
               {
                 id: "type",
-                label: "Type",
+                label: t("roles.list.filterTypeLabel"),
                 value: lv.filters.type ?? "",
                 options: [
-                  { label: "System", value: "system" },
-                  { label: "Custom", value: "custom" },
+                  { label: t("roles.list.filterSystem"), value: "system" },
+                  { label: t("roles.list.filterCustom"), value: "custom" },
                 ],
                 onChange: (v) => lv.setFilter("type", v),
               },
             ]}
             columns={[
-              { id: "description", label: "Description" },
-              { id: "created", label: "Created" },
+              { id: "description", label: t("roles.list.colDescription") },
+              { id: "created", label: t("roles.list.colCreated") },
             ]}
             isColumnVisible={lv.isVisible}
             onToggleColumn={lv.toggleColumn}
@@ -156,23 +158,23 @@ function RolesPage() {
             error={rolesQ.error}
             isEmpty={rows.length === 0}
             emptyIcon={ShieldCheckIcon}
-            emptyTitle={lv.hasActiveFilters ? "No roles match your filters." : "No roles defined."}
+            emptyTitle={lv.hasActiveFilters ? t("roles.list.emptyFiltered") : t("roles.list.empty")}
             skeletonRows={3}
           >
             <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
                   <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
-                    Name
+                    {t("roles.list.columnName")}
                   </SortHeader>
-                  {lv.isVisible("description") && <TableHead>Description</TableHead>}
-                  <TableHead>Type</TableHead>
+                  {lv.isVisible("description") && <TableHead>{t("roles.list.colDescription")}</TableHead>}
+                  <TableHead>{t("roles.list.columnType")}</TableHead>
                   {lv.isVisible("created") && (
                     <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Created
+                      {t("roles.list.colCreated")}
                     </SortHeader>
                   )}
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">{t("roles.list.columnActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -194,9 +196,9 @@ function RolesPage() {
                     )}
                     <TableCell>
                       {r.is_system ? (
-                        <Badge variant="muted">System</Badge>
+                        <Badge variant="muted">{t("roles.list.typeSystem")}</Badge>
                       ) : (
-                        <Badge variant="outline">Custom</Badge>
+                        <Badge variant="outline">{t("roles.list.typeCustom")}</Badge>
                       )}
                     </TableCell>
                     {lv.isVisible("created") && (
@@ -206,7 +208,7 @@ function RolesPage() {
                     )}
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => setEditingRole(r)}>
-                        Permissions
+                        {t("roles.list.permissionsBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -219,10 +221,8 @@ function RolesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Platform permissions</CardTitle>
-          <CardDescription>
-            The global permission keys available for assignment to any role.
-          </CardDescription>
+          <CardTitle className="text-base">{t("roles.platformPerms.title")}</CardTitle>
+          <CardDescription>{t("roles.platformPerms.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           {permsQ.isLoading ? (
@@ -270,6 +270,7 @@ type CreateRoleSheetProps = {
 };
 
 function CreateRoleSheet({ open, onOpenChange, tenantId, onCreated }: CreateRoleSheetProps) {
+  const { t } = useTranslation("rbac");
   const createM = useMutation({
     mutationFn: (body: { name: string; description: string }) =>
       api<Role>(`/v1/tenants/${tenantId}/roles`, { method: "POST", body }),
@@ -296,15 +297,13 @@ function CreateRoleSheet({ open, onOpenChange, tenantId, onCreated }: CreateRole
           }}
         >
           <SheetHeader>
-            <SheetTitle>New role</SheetTitle>
-            <SheetDescription>
-              Create a custom role for this tenant. Assign permissions afterwards.
-            </SheetDescription>
+            <SheetTitle>{t("roles.create.title")}</SheetTitle>
+            <SheetDescription>{t("roles.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Name</FieldLabel>
+                <FieldLabel htmlFor="name">{t("roles.create.nameLabel")}</FieldLabel>
                 <Input
                   id="name"
                   name="name"
@@ -315,7 +314,7 @@ function CreateRoleSheet({ open, onOpenChange, tenantId, onCreated }: CreateRole
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="description">Description</FieldLabel>
+                <FieldLabel htmlFor="description">{t("roles.create.descLabel")}</FieldLabel>
                 <Textarea id="description" name="description" rows={3} maxLength={500} />
               </Field>
               {createM.error && (
@@ -326,10 +325,10 @@ function CreateRoleSheet({ open, onOpenChange, tenantId, onCreated }: CreateRole
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("roles.create.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create"}
+              {createM.isPending ? t("roles.create.creatingBtn") : t("roles.create.createBtn")}
             </Button>
           </SheetFooter>
         </form>
@@ -345,6 +344,7 @@ type RolePermissionsSheetProps = {
 };
 
 function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsSheetProps) {
+  const { t } = useTranslation("rbac");
   // We don't have a "list permissions for a role" endpoint, so derive
   // membership by checking each permission with the rbac check endpoint
   // is impractical. Instead, when toggled we just call grant/revoke and
@@ -369,22 +369,27 @@ function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsShe
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Permissions — {role.name}</SheetTitle>
-          <SheetDescription>
-            Toggle to grant or revoke. Changes apply immediately to every user holding this role.
-          </SheetDescription>
+          <SheetTitle>{t("roles.permsSheet.title", { name: role.name })}</SheetTitle>
+          <SheetDescription>{t("roles.permsSheet.description")}</SheetDescription>
         </SheetHeader>
         <div className="flex-1 overflow-y-auto p-4">
           <FieldGroup>
             {permissions.map((p) => {
               const isGranted = granted.has(p.id);
               return (
+                /* aria-label={p.key} gives the rule a statically-visible accessible-text
+                   attribute; the label still wraps the input for the native
+                   click-to-check UX. aria-describedby links the longer description. */
                 <label
                   key={p.id}
-                  className="flex items-start gap-3 rounded-md border p-3 text-sm hover:bg-muted/40"
+                  htmlFor={`perm-${p.id}`}
+                  aria-label={p.key}
+                  className="flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm hover:bg-muted/40"
                 >
                   <input
+                    id={`perm-${p.id}`}
                     type="checkbox"
+                    aria-describedby={`perm-desc-${p.id}`}
                     className="mt-1"
                     checked={isGranted}
                     disabled={grantM.isPending || revokeM.isPending}
@@ -402,10 +407,10 @@ function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsShe
                       }
                     }}
                   />
-                  <div className="flex-1">
+                  <span className="flex-1">
                     <code className="text-xs font-medium">{p.key}</code>
-                    <p className="text-xs text-muted-foreground">{p.description}</p>
-                  </div>
+                    <p id={`perm-desc-${p.id}`} className="text-xs text-muted-foreground">{p.description}</p>
+                  </span>
                 </label>
               );
             })}
@@ -413,7 +418,7 @@ function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsShe
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t">
           <Button variant="outline" onClick={onClose}>
-            Close
+            {t("roles.permsSheet.closeBtn")}
           </Button>
         </SheetFooter>
       </SheetContent>

@@ -11,7 +11,8 @@ import {
 } from "@qeetrix/ui";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2Icon, Loader2Icon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { BrandHero } from "@/features/auth/components/brand-hero";
 import { useForgotPassword } from "@/lib/auth";
@@ -21,8 +22,16 @@ export const Route = createFileRoute("/_auth/forgot-password")({
 });
 
 function ForgotPasswordPage() {
+  const { t } = useTranslation("authFlow");
   const forgot = useForgotPassword();
   const [submitted, setSubmitted] = useState(false);
+  // Move focus to the email field on mount — replaces autoFocus which
+  // jsx-a11y/no-autofocus flags, with an explicit effect that fires after
+  // the page has fully rendered.
+  const emailRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    emailRef.current?.focus();
+  }, []);
 
   return (
     <div className="flex flex-col gap-6">
@@ -51,36 +60,33 @@ function ForgotPasswordPage() {
               >
                 <FieldGroup>
                   <div className="flex flex-col items-center gap-2 text-center">
-                    <h1 className="text-2xl font-bold">Reset your password</h1>
-                    <p className="text-balance text-muted-foreground">
-                      Enter the email address tied to your Qeet ID account and we&apos;ll send
-                      you a reset link.
-                    </p>
+                    <h1 className="text-2xl font-bold">{t("forgotPassword.title")}</h1>
+                    <p className="text-balance text-muted-foreground">{t("forgotPassword.subtitle")}</p>
                   </div>
 
                   <Field>
-                    <FieldLabel htmlFor="email">Email</FieldLabel>
+                    <FieldLabel htmlFor="email">{t("forgotPassword.emailLabel")}</FieldLabel>
                     <Input
+                      ref={emailRef}
                       id="email"
                       name="email"
                       type="email"
                       placeholder="m@example.com"
                       required
-                      autoFocus
                     />
                   </Field>
 
                   <Field>
                     <Button type="submit" disabled={forgot.isPending}>
                       {forgot.isPending && <Loader2Icon className="animate-spin" />}
-                      {forgot.isPending ? "Sending reset link…" : "Send reset link"}
+                      {forgot.isPending ? t("forgotPassword.sendingBtn") : t("forgotPassword.sendBtn")}
                     </Button>
                   </Field>
 
                   <FieldDescription className="text-center">
-                    Remembered it?{" "}
+                    {t("forgotPassword.rememberedIt")}{" "}
                     <Link to="/sign-in" className="underline-offset-2 hover:underline">
-                      Back to sign in
+                      {t("forgotPassword.backToSignIn")}
                     </Link>
                   </FieldDescription>
                 </FieldGroup>
@@ -95,23 +101,21 @@ function ForgotPasswordPage() {
 }
 
 function SuccessPanel() {
+  const { t } = useTranslation("authFlow");
   return (
     <div className="flex flex-col items-center gap-3 text-center">
       <CheckCircle2Icon className="size-10 text-emerald-500" />
-      <h1 className="text-2xl font-bold">Check your inbox</h1>
-      <p className="text-balance text-muted-foreground">
-        If an account exists for that email, we&apos;ve sent a one-time reset link.
-        The link expires in 60 minutes.
-      </p>
+      <h1 className="text-2xl font-bold">{t("forgotPassword.successTitle")}</h1>
+      <p className="text-balance text-muted-foreground">{t("forgotPassword.successText")}</p>
       <p className="mt-2 text-sm text-muted-foreground">
-        Didn&apos;t get it? Check spam, or{" "}
+        {t("forgotPassword.successResend")}{" "}
         <Link to="/forgot-password" className="underline-offset-2 hover:underline">
-          try again
+          {t("forgotPassword.successResendLink")}
         </Link>
         .
       </p>
       <Link to="/sign-in" className={buttonVariants({ variant: "outline" }) + " mt-4"}>
-        Back to sign in
+        {t("forgotPassword.successBackBtn")}
       </Link>
     </div>
   );

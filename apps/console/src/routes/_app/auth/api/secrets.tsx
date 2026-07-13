@@ -31,6 +31,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -46,6 +47,7 @@ import {
 export const Route = createFileRoute("/_app/auth/api/secrets")({ component: SecretsPage });
 
 function SecretsPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useSecrets();
   const revealM = useRevealSecret();
@@ -76,7 +78,7 @@ function SecretsPage() {
   };
 
   const rotate = (id: string, name: string) => {
-    const v = window.prompt(`New value for "${name}":`);
+    const v = window.prompt(t("secrets.rotatePrompt", { name }));
     if (v && v.trim()) rotateM.mutate({ id, value: v.trim() });
   };
 
@@ -84,19 +86,19 @@ function SecretsPage() {
     <div className="flex min-w-0 flex-col gap-6">
       {confirmDialog}
       <PageHeader
-        description="Encrypted vault for integration secrets — 3rd-party API keys, tokens and signing material. Values are AES-256-GCM encrypted at rest and only shown via an audited reveal."
+        description={t("secrets.description")}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <PlusIcon className="mr-2 size-4" />
-            New secret
+            {t("secrets.newButton")}
           </Button>
         }
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>Secrets</CardTitle>
-          <CardDescription>{items.length} secret{items.length === 1 ? "" : "s"}</CardDescription>
+          <CardTitle>{t("secrets.list.title")}</CardTitle>
+          <CardDescription>{t("secrets.list.count", { count: items.length })}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -105,17 +107,17 @@ function SecretsPage() {
             error={listQ.error}
             isEmpty={items.length === 0}
             emptyIcon={KeyRoundIcon}
-            emptyTitle="No secrets yet."
+            emptyTitle={t("secrets.list.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Scope</TableHead>
-                  <TableHead>Value</TableHead>
-                  <TableHead>Updated</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("secrets.columns.name")}</TableHead>
+                  <TableHead>{t("secrets.columns.scope")}</TableHead>
+                  <TableHead>{t("secrets.columns.value")}</TableHead>
+                  <TableHead>{t("secrets.columns.updated")}</TableHead>
+                  <TableHead className="text-right">{t("secrets.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -128,12 +130,12 @@ function SecretsPage() {
                       <TableCell className="font-mono text-xs">
                         {shown !== undefined ? (
                           <span className="flex items-center gap-2">
-                            <span className="max-w-[220px] truncate">{shown}</span>
+                            <span className="max-w-55 truncate">{shown}</span>
                             <button
                               type="button"
                               onClick={() => copy(s.id, shown)}
                               className="text-muted-foreground hover:text-foreground"
-                              aria-label="Copy"
+                              aria-label={t("secrets.copyAriaLabel")}
                             >
                               {copied === s.id ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
                             </button>
@@ -153,26 +155,26 @@ function SecretsPage() {
                           disabled={revealM.isPending}
                         >
                           {shown !== undefined ? <EyeOffIcon /> : <EyeIcon />}
-                          {shown !== undefined ? "Hide" : "Reveal"}
+                          {shown !== undefined ? t("secrets.hide") : t("secrets.reveal")}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => rotate(s.id, s.name)} disabled={rotateM.isPending}>
-                          <RefreshCwIcon /> Rotate
+                          <RefreshCwIcon /> {t("secrets.rotate")}
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() =>
                             openConfirm({
-                              title: `Delete secret "${s.name}"?`,
-                              description: "Anything using it will break.",
+                              title: t("secrets.confirm.title", { name: s.name }),
+                              description: t("secrets.confirm.description"),
                               variant: "destructive",
-                              confirmLabel: "Delete",
+                              confirmLabel: t("secrets.confirm.label"),
                               onConfirm: () => deleteM.mutate(s.id),
                             })
                           }
                           disabled={deleteM.isPending}
                         >
-                          <Trash2Icon /> Delete
+                          <Trash2Icon /> {t("secrets.deleteBtn")}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -190,6 +192,7 @@ function SecretsPage() {
 }
 
 function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { t } = useTranslation("auth");
   const createM = useCreateSecret();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -210,23 +213,23 @@ function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange
           }}
         >
           <SheetHeader>
-            <SheetTitle>New secret</SheetTitle>
-            <SheetDescription>The value is encrypted immediately and can&apos;t be read back except via reveal.</SheetDescription>
+            <SheetTitle>{t("secrets.create.title")}</SheetTitle>
+            <SheetDescription>{t("secrets.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Name</FieldLabel>
-                <Input id="name" name="name" placeholder="stripe.api_key" className="font-mono" required />
+                <FieldLabel htmlFor="secret-name">{t("secrets.create.nameLabel")}</FieldLabel>
+                <Input id="secret-name" name="name" placeholder="stripe.api_key" className="font-mono" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="scope">Scope</FieldLabel>
-                <Input id="scope" name="scope" placeholder="billing (optional)" />
-                <FieldDescription>A free-text label for grouping, e.g. the integration it belongs to.</FieldDescription>
+                <FieldLabel htmlFor="secret-scope">{t("secrets.create.scopeLabel")}</FieldLabel>
+                <Input id="secret-scope" name="scope" placeholder="billing (optional)" />
+                <FieldDescription>{t("secrets.create.scopeHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="value">Value</FieldLabel>
-                <Input id="value" name="value" type="password" placeholder="sk_live_…" className="font-mono" required />
+                <FieldLabel htmlFor="secret-value">{t("secrets.create.valueLabel")}</FieldLabel>
+                <Input id="secret-value" name="value" type="password" placeholder="sk_live_…" className="font-mono" required />
               </Field>
               {createM.error && (
                 <Field>
@@ -236,10 +239,10 @@ function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("secrets.create.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Saving…" : "Create secret"}
+              {createM.isPending ? t("secrets.create.savingBtn") : t("secrets.create.createBtn")}
             </Button>
           </SheetFooter>
         </form>

@@ -1,0 +1,57 @@
+{
+  "list": {
+    "description": "Invite teammates by email. They get a one-time link that creates their account and assigns the chosen role on acceptance.",
+    "refresh": "Refresh",
+    "send": "Send invite",
+    "title": "Invitations",
+    "count_one": "{{shown}} of {{total}} invitation",
+    "count_other": "{{shown}} of {{total}} invitations",
+    "searchPlaceholder": "Search email or role…",
+    "emptyFiltered": "No invitations match your filters.",
+    "empty": "No invitations sent yet.",
+    "filters": {
+      "status": {
+        "label": "Status",
+        "pending": "Pending",
+        "accepted": "Accepted",
+        "expired": "Expired",
+        "revoked": "Revoked"
+      }
+    },
+    "columns": {
+      "email": "Email",
+      "role": "Role",
+      "status": "Status",
+      "expires": "Expires",
+      "sent": "Sent",
+      "actions": "Actions"
+    }
+  },
+  "table": {
+    "revoke": "Revoke"
+  },
+  "confirm": {
+    "revokeTitle": "Revoke invitation for {{email}}?",
+    "revokeLabel": "Revoke"
+  },
+  "create": {
+    "title": "Send invitation",
+    "description": "The invitee gets an email with a one-time link. They set their password during acceptance.",
+    "email": "Email",
+    "workspace": "Workspace",
+    "workspaceLoadingPlaceholder": "Loading workspaces…",
+    "workspacePlaceholder": "Select a workspace",
+    "workspaceHelp": "The workspace the invitee will join.",
+    "role": "Role",
+    "roleLoadingPlaceholder": "Loading roles…",
+    "rolePlaceholder": "Select a role",
+    "roleHelp": "Granted on acceptance — required for the user to become a member.",
+    "cancel": "Cancel",
+    "submit": "Send invite",
+    "submitting": "Sending…"
+  },
+  "toast": {
+    "sent": "Invitation sent",
+    "revoked": "Invitation revoked"
+  }
+}

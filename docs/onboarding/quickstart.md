@@ -7,7 +7,7 @@ Get Qeet ID running locally in about 10 minutes.
 | Tool | Version | Install |
 |---|---|---|
 | Go | 1.25+ | [go.dev/dl](https://go.dev/dl) |
-| Node.js | ≥20.9 | `nvm install v22.20.0` |
+| Node.js | ≥24 | `nvm install` (reads `.nvmrc`) |
 | pnpm | 9.15.4 | `npm install -g pnpm@9.15.4` |
 | Docker | any recent | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | golang-migrate | any | `brew install golang-migrate` |
@@ -15,7 +15,7 @@ Get Qeet ID running locally in about 10 minutes.
 Node version is critical — the frontend fails to build on Node 18 (the macOS default). Always activate the correct version first:
 
 ```bash
-nvm use v22.20.0
+nvm use   # reads the repo .nvmrc (Node 24)
 ```
 
 ## Setup (5 commands)

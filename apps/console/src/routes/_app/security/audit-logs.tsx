@@ -25,6 +25,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { DownloadIcon, FileSearchIcon, Loader2Icon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/page-header";
@@ -130,6 +131,7 @@ function downloadBlob(content: string, mime: string, filename: string) {
 }
 
 function AuditLogsPage() {
+  const { t } = useTranslation("security");
   const tenantId = useTenantId();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -226,11 +228,12 @@ function AuditLogsPage() {
 
   const hasFilters = Object.values(filters).some(Boolean);
   const [searchDraft, setSearchDraft] = useState(filters.q);
+  const itemCount = auditQ.data?.items?.length ?? 0;
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Every state-changing event in this tenant, written atomically with the underlying business row."
+        description={t("auditLogs.description")}
         actions={
           <>
             <DropdownMenu>
@@ -242,16 +245,18 @@ function AuditLogsPage() {
                     ) : (
                       <DownloadIcon />
                     )}
-                    {exporting ? `Exporting ${exporting.toUpperCase()}…` : "Export"}
+                    {exporting
+                      ? t("auditLogs.exporting", { format: exporting.toUpperCase() })
+                      : t("auditLogs.export")}
                   </Button>
                 }
               />
               <DropdownMenuContent align="end" sideOffset={4} className="min-w-36">
                 <DropdownMenuItem onClick={() => exportAll("csv")}>
-                  Download as CSV
+                  {t("auditLogs.exportCsv")}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => exportAll("json")}>
-                  Download as JSON
+                  {t("auditLogs.exportJson")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -262,7 +267,7 @@ function AuditLogsPage() {
               disabled={auditQ.isFetching}
             >
               <RefreshCwIcon className={auditQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("auditLogs.refresh")}
             </Button>
           </>
         }
@@ -282,19 +287,19 @@ function AuditLogsPage() {
           >
             <Input
               className="flex-1"
-              placeholder='Search events — e.g. "failed login", user.delete, -saml'
+              placeholder={t("auditLogs.filter.searchPlaceholder")}
               value={searchDraft}
               onChange={(e) => setSearchDraft(e.target.value)}
-              aria-label="Free-text event search"
+              aria-label={t("auditLogs.filter.searchLabel")}
             />
             <Button type="submit" variant="outline" size="sm">
-              Search
+              {t("auditLogs.filter.search")}
             </Button>
           </form>
           {/* Exact-match filters + clear */}
           <div className="grid gap-3 md:grid-cols-4">
             <Input
-              placeholder="Filter by action (e.g. user.create)"
+              placeholder={t("auditLogs.filter.actionPlaceholder")}
               value={filters.action}
               onChange={(e) => {
                 setFilters((f) => ({ ...f, action: e.target.value }));
@@ -302,7 +307,7 @@ function AuditLogsPage() {
               }}
             />
             <Input
-              placeholder="Filter by resource type"
+              placeholder={t("auditLogs.filter.resourceTypePlaceholder")}
               value={filters.resource_type}
               onChange={(e) => {
                 setFilters((f) => ({ ...f, resource_type: e.target.value }));
@@ -310,7 +315,7 @@ function AuditLogsPage() {
               }}
             />
             <Input
-              placeholder="Filter by actor user_id"
+              placeholder={t("auditLogs.filter.actorPlaceholder")}
               value={filters.actor_user_id}
               onChange={(e) => {
                 setFilters((f) => ({ ...f, actor_user_id: e.target.value }));
@@ -326,7 +331,7 @@ function AuditLogsPage() {
                 setCursor(undefined);
               }}
             >
-              <XIcon /> Clear
+              <XIcon /> {t("auditLogs.filter.clear")}
             </Button>
           </div>
         </CardContent>
@@ -334,10 +339,9 @@ function AuditLogsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Events</CardTitle>
+          <CardTitle className="text-base">{t("auditLogs.list.title")}</CardTitle>
           <CardDescription>
-            {auditQ.data?.items?.length ?? 0} event{auditQ.data?.items?.length === 1 ? "" : "s"} on
-            this page
+            {t("auditLogs.list.count", { count: itemCount })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -347,18 +351,18 @@ function AuditLogsPage() {
             error={auditQ.error}
             isEmpty={!auditQ.data?.items?.length}
             emptyIcon={FileSearchIcon}
-            emptyTitle="No events match your filters yet."
+            emptyTitle={t("auditLogs.list.empty")}
           >
             {auditQ.data && (
               <>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Actor</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Resource</TableHead>
-                    <TableHead>IP</TableHead>
+                    <TableHead>{t("auditLogs.list.columns.time")}</TableHead>
+                    <TableHead>{t("auditLogs.list.columns.actor")}</TableHead>
+                    <TableHead>{t("auditLogs.list.columns.action")}</TableHead>
+                    <TableHead>{t("auditLogs.list.columns.resource")}</TableHead>
+                    <TableHead>{t("auditLogs.list.columns.ip")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

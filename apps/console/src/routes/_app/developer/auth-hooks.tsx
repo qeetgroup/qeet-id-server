@@ -17,6 +17,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, Trash2Icon, ZapIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -31,6 +32,7 @@ import {
 export const Route = createFileRoute("/_app/developer/auth-hooks")({ component: AuthHooksPage });
 
 function AuthHooksPage() {
+  const { t } = useTranslation("developer");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const hooksQ = useAuthHooks();
   const createM = useCreateAuthHook();
@@ -46,14 +48,12 @@ function AuthHooksPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
-      <PageHeader description="Run a synchronous policy endpoint during sign-in. After credentials verify, Qeet POSTs a signed event to your hook (X-Qeet-Signature, HMAC-SHA256); the hook returns {decision:'allow'|'deny'}. Hooks are bounded by a 3s timeout." />
+      <PageHeader description={t("authHooks.description")} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Add a login hook</CardTitle>
-          <CardDescription>
-            Fired after a password is verified (the &ldquo;post_login&rdquo; trigger).
-          </CardDescription>
+          <CardTitle className="text-base">{t("authHooks.add.title")}</CardTitle>
+          <CardDescription>{t("authHooks.add.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -75,39 +75,40 @@ function AuthHooksPage() {
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <Field className="flex-1">
-                <FieldLabel htmlFor="url">Hook URL</FieldLabel>
+                <FieldLabel htmlFor="hook-url">{t("authHooks.add.url")}</FieldLabel>
                 <Input
-                  id="url"
-                  placeholder="https://policy.acme.com/qeet/login"
+                  id="hook-url"
+                  placeholder={t("authHooks.add.urlPlaceholder")}
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                 />
               </Field>
               <Field className="sm:w-56">
-                <FieldLabel htmlFor="secret">Signing secret</FieldLabel>
+                <FieldLabel htmlFor="hook-secret">{t("authHooks.add.secret")}</FieldLabel>
                 <Input
-                  id="secret"
+                  id="hook-secret"
                   type="password"
-                  placeholder="write-only"
+                  placeholder={t("authHooks.add.secretPlaceholder")}
                   value={secret}
                   onChange={(e) => setSecret(e.target.value)}
                 />
               </Field>
               <Button type="submit" disabled={createM.isPending || !url.trim()}>
                 {createM.isPending && <Loader2Icon className="animate-spin" />}
-                Add
+                {t("authHooks.add.submit")}
               </Button>
             </div>
             <Field>
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <FieldLabel>Fail open</FieldLabel>
-                  <FieldDescription>
-                    If the hook errors or times out, allow the sign-in (recommended). Turn off to
-                    block sign-ins when the hook is unreachable.
-                  </FieldDescription>
+                  <FieldLabel>{t("authHooks.add.failOpen")}</FieldLabel>
+                  <FieldDescription>{t("authHooks.add.failOpenDescription")}</FieldDescription>
                 </div>
-                <Switch checked={failOpen} aria-label="Fail open" onCheckedChange={setFailOpen} />
+                <Switch
+                  checked={failOpen}
+                  aria-label={t("authHooks.add.failOpenAriaLabel")}
+                  onCheckedChange={setFailOpen}
+                />
               </div>
             </Field>
           </form>
@@ -119,8 +120,8 @@ function AuthHooksPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Hooks</CardTitle>
-          <CardDescription>Toggle enabled / fail-open per hook.</CardDescription>
+          <CardTitle className="text-base">{t("authHooks.list.title")}</CardTitle>
+          <CardDescription>{t("authHooks.list.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -129,8 +130,8 @@ function AuthHooksPage() {
             error={hooksQ.error}
             isEmpty={items.length === 0}
             emptyIcon={ZapIcon}
-            emptyTitle="No login hooks configured."
-            emptyDescription="Add a hook above to gate sign-ins with your own policy."
+            emptyTitle={t("authHooks.list.empty")}
+            emptyDescription={t("authHooks.list.emptyDescription")}
             skeletonRows={2}
           >
             <ul className="divide-y">
@@ -140,7 +141,7 @@ function AuthHooksPage() {
                     <p className="flex items-center gap-2 text-sm font-medium">
                       <span className="truncate font-mono">{h.url}</span>
                       <Badge variant={h.fail_open ? "outline" : "destructive"}>
-                        {h.fail_open ? "fail-open" : "fail-closed"}
+                        {h.fail_open ? t("authHooks.list.failOpen") : t("authHooks.list.failClosed")}
                       </Badge>
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -150,7 +151,7 @@ function AuthHooksPage() {
                   <div className="flex items-center gap-3">
                     <Switch
                       checked={h.enabled}
-                      aria-label="Enabled"
+                      aria-label={t("authHooks.list.enabledAriaLabel")}
                       disabled={updateM.isPending}
                       onCheckedChange={(v) =>
                         updateM.mutate({ id: h.id, enabled: v, fail_open: h.fail_open })
@@ -162,14 +163,14 @@ function AuthHooksPage() {
                       disabled={deleteM.isPending}
                       onClick={() =>
                         openConfirm({
-                          title: "Remove this hook?",
+                          title: t("authHooks.confirm.removeTitle"),
                           variant: "destructive",
-                          confirmLabel: "Remove",
+                          confirmLabel: t("authHooks.confirm.removeLabel"),
                           onConfirm: () => deleteM.mutate(h.id),
                         })
                       }
                     >
-                      <Trash2Icon /> Remove
+                      <Trash2Icon /> {t("authHooks.list.remove")}
                     </Button>
                   </div>
                 </li>

@@ -22,22 +22,8 @@ const nextFiles = [
 // re-registering a second instance for the same files throws ESLint flat
 // config's "Cannot redefine plugin" error, so loginA11yFiles gets rules only.
 const consoleA11yFiles = [
-  // Admin — new screens
-  "apps/console/src/routes/_app/auth/connections/oidc.tsx",
-  "apps/console/src/routes/_app/auth/connections/oidc.$clientId.tsx",
-  "apps/console/src/routes/_app/auth/connections/saml-idp.tsx",
-  "apps/console/src/routes/_app/auth/api/consent-grants.tsx",
-  "apps/console/src/routes/_app/auth/api/signing-keys.tsx",
-  "apps/console/src/routes/_app/access/check.tsx",
-  "apps/console/src/routes/_app/security/device-authorizations.tsx",
-  "apps/console/src/routes/_app/groups.$groupId.tsx",
-  // Admin — critical flows + app shell
-  "apps/console/src/routes/_app/users/**/*.{ts,tsx}",
-  "apps/console/src/routes/_app/auth/login-methods/**/*.{ts,tsx}",
-  "apps/console/src/routes/_app.tsx",
-  "apps/console/src/features/dashboard/components/app-sidebar.tsx",
-  "apps/console/src/features/dashboard/components/nav-main.tsx",
-  "apps/console/src/features/dashboard/components/language-switcher.tsx",
+  // All console routes and features — full WCAG 2.2 AA enforcement
+  "apps/console/src/**/*.{ts,tsx}",
 ];
 
 // Login app (Next.js) — every screen.

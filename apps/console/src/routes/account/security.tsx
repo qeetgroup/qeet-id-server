@@ -17,6 +17,7 @@ import {
   ShieldCheckIcon,
   Trash2Icon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { usePasskeys } from "@/lib/passkeys";
 import { useSocialIdentities, useUnlinkIdentity } from "@/lib/social-identities";
@@ -28,6 +29,7 @@ function titleCase(s: string) {
 }
 
 function SecurityPage() {
+  const { t } = useTranslation("account");
   const passkeysQ = usePasskeys();
   const passkeyCount = passkeysQ.data?.items?.length ?? 0;
   const identitiesQ = useSocialIdentities();
@@ -42,20 +44,18 @@ function SecurityPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <KeyRoundIcon className="size-5 text-muted-foreground" />
-              <CardTitle className="text-base">Password</CardTitle>
+              <CardTitle className="text-base">{t("security.password.title")}</CardTitle>
             </div>
             <StatusPill status="active" />
           </div>
-          <CardDescription>
-            Use a strong, unique password. We recommend a password manager.
-          </CardDescription>
+          <CardDescription>{t("security.password.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Link
             to="/forgot-password"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            <RefreshCwIcon /> Reset password
+            <RefreshCwIcon /> {t("security.password.reset")}
           </Link>
         </CardContent>
       </Card>
@@ -66,23 +66,22 @@ function SecurityPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FingerprintIcon className="size-5 text-muted-foreground" />
-              <CardTitle className="text-base">Passkeys</CardTitle>
+              <CardTitle className="text-base">{t("security.passkeys.title")}</CardTitle>
             </div>
             <StatusPill status={passkeyCount > 0 ? "active" : "pending"} dot={false}>
-              {passkeyCount > 0 ? `${passkeyCount} enrolled` : "Not enrolled"}
+              {passkeyCount > 0
+                ? t("security.passkeys.enrolled", { count: passkeyCount })
+                : t("security.passkeys.notEnrolled")}
             </StatusPill>
           </div>
-          <CardDescription>
-            Faster, phishing-resistant sign-in using Touch ID, Face ID, Windows Hello, or a security
-            key.
-          </CardDescription>
+          <CardDescription>{t("security.passkeys.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Link
             to="/auth/login-methods/passkeys"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            <FingerprintIcon /> Manage passkeys
+            <FingerprintIcon /> {t("security.passkeys.manage")}
           </Link>
         </CardContent>
       </Card>
@@ -92,28 +91,25 @@ function SecurityPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <ShieldCheckIcon className="size-5 text-muted-foreground" />
-            <CardTitle className="text-base">Two-factor authentication</CardTitle>
+            <CardTitle className="text-base">{t("security.mfa.title")}</CardTitle>
           </div>
-          <CardDescription>
-            Add a second factor (authenticator app, SMS, or email code) to require a second step on
-            every sign-in.
-          </CardDescription>
+          <CardDescription>{t("security.mfa.description")}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Link to="/auth/mfa/totp" className={buttonVariants({ variant: "outline", size: "sm" })}>
-            Authenticator app (TOTP)
+            {t("security.mfa.totp")}
           </Link>
           <Link
             to="/auth/mfa/sms-email"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            SMS or email codes
+            {t("security.mfa.smsEmail")}
           </Link>
           <Link
             to="/auth/mfa/recovery-codes"
             className={buttonVariants({ variant: "ghost", size: "sm" })}
           >
-            Recovery codes
+            {t("security.mfa.recoveryCodes")}
           </Link>
         </CardContent>
       </Card>
@@ -123,18 +119,13 @@ function SecurityPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <LinkIcon className="size-5 text-muted-foreground" />
-            <CardTitle className="text-base">Connected accounts</CardTitle>
+            <CardTitle className="text-base">{t("security.connected.title")}</CardTitle>
           </div>
-          <CardDescription>
-            Social and identity providers linked to your account. You can sign in with any of them;
-            unlink the ones you no longer use.
-          </CardDescription>
+          <CardDescription>{t("security.connected.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           {identities.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No connected accounts. Link one by signing in with a provider from the sign-in screen.
-            </p>
+            <p className="text-sm text-muted-foreground">{t("security.connected.empty")}</p>
           ) : (
             <ul className="divide-y">
               {identities.map((idn) => (
@@ -145,7 +136,10 @@ function SecurityPage() {
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{titleCase(idn.provider)}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {idn.email ?? "—"} · linked {new Date(idn.linked_at).toLocaleDateString()}
+                      {idn.email ?? "—"}{" "}
+                      {t("security.connected.linkedAt", {
+                        date: new Date(idn.linked_at).toLocaleDateString(),
+                      })}
                     </p>
                   </div>
                   <Button
@@ -154,7 +148,7 @@ function SecurityPage() {
                     disabled={unlink.isPending}
                     onClick={() => unlink.mutate(idn.id)}
                   >
-                    <Trash2Icon /> Unlink
+                    <Trash2Icon /> {t("security.connected.unlink")}
                   </Button>
                 </li>
               ))}

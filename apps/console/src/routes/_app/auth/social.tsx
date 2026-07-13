@@ -60,6 +60,7 @@ import {
   Zoom,
 } from "@thesvg/react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
@@ -152,6 +153,7 @@ function ProviderChip({ provider }: { provider: KnownProvider }) {
 }
 
 function SocialPage() {
+  const { t } = useTranslation("auth");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
@@ -167,11 +169,11 @@ function SocialPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Configure OAuth client credentials for social IdPs. The sign-in flow (start / callback / token exchange) runs through the hosted login app."
+        description={t("social.description")}
         actions={
           <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
             <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
-            Refresh
+            {t("social.refreshBtn")}
           </Button>
         }
       />
@@ -187,24 +189,24 @@ function SocialPage() {
                     <ProviderChip provider={p} />
                     <div>
                       <CardTitle className="text-base">{p.label}</CardTitle>
-                      <CardDescription>{cfg ? "Configured" : "Not configured"}</CardDescription>
+                      <CardDescription>{cfg ? t("social.configured") : t("social.notConfigured")}</CardDescription>
                     </div>
                   </div>
                   {p.oauth2Only ? (
-                    <Badge variant="outline">Not supported yet</Badge>
+                    <Badge variant="outline">{t("social.badges.notSupported")}</Badge>
                   ) : cfg ? (
-                    cfg.enabled ? <Badge variant="success">Enabled</Badge> : <Badge variant="muted">Disabled</Badge>
+                    cfg.enabled
+                      ? <Badge variant="success">{t("social.badges.enabled")}</Badge>
+                      : <Badge variant="muted">{t("social.badges.disabled")}</Badge>
                   ) : (
-                    <Badge variant="outline">Off</Badge>
+                    <Badge variant="outline">{t("social.badges.off")}</Badge>
                   )}
                 </div>
               </CardHeader>
               <CardContent className="space-y-2">
                 {p.oauth2Only ? (
                   <p className="text-xs text-muted-foreground">
-                    {p.label} doesn&apos;t publish an OIDC discovery document — sign-in requires a
-                    discovery URL, so this provider can&apos;t work until a plain-OAuth-2.0 adapter
-                    ships.
+                    {t("social.oauth2OnlyDesc", { label: p.label })}
                   </p>
                 ) : listQ.isLoading ? (
                   <Skeleton className="h-12 w-full" />
@@ -214,8 +216,8 @@ function SocialPage() {
                   </code>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    No credentials saved.
-                    {!p.discovery && " Requires your own OIDC discovery URL."}
+                    {t("social.noCredentials")}
+                    {!p.discovery && t("social.requiresDiscovery")}
                   </p>
                 )}
                 <Button
@@ -225,7 +227,7 @@ function SocialPage() {
                   disabled={p.oauth2Only}
                   onClick={() => setEditingProvider(p.id)}
                 >
-                  <PlusIcon /> {cfg ? "Update" : "Configure"}
+                  <PlusIcon /> {cfg ? t("social.updateBtn") : t("social.configureBtn")}
                 </Button>
               </CardContent>
             </Card>
@@ -238,7 +240,7 @@ function SocialPage() {
           <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
             <NetworkIcon className="size-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              No providers configured yet. Pick a provider above to enable social sign-in.
+              {t("social.emptyTitle")}
             </p>
           </CardContent>
         </Card>
@@ -266,6 +268,7 @@ type ConfigureSheetProps = {
 };
 
 function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved }: ConfigureSheetProps) {
+  const { t } = useTranslation("auth");
   const meta = KNOWN_PROVIDERS.find((p) => p.id === provider);
   const upsertM = useMutation({
     mutationFn: (body: {
@@ -309,16 +312,16 @@ function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved
               ) : (
                 meta?.Icon && <meta.Icon className={cn("size-5", meta.iconClass)} {...(meta.fill ? { fill: meta.fill } : {})} />
               )}
-              Configure {meta?.label ?? provider}
+              {t("social.configure.title", { label: meta?.label ?? provider })}
             </SheetTitle>
             <SheetDescription>
-              Paste the OAuth client credentials from your IdP&apos;s developer console.
+              {t("social.configure.description")}
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel>Provider</FieldLabel>
+                <FieldLabel>{t("social.configure.providerLabel")}</FieldLabel>
                 <Select value={provider} disabled>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -327,18 +330,18 @@ function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="client_id">Client ID</FieldLabel>
-                <Input id="client_id" name="client_id" defaultValue={existing?.client_id} required />
+                <FieldLabel htmlFor="social-client_id">{t("social.configure.clientIdLabel")}</FieldLabel>
+                <Input id="social-client_id" name="client_id" defaultValue={existing?.client_id} required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="client_secret">Client secret</FieldLabel>
-                <Input id="client_secret" name="client_secret" type="password" required placeholder={existing ? "Leave blank to keep existing" : ""} />
-                <FieldDescription>Stored server-side as plaintext today — rotation is your responsibility.</FieldDescription>
+                <FieldLabel htmlFor="social-client_secret">{t("social.configure.clientSecretLabel")}</FieldLabel>
+                <Input id="social-client_secret" name="client_secret" type="password" required placeholder={existing ? "Leave blank to keep existing" : ""} />
+                <FieldDescription>{t("social.configure.clientSecretHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="discovery_url">Discovery URL</FieldLabel>
+                <FieldLabel htmlFor="social-discovery_url">{t("social.configure.discoveryLabel")}</FieldLabel>
                 <Input
-                  id="discovery_url"
+                  id="social-discovery_url"
                   name="discovery_url"
                   type="url"
                   required
@@ -355,10 +358,10 @@ function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("social.configure.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={upsertM.isPending}>
               {upsertM.isPending && <Loader2Icon className="animate-spin" />}
-              {upsertM.isPending ? "Saving…" : "Save"}
+              {upsertM.isPending ? t("social.configure.savingBtn") : t("social.configure.saveBtn")}
             </Button>
           </SheetFooter>
         </form>

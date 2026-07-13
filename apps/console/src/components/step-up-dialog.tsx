@@ -12,7 +12,7 @@ import {
   Spinner,
 } from "@qeetrix/ui";
 import { ShieldCheckIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/lib/api";
 import { useStepUpVerify } from "@/lib/mfa";
@@ -35,6 +35,18 @@ type StepUpDialogProps = {
 export function StepUpDialog({ open, onOpenChange, onVerified, actionLabel }: StepUpDialogProps) {
   const [code, setCode] = useState("");
   const verifyM = useStepUpVerify();
+  // Focus the first OTP digit input when the dialog opens. Replaces the
+  // autoFocus prop (which jsx-a11y/no-autofocus flags) with an explicit
+  // useEffect that fires after the dialog animation completes — the correct
+  // moment for screen readers to announce the new context.
+  const otpWrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const id = setTimeout(() => {
+      otpWrapperRef.current?.querySelector<HTMLInputElement>("input:not([disabled])")?.focus();
+    }, 50);
+    return () => clearTimeout(id);
+  }, [open]);
 
   function reset() {
     setCode("");
@@ -72,14 +84,15 @@ export function StepUpDialog({ open, onOpenChange, onVerified, actionLabel }: St
         </DialogHeader>
 
         <Field>
-          <OTPInput
-            value={code}
-            onChange={setCode}
-            onComplete={submit}
-            autoFocus
-            aria-label="Verification code"
-            aria-invalid={verifyM.isError}
-          />
+          <div ref={otpWrapperRef}>
+            <OTPInput
+              value={code}
+              onChange={setCode}
+              onComplete={submit}
+              aria-label="Verification code"
+              aria-invalid={verifyM.isError}
+            />
+          </div>
           {verifyM.isError && (
             <FieldError>
               {verifyM.error instanceof ApiError

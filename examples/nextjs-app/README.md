@@ -12,7 +12,7 @@ A minimal Next.js (App Router) app that authenticates users with **Qeet ID** usi
 
 ## Prerequisites
 
-- Node ≥ 20.9 (`nvm use v22.20.0`) and the repo's `pnpm` (run `pnpm install` from `frontend/`).
+- Node ≥ 24 (`nvm use`) and the repo's `pnpm` (run `pnpm install` from `frontend/`).
 - The Qeet ID backend running locally **with the dev seed applied** (the seed creates the
   `qci_example_app` OAuth client this example uses).
 

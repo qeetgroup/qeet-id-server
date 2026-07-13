@@ -21,6 +21,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
@@ -52,6 +53,7 @@ type AuditEvent = {
 };
 
 function UserDetailPage() {
+  const { t } = useTranslation("users");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const { userId } = Route.useParams();
   const tenantId = useTenantId();
@@ -91,7 +93,7 @@ function UserDetailPage() {
         to="/users"
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
       >
-        <ArrowLeftIcon className="size-3" /> Back to users
+        <ArrowLeftIcon className="size-3" /> {t("detail.backLink")}
       </Link>
 
       {/* Identity card */}
@@ -129,20 +131,20 @@ function UserDetailPage() {
         </CardHeader>
         {userQ.data && (
           <CardContent className="grid gap-3 sm:grid-cols-2">
-            <Field label="User ID" value={userQ.data.id} mono />
-            <Field label="Tenant" value={userQ.data.tenant_id} mono />
+            <Field label={t("detail.fieldUserId")} value={userQ.data.id} mono />
+            <Field label={t("detail.fieldTenant")} value={userQ.data.tenant_id} mono />
             <Field
-              label="Email verified"
+              label={t("detail.fieldEmailVerified")}
               valueNode={
                 userQ.data.email_verified_at ? (
                   <TimeSince value={userQ.data.email_verified_at} />
                 ) : (
-                  <Badge variant="warning">Unverified</Badge>
+                  <Badge variant="warning">{t("detail.unverified")}</Badge>
                 )
               }
             />
             <Field
-              label="Phone verified"
+              label={t("detail.fieldPhoneVerified")}
               valueNode={
                 userQ.data.phone_verified_at ? (
                   <TimeSince value={userQ.data.phone_verified_at} />
@@ -152,11 +154,11 @@ function UserDetailPage() {
               }
             />
             <Field
-              label="Created"
+              label={t("detail.fieldCreated")}
               valueNode={<TimeSince value={userQ.data.created_at} />}
             />
             <Field
-              label="Last updated"
+              label={t("detail.fieldLastUpdated")}
               valueNode={<TimeSince value={userQ.data.updated_at} />}
             />
           </CardContent>
@@ -166,7 +168,7 @@ function UserDetailPage() {
       {/* Recent activity */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Recent activity</CardTitle>
+          <CardTitle className="text-base">{t("detail.activityTitle")}</CardTitle>
           <CardDescription>
             Last 10 audit events where this user was the actor.{" "}
             <Link to="/security/audit-logs" className="underline">
@@ -182,16 +184,16 @@ function UserDetailPage() {
             error={auditQ.error}
             isEmpty={!auditQ.data?.items?.length}
             emptyIcon={FileSearchIcon}
-            emptyTitle="No recent audit events for this user."
+            emptyTitle={t("detail.activityEmpty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Resource</TableHead>
-                  <TableHead>IP</TableHead>
+                  <TableHead>{t("detail.colWhen")}</TableHead>
+                  <TableHead>{t("detail.colAction")}</TableHead>
+                  <TableHead>{t("detail.colResource")}</TableHead>
+                  <TableHead>{t("detail.colIp")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -223,20 +225,20 @@ function UserDetailPage() {
       {/* Quick links */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Quick actions</CardTitle>
+          <CardTitle className="text-base">{t("detail.quickTitle")}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Link
             to="/users/sessions"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            All sessions
+            {t("detail.allSessionsBtn")}
           </Link>
           <Link
             to="/access/roles"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            Manage roles
+            {t("detail.manageRolesBtn")}
           </Link>
           <Button
             variant="outline"
@@ -244,16 +246,15 @@ function UserDetailPage() {
             disabled={resetMfa.isPending}
             onClick={() =>
               openConfirm({
-                title: "Reset this user's MFA?",
-                description:
-                  "Their authenticator (TOTP), recovery codes, and email/SMS OTP factors will be removed, and they'll re-enroll at next sign-in.",
+                title: t("detail.resetMfaConfirmTitle"),
+                description: t("detail.resetMfaConfirmDescription"),
                 variant: "destructive",
-                confirmLabel: "Reset MFA",
+                confirmLabel: t("detail.resetMfaConfirmLabel"),
                 onConfirm: () => resetMfa.mutate(),
               })
             }
           >
-            {resetMfa.isPending ? "Resetting…" : "Reset MFA"}
+            {resetMfa.isPending ? t("detail.resetMfaPendingBtn") : t("detail.resetMfaBtn")}
           </Button>
         </CardContent>
       </Card>

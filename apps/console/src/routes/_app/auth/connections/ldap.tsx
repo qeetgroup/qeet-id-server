@@ -37,6 +37,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, PlugIcon, PlusIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -53,6 +54,7 @@ import {
 export const Route = createFileRoute("/_app/auth/connections/ldap")({ component: LdapPage });
 
 function LdapPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useLdapConnections();
   const updateM = useUpdateLdapConnection();
@@ -66,21 +68,20 @@ function LdapPage() {
     <div className="flex min-w-0 flex-col gap-6">
       {confirmDialog}
       <PageHeader
-        description="Bridge on-prem Active Directory or generic LDAPv3 directories. Users authenticate with their directory credentials and are provisioned on first login."
+        description={t("ldap.description")}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <PlusIcon className="mr-2 size-4" />
-            New connection
+            {t("ldap.newButton")}
           </Button>
         }
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>Connections</CardTitle>
+          <CardTitle>{t("ldap.list.title")}</CardTitle>
           <CardDescription>
-            Qeet ID binds with the service account, finds the user under the base DN, then re-binds
-            as that user to verify the password.
+            {t("ldap.list.description")}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -90,24 +91,24 @@ function LdapPage() {
             error={listQ.error}
             isEmpty={items.length === 0}
             emptyIcon={ServerIcon}
-            emptyTitle="No LDAP connections yet."
+            emptyTitle={t("ldap.list.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Server</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last login</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("ldap.columns.name")}</TableHead>
+                  <TableHead>{t("ldap.columns.server")}</TableHead>
+                  <TableHead>{t("ldap.columns.status")}</TableHead>
+                  <TableHead>{t("ldap.columns.lastLogin")}</TableHead>
+                  <TableHead className="text-right">{t("ldap.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell className="max-w-[260px] truncate font-mono text-xs text-muted-foreground">
+                    <TableCell className="max-w-65 truncate font-mono text-xs text-muted-foreground">
                       {c.server_url}
                     </TableCell>
                     <TableCell>
@@ -122,9 +123,9 @@ function LdapPage() {
                         size="sm"
                         onClick={() => testM.mutate(c.id)}
                         disabled={testM.isPending}
-                        title="Bind with the service account to verify settings"
+                        title={t("ldap.testTitle")}
                       >
-                        <PlugIcon /> Test
+                        <PlugIcon /> {t("ldap.testBtn")}
                       </Button>
                       <Button
                         variant="ghost"
@@ -137,22 +138,22 @@ function LdapPage() {
                         }
                         disabled={updateM.isPending}
                       >
-                        {c.status === "active" ? "Disable" : "Enable"}
+                        {c.status === "active" ? t("ldap.disable") : t("ldap.enable")}
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() =>
                           openConfirm({
-                            title: `Delete LDAP connection "${c.name}"?`,
+                            title: t("ldap.confirm.title", { name: c.name }),
                             variant: "destructive",
-                            confirmLabel: "Delete",
+                            confirmLabel: t("ldap.confirm.label"),
                             onConfirm: () => deleteM.mutate(c.id),
                           })
                         }
                         disabled={deleteM.isPending}
                       >
-                        <Trash2Icon /> Delete
+                        <Trash2Icon /> {t("ldap.deleteBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -175,6 +176,7 @@ function CreateConnectionSheet({
   open: boolean;
   onOpenChange: (o: boolean) => void;
 }) {
+  const { t } = useTranslation("auth");
   const createM = useCreateLdapConnection();
   const [status, setStatus] = useState<LdapConnection["status"]>("draft");
   const [startTls, setStartTls] = useState(false);
@@ -207,36 +209,36 @@ function CreateConnectionSheet({
           }}
         >
           <SheetHeader>
-            <SheetTitle>New LDAP connection</SheetTitle>
-            <SheetDescription>Point at your directory and supply a read-only service account.</SheetDescription>
+            <SheetTitle>{t("ldap.create.title")}</SheetTitle>
+            <SheetDescription>{t("ldap.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Connection name</FieldLabel>
-                <Input id="name" name="name" placeholder="Corp AD" required />
+                <FieldLabel htmlFor="ldap-name">{t("ldap.create.nameLabel")}</FieldLabel>
+                <Input id="ldap-name" name="name" placeholder="Corp AD" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="server_url">Server URL</FieldLabel>
-                <Input id="server_url" name="server_url" className="font-mono text-xs" placeholder="ldaps://ldap.corp.example.com:636" required />
-                <FieldDescription>Use ldaps:// (636) for TLS, or ldap:// (389) with StartTLS below.</FieldDescription>
+                <FieldLabel htmlFor="ldap-server_url">{t("ldap.create.serverLabel")}</FieldLabel>
+                <Input id="ldap-server_url" name="server_url" className="font-mono text-xs" placeholder="ldaps://ldap.corp.example.com:636" required />
+                <FieldDescription>{t("ldap.create.serverHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="bind_dn">Bind DN (service account)</FieldLabel>
-                <Input id="bind_dn" name="bind_dn" className="font-mono text-xs" placeholder="cn=qeetid-svc,ou=ServiceAccounts,dc=corp,dc=example,dc=com" required />
+                <FieldLabel htmlFor="ldap-bind_dn">{t("ldap.create.bindDnLabel")}</FieldLabel>
+                <Input id="ldap-bind_dn" name="bind_dn" className="font-mono text-xs" placeholder="cn=qeetid-svc,ou=ServiceAccounts,dc=corp,dc=example,dc=com" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="bind_password">Bind password</FieldLabel>
-                <Input id="bind_password" name="bind_password" type="password" placeholder="••••••••" required />
-                <FieldDescription>Stored server-side and never returned by the API.</FieldDescription>
+                <FieldLabel htmlFor="ldap-bind_password">{t("ldap.create.bindPasswordLabel")}</FieldLabel>
+                <Input id="ldap-bind_password" name="bind_password" type="password" placeholder="••••••••" required />
+                <FieldDescription>{t("ldap.create.bindPasswordHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="base_dn">User base DN</FieldLabel>
-                <Input id="base_dn" name="base_dn" className="font-mono text-xs" placeholder="ou=People,dc=corp,dc=example,dc=com" required />
+                <FieldLabel htmlFor="ldap-base_dn">{t("ldap.create.baseDnLabel")}</FieldLabel>
+                <Input id="ldap-base_dn" name="base_dn" className="font-mono text-xs" placeholder="ou=People,dc=corp,dc=example,dc=com" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="user_filter">User filter</FieldLabel>
-                <Input id="user_filter" name="user_filter" className="font-mono text-xs" placeholder="(uid=%s)" defaultValue="(uid=%s)" />
+                <FieldLabel htmlFor="ldap-user_filter">{t("ldap.create.filterLabel")}</FieldLabel>
+                <Input id="ldap-user_filter" name="user_filter" className="font-mono text-xs" placeholder="(uid=%s)" defaultValue="(uid=%s)" />
                 <FieldDescription>
                   <code>%s</code> is replaced with the (escaped) username. AD often uses{" "}
                   <code>(sAMAccountName=%s)</code>.
@@ -244,19 +246,19 @@ function CreateConnectionSheet({
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field>
-                  <FieldLabel htmlFor="email_attribute">Email attribute</FieldLabel>
-                  <Input id="email_attribute" name="email_attribute" placeholder="mail" defaultValue="mail" />
+                  <FieldLabel htmlFor="ldap-email_attribute">{t("ldap.create.emailAttrLabel")}</FieldLabel>
+                  <Input id="ldap-email_attribute" name="email_attribute" placeholder="mail" defaultValue="mail" />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="name_attribute">Name attribute</FieldLabel>
-                  <Input id="name_attribute" name="name_attribute" placeholder="cn" defaultValue="cn" />
+                  <FieldLabel htmlFor="ldap-name_attribute">{t("ldap.create.nameAttrLabel")}</FieldLabel>
+                  <Input id="ldap-name_attribute" name="name_attribute" placeholder="cn" defaultValue="cn" />
                 </Field>
               </div>
               <Field>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <FieldLabel>StartTLS</FieldLabel>
-                    <FieldDescription>Upgrade an ldap:// connection to TLS.</FieldDescription>
+                    <FieldLabel>{t("ldap.create.startTlsLabel")}</FieldLabel>
+                    <FieldDescription>{t("ldap.create.startTlsHelp")}</FieldDescription>
                   </div>
                   <Switch checked={startTls} onCheckedChange={setStartTls} />
                 </div>
@@ -264,21 +266,21 @@ function CreateConnectionSheet({
               <Field>
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <FieldLabel>Skip TLS verification</FieldLabel>
-                    <FieldDescription>Accept self-signed certs (lab only — not recommended).</FieldDescription>
+                    <FieldLabel>{t("ldap.create.skipVerifyLabel")}</FieldLabel>
+                    <FieldDescription>{t("ldap.create.skipVerifyHelp")}</FieldDescription>
                   </div>
                   <Switch checked={skipVerify} onCheckedChange={setSkipVerify} />
                 </div>
               </Field>
               <Field>
-                <FieldLabel>Initial status</FieldLabel>
+                <FieldLabel>{t("ldap.create.statusLabel")}</FieldLabel>
                 <Select value={status} onValueChange={(v) => setStatus(v as LdapConnection["status"])}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="draft">{t("ldap.create.statusDraft")}</SelectItem>
+                    <SelectItem value="active">{t("ldap.create.statusActive")}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -290,10 +292,10 @@ function CreateConnectionSheet({
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("ldap.create.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create connection"}
+              {createM.isPending ? t("ldap.create.creatingBtn") : t("ldap.create.createBtn")}
             </Button>
           </SheetFooter>
         </form>

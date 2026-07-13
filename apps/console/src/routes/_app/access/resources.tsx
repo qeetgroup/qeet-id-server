@@ -19,6 +19,7 @@ import { BoxesIcon, KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
+import { useTranslation } from "react-i18next";
 
 export const Route = createFileRoute("/_app/access/resources")({ component: ResourcesPage });
 
@@ -47,6 +48,7 @@ function groupResources(perms: Permission[]): Resource[] {
 }
 
 function ResourcesPage() {
+  const { t } = useTranslation("rbac");
   const permsQ = useQuery({
     queryKey: ["permissions"],
     queryFn: () => api<{ items: Permission[] }>("/v1/permissions"),
@@ -58,12 +60,12 @@ function ResourcesPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="The protected resources RBAC permissions are scoped to. Derived from the permission catalogue — each resource exposes a set of actions you can grant to roles." />
+      <PageHeader description={t("resources.description")} />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Resources</CardDescription>
+            <CardDescription>{t("resources.stats.resources")}</CardDescription>
             <BoxesIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -72,7 +74,7 @@ function ResourcesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Actions</CardDescription>
+            <CardDescription>{t("resources.stats.actions")}</CardDescription>
             <ShieldCheckIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -81,7 +83,7 @@ function ResourcesPage() {
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Permission keys</CardDescription>
+            <CardDescription>{t("resources.stats.keys")}</CardDescription>
             <KeyRoundIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -92,8 +94,8 @@ function ResourcesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Resource catalogue</CardTitle>
-          <CardDescription>One row per resource, with the actions it exposes.</CardDescription>
+          <CardTitle>{t("resources.catalogue.title")}</CardTitle>
+          <CardDescription>{t("resources.catalogue.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -102,15 +104,15 @@ function ResourcesPage() {
             error={permsQ.error}
             isEmpty={resources.length === 0}
             emptyIcon={BoxesIcon}
-            emptyTitle="No permissions registered, so no resources to show."
+            emptyTitle={t("resources.catalogue.empty")}
             skeletonRows={4}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Resource</TableHead>
-                  <TableHead>Actions</TableHead>
-                  <TableHead className="text-right">Count</TableHead>
+                  <TableHead>{t("resources.columns.resource")}</TableHead>
+                  <TableHead>{t("resources.columns.actions")}</TableHead>
+                  <TableHead className="text-right">{t("resources.columns.count")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

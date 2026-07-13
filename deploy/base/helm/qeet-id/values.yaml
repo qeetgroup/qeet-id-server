@@ -1,0 +1,170 @@
+# Default values for qeet-id. Override per environment with
+# environments/stage/values.yaml / environments/prod/values.yaml.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/qeetgroup/qeet-id
+  # Defaults to .Chart.AppVersion when empty. Prefer a digest in prod.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+migrate:
+  # Runs golang-migrate as a Helm pre-install/pre-upgrade hook before rollout.
+  enabled: true
+  image:
+    repository: ghcr.io/qeetgroup/qeet-id-migrate
+    tag: ""
+    pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  # For AWS IRSA (KMS / Secrets Manager access), set the role ARN here:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/qeet-id
+  annotations: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "4001"
+  prometheus.io/path: "/metrics"
+podLabels: {}
+
+# Hardened defaults — match the distroless nonroot image.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4001
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: api.id.qeet.in
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: qeet-id-tls
+      hosts:
+        - api.id.qeet.in
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  # targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Liveness/readiness probes hit the app's k8s-shaped endpoints.
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Non-secret env -> ConfigMap. SERVICE_ENV != "dev" activates config.Validate().
+config:
+  SERVICE_ENV: "prod"
+  SERVICE_NAME: "qeet-id"
+  HTTP_PORT: "4001"
+  LOG_LEVEL: "info"
+  APP_BASE_URL: "https://app.id.qeet.in"
+  LOGIN_BASE_URL: "https://login.id.qeet.in"
+  ALLOWED_ORIGINS: "https://app.id.qeet.in,https://login.id.qeet.in"
+  CSRF_COOKIE_DOMAIN: ".id.qeet.in"
+  DB_MIN_CONNS: "2"
+  DB_MAX_CONNS: "20"
+  REDIS_URL: "redis://qeet-id-redis:6379/0"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_TRACES_SAMPLER_RATIO: "0.1"
+  SECRETS_PROVIDER: "aws-kms"
+  KMS_KEY_ID: ""
+  BREACHED_PASSWORD_CHECK: "true"
+  SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_FROM: "noreply@qeet.in"
+  SMTP_USERNAME: ""
+  TWILIO_ACCOUNT_SID: ""
+  TWILIO_FROM: ""
+  WEBAUTHN_RP_ID: "id.qeet.in"
+  WEBAUTHN_RP_DISPLAY_NAME: "Qeet ID"
+  WEBAUTHN_RP_ORIGINS: "https://app.id.qeet.in,https://login.id.qeet.in"
+
+# Sensitive env. The Deployment loads these via envFrom -> Secret. Either:
+#   1) point existingSecret at an operator-managed Secret, or
+#   2) enable externalSecrets to sync from AWS Secrets Manager.
+# Required keys: DB_URL, JWT_SECRET, JWT_SIGNING_KEY, SAML_IDP_KEY, SAML_IDP_CERT,
+# and SECRETS_WRAPPED_DEK (aws-kms) or SECRETS_KEY (static). Optional:
+# JWT_RETIRED_KEYS, SMTP_PASSWORD, TWILIO_AUTH_TOKEN.
+secrets:
+  existingSecret: ""
+
+externalSecrets:
+  enabled: false
+  # external-secrets.io SecretStore/ClusterSecretStore that fronts AWS SM.
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  # AWS Secrets Manager keys -> env var names synced into the k8s Secret.
+  data:
+    - secretKey: DB_URL
+      remoteRef: { key: qeet-id/prod, property: DB_URL }
+    - secretKey: JWT_SECRET
+      remoteRef: { key: qeet-id/prod, property: JWT_SECRET }
+    - secretKey: JWT_SIGNING_KEY
+      remoteRef: { key: qeet-id/prod, property: JWT_SIGNING_KEY }
+    - secretKey: SECRETS_WRAPPED_DEK
+      remoteRef: { key: qeet-id/prod, property: SECRETS_WRAPPED_DEK }
+    - secretKey: SAML_IDP_KEY
+      remoteRef: { key: qeet-id/prod, property: SAML_IDP_KEY }
+    - secretKey: SAML_IDP_CERT
+      remoteRef: { key: qeet-id/prod, property: SAML_IDP_CERT }
+
+# Prometheus Operator ServiceMonitor (requires the CRD).
+serviceMonitor:
+  enabled: false
+  interval: 30s
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# Spread replicas across nodes/zones for resilience.
+topologySpreadConstraints: []

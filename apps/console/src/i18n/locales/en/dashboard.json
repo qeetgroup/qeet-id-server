@@ -72,5 +72,29 @@
     "title": "Create your first workspace",
     "description": "Your account isn't tied to a workspace yet. Create one to start managing users, configuring auth, and inviting teammates — you'll be its owner.",
     "cta": "Create workspace"
+  },
+  "analytics": {
+    "description": "Product analytics across tenants, applications, and authentication methods.",
+    "loadError": "Couldn't load analytics",
+    "range24h": "Last 24 hours",
+    "range7d": "Last 7 days",
+    "range30d": "Last 30 days",
+    "range90d": "Last 90 days",
+    "kpiHintVs30d": "vs last 30 days",
+    "kpiHintStickiness": "stickiness",
+    "kpiHintLast30d": "last 30 days",
+    "kpiHintVs30dAgo": "vs 30 days ago",
+    "activeUsersTitle": "Active users",
+    "activeUsersDesc": "Weekly WAU and average DAU · last 8 weeks",
+    "emptyActivity": "No session activity recorded in the last 8 weeks.",
+    "geoTitle": "Geography",
+    "geoDesc": "Users by region",
+    "emptyGeo": "Requires GeoIP enrichment (roadmap §4.6).",
+    "apiTitle": "API volume",
+    "apiDesc": "Requests per day",
+    "emptyApi": "Requires request-volume instrumentation.",
+    "appsTitle": "Top applications",
+    "appsDesc": "Ranked by logins in the selected period",
+    "emptyApps": "Requires per-application login tagging on auth events."
   }
 }

@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: qeet-id
+
+resources:
+  - ../../../base/kubernetes/base
+  - ingress.yaml
+
+patches:
+  - path: patch-replicas.yaml
+    target:
+      kind: Deployment
+      name: qeet-id
+  - path: patch-resources.yaml
+    target:
+      kind: Deployment
+      name: qeet-id
+  - path: patch-config.yaml
+    target:
+      kind: ConfigMap
+      name: qeet-id-config
+
+images:
+  - name: ghcr.io/qeetgroup/qeet-id
+    newTag: latest
+  - name: ghcr.io/qeetgroup/qeet-id-migrate
+    newTag: latest

@@ -23,6 +23,7 @@ import {
   ShieldAlertIcon,
   UserXIcon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { useAnomalies, useAnomalySummary, useResolveAnomaly } from "@/lib/anomalies";
@@ -38,6 +39,7 @@ function severityBadge(s: string) {
 }
 
 function AnomaliesPage() {
+  const { t } = useTranslation("security");
   const anomaliesQ = useAnomalies();
   const summaryQ = useAnomalySummary();
   const resolve = useResolveAnomaly();
@@ -45,32 +47,16 @@ function AnomaliesPage() {
   const sm = summaryQ.data;
 
   const summary = [
-    {
-      label: "Open incidents",
-      value: sm?.open ?? 0,
-      icon: <AlertTriangleIcon className="size-4" />,
-    },
-    {
-      label: "Resolved (24h)",
-      value: sm?.resolved_24h ?? 0,
-      icon: <ShieldAlertIcon className="size-4" />,
-    },
-    {
-      label: "Affected accounts",
-      value: sm?.affected_accounts ?? 0,
-      icon: <UserXIcon className="size-4" />,
-    },
-    {
-      label: "High severity (24h)",
-      value: sm?.high_severity_24h ?? 0,
-      icon: <MapPinIcon className="size-4" />,
-    },
+    { key: "openIncidents", value: sm?.open ?? 0, icon: <AlertTriangleIcon className="size-4" /> },
+    { key: "resolved24h", value: sm?.resolved_24h ?? 0, icon: <ShieldAlertIcon className="size-4" /> },
+    { key: "affectedAccounts", value: sm?.affected_accounts ?? 0, icon: <UserXIcon className="size-4" /> },
+    { key: "highSeverity24h", value: sm?.high_severity_24h ?? 0, icon: <MapPinIcon className="size-4" /> },
   ];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
-        description="Behavioral anomalies detected across logins, sessions, and API access."
+        description={t("threats.anomalies.description")}
         actions={
           <Button
             variant="outline"
@@ -82,16 +68,16 @@ function AnomaliesPage() {
             disabled={anomaliesQ.isFetching}
           >
             <RefreshCwIcon className={anomaliesQ.isFetching ? "animate-spin" : ""} />
-            Refresh
+            {t("threats.anomalies.refresh")}
           </Button>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         {summary.map((s) => (
-          <Card key={s.label}>
+          <Card key={s.key}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardDescription>{s.label}</CardDescription>
+              <CardDescription>{t(`threats.anomalies.summary.${s.key}`)}</CardDescription>
               <span className="text-muted-foreground">{s.icon}</span>
             </CardHeader>
             <CardContent>
@@ -103,8 +89,8 @@ function AnomaliesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent anomalies</CardTitle>
-          <CardDescription>Most recent detections, newest first</CardDescription>
+          <CardTitle>{t("threats.anomalies.recent.title")}</CardTitle>
+          <CardDescription>{t("threats.anomalies.recent.description")}</CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <DataState
@@ -113,19 +99,19 @@ function AnomaliesPage() {
             error={anomaliesQ.error}
             isEmpty={items.length === 0}
             emptyIcon={AlertTriangleIcon}
-            emptyTitle="No anomalies detected."
+            emptyTitle={t("threats.anomalies.recent.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Type</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Detail</TableHead>
-                  <TableHead>Severity</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>When</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  <TableHead>{t("threats.anomalies.recent.columns.type")}</TableHead>
+                  <TableHead>{t("threats.anomalies.recent.columns.user")}</TableHead>
+                  <TableHead>{t("threats.anomalies.recent.columns.detail")}</TableHead>
+                  <TableHead>{t("threats.anomalies.recent.columns.severity")}</TableHead>
+                  <TableHead>{t("threats.anomalies.recent.columns.status")}</TableHead>
+                  <TableHead>{t("threats.anomalies.recent.columns.when")}</TableHead>
+                  <TableHead className="text-right">{t("threats.anomalies.recent.columns.action")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -133,7 +119,7 @@ function AnomaliesPage() {
                   <TableRow key={i.id}>
                     <TableCell className="font-mono text-xs">{i.type}</TableCell>
                     <TableCell>{i.user_email ?? "—"}</TableCell>
-                    <TableCell className="max-w-[320px] truncate text-sm text-muted-foreground">
+                    <TableCell className="max-w-80 truncate text-sm text-muted-foreground">
                       {i.detail}
                     </TableCell>
                     <TableCell>{severityBadge(i.severity)}</TableCell>
@@ -145,7 +131,7 @@ function AnomaliesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {i.status === "resolved" ? (
-                        <span className="text-xs text-muted-foreground">Resolved</span>
+                        <span className="text-xs text-muted-foreground">{t("threats.anomalies.resolved")}</span>
                       ) : (
                         <Button
                           variant="ghost"
@@ -153,7 +139,7 @@ function AnomaliesPage() {
                           disabled={resolve.isPending}
                           onClick={() => resolve.mutate(i.id)}
                         >
-                          Resolve
+                          {t("threats.anomalies.resolve")}
                         </Button>
                       )}
                     </TableCell>

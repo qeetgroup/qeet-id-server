@@ -7,6 +7,7 @@ import {
   MailIcon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import { BrandHero } from "@/features/auth/components/brand-hero";
 import { ApiError } from "@/lib/api";
@@ -24,6 +25,7 @@ export const Route = createFileRoute("/_auth/magic")({
 });
 
 function MagicLinkPage() {
+  const { t } = useTranslation("authFlow");
   const { token } = useSearch({ from: "/_auth/magic" });
   const consume = useConsumeMagicLink();
 
@@ -41,7 +43,7 @@ function MagicLinkPage() {
       <Card className="overflow-hidden p-0">
         <CardContent className="grid p-0 md:grid-cols-2">
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center">
-            {renderStatus({ token, consume })}
+            {renderStatus({ token, consume, t })}
           </div>
           <BrandHero />
         </CardContent>
@@ -53,21 +55,20 @@ function MagicLinkPage() {
 function renderStatus({
   token,
   consume,
+  t,
 }: {
   token: string | undefined;
   consume: ReturnType<typeof useConsumeMagicLink>;
+  t: (key: string) => string;
 }) {
   if (!token) {
     return (
       <>
         <AlertTriangleIcon className="size-10 text-amber-500" />
-        <h1 className="text-2xl font-bold">Missing token</h1>
-        <p className="text-balance text-muted-foreground">
-          This link doesn&apos;t carry a sign-in token. If you got here via a
-          recently-sent email, try copying the URL directly from the message body.
-        </p>
+        <h1 className="text-2xl font-bold">{t("magic.missingTitle")}</h1>
+        <p className="text-balance text-muted-foreground">{t("magic.missingText")}</p>
         <Link to="/sign-in" className={buttonVariants({ variant: "outline" }) + " mt-2"}>
-          Back to sign in
+          {t("magic.backToSignIn")}
         </Link>
       </>
     );
@@ -77,10 +78,8 @@ function renderStatus({
     return (
       <>
         <Loader2Icon className="size-10 animate-spin text-sky-500" />
-        <h1 className="text-2xl font-bold">Signing you in…</h1>
-        <p className="text-balance text-muted-foreground">
-          Verifying your one-time sign-in link.
-        </p>
+        <h1 className="text-2xl font-bold">{t("magic.loadingTitle")}</h1>
+        <p className="text-balance text-muted-foreground">{t("magic.loadingText")}</p>
       </>
     );
   }
@@ -89,10 +88,8 @@ function renderStatus({
     return (
       <>
         <CheckCircle2Icon className="size-10 text-emerald-500" />
-        <h1 className="text-2xl font-bold">Welcome back</h1>
-        <p className="text-balance text-muted-foreground">
-          Redirecting to your dashboard…
-        </p>
+        <h1 className="text-2xl font-bold">{t("magic.successTitle")}</h1>
+        <p className="text-balance text-muted-foreground">{t("magic.successText")}</p>
       </>
     );
   }
@@ -107,19 +104,17 @@ function renderStatus({
     <>
       <MailIcon className="size-10 text-rose-500" />
       <h1 className="text-2xl font-bold">
-        {isExpiredOrUsed ? "Link no longer valid" : "Couldn't sign you in"}
+        {isExpiredOrUsed ? t("magic.expiredTitle") : t("magic.errorTitle")}
       </h1>
       <p className="text-balance text-muted-foreground">
-        {isExpiredOrUsed
-          ? "This link was either already used or has expired. Magic links work once and last 60 minutes."
-          : detail}
+        {isExpiredOrUsed ? t("magic.expiredText") : detail}
       </p>
       <div className="mt-4 flex gap-2">
         <Link
           to="/sign-in"
           className={buttonVariants({ variant: "outline", size: "sm" })}
         >
-          Back to sign in
+          {t("magic.backToSignIn")}
         </Link>
         {/* The "request a new link" entry point is the sign-in form's
             magic-link flow — for now we route there. Future: a dedicated
@@ -131,7 +126,7 @@ function renderStatus({
             window.location.href = "/sign-in?from=magic";
           }}
         >
-          Send a new link
+          {t("magic.sendNewLink")}
         </Button>
       </div>
     </>

@@ -16,7 +16,7 @@ The flow ([src/qeet.ts](./src/qeet.ts)):
 
 ## Prerequisites
 
-- Node ≥ 20.9 (`nvm use v22.20.0`); run `pnpm install` from `frontend/`.
+- Node ≥ 24 (`nvm use`); run `pnpm install` from `frontend/`.
 - The Qeet ID backend running locally **with the dev seed applied** (creates the public
   `qci_example_spa` client this app uses).
 - **`ALLOWED_ORIGINS` must include `http://localhost:3020`.** The browser calls the token + userinfo

@@ -38,6 +38,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, MailIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ListToolbar, SortHeader } from "@/components/data-table";
@@ -63,6 +64,7 @@ type Invite = {
 type Role = { id: string; name: string };
 
 function InvitationsPage() {
+  const { t } = useTranslation("invitations");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
@@ -83,7 +85,7 @@ function InvitationsPage() {
   const revokeM = useMutation({
     mutationFn: (id: string) => api<void>(`/v1/invites/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["invites"] }),
-    meta: { successMessage: "Invitation revoked" },
+    meta: { successMessage: t("toast.revoked") },
   });
 
   const roleName = (id?: string | null) =>
@@ -91,27 +93,31 @@ function InvitationsPage() {
 
   const items = listQ.data?.items ?? [];
   const lv = useListView(items, {
-    searchFields: (i) => [i.email, roleName(i.role_id)],
-    filterFields: { status: (i) => i.status },
-    sortFields: { email: (i) => i.email, expires: (i) => i.expires_at, sent: (i) => i.created_at },
+    searchFields: (inv) => [inv.email, roleName(inv.role_id)],
+    filterFields: { status: (inv) => inv.status },
+    sortFields: {
+      email: (inv) => inv.email,
+      expires: (inv) => inv.expires_at,
+      sent: (inv) => inv.created_at,
+    },
   });
   const rows = lv.view;
   const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
 
   const inviteCsvColumns: CsvColumn<Invite>[] = [
-    { header: "id", value: (i) => i.id },
-    { header: "email", value: (i) => i.email },
-    { header: "role", value: (i) => roleName(i.role_id) },
-    { header: "status", value: (i) => i.status },
-    { header: "expires_at", value: (i) => i.expires_at },
-    { header: "created_at", value: (i) => i.created_at },
+    { header: "id", value: (inv) => inv.id },
+    { header: "email", value: (inv) => inv.email },
+    { header: "role", value: (inv) => roleName(inv.role_id) },
+    { header: "status", value: (inv) => inv.status },
+    { header: "expires_at", value: (inv) => inv.expires_at },
+    { header: "created_at", value: (inv) => inv.created_at },
   ];
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="Invite teammates by email. They get a one-time link that creates their account and assigns the chosen role on acceptance."
+        description={t("list.description")}
         actions={
           <>
             <Button
@@ -121,10 +127,10 @@ function InvitationsPage() {
               disabled={listQ.isFetching}
             >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("list.refresh")}
             </Button>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> Send invite
+              <PlusIcon /> {t("list.send")}
             </Button>
           </>
         }
@@ -132,34 +138,34 @@ function InvitationsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Invitations</CardTitle>
+          <CardTitle className="text-base">{t("list.title")}</CardTitle>
           <CardDescription>
-            {rows.length} of {items.length} invitation{items.length === 1 ? "" : "s"}
+            {t("list.count", { shown: rows.length, total: items.length })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <ListToolbar
             search={lv.search}
             onSearchChange={lv.setSearch}
-            searchPlaceholder="Search email or role…"
+            searchPlaceholder={t("list.searchPlaceholder")}
             filters={[
               {
                 id: "status",
-                label: "Status",
+                label: t("list.filters.status.label"),
                 value: lv.filters.status ?? "",
                 options: [
-                  { label: "Pending", value: "pending" },
-                  { label: "Accepted", value: "accepted" },
-                  { label: "Expired", value: "expired" },
-                  { label: "Revoked", value: "revoked" },
+                  { label: t("list.filters.status.pending"), value: "pending" },
+                  { label: t("list.filters.status.accepted"), value: "accepted" },
+                  { label: t("list.filters.status.expired"), value: "expired" },
+                  { label: t("list.filters.status.revoked"), value: "revoked" },
                 ],
                 onChange: (v) => lv.setFilter("status", v),
               },
             ]}
             columns={[
-              { id: "role", label: "Role" },
-              { id: "expires", label: "Expires" },
-              { id: "sent", label: "Sent" },
+              { id: "role", label: t("list.columns.role") },
+              { id: "expires", label: t("list.columns.expires") },
+              { id: "sent", label: t("list.columns.sent") },
             ]}
             isColumnVisible={lv.isVisible}
             onToggleColumn={lv.toggleColumn}
@@ -181,7 +187,7 @@ function InvitationsPage() {
             isEmpty={rows.length === 0}
             emptyIcon={MailIcon}
             emptyTitle={
-              lv.hasActiveFilters ? "No invitations match your filters." : "No invitations sent yet."
+              lv.hasActiveFilters ? t("list.emptyFiltered") : t("list.empty")
             }
             skeletonRows={3}
           >
@@ -189,60 +195,60 @@ function InvitationsPage() {
               <TableHeader>
                 <TableRow>
                   <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
-                    Email
+                    {t("list.columns.email")}
                   </SortHeader>
-                  {lv.isVisible("role") && <TableHead>Role</TableHead>}
-                  <TableHead>Status</TableHead>
+                  {lv.isVisible("role") && <TableHead>{t("list.columns.role")}</TableHead>}
+                  <TableHead>{t("list.columns.status")}</TableHead>
                   {lv.isVisible("expires") && (
                     <SortHeader columnKey="expires" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Expires
+                      {t("list.columns.expires")}
                     </SortHeader>
                   )}
                   {lv.isVisible("sent") && (
                     <SortHeader columnKey="sent" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Sent
+                      {t("list.columns.sent")}
                     </SortHeader>
                   )}
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">{t("list.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((i) => (
-                  <TableRow key={i.id}>
-                    <TableCell className="font-medium">{i.email}</TableCell>
+                {rows.map((inv) => (
+                  <TableRow key={inv.id}>
+                    <TableCell className="font-medium">{inv.email}</TableCell>
                     {lv.isVisible("role") && (
                       <TableCell>
-                        <Badge variant="muted">{roleName(i.role_id)}</Badge>
+                        <Badge variant="muted">{roleName(inv.role_id)}</Badge>
                       </TableCell>
                     )}
                     <TableCell>
-                      <StatusPill status={i.status} />
+                      <StatusPill status={inv.status} />
                     </TableCell>
                     {lv.isVisible("expires") && (
                       <TableCell>
-                        <TimeSince value={i.expires_at} />
+                        <TimeSince value={inv.expires_at} />
                       </TableCell>
                     )}
                     {lv.isVisible("sent") && (
                       <TableCell>
-                        <TimeSince value={i.created_at} />
+                        <TimeSince value={inv.created_at} />
                       </TableCell>
                     )}
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
                         size="sm"
-                        disabled={i.status !== "pending" || revokeM.isPending}
+                        disabled={inv.status !== "pending" || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: `Revoke invitation for ${i.email}?`,
+                            title: t("confirm.revokeTitle", { email: inv.email }),
                             variant: "destructive",
-                            confirmLabel: "Revoke",
-                            onConfirm: () => revokeM.mutate(i.id),
+                            confirmLabel: t("confirm.revokeLabel"),
+                            onConfirm: () => revokeM.mutate(inv.id),
                           })
                         }
                       >
-                        <Trash2Icon /> Revoke
+                        <Trash2Icon /> {t("table.revoke")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -276,6 +282,8 @@ function CreateInviteSheet({
   currentTenantId,
   onCreated,
 }: CreateInviteSheetProps) {
+  const { t } = useTranslation("invitations");
+
   // Which workspace the invitee joins. Defaults to the current one; admins who
   // belong to several can target another. Roles are tenant-scoped, so the role
   // list (and its default) follow this selection.
@@ -320,7 +328,7 @@ function CreateInviteSheet({
       onCreated();
       onOpenChange(false);
     },
-    meta: { successMessage: "Invitation sent" },
+    meta: { successMessage: t("toast.sent") },
   });
 
   return (
@@ -340,24 +348,25 @@ function CreateInviteSheet({
           }}
         >
           <SheetHeader>
-            <SheetTitle>Send invitation</SheetTitle>
-            <SheetDescription>
-              The invitee gets an email with a one-time link. They set their password during
-              acceptance.
-            </SheetDescription>
+            <SheetTitle>{t("create.title")}</SheetTitle>
+            <SheetDescription>{t("create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" name="email" type="email" required />
+                <FieldLabel htmlFor="invite-email">{t("create.email")}</FieldLabel>
+                <Input id="invite-email" name="email" type="email" required />
               </Field>
               <Field>
-                <FieldLabel>Workspace</FieldLabel>
+                <FieldLabel>{t("create.workspace")}</FieldLabel>
                 <Select value={tenantId} onValueChange={(v) => v && setTenantId(v)}>
                   <SelectTrigger>
                     <SelectValue
-                      placeholder={tenantsQ.isLoading ? "Loading workspaces…" : "Select a workspace"}
+                      placeholder={
+                        tenantsQ.isLoading
+                          ? t("create.workspaceLoadingPlaceholder")
+                          : t("create.workspacePlaceholder")
+                      }
                     />
                   </SelectTrigger>
                   <SelectContent>
@@ -368,14 +377,18 @@ function CreateInviteSheet({
                     ))}
                   </SelectContent>
                 </Select>
-                <FieldDescription>The workspace the invitee will join.</FieldDescription>
+                <FieldDescription>{t("create.workspaceHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Role</FieldLabel>
+                <FieldLabel>{t("create.role")}</FieldLabel>
                 <Select value={roleId} onValueChange={(v) => v && setRoleId(v)}>
                   <SelectTrigger>
                     <SelectValue
-                      placeholder={rolesQ.isLoading ? "Loading roles…" : "Select a role"}
+                      placeholder={
+                        rolesQ.isLoading
+                          ? t("create.roleLoadingPlaceholder")
+                          : t("create.rolePlaceholder")
+                      }
                     />
                   </SelectTrigger>
                   <SelectContent>
@@ -386,9 +399,7 @@ function CreateInviteSheet({
                     ))}
                   </SelectContent>
                 </Select>
-                <FieldDescription>
-                  Granted on acceptance — required for the user to become a member.
-                </FieldDescription>
+                <FieldDescription>{t("create.roleHelp")}</FieldDescription>
               </Field>
               {createM.error && (
                 <Field>
@@ -398,10 +409,12 @@ function CreateInviteSheet({
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("create.cancel")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending || !tenantId}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Sending…" : "Send invite"}
+              {createM.isPending ? t("create.submitting") : t("create.submit")}
             </Button>
           </SheetFooter>
         </form>

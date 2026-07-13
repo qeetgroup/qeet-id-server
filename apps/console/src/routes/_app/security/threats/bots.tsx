@@ -21,6 +21,7 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { BotIcon, RefreshCwIcon, ShieldOffIcon, ZapIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { useBotOverview, useBotSettings, useUpdateBotSettings, type BotSettings } from "@/lib/bots";
@@ -39,6 +40,7 @@ function verdictBadge(v: string) {
 }
 
 function BotsPage() {
+  const { t } = useTranslation("security");
   const overviewQ = useBotOverview();
   const settingsQ = useBotSettings();
   const update = useUpdateBotSettings();
@@ -48,21 +50,9 @@ function BotsPage() {
   const settings = settingsQ.data;
 
   const stats = [
-    {
-      label: "Blocked (24h)",
-      value: s?.blocked_24h ?? 0,
-      icon: <ShieldOffIcon className="size-4" />,
-    },
-    {
-      label: "Challenged (24h)",
-      value: s?.challenged_24h ?? 0,
-      icon: <ZapIcon className="size-4" />,
-    },
-    {
-      label: "Bot score threshold",
-      value: (s?.threshold ?? 0.7).toFixed(2),
-      icon: <BotIcon className="size-4" />,
-    },
+    { key: "blocked", value: s?.blocked_24h ?? 0, icon: <ShieldOffIcon className="size-4" /> },
+    { key: "challenged", value: s?.challenged_24h ?? 0, icon: <ZapIcon className="size-4" /> },
+    { key: "threshold", value: (s?.threshold ?? 0.7).toFixed(2), icon: <BotIcon className="size-4" /> },
   ];
 
   // Toggling a switch persists the full settings object (the scorer only
@@ -75,7 +65,7 @@ function BotsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
-        description="Detection rules and recent challenges against suspected automated traffic."
+        description={t("bots.description")}
         actions={
           <Button
             variant="outline"
@@ -84,16 +74,16 @@ function BotsPage() {
             disabled={overviewQ.isFetching}
           >
             <RefreshCwIcon className={overviewQ.isFetching ? "animate-spin" : ""} />
-            Refresh
+            {t("bots.refresh")}
           </Button>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {stats.map((st) => (
-          <Card key={st.label}>
+          <Card key={st.key}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardDescription>{st.label}</CardDescription>
+              <CardDescription>{t(`bots.stats.${st.key}`)}</CardDescription>
               <span className="text-muted-foreground">{st.icon}</span>
             </CardHeader>
             <CardContent>
@@ -105,20 +95,15 @@ function BotsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Detection rules</CardTitle>
-          <CardDescription>
-            Heuristics evaluated on each authentication attempt. User-Agent fingerprinting is
-            enforced today; the others are stored for upcoming enforcement.
-          </CardDescription>
+          <CardTitle>{t("bots.rules.title")}</CardTitle>
+          <CardDescription>{t("bots.rules.description")}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <Field>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <FieldLabel>User-Agent fingerprinting</FieldLabel>
-                <FieldDescription>
-                  Score known bot UA strings and headless browsers.
-                </FieldDescription>
+                <FieldLabel>{t("bots.rules.uaCheck")}</FieldLabel>
+                <FieldDescription>{t("bots.rules.uaCheckHelp")}</FieldDescription>
               </div>
               <Switch
                 checked={settings?.ua_check ?? false}
@@ -130,8 +115,8 @@ function BotsPage() {
           <Field>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <FieldLabel>Honeypot fields</FieldLabel>
-                <FieldDescription>Hidden form inputs that bots will fill.</FieldDescription>
+                <FieldLabel>{t("bots.rules.honeypot")}</FieldLabel>
+                <FieldDescription>{t("bots.rules.honeypotHelp")}</FieldDescription>
               </div>
               <Switch
                 checked={settings?.honeypot ?? false}
@@ -143,8 +128,8 @@ function BotsPage() {
           <Field>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <FieldLabel>CAPTCHA challenge</FieldLabel>
-                <FieldDescription>hCaptcha shown for score &gt; threshold.</FieldDescription>
+                <FieldLabel>{t("bots.rules.captcha")}</FieldLabel>
+                <FieldDescription>{t("bots.rules.captchaHelp")}</FieldDescription>
               </div>
               <Switch
                 checked={settings?.captcha ?? false}
@@ -156,8 +141,8 @@ function BotsPage() {
           <Field>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <FieldLabel>Request-signature analysis</FieldLabel>
-                <FieldDescription>TLS JA3 + header-order fingerprinting (beta).</FieldDescription>
+                <FieldLabel>{t("bots.rules.signature")}</FieldLabel>
+                <FieldDescription>{t("bots.rules.signatureHelp")}</FieldDescription>
               </div>
               <Switch
                 checked={settings?.signature ?? false}
@@ -171,8 +156,8 @@ function BotsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent decisions</CardTitle>
-          <CardDescription>Suspicious authentication attempts, newest first</CardDescription>
+          <CardTitle>{t("bots.recent.title")}</CardTitle>
+          <CardDescription>{t("bots.recent.description")}</CardDescription>
         </CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <DataState
@@ -181,17 +166,17 @@ function BotsPage() {
             error={overviewQ.error}
             isEmpty={recent.length === 0}
             emptyIcon={BotIcon}
-            emptyTitle="No bot activity detected."
+            emptyTitle={t("bots.recent.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>IP</TableHead>
-                  <TableHead>User-Agent</TableHead>
-                  <TableHead>Verdict</TableHead>
-                  <TableHead>Score</TableHead>
-                  <TableHead>When</TableHead>
+                  <TableHead>{t("bots.recent.columns.ip")}</TableHead>
+                  <TableHead>{t("bots.recent.columns.userAgent")}</TableHead>
+                  <TableHead>{t("bots.recent.columns.verdict")}</TableHead>
+                  <TableHead>{t("bots.recent.columns.score")}</TableHead>
+                  <TableHead>{t("bots.recent.columns.when")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

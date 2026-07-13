@@ -31,6 +31,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BotIcon, CopyIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -52,6 +53,7 @@ type Principal = {
 };
 
 function MachineIdentitiesPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -73,15 +75,15 @@ function MachineIdentitiesPage() {
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="Service accounts for server-to-server calls. Authenticate via POST /v1/oauth/token with grant_type=client_credentials."
+        description={t("machineIds.description")}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("machineIds.refreshBtn")}
             </Button>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> New identity
+              <PlusIcon /> {t("machineIds.newButton")}
             </Button>
           </>
         }
@@ -90,10 +92,9 @@ function MachineIdentitiesPage() {
       {revealed && (
         <Card className="border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20">
           <CardHeader>
-            <CardTitle className="text-base">Client credentials for {revealed.principal.name}</CardTitle>
+            <CardTitle className="text-base">{t("machineIds.revealed.title", { name: revealed.principal.name })}</CardTitle>
             <CardDescription>
-              We&apos;ll never show this secret again. Use it as <code>client_id</code> +{" "}
-              <code>client_secret</code> on the token endpoint.
+              {t("machineIds.revealed.description")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -114,7 +115,7 @@ function MachineIdentitiesPage() {
               </Button>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>
-              Dismiss
+              {t("machineIds.revealed.dismiss")}
             </Button>
           </CardContent>
         </Card>
@@ -122,8 +123,8 @@ function MachineIdentitiesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Service principals</CardTitle>
-          <CardDescription>{listQ.data?.items?.length ?? 0} identit{listQ.data?.items?.length === 1 ? "y" : "ies"}</CardDescription>
+          <CardTitle className="text-base">{t("machineIds.list.title")}</CardTitle>
+          <CardDescription>{t("machineIds.list.count", { count: listQ.data?.items?.length ?? 0 })}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {listQ.isLoading ? (
@@ -135,18 +136,18 @@ function MachineIdentitiesPage() {
           ) : !listQ.data?.items?.length ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <BotIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No service principals yet.</p>
+              <p className="text-sm text-muted-foreground">{t("machineIds.list.empty")}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Client ID</TableHead>
-                  <TableHead>Scopes</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("machineIds.columns.name")}</TableHead>
+                  <TableHead>{t("machineIds.columns.clientId")}</TableHead>
+                  <TableHead>{t("machineIds.columns.scopes")}</TableHead>
+                  <TableHead>{t("machineIds.columns.status")}</TableHead>
+                  <TableHead>{t("machineIds.columns.created")}</TableHead>
+                  <TableHead className="text-right">{t("machineIds.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -162,7 +163,9 @@ function MachineIdentitiesPage() {
                       ) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell>
-                      {p.disabled_at ? <Badge variant="destructive">Disabled</Badge> : <Badge variant="success">Active</Badge>}
+                      {p.disabled_at
+                        ? <Badge variant="destructive">{t("machineIds.status.disabled")}</Badge>
+                        : <Badge variant="success">{t("machineIds.status.active")}</Badge>}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
@@ -172,15 +175,15 @@ function MachineIdentitiesPage() {
                         disabled={!!p.disabled_at || disableM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: `Disable "${p.name}"?`,
-                            description: "Token issuance will be blocked immediately.",
+                            title: t("machineIds.confirm.title", { name: p.name }),
+                            description: t("machineIds.confirm.description"),
                             variant: "destructive",
-                            confirmLabel: "Disable",
+                            confirmLabel: t("machineIds.confirm.label"),
                             onConfirm: () => disableM.mutate(p.id),
                           })
                         }
                       >
-                        <Trash2Icon /> Disable
+                        <Trash2Icon /> {t("machineIds.disableBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -212,6 +215,7 @@ type CreatePrincipalSheetProps = {
 };
 
 function CreatePrincipalSheet({ open, onOpenChange, tenantId, onCreated }: CreatePrincipalSheetProps) {
+  const { t } = useTranslation("auth");
   const createM = useMutation({
     mutationFn: (body: {
       tenant_id: string;
@@ -251,24 +255,24 @@ function CreatePrincipalSheet({ open, onOpenChange, tenantId, onCreated }: Creat
           }}
         >
           <SheetHeader>
-            <SheetTitle>New machine identity</SheetTitle>
+            <SheetTitle>{t("machineIds.create.title")}</SheetTitle>
             <SheetDescription>
-              Creates a service principal usable via OAuth 2.0 client_credentials.
+              {t("machineIds.create.description")}
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Name</FieldLabel>
-                <Input id="name" name="name" placeholder="build-bot" required />
+                <FieldLabel htmlFor="mi-name">{t("machineIds.create.nameLabel")}</FieldLabel>
+                <Input id="mi-name" name="name" placeholder="build-bot" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="description">Description</FieldLabel>
-                <Textarea id="description" name="description" rows={3} placeholder="What this identity is used for" />
+                <FieldLabel htmlFor="mi-description">{t("machineIds.create.descriptionLabel")}</FieldLabel>
+                <Textarea id="mi-description" name="description" rows={3} placeholder="What this identity is used for" />
               </Field>
               <Field>
-                <FieldLabel htmlFor="scopes">Scopes (space-separated)</FieldLabel>
-                <Input id="scopes" name="scopes" placeholder="user.read tenant.read" />
+                <FieldLabel htmlFor="mi-scopes">{t("machineIds.create.scopesLabel")}</FieldLabel>
+                <Input id="mi-scopes" name="scopes" placeholder="user.read tenant.read" />
               </Field>
               {createM.error && (
                 <Field>
@@ -278,10 +282,10 @@ function CreatePrincipalSheet({ open, onOpenChange, tenantId, onCreated }: Creat
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("machineIds.create.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create"}
+              {createM.isPending ? t("machineIds.create.creatingBtn") : t("machineIds.create.createBtn")}
             </Button>
           </SheetFooter>
         </form>

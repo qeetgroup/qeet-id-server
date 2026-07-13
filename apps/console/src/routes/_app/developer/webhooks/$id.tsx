@@ -29,6 +29,7 @@ import {
   WebhookIcon,
 } from "lucide-react";
 import { Fragment, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
@@ -61,6 +62,7 @@ type Delivery = {
 };
 
 function WebhookDetailPage() {
+  const { t } = useTranslation("developer");
   const { id } = Route.useParams();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -81,7 +83,7 @@ function WebhookDetailPage() {
   const testM = useMutation({
     mutationFn: () => api<void>(`/v1/webhooks/${id}/test`, { method: "POST" }),
     onSettled: () => qc.invalidateQueries({ queryKey: ["webhook-deliveries", id] }),
-    meta: { successMessage: "Test event queued" },
+    meta: { successMessage: t("webhooks.toast.testQueued") },
   });
 
   const retryM = useMutation({
@@ -94,7 +96,7 @@ function WebhookDetailPage() {
   const disableM = useMutation({
     mutationFn: () => api<void>(`/v1/webhooks/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["webhook", id] }),
-    meta: { successMessage: "Webhook disabled" },
+    meta: { successMessage: t("webhooks.toast.disabled") },
   });
 
   const w = webhookQ.data;
@@ -106,7 +108,7 @@ function WebhookDetailPage() {
         to="/developer/webhooks"
         className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
       >
-        <ArrowLeftIcon className="size-3" /> Back to webhooks
+        <ArrowLeftIcon className="size-3" /> {t("webhookDetail.back")}
       </Link>
 
       <Card>
@@ -128,7 +130,7 @@ function WebhookDetailPage() {
                   <span className="break-all font-mono text-sm">{w.url}</span>
                 </CardTitle>
                 <CardDescription>
-                  Subscribed to {w.events.length} event{w.events.length === 1 ? "" : "s"}.
+                  {t("webhookDetail.subscribedCount", { count: w.events.length })}
                 </CardDescription>
               </div>
               <StatusPill status={w.disabled_at ? "disabled" : "active"} />
@@ -151,7 +153,7 @@ function WebhookDetailPage() {
                 onClick={() => testM.mutate()}
                 disabled={testM.isPending || !!w.disabled_at}
               >
-                <PlayIcon /> Send test event
+                <PlayIcon /> {t("webhookDetail.testEvent")}
               </Button>
               {!w.disabled_at && (
                 <Button
@@ -159,20 +161,20 @@ function WebhookDetailPage() {
                   variant="ghost"
                   onClick={() =>
                     openConfirm({
-                      title: "Disable webhook?",
-                      description: `Disable ${w.url}?`,
+                      title: t("webhookDetail.confirm.disableTitle"),
+                      description: t("webhooks.confirm.disableDescription", { url: w.url }),
                       variant: "destructive",
-                      confirmLabel: "Disable",
+                      confirmLabel: t("webhookDetail.confirm.disableLabel"),
                       onConfirm: () => disableM.mutate(),
                     })
                   }
                   disabled={disableM.isPending}
                 >
-                  <Trash2Icon /> Disable
+                  <Trash2Icon /> {t("webhookDetail.disable")}
                 </Button>
               )}
               <span className="ms-auto text-xs text-muted-foreground">
-                Created <TimeSince value={w.created_at} />
+                {t("webhookDetail.created")} <TimeSince value={w.created_at} />
               </span>
             </div>
           </CardContent>
@@ -181,10 +183,8 @@ function WebhookDetailPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Recent deliveries</CardTitle>
-          <CardDescription>
-            Last 50 attempts. Failures are retried with exponential backoff.
-          </CardDescription>
+          <CardTitle className="text-base">{t("webhookDetail.deliveries.title")}</CardTitle>
+          <CardDescription>{t("webhookDetail.deliveries.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -193,19 +193,21 @@ function WebhookDetailPage() {
             error={deliveriesQ.error}
             isEmpty={!deliveriesQ.data?.items?.length}
             emptyIcon={WebhookIcon}
-            emptyTitle="No deliveries yet."
-            emptyDescription="When this webhook fires, attempts will appear here."
+            emptyTitle={t("webhookDetail.deliveries.empty")}
+            emptyDescription={t("webhookDetail.deliveries.emptyDescription")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
-                  <TableHead>When</TableHead>
-                  <TableHead>Event</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Attempts</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("webhookDetail.deliveries.columns.when")}</TableHead>
+                  <TableHead>{t("webhookDetail.deliveries.columns.event")}</TableHead>
+                  <TableHead>{t("webhookDetail.deliveries.columns.status")}</TableHead>
+                  <TableHead>{t("webhookDetail.deliveries.columns.attempts")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("webhookDetail.deliveries.columns.actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -215,7 +217,11 @@ function WebhookDetailPage() {
                       <TableCell>
                         <button
                           type="button"
-                          aria-label={expanded === d.id ? "Collapse" : "Expand"}
+                          aria-label={
+                            expanded === d.id
+                              ? t("webhookDetail.deliveries.collapse")
+                              : t("webhookDetail.deliveries.expand")
+                          }
                           className="text-muted-foreground hover:text-foreground"
                           onClick={() => setExpanded(expanded === d.id ? null : d.id)}
                         >
@@ -243,7 +249,11 @@ function WebhookDetailPage() {
                           }
                           dot
                         >
-                          {d.delivered_at ? "Delivered" : d.dead_at ? "Dead" : `${d.status_code ?? "Pending"}`}
+                          {d.delivered_at
+                            ? t("webhookDetail.deliveries.statusDelivered")
+                            : d.dead_at
+                              ? t("webhookDetail.deliveries.statusDead")
+                              : `${d.status_code ?? t("webhookDetail.deliveries.statusPending")}`}
                         </StatusPill>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{d.attempt}</TableCell>
@@ -254,7 +264,7 @@ function WebhookDetailPage() {
                           onClick={() => retryM.mutate(d.id)}
                           disabled={retryM.isPending}
                         >
-                          <RotateCwIcon /> Retry
+                          <RotateCwIcon /> {t("webhookDetail.deliveries.retry")}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -265,14 +275,14 @@ function WebhookDetailPage() {
                             {d.error && <p className="text-destructive text-xs">{d.error}</p>}
                             <div>
                               <p className="mb-1 text-xs font-medium text-muted-foreground">
-                                Request payload
+                                {t("webhookDetail.deliveries.requestPayload")}
                               </p>
                               <CodeBlock language="json" value={d.payload} />
                             </div>
                             {d.response_body && (
                               <div>
                                 <p className="mb-1 text-xs font-medium text-muted-foreground">
-                                  Response body
+                                  {t("webhookDetail.deliveries.responseBody")}
                                 </p>
                                 <CodeBlock language="text" value={d.response_body} />
                               </div>
@@ -292,10 +302,8 @@ function WebhookDetailPage() {
       {w && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Sample payload</CardTitle>
-            <CardDescription>
-              POSTed to the URL above with an HMAC-SHA256 signature in the X-Signature header.
-            </CardDescription>
+            <CardTitle className="text-base">{t("webhookDetail.sample.title")}</CardTitle>
+            <CardDescription>{t("webhookDetail.sample.description")}</CardDescription>
           </CardHeader>
           <CardContent>
             <CodeBlock

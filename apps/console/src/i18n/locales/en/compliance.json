@@ -1,0 +1,117 @@
+{
+  "soc2": {
+    "title": "SOC 2",
+    "description": "AICPA Trust Service Criteria — evidence generated from this workspace's live configuration and audit trail."
+  },
+  "iso27001": {
+    "title": "ISO 27001",
+    "description": "ISO/IEC 27001:2022 Annex A controls — evidence generated from this workspace's live configuration and audit trail."
+  },
+  "gdpr": {
+    "description": "GDPR Article 17 (right-to-erasure) requests. Each request enters a 30-day grace window before the background purge job redacts PII while preserving audit references.",
+    "refresh": "Refresh",
+    "fileRequest": "File erasure request",
+    "infoBanner": {
+      "title": "Right-to-erasure runs an async background purge.",
+      "description": "Requests are recorded with a 30-day grace window; the purge job then redacts PII while preserving the tamper-evident audit trail."
+    },
+    "list": {
+      "title": "Erasure requests",
+      "count_one": "{{count}} request",
+      "count_other": "{{count}} requests",
+      "empty": "No GDPR erasure requests on file.",
+      "columns": {
+        "user": "User",
+        "reason": "Reason",
+        "status": "Status",
+        "graceUntil": "Grace until",
+        "filed": "Filed",
+        "actions": "Actions"
+      },
+      "cancelRequest": "Cancel"
+    },
+    "create": {
+      "title": "File erasure request",
+      "description": "Starts the 30-day grace window. The user is not deleted yet — cancel before grace expires to abort.",
+      "userId": "User ID",
+      "userIdHelp": "UUID of the user to erase. Copy from the Users page.",
+      "reason": "Reason",
+      "reasonHelp": "Optional but strongly recommended for audit-trail purposes.",
+      "cancel": "Cancel",
+      "submit": "File request",
+      "submitting": "Filing…"
+    },
+    "confirm": {
+      "cancelTitle": "Cancel this erasure request?",
+      "cancelLabel": "Cancel request"
+    }
+  },
+  "evidence": {
+    "generate": "Generate evidence",
+    "generating": "Generating...",
+    "emptyTitle": "No evidence runs yet",
+    "emptyDescription": "Click \"Generate evidence\" to run a live control check against this workspace's configuration and audit trail.",
+    "stats": {
+      "passing": "Controls passing",
+      "failing": "Failing",
+      "notDeterminable": "Not determinable",
+      "lastGenerated": "Last generated"
+    },
+    "controls": {
+      "title": "Controls",
+      "count_one": "{{count}} control checked in this run",
+      "count_other": "{{count}} controls checked in this run",
+      "download": "Download JSON",
+      "empty": "No controls in this evidence run.",
+      "columns": {
+        "criteria": "Criteria",
+        "control": "Control",
+        "category": "Category",
+        "status": "Status",
+        "evidence": "Evidence"
+      }
+    },
+    "history": {
+      "title": "Report history",
+      "count_one": "{{count}} run — select a row to load its controls above.",
+      "count_other": "{{count}} runs — select a row to load its controls above.",
+      "columns": {
+        "generated": "Generated",
+        "passing": "Passing",
+        "failing": "Failing",
+        "na": "N/A"
+      }
+    },
+    "toast": {
+      "generated": "Evidence generated"
+    }
+  },
+  "retention": {
+    "description": "How long deleted data is kept before it's permanently purged. Retention runs automatically once enabled; you can also preview or run it on demand.",
+    "deletedUsers": {
+      "title": "Soft-deleted users",
+      "description": "Permanently purge users that have been in the recycle bin longer than the window.",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "automaticPurge": "Automatic purge",
+      "automaticPurgeHelp": "A background job purges ripe users hourly when enabled.",
+      "windowLabel": "Retention window: {{days}} days",
+      "windowHelp": "Users soft-deleted longer ago than this are purged. 1–3650 days.",
+      "preview": "Preview",
+      "runPurge": "Run purge now",
+      "saving": "Saving…",
+      "save": "Save policy",
+      "purgeConfirmTitle": "Permanently purge soft-deleted users?",
+      "purgeConfirmDescription": "This purges all soft-deleted users older than the retention window. This cannot be undone.",
+      "purgeConfirmLabel": "Run purge now",
+      "previewResult_one": "{{count}} user would be purged at the current {{days}}-day window.",
+      "previewResult_other": "{{count}} users would be purged at the current {{days}}-day window.",
+      "runResult_one": "Purged {{count}} user.",
+      "runResult_other": "Purged {{count}} users."
+    },
+    "otherDataClasses": {
+      "title": "Other data classes",
+      "description": "Audit logs are append-only and retained for the compliance window; session and event retention are managed by the platform. Configurable per-class policies are on the roadmap."
+    }
+  }
+}

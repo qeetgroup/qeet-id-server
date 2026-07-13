@@ -13,7 +13,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 **Current:** live on **EC2 + Docker Compose + Caddy (auto-TLS) + AWS RDS** (`ap-south-2`); image built/pushed to GHCR and shipped over SSH. Config lives in `deploy/` (`Caddyfile`, `docker-compose.yml`, runbook `README.md`).
 
-**Future (in git history, restore when ready):**
+**Restored in-tree 2026-07-13** under `deploy/base/` + `deploy/environments/` (Helm chart, Terraform RDS/ECR/KMS modules, Kubernetes + kustomize overlays, Prometheus/Grafana/OTel). Structurally validated; run `helm lint` / `terraform validate` on a machine with those CLIs before first use. The **live** deployment is still Docker Compose + Caddy on EC2 — these are staged for the K8s migration when ready:
 - 🟡 **Kubernetes + Helm** — chart with Deployment/Service/Ingress/HPA/PDB + pre-upgrade migration Job + ExternalSecrets; per-env `values.yaml` for stage + prod
 - 🟡 **AWS Terraform** — RDS, ECR, KMS CMK, Secrets Manager; root module + per-env `tfvars`
 - 🟢 **Multi-env staging** — `environments/stage/` overlay; promote dev → stage → prod pipeline
@@ -40,7 +40,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 - ✅ Social login (Google, GitHub, Microsoft, Apple, custom) · account linking · SSO test-connection
 
 ### 🛡️ Authorization
-- ✅ RBAC (roles, group-derived perms, single-call `/check`, **explainable `?explain=true` grant-path trace**) · per-tenant policy (IP allow/deny CIDR, password/login-method rules) *(this is tenant policy — not a general attribute-condition ABAC engine)*
+- ✅ RBAC (roles, group-derived perms, single-call `/check`, **explainable `?explain=true` grant-path trace**) · per-tenant policy (IP allow/deny CIDR, password/login-method rules) · **ABAC** — general attribute-condition engine: `all`/`any`/`not` trees over `subject.*`/`resource.*`/`context.*` attributes, 13 operators (eq/ne/in/nin/contains/gt/gte/lt/lte/exists/prefix/suffix/regex), deny-overrides, fail-closed, policy CRUD + explainable `POST /evaluate` (migration 0080)
 - ✅ **ReBAC** (Zanzibar-style `relation_tuples`, recursive `/check` with cycle guard, **`?explain=true` grant-path trace** — root-to-leaf chain of tuples, mirrors RBAC's explain shape)
 - ✅ IP allow/deny (CIDR) · Auth Hooks / Actions (post-login **allow/deny + custom-claim injection**, HMAC-signed) *(claims flow into the direct API-token login path, incl. MFA; the hosted-login SSO cookie → OIDC ID-token path doesn't carry them yet)*
 
@@ -62,7 +62,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 - ✅ SHA-256 hash-chained audit log (`/verify` integrity walk) · **audit intelligence** — a background sweep builds a rolling behavioral baseline per `(tenant, actor)` (action types, hour-of-day, IPs) and flags deviations (first-time action, unusual hour, new IP) as a transparent, weighted-novelty score with named reasons — not a black-box model; per-tenant threshold + cold-start guard, console screen at Security & Compliance → Audit Intelligence · GDPR erasure + grace-period purge · retention auto-purge
 - ✅ GDPR data export — async job (`user.export_requests`), payload covers profile/sessions/passkeys/roles/MFA status, `/gdpr/export` + `/gdpr/export/{id}` download
 - ✅ Multi-currency billing (ISO-4217) · card payments — Stripe (global) + Razorpay (India), webhook-verified (env-gated)
-- 🟡 SOC 2 / ISO 27001 compliance screens are **static templates**, not generated evidence
+- ✅ SOC 2 / ISO 27001 **evidence generation** — control catalog (13 SOC 2 Trust Service Criteria + 12 ISO Annex A controls) evaluated against **live tenant state** (MFA/password policy, audit hash-chain verify, retention, KMS/secrets vault, RBAC assignments, IP rules, SIEM sink), persisted as point-in-time evidence runs (pass/fail/na); console shows per-control status + evidence detail + JSON export (migration 0081). Undeterminable → `na`, never a fabricated pass
 
 ### 🧰 Platform & delivery
 - ✅ 3 React frontends (admin console ~80 screens, hosted login, marketing site) · **6 SDK packages** (TS server + browser, React w/ full `<SignIn/>`/`<OrgSwitcher/>`/… component suite, Next.js, Go, Python) · per-tenant rate-limit overrides (`0064`)
@@ -77,9 +77,9 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | Feature | Priority | Notes |
 |---|---|---|
 | Auth-hook claims in the OIDC ID-token path | 🟢 | Custom claims already flow into direct API-token login (incl. MFA); threading them through the hosted-login cookie → OIDC authorize/ID-token pipeline is separate, larger work |
-| i18n — remaining coverage | 🟡 | 8 console catalogs (en+7) exist w/ partial namespaces; remaining screens + locale-aware emails + login app pending |
+| i18n — remaining coverage | 🟡 | Console now ~fully externalised to the `en` catalog — 77/85 route screens across 16 namespaces (the 8 unconverted are no-copy layouts/redirects/thin wrappers); the other 7 locales resolve via `fallbackLng:en` and await human translation. Locale-aware emails + login app still pending |
 | WCAG 2.2 AA — a11y gate + legacy screens | 🟡 | Gate fixed (`eslint.config.mjs` globs updated from `qeetid-admin`/`qeetid-login` → `console`/`login` + `qeetid-web` → `website`; also split plugin registration to avoid Next.js flat-config conflict); 6 newly-exposed violations resolved. ~70 older console screens still carry hardcoded English — not a11y violations per se, but gating them incrementally remains the backlog |
-| SOC 2 / ISO 27001 evidence generation | 🟡 | Compliance screens are static templates; generated evidence pending |
+| SOC 2 / ISO 27001 evidence generation | ✅ | Live control catalog (13 SOC 2 + 12 ISO) evaluated against real tenant state, persisted evidence runs, console + JSON export (migration 0081) |
 | Published performance benchmarks (p95/p99) | 🟡 | `tests/performance/` k6 scripts now cover the authz hot path too (`authz.js` — RBAC `/check` + ReBAC recursive group-membership `/check`), not just auth/CRUD; still no externally-published numbers or CI wiring — pending representative post-GA traffic, not an engineering blocker |
 | Audit free-text search | ✅ | `GET /audit?q=` — PostgreSQL `websearch_to_tsquery('simple', ...)` over a generated `search_vector` column on `audit.events` (action, resource_type, actor_type, user_agent, metadata); GIN-indexed (migration 0079). Console filter bar adds a Search input above the exact-match filters; exported pages pass `q` through. Supports quoted phrases, `-exclusions`, OR |
 
@@ -158,12 +158,12 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | Capability | **Qeet ID** | Auth0/Okta | Clerk | WorkOS | Stytch | Keycloak | FusionAuth | Zitadel | Ory |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | RBAC + single-call `/check` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 |
-| ABAC / policy | 🟡⁵ | 🟡 | ❌ | 🟡 | 🟡 | ✅ | ✅ | 🟡 | ✅ |
+| ABAC / policy | ✅⁵ | 🟡 | ❌ | 🟡 | 🟡 | ✅ | ✅ | 🟡 | ✅ |
 | Group-level RBAC | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Fine-grained / ReBAC (Zanzibar)** | ✅ | ✅ FGA | 🟡 | ✅ | ✅ | ✅ | ✅ | 🟡 | ✅ Keto |
 | **Explainable authz ("why?")** | ✅⁶ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 🟡 |
 
-<sub>⁵ Per-tenant IP allow/deny (CIDR) + password/login-method policy, not a general attribute-condition engine. ⁶ `?explain=true` returns a full grant-path trace on **both** RBAC and ReBAC `/check`. ⁹ Both a logged-in tenant admin's own self-serve console screens *and* a WorkOS-style Admin Portal link an external IT admin can use with no Qeet ID account at all.</sub>
+<sub>⁵ Per-tenant IP allow/deny (CIDR) + password/login-method policy, **plus** a general attribute-condition ABAC engine (subject/resource/context attrs, 13 operators, deny-overrides, explainable — migration 0080). ⁶ `?explain=true` returns a full grant-path trace on **both** RBAC and ReBAC `/check`. ⁹ Both a logged-in tenant admin's own self-serve console screens *and* a WorkOS-style Admin Portal link an external IT admin can use with no Qeet ID account at all.</sub>
 
 ### Security & operations
 | Capability | **Qeet ID** | Auth0/Okta | Clerk | WorkOS | Stytch | Keycloak | FusionAuth | Zitadel | Ory |

@@ -1,0 +1,340 @@
+{
+  "overview": {
+    "description": "Your workspace's security posture at a glance. Jump into any area below.",
+    "sections": {
+      "threatProtection": {
+        "title": "Threat Protection",
+        "description": "Bot detection, anomalies, rate limits and IP allowlists."
+      },
+      "sessions": {
+        "title": "Sessions",
+        "description": "Active sessions across the workspace — revoke any you don't recognise."
+      },
+      "deviceAuthorizations": {
+        "title": "Device Authorizations",
+        "description": "Devices that completed the device-authorization flow."
+      },
+      "rateLimits": {
+        "title": "Rate Limits",
+        "description": "Per-endpoint gateway limits and tenant network policy."
+      },
+      "auditLogs": {
+        "title": "Audit Logs",
+        "description": "Hash-chained, append-only record of every security event."
+      },
+      "compliance": {
+        "title": "Compliance",
+        "description": "SOC 2, GDPR, ISO 27001 and data-retention controls."
+      }
+    }
+  },
+  "sessions": {
+    "description": "Every active and revoked session for your account. Revoking a session terminates the refresh token immediately.",
+    "refresh": "Refresh",
+    "list": {
+      "title": "Your sessions",
+      "count_one": "{{count}} session",
+      "count_other": "{{count}} sessions",
+      "empty": "No sessions recorded.",
+      "columns": {
+        "userAgent": "User agent",
+        "ip": "IP",
+        "created": "Created",
+        "lastSeen": "Last seen",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "revoke": "Revoke"
+    },
+    "confirm": {
+      "revokeTitle": "Revoke this session?",
+      "revokeLabel": "Revoke"
+    }
+  },
+  "auditLogs": {
+    "description": "Every state-changing event in this tenant, written atomically with the underlying business row.",
+    "export": "Export",
+    "exporting": "Exporting {{format}}…",
+    "exportCsv": "Download as CSV",
+    "exportJson": "Download as JSON",
+    "refresh": "Refresh",
+    "filter": {
+      "searchPlaceholder": "Search events — e.g. \"failed login\", user.delete, -saml",
+      "searchLabel": "Free-text event search",
+      "search": "Search",
+      "clear": "Clear",
+      "actionPlaceholder": "Filter by action (e.g. user.create)",
+      "resourceTypePlaceholder": "Filter by resource type",
+      "actorPlaceholder": "Filter by actor user_id"
+    },
+    "list": {
+      "title": "Events",
+      "count_one": "{{count}} event on this page",
+      "count_other": "{{count}} events on this page",
+      "empty": "No events match your filters yet.",
+      "columns": {
+        "time": "Time",
+        "actor": "Actor",
+        "action": "Action",
+        "resource": "Resource",
+        "ip": "IP"
+      }
+    }
+  },
+  "auditIntelligence": {
+    "description": "Behavioral-baseline anomaly detection over the audit log: a first-time action type, an unusual hour, or a new IP for an admin's own history. Distinct from Threat Protection's Anomalies, which watches login/session signals.",
+    "refresh": "Refresh",
+    "reasonLabels": {
+      "new_action_type": "Never done this before",
+      "unusual_hour": "Unusual time of day",
+      "new_ip": "New IP address"
+    },
+    "summary": {
+      "open": "Open",
+      "highScore": "High score (open)",
+      "resolved7d": "Resolved (7d)"
+    },
+    "anomalies": {
+      "title": "Anomalies",
+      "description": "Scored by a background sweep, newest first.",
+      "statusOpen": "Open",
+      "statusResolved": "Resolved",
+      "emptyOpen": "No open anomalies.",
+      "emptyResolved": "Nothing resolved yet.",
+      "resolved": "Resolved",
+      "resolve": "Resolve",
+      "columns": {
+        "action": "Action",
+        "actor": "Actor",
+        "reason": "Why it's flagged",
+        "score": "Score",
+        "when": "When",
+        "rowAction": "Action"
+      }
+    },
+    "settings": {
+      "title": "Detection settings",
+      "description": "Tune sensitivity for this tenant.",
+      "scoreThreshold": "Score threshold",
+      "coldStartGuard": "Cold-start guard (events)",
+      "save": "Save"
+    },
+    "verify": {
+      "title": "Chain integrity",
+      "description": "Walk the tenant's hash-chained audit log and confirm no row has been tampered with.",
+      "verify": "Verify integrity",
+      "verifying": "Verifying…"
+    }
+  },
+  "rateLimits": {
+    "description": "Per-endpoint rate limits and per-tenant network policy. Per-tenant / per-user / per-api-key overrides are supported by the API; managing them from this screen is coming soon.",
+    "perEndpoint": {
+      "title": "Per-endpoint limits",
+      "description": "Built-in token-bucket limits applied at the gateway in platform/ratelimit/limiter.go."
+    },
+    "networkPolicy": {
+      "title": "Network policy",
+      "description": "Tenant-level IP filtering. Manage in Roles & Permissions → Policies.",
+      "allowlist": "Allowlist ({{count}})",
+      "denylist": "Denylist ({{count}})",
+      "noAllowlist": "No allowlist — open to all source IPs.",
+      "noDenylist": "No denied CIDRs."
+    },
+    "comingSoon": {
+      "title": "Per-tenant rate-limit controls coming to this screen.",
+      "description": "The API already supports per-tenant / per-user / per-api-key overrides (migration 0064_rate_limit_overrides); a UI to view and edit them from here is on the way."
+    }
+  },
+  "bots": {
+    "description": "Detection rules and recent challenges against suspected automated traffic.",
+    "refresh": "Refresh",
+    "stats": {
+      "blocked": "Blocked (24h)",
+      "challenged": "Challenged (24h)",
+      "threshold": "Bot score threshold"
+    },
+    "rules": {
+      "title": "Detection rules",
+      "description": "Heuristics evaluated on each authentication attempt. User-Agent fingerprinting is enforced today; the others are stored for upcoming enforcement.",
+      "uaCheck": "User-Agent fingerprinting",
+      "uaCheckHelp": "Score known bot UA strings and headless browsers.",
+      "honeypot": "Honeypot fields",
+      "honeypotHelp": "Hidden form inputs that bots will fill.",
+      "captcha": "CAPTCHA challenge",
+      "captchaHelp": "hCaptcha shown for score > threshold.",
+      "signature": "Request-signature analysis",
+      "signatureHelp": "TLS JA3 + header-order fingerprinting (beta)."
+    },
+    "recent": {
+      "title": "Recent decisions",
+      "description": "Suspicious authentication attempts, newest first",
+      "empty": "No bot activity detected.",
+      "columns": {
+        "ip": "IP",
+        "userAgent": "User-Agent",
+        "verdict": "Verdict",
+        "score": "Score",
+        "when": "When"
+      }
+    }
+  },
+  "logStreaming": {
+    "description": "Stream this tenant's audit events to your SIEM or log platform. New events are forwarded from when a sink is added (no history backfill); delivery is at-least-once.",
+    "addSink": {
+      "title": "Add a sink",
+      "description": "Splunk HEC (token in the HEC field), Datadog (DD-API-KEY), or a generic HTTP endpoint (optional Bearer token).",
+      "type": "Type",
+      "endpointLabel": "Endpoint URL",
+      "tokenLabel": "Token",
+      "tokenHelp": "Stored write-only; never shown again.",
+      "add": "Add"
+    },
+    "sinks": {
+      "title": "Sinks",
+      "description": "Toggle a sink to pause/resume forwarding.",
+      "empty": "No log sinks configured.",
+      "emptyDescription": "Add a sink above to start streaming audit events.",
+      "lastForwarded": "last forwarded",
+      "remove": "Remove",
+      "confirmRemoveTitle": "Remove this sink?",
+      "confirmRemoveLabel": "Remove"
+    }
+  },
+  "threats": {
+    "anomalies": {
+      "description": "Behavioral anomalies detected across logins, sessions, and API access.",
+      "refresh": "Refresh",
+      "summary": {
+        "openIncidents": "Open incidents",
+        "resolved24h": "Resolved (24h)",
+        "affectedAccounts": "Affected accounts",
+        "highSeverity24h": "High severity (24h)"
+      },
+      "recent": {
+        "title": "Recent anomalies",
+        "description": "Most recent detections, newest first",
+        "empty": "No anomalies detected.",
+        "columns": {
+          "type": "Type",
+          "user": "User",
+          "detail": "Detail",
+          "severity": "Severity",
+          "status": "Status",
+          "when": "When",
+          "action": "Action"
+        }
+      },
+      "resolved": "Resolved",
+      "resolve": "Resolve"
+    },
+    "ipAllowlist": {
+      "description": "CIDR ranges that may or may not reach this tenant. Deny rules win over allow rules; if any allow rule exists, an address must match one.",
+      "enforcement": "Enforcement",
+      "disabledBanner": "Enforcement is off — these rules are saved but not applied. Toggle it on once you've confirmed your own address is allowed.",
+      "quickAdd": {
+        "title": "Quick add",
+        "description": "Add a CIDR range or a single IP address.",
+        "cidrLabel": "CIDR / IP",
+        "labelLabel": "Label",
+        "actionLabel": "Action",
+        "actionAllow": "Allow",
+        "actionDeny": "Deny",
+        "add": "Add rule"
+      },
+      "rules": {
+        "title": "Rules",
+        "count_one": "{{count}} rule",
+        "count_other": "{{count}} rules",
+        "empty": "No IP rules yet.",
+        "columns": {
+          "cidr": "CIDR",
+          "label": "Label",
+          "action": "Action",
+          "added": "Added",
+          "actions": "Actions"
+        },
+        "remove": "Remove"
+      },
+      "test": {
+        "title": "Test an address",
+        "description": "Evaluate an IP against the current rules before turning enforcement on.",
+        "ipLabel": "IP address",
+        "ipHelp": "Checked exactly as the rules would apply at request time.",
+        "check": "Check",
+        "allowed": "Allowed",
+        "blocked": "Blocked"
+      }
+    },
+    "rateLimits": {
+      "description": "Configure per-tenant rate limits. Rate is tokens per second; burst is the maximum burst capacity. These override the platform defaults for this tenant.",
+      "card": {
+        "title": "Rate Limits",
+        "description": "Limits are enforced per bucket (tenant, user, API key). Burst allows short spikes above the sustained rate.",
+        "resetToDefaults": "Reset to defaults",
+        "resetConfirmTitle": "Reset all rate limits to platform defaults?",
+        "resetConfirmLabel": "Reset to defaults",
+        "rateLabel": "Rate (req/s)",
+        "burstLabel": "Burst",
+        "loading": "Loading…",
+        "save": "Save changes",
+        "saved": "Saved."
+      },
+      "rows": {
+        "tenant": {
+          "label": "Per-tenant",
+          "description": "Total requests per second across all users in this tenant."
+        },
+        "user": {
+          "label": "Per-user",
+          "description": "Requests per second per individual user account."
+        },
+        "apiKey": {
+          "label": "Per-API-key",
+          "description": "Requests per second per API key credential."
+        }
+      }
+    },
+    "riskSettings": {
+      "description": "Configure adaptive MFA. When a login's risk score — bot-likeness, plus impossible-travel and device-reputation if you enable them — exceeds your chosen threshold, MFA is required even on a remembered device.",
+      "thresholds": {
+        "title": "Risk Thresholds",
+        "description": "Bot scores range from 0 (clearly human) to 1 (clearly automated). A score above the High threshold forces MFA even on a trusted device.",
+        "medium": "Medium threshold (0.1–1.0)",
+        "mediumHelp": "Score at/above this triggers a step-up MFA challenge for unrecognised devices.",
+        "high": "High threshold (0.1–1.0)",
+        "highHelp": "Score at/above this forces MFA even on a trusted/remembered device.",
+        "forceAt": "Force MFA at level",
+        "forceAtHelp": "Which risk level overrides the trusted-device skip.",
+        "forceAtMedium": "Medium — force on any suspicious request",
+        "forceAtHigh": "High — force only on clearly automated requests"
+      },
+      "impossibleTravel": {
+        "title": "Impossible travel",
+        "description": "Flag a login from a new country too soon after the last one to be plausible travel. Off by default — also needs a trusted upstream proxy to supply a country header (see docs); with none configured this never fires.",
+        "minTravelHours": "Minimum plausible travel time (hours)"
+      },
+      "deviceReputation": {
+        "title": "Device reputation",
+        "description": "Flag a login from a browser + OS combination never seen before for that user. Off by default."
+      },
+      "loading": "Loading…",
+      "save": "Save changes",
+      "saved": "Saved."
+    }
+  },
+  "activity": {
+    "description": "The 20 most recent events across this tenant. Auto-refreshes every 15 seconds. For full filtering and search, head to Audit Logs.",
+    "cardTitle": "Recent activity",
+    "titleRefreshing": "Refreshing",
+    "titleIdle": "Idle",
+    "liveBadge": "live",
+    "newSince_one": "{{count}} new since you opened",
+    "newSince_other": "{{count}} new since you opened",
+    "empty": "No recent activity in this tenant yet.",
+    "colWhen": "When",
+    "colActor": "Actor",
+    "colAction": "Action",
+    "colResource": "Resource",
+    "newBadge": "New"
+  }
+}

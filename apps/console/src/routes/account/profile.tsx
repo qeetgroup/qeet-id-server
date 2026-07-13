@@ -19,6 +19,7 @@ import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, UploadIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api } from "@/lib/api";
 import { useMe } from "@/lib/auth";
@@ -61,6 +62,7 @@ async function fileToAvatarDataUrl(file: File, size = AVATAR_PX): Promise<string
 }
 
 function ProfilePage() {
+  const { t } = useTranslation("account");
   const me = useMe();
   const fileRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState({ display_name: "" });
@@ -85,7 +87,7 @@ function ProfilePage() {
       setAvatar(undefined); // fall back to the freshly-fetched server value
       void me.refetch();
     },
-    meta: { successMessage: "Profile updated" },
+    meta: { successMessage: t("profile.toast.updated") },
   });
 
   const name = me.data?.display_name || me.data?.email?.split("@")[0] || "—";
@@ -98,17 +100,17 @@ function ProfilePage() {
     if (!file) return;
     setUploadError(null);
     if (!file.type.startsWith("image/")) {
-      setUploadError("Please choose an image file.");
+      setUploadError(t("profile.picture.errorNotImage"));
       return;
     }
     if (file.size > MAX_FILE_BYTES) {
-      setUploadError("Image is too large (max 8 MB).");
+      setUploadError(t("profile.picture.errorTooLarge"));
       return;
     }
     try {
       setAvatar(await fileToAvatarDataUrl(file));
     } catch {
-      setUploadError("Couldn't process that image — try a different file.");
+      setUploadError(t("profile.picture.errorProcess"));
     }
   }
 
@@ -116,10 +118,8 @@ function ProfilePage() {
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Profile</CardTitle>
-          <CardDescription>
-            The name, photo and contact details we show across Qeet ID.
-          </CardDescription>
+          <CardTitle className="text-base">{t("profile.title")}</CardTitle>
+          <CardDescription>{t("profile.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           {me.isLoading ? (
@@ -141,7 +141,7 @@ function ProfilePage() {
               <FieldGroup>
                 {/* Avatar */}
                 <Field>
-                  <FieldLabel>Profile picture</FieldLabel>
+                  <FieldLabel>{t("profile.picture.label")}</FieldLabel>
                   <div className="flex items-center gap-4">
                     <Avatar className="size-16">
                       <AvatarImage src={shownAvatar} alt={name} />
@@ -155,7 +155,7 @@ function ProfilePage() {
                           size="sm"
                           onClick={() => fileRef.current?.click()}
                         >
-                          <UploadIcon /> Upload photo
+                          <UploadIcon /> {t("profile.picture.upload")}
                         </Button>
                         {shownAvatar && (
                           <Button
@@ -167,13 +167,11 @@ function ProfilePage() {
                               setAvatar("");
                             }}
                           >
-                            Remove
+                            {t("profile.picture.remove")}
                           </Button>
                         )}
                       </div>
-                      <FieldDescription>
-                        PNG or JPG; a square image works best. Applied when you save.
-                      </FieldDescription>
+                      <FieldDescription>{t("profile.picture.help")}</FieldDescription>
                       {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
                     </div>
                   </div>
@@ -187,27 +185,25 @@ function ProfilePage() {
                 </Field>
 
                 <Field>
-                  <FieldLabel htmlFor="display_name">Display name</FieldLabel>
+                  <FieldLabel htmlFor="display_name">{t("profile.displayName")}</FieldLabel>
                   <Input
                     id="display_name"
                     value={draft.display_name}
                     onChange={(e) => setDraft((d) => ({ ...d, display_name: e.target.value }))}
-                    placeholder="How you'd like to be addressed"
+                    placeholder={t("profile.displayNamePlaceholder")}
                   />
                 </Field>
 
                 <Field>
-                  <FieldLabel htmlFor="email">Email</FieldLabel>
+                  <FieldLabel htmlFor="email">{t("profile.email")}</FieldLabel>
                   <Input id="email" value={me.data?.email ?? ""} disabled />
-                  <FieldDescription>
-                    Change your email from the security tab — it requires re-verification.
-                  </FieldDescription>
+                  <FieldDescription>{t("profile.emailHelp")}</FieldDescription>
                 </Field>
 
                 <Field>
                   <Button type="submit" disabled={saveM.isPending}>
                     {saveM.isPending && <Loader2Icon className="animate-spin" />}
-                    {saveM.isPending ? "Saving…" : "Save changes"}
+                    {saveM.isPending ? t("profile.saving") : t("profile.save")}
                   </Button>
                 </Field>
               </FieldGroup>

@@ -73,6 +73,7 @@ function initialsFor(s: string): string {
 }
 
 function GroupDetailPage() {
+  const { t } = useTranslation("groups");
   const { groupId } = Route.useParams();
   const tenantId = useTenantId();
 
@@ -110,7 +111,7 @@ function GroupDetailPage() {
           to="/groups"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
-          <ArrowLeftIcon className="size-3.5" /> All groups
+          <ArrowLeftIcon className="size-3.5" /> {t("detail.back")}
         </Link>
       </div>
 
@@ -120,8 +121,8 @@ function GroupDetailPage() {
         error={listQ.error}
         isEmpty={listQ.isSuccess && !group}
         emptyIcon={FolderIcon}
-        emptyTitle={`No group with id "${groupId.slice(0, 8)}…" in this tenant`}
-        emptyDescription="It may have been deleted, or you may not have permission to view it. Use the back link above to return to the list."
+        emptyTitle={t("detail.notFound", { id: groupId.slice(0, 8) + "…" })}
+        emptyDescription={t("detail.notFoundDescription")}
       >
         {group && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -130,19 +131,21 @@ function GroupDetailPage() {
                 <CardTitle className="text-xl">{group.name}</CardTitle>
                 <CardDescription>
                   {group.description || (
-                    <span className="italic text-muted-foreground/70">No description</span>
+                    <span className="italic text-muted-foreground/70">
+                      {t("detail.noDescription")}
+                    </span>
                   )}
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs text-muted-foreground">Members</p>
+                  <p className="text-xs text-muted-foreground">{t("detail.stats.members")}</p>
                   <p className="mt-1 text-2xl font-semibold tabular-nums">
                     {membersQ.isLoading ? "—" : members.length}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Created</p>
+                  <p className="text-xs text-muted-foreground">{t("detail.stats.created")}</p>
                   <TimeSince value={group.created_at} className="font-mono text-xs" />
                 </div>
               </CardContent>
@@ -150,16 +153,16 @@ function GroupDetailPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Metadata</CardTitle>
+                <CardTitle className="text-base">{t("detail.metadata.title")}</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-3 text-sm">
                 <div>
-                  <p className="text-xs text-muted-foreground">Group ID</p>
+                  <p className="text-xs text-muted-foreground">{t("detail.metadata.groupId")}</p>
                   <p className="font-mono text-xs">{group.id}</p>
                 </div>
                 {group.parent_id && (
                   <div>
-                    <p className="text-xs text-muted-foreground">Parent group</p>
+                    <p className="text-xs text-muted-foreground">{t("detail.metadata.parentGroup")}</p>
                     <Link
                       to="/groups/$groupId"
                       params={{ groupId: group.parent_id }}
@@ -170,7 +173,7 @@ function GroupDetailPage() {
                   </div>
                 )}
                 <div>
-                  <p className="text-xs text-muted-foreground">Tenant</p>
+                  <p className="text-xs text-muted-foreground">{t("detail.metadata.tenant")}</p>
                   <p className="font-mono text-xs">{group.tenant_id}</p>
                 </div>
               </CardContent>
@@ -179,14 +182,14 @@ function GroupDetailPage() {
             <Card className="lg:col-span-3">
               <CardHeader className="flex flex-row items-start justify-between gap-3">
                 <div>
-                  <CardTitle className="text-base">Members</CardTitle>
-                  <CardDescription>Users currently belonging to this group.</CardDescription>
+                  <CardTitle className="text-base">{t("detail.members.title")}</CardTitle>
+                  <CardDescription>{t("detail.members.description")}</CardDescription>
                 </div>
                 <Link
                   to="/groups"
                   className={buttonVariants({ variant: "outline", size: "sm" })}
                 >
-                  Manage on list
+                  {t("detail.members.manage")}
                 </Link>
               </CardHeader>
               <CardContent className="p-0">
@@ -196,15 +199,15 @@ function GroupDetailPage() {
                   error={membersQ.error}
                   isEmpty={members.length === 0}
                   emptyIcon={UsersIcon}
-                  emptyTitle="No members in this group yet."
+                  emptyTitle={t("detail.members.empty")}
                   skeletonRows={3}
                 >
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>User</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead className="text-right">User ID</TableHead>
+                        <TableHead>{t("detail.members.columns.user")}</TableHead>
+                        <TableHead>{t("detail.members.columns.email")}</TableHead>
+                        <TableHead className="text-right">{t("detail.members.columns.userId")}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>

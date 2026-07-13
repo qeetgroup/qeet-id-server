@@ -18,6 +18,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { LogoField } from "@/components/logo-field";
 import { PageHeader } from "@/components/page-header";
@@ -48,6 +49,7 @@ const empty: Branding = {
 };
 
 function BrandingPage() {
+  const { t } = useTranslation("settings");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Branding>(empty);
@@ -59,7 +61,6 @@ function BrandingPage() {
     enabled: !!tenantId,
   });
 
-  // Hydrate the form once the GET resolves.
   useEffect(() => {
     if (brandQ.data) setDraft({ ...empty, ...brandQ.data });
   }, [brandQ.data]);
@@ -71,7 +72,7 @@ function BrandingPage() {
       setSavedAt(new Date());
       qc.invalidateQueries({ queryKey: ["branding", tenantId] });
     },
-    meta: { successMessage: "Branding saved" },
+    meta: { successMessage: t("branding.toast.saved") },
   });
 
   const set = <K extends keyof Branding>(key: K, value: Branding[K]) =>
@@ -79,9 +80,7 @@ function BrandingPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader
-        description="Logo, colors, custom domain, and outgoing email identity for this tenant. Changes apply to hosted login pages and transactional emails."
-      />
+      <PageHeader description={t("branding.description")} />
 
       {brandQ.isLoading ? (
         <Card>
@@ -103,15 +102,13 @@ function BrandingPage() {
             <div className="space-y-4 lg:col-span-2">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Visual identity</CardTitle>
-                  <CardDescription>
-                    Used in hosted sign-in, emails, and the admin sidebar.
-                  </CardDescription>
+                  <CardTitle className="text-base">{t("branding.visualIdentity.title")}</CardTitle>
+                  <CardDescription>{t("branding.visualIdentity.description")}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <FieldGroup>
                     <Field>
-                      <FieldLabel>Logo</FieldLabel>
+                      <FieldLabel>{t("branding.visualIdentity.logo")}</FieldLabel>
                       <LogoField
                         value={draft.logo_url ?? ""}
                         onChange={(next) => set("logo_url", next)}
@@ -121,28 +118,24 @@ function BrandingPage() {
                     </Field>
                     <Field className="grid grid-cols-2 gap-4">
                       <Field>
-                        <FieldLabel>Primary color</FieldLabel>
+                        <FieldLabel>{t("branding.visualIdentity.primaryColor")}</FieldLabel>
                         <ColorPicker
                           value={draft.primary_color ?? ""}
                           onChange={(hex) => set("primary_color", hex)}
                           placeholder="#5b21b6"
-                          ariaLabel="Primary brand colour"
+                          ariaLabel={t("branding.visualIdentity.primaryColor")}
                         />
-                        <FieldDescription>
-                          Used for buttons, links, and accents on the sign-in page.
-                        </FieldDescription>
+                        <FieldDescription>{t("branding.visualIdentity.primaryColorHelp")}</FieldDescription>
                       </Field>
                       <Field>
-                        <FieldLabel>Secondary color</FieldLabel>
+                        <FieldLabel>{t("branding.visualIdentity.secondaryColor")}</FieldLabel>
                         <ColorPicker
                           value={draft.secondary_color ?? ""}
                           onChange={(hex) => set("secondary_color", hex)}
                           placeholder="#ffffff"
-                          ariaLabel="Secondary brand colour"
+                          ariaLabel={t("branding.visualIdentity.secondaryColor")}
                         />
-                        <FieldDescription>
-                          Page background color behind the sign-in card.
-                        </FieldDescription>
+                        <FieldDescription>{t("branding.visualIdentity.secondaryColorHelp")}</FieldDescription>
                       </Field>
                     </Field>
                   </FieldGroup>
@@ -151,15 +144,15 @@ function BrandingPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Custom domain</CardTitle>
+                  <CardTitle className="text-base">{t("branding.customDomain.title")}</CardTitle>
                   <CardDescription>
-                    Where your hosted login pages are served (e.g. <code>auth.acme.com</code>).
+                    {t("branding.customDomain.description")}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <FieldGroup>
                     <Field>
-                      <FieldLabel htmlFor="custom_domain">Domain</FieldLabel>
+                      <FieldLabel htmlFor="custom_domain">{t("branding.customDomain.label")}</FieldLabel>
                       <Input
                         id="custom_domain"
                         name="custom_domain"
@@ -168,14 +161,11 @@ function BrandingPage() {
                         value={draft.custom_domain ?? ""}
                         onChange={(e) => set("custom_domain", e.target.value)}
                       />
-                      <FieldDescription>
-                        DNS + TLS provisioning happens out-of-band today. We'll show status here
-                        once the custom-domain wizard ships.
-                      </FieldDescription>
+                      <FieldDescription>{t("branding.customDomain.help")}</FieldDescription>
                       {draft.custom_domain && (
                         <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
                           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
-                          DNS verification pending
+                          {t("branding.customDomain.pending")}
                         </div>
                       )}
                     </Field>
@@ -185,16 +175,14 @@ function BrandingPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Outgoing email</CardTitle>
-                  <CardDescription>
-                    Sender identity used on magic links, OTP codes, password reset, invites.
-                  </CardDescription>
+                  <CardTitle className="text-base">{t("branding.outgoingEmail.title")}</CardTitle>
+                  <CardDescription>{t("branding.outgoingEmail.description")}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <FieldGroup>
                     <Field className="grid grid-cols-2 gap-4">
                       <Field>
-                        <FieldLabel htmlFor="email_from_name">From name</FieldLabel>
+                        <FieldLabel htmlFor="email_from_name">{t("branding.outgoingEmail.fromName")}</FieldLabel>
                         <Input
                           id="email_from_name"
                           name="email_from_name"
@@ -204,7 +192,7 @@ function BrandingPage() {
                         />
                       </Field>
                       <Field>
-                        <FieldLabel htmlFor="email_from_address">From address</FieldLabel>
+                        <FieldLabel htmlFor="email_from_address">{t("branding.outgoingEmail.fromAddress")}</FieldLabel>
                         <Input
                           id="email_from_address"
                           name="email_from_address"
@@ -232,8 +220,8 @@ function BrandingPage() {
             <div className="sticky top-24 space-y-4">
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Live preview</CardTitle>
-                  <CardDescription>How your hosted sign-in page will look.</CardDescription>
+                  <CardTitle className="text-base">{t("branding.preview.title")}</CardTitle>
+                  <CardDescription>{t("branding.preview.description")}</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   {/* Simulated browser chrome */}
@@ -274,28 +262,28 @@ function BrandingPage() {
                             </div>
                           )}
                           <h3 className="text-sm font-semibold text-slate-900">
-                            Sign in to {draft.email_from_name || "your account"}
+                            {t("branding.preview.signInTo", { name: draft.email_from_name || "your account" })}
                           </h3>
                           <p className="mt-0.5 text-[10px] text-slate-500">
-                            Enter your email to continue
+                            {t("branding.preview.emailPlaceholder")}
                           </p>
                         </div>
                         {/* Form fields */}
                         <div className="space-y-2 px-5 pb-5">
                           <div className="flex h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-3">
-                            <span className="text-[10px] text-slate-400">Email address</span>
+                            <span className="text-[10px] text-slate-400">{t("branding.preview.emailPlaceholder")}</span>
                           </div>
                           <button
                             type="button"
                             className="h-8 w-full rounded-md text-[11px] font-medium text-white transition-opacity hover:opacity-90"
                             style={{ backgroundColor: draft.primary_color || "#5b21b6" }}
                           >
-                            Continue
+                            {t("branding.preview.continue")}
                           </button>
                           <div className="flex items-center gap-2">
                             <div className="h-px flex-1 bg-slate-200" />
                             <span className="text-[9px] uppercase tracking-wider text-slate-400">
-                              or
+                              {t("branding.preview.or")}
                             </span>
                             <div className="h-px flex-1 bg-slate-200" />
                           </div>
@@ -323,7 +311,7 @@ function BrandingPage() {
                                 fill="#EA4335"
                               />
                             </svg>
-                            <span className="text-[10px] text-slate-600">Continue with Google</span>
+                            <span className="text-[10px] text-slate-600">{t("branding.preview.continueWithGoogle")}</span>
                           </div>
                         </div>
                         {/* Footer */}
@@ -334,7 +322,7 @@ function BrandingPage() {
                           }}
                         >
                           <p className="text-[9px] text-slate-500">
-                            Secured by{" "}
+                            {t("branding.preview.securedBy")}{" "}
                             <span
                               className="font-medium"
                               style={{ color: draft.primary_color || "#5b21b6" }}
@@ -352,7 +340,7 @@ function BrandingPage() {
               {/* Color palette swatch preview */}
               <Card>
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Color palette</CardTitle>
+                  <CardTitle className="text-base">{t("branding.palette.title")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center gap-3">
@@ -361,7 +349,7 @@ function BrandingPage() {
                       style={{ backgroundColor: draft.primary_color || "#5b21b6" }}
                     />
                     <div>
-                      <p className="text-xs font-medium">Primary</p>
+                      <p className="text-xs font-medium">{t("branding.palette.primary")}</p>
                       <p className="font-mono text-xs text-muted-foreground">
                         {draft.primary_color || "#5b21b6"}
                       </p>
@@ -373,7 +361,7 @@ function BrandingPage() {
                       style={{ backgroundColor: draft.secondary_color || "#ffffff" }}
                     />
                     <div>
-                      <p className="text-xs font-medium">Background</p>
+                      <p className="text-xs font-medium">{t("branding.palette.background")}</p>
                       <p className="font-mono text-xs text-muted-foreground">
                         {draft.secondary_color || "#ffffff"}
                       </p>
@@ -387,7 +375,9 @@ function BrandingPage() {
           {/* Sticky save footer */}
           <div className="sticky bottom-0 z-10 mt-4 flex items-center justify-between rounded-b-lg border-t bg-background/95 px-4 py-3 backdrop-blur-sm">
             <p className="text-xs text-muted-foreground">
-              {savedAt ? `Saved at ${savedAt.toLocaleTimeString()}` : "Unsaved changes"}
+              {savedAt
+                ? t("branding.footer.savedAt", { time: savedAt.toLocaleTimeString() })
+                : t("branding.footer.unsaved")}
             </p>
             <div className="flex gap-2">
               <Button
@@ -397,12 +387,12 @@ function BrandingPage() {
                 onClick={() => brandQ.data && setDraft({ ...empty, ...brandQ.data })}
                 disabled={saveM.isPending}
               >
-                Reset
+                {t("branding.footer.reset")}
               </Button>
               <Button type="submit" size="sm" disabled={saveM.isPending}>
                 {saveM.isPending && <Loader2Icon className="animate-spin" />}
                 {saveM.isSuccess && !saveM.isPending && <CheckIcon />}
-                {saveM.isPending ? "Saving…" : "Save changes"}
+                {saveM.isPending ? t("branding.footer.saving") : t("branding.footer.save")}
               </Button>
             </div>
           </div>

@@ -12,6 +12,15 @@ import consent from "./locales/en/consent.json";
 import auth from "./locales/en/auth.json";
 import users from "./locales/en/users.json";
 import dashboard from "./locales/en/dashboard.json";
+import settings from "./locales/en/settings.json";
+import security from "./locales/en/security.json";
+import organizations from "./locales/en/organizations.json";
+import groups from "./locales/en/groups.json";
+import invitations from "./locales/en/invitations.json";
+import developer from "./locales/en/developer.json";
+import account from "./locales/en/account.json";
+import compliance from "./locales/en/compliance.json";
+import authFlow from "./locales/en/authFlow.json";
 
 import hiCommon from "./locales/hi/common.json";
 import hiOidc from "./locales/hi/oidc.json";
@@ -114,8 +123,13 @@ export const LANGUAGE_LABELS: Record<SupportedLanguage, string> = {
 // synchronous, which matters under SSR: i18next is ready at import time,
 // so the first server render already has translations and there is no
 // async gate before React mounts.
+// New namespaces (settings, security, organizations, groups, invitations,
+// developer, account) are English-only. Other locales fall back to "en" via
+// fallbackLng — this is the intentional professional rollout strategy.
+const newNs = { settings, security, organizations, groups, invitations, developer, account, compliance, authFlow };
+
 const resources = {
-  en: { common, oidc, saml, rbac, device, signingKeys, consent, auth, users, dashboard },
+  en: { common, oidc, saml, rbac, device, signingKeys, consent, auth, users, dashboard, ...newNs },
   hi: { common: hiCommon, oidc: hiOidc, saml: hiSaml, rbac: hiRbac, device: hiDevice, signingKeys: hiSigningKeys, consent: hiConsent, auth: hiAuth, users: hiUsers, dashboard: hiDashboard },
   fr: { common: frCommon, oidc: frOidc, saml: frSaml, rbac: frRbac, device: frDevice, signingKeys: frSigningKeys, consent: frConsent, auth: frAuth, users: frUsers, dashboard: frDashboard },
   de: { common: deCommon, oidc: deOidc, saml: deSaml, rbac: deRbac, device: deDevice, signingKeys: deSigningKeys, consent: deConsent, auth: deAuth, users: deUsers, dashboard: deDashboard },

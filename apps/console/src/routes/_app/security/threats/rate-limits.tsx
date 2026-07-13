@@ -14,6 +14,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GaugeIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -63,21 +64,18 @@ function useResetRateLimits() {
   });
 }
 
-function LimitRow({
-  label,
-  description,
-  rate,
-  capacity,
-  onRate,
-  onCapacity,
-}: {
+type LimitRowProps = {
   label: string;
   description: string;
   rate: number;
   capacity: number;
   onRate: (v: number) => void;
   onCapacity: (v: number) => void;
-}) {
+  rateLabel: string;
+  burstLabel: string;
+};
+
+function LimitRow({ label, description, rate, capacity, onRate, onCapacity, rateLabel, burstLabel }: LimitRowProps) {
   return (
     <div className="grid gap-3 sm:grid-cols-[1fr_120px_120px] sm:items-end border-b pb-4 last:border-0 last:pb-0">
       <Field>
@@ -85,7 +83,7 @@ function LimitRow({
         <FieldDescription>{description}</FieldDescription>
       </Field>
       <Field>
-        <FieldLabel htmlFor={`${label}-rate`}>Rate (req/s)</FieldLabel>
+        <FieldLabel htmlFor={`${label}-rate`}>{rateLabel}</FieldLabel>
         <Input
           id={`${label}-rate`}
           type="number"
@@ -96,7 +94,7 @@ function LimitRow({
         />
       </Field>
       <Field>
-        <FieldLabel htmlFor={`${label}-burst`}>Burst</FieldLabel>
+        <FieldLabel htmlFor={`${label}-burst`}>{burstLabel}</FieldLabel>
         <Input
           id={`${label}-burst`}
           type="number"
@@ -111,6 +109,7 @@ function LimitRow({
 }
 
 function RateLimitsPage() {
+  const { t } = useTranslation("security");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const limitsQ = useRateLimits();
   const update = useUpdateRateLimits();
@@ -146,18 +145,16 @@ function RateLimitsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
-      <PageHeader description="Configure per-tenant rate limits. Rate is tokens per second; burst is the maximum burst capacity. These override the platform defaults for this tenant." />
+      <PageHeader description={t("threats.rateLimits.description")} />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
               <GaugeIcon className="size-4" />
-              Rate Limits
+              {t("threats.rateLimits.card.title")}
             </CardTitle>
-            <CardDescription>
-              Limits are enforced per bucket (tenant, user, API key). Burst allows short spikes above the sustained rate.
-            </CardDescription>
+            <CardDescription>{t("threats.rateLimits.card.description")}</CardDescription>
           </div>
           <Button
             variant="outline"
@@ -165,20 +162,20 @@ function RateLimitsPage() {
             disabled={reset.isPending}
             onClick={() =>
               openConfirm({
-                title: "Reset all rate limits to platform defaults?",
+                title: t("threats.rateLimits.card.resetConfirmTitle"),
                 variant: "destructive",
-                confirmLabel: "Reset to defaults",
+                confirmLabel: t("threats.rateLimits.card.resetConfirmLabel"),
                 onConfirm: () => reset.mutate(),
               })
             }
           >
             {reset.isPending ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
-            Reset to defaults
+            {t("threats.rateLimits.card.resetToDefaults")}
           </Button>
         </CardHeader>
         <CardContent>
           {limitsQ.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <p className="text-sm text-muted-foreground">{t("threats.rateLimits.card.loading")}</p>
           ) : (
             <form
               className="flex flex-col gap-5"
@@ -192,35 +189,41 @@ function RateLimitsPage() {
               }}
             >
               <LimitRow
-                label="Per-tenant"
-                description="Total requests per second across all users in this tenant."
+                label={t("threats.rateLimits.rows.tenant.label")}
+                description={t("threats.rateLimits.rows.tenant.description")}
                 rate={tenantRate}
                 capacity={tenantCap}
                 onRate={setTenantRate}
                 onCapacity={setTenantCap}
+                rateLabel={t("threats.rateLimits.card.rateLabel")}
+                burstLabel={t("threats.rateLimits.card.burstLabel")}
               />
               <LimitRow
-                label="Per-user"
-                description="Requests per second per individual user account."
+                label={t("threats.rateLimits.rows.user.label")}
+                description={t("threats.rateLimits.rows.user.description")}
                 rate={userRate}
                 capacity={userCap}
                 onRate={setUserRate}
                 onCapacity={setUserCap}
+                rateLabel={t("threats.rateLimits.card.rateLabel")}
+                burstLabel={t("threats.rateLimits.card.burstLabel")}
               />
               <LimitRow
-                label="Per-API-key"
-                description="Requests per second per API key credential."
+                label={t("threats.rateLimits.rows.apiKey.label")}
+                description={t("threats.rateLimits.rows.apiKey.description")}
                 rate={apiKeyRate}
                 capacity={apiKeyCap}
                 onRate={setApiKeyRate}
                 onCapacity={setApiKeyCap}
+                rateLabel={t("threats.rateLimits.card.rateLabel")}
+                burstLabel={t("threats.rateLimits.card.burstLabel")}
               />
               <div className="flex items-center gap-3 pt-2">
                 <Button type="submit" disabled={!dirty || update.isPending}>
                   {update.isPending && <Loader2Icon className="animate-spin" />}
-                  Save changes
+                  {t("threats.rateLimits.card.save")}
                 </Button>
-                {update.isSuccess && <span className="text-sm text-green-600">Saved.</span>}
+                {update.isSuccess && <span className="text-sm text-green-600">{t("threats.rateLimits.card.saved")}</span>}
               </div>
             </form>
           )}

@@ -107,7 +107,7 @@ export function NotificationsInbox() {
             {items.length === 0 ? (
               <EmptyState />
             ) : (
-              <ul role="list" className="divide-y">
+              <ul className="divide-y">
                 {items.map((n) => (
                   <NotificationItem
                     key={n.id}

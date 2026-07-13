@@ -47,6 +47,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -65,6 +66,7 @@ import {
 export const Route = createFileRoute("/_app/auth/connections/saml")({ component: SamlPage });
 
 function SamlPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useSamlConnections();
   const updateM = useUpdateSamlConnection();
@@ -83,11 +85,11 @@ function SamlPage() {
     <div className="flex min-w-0 flex-col gap-6">
       {confirmDialog}
       <PageHeader
-        description="Service-provider–initiated SAML 2.0 connections to enterprise IdPs. Assertions are validated against the IdP signing certificate; users are provisioned on first login."
+        description={t("samlSp.description")}
         actions={
           <Button size="sm" onClick={() => setCreating(true)}>
             <PlusIcon className="mr-2 size-4" />
-            New connection
+            {t("samlSp.newButton")}
           </Button>
         }
       />
@@ -95,7 +97,7 @@ function SamlPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardDescription>Active connections</CardDescription>
+            <CardDescription>{t("samlSp.stats.active")}</CardDescription>
             <WorkflowIcon className="size-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -104,7 +106,7 @@ function SamlPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription>Total connections</CardDescription>
+            <CardDescription>{t("samlSp.stats.total")}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold tracking-tight">{items.length}</div>
@@ -112,11 +114,11 @@ function SamlPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription>Last SSO login</CardDescription>
+            <CardDescription>{t("samlSp.stats.lastLogin")}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold tracking-tight">
-              {lastLogin ? <TimeSince value={lastLogin} /> : "Never"}
+              {lastLogin ? <TimeSince value={lastLogin} /> : t("samlSp.stats.never")}
             </div>
           </CardContent>
         </Card>
@@ -124,9 +126,9 @@ function SamlPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Connections</CardTitle>
+          <CardTitle>{t("samlSp.list.title")}</CardTitle>
           <CardDescription>
-            One row per IdP. JIT provisioning runs on every successful assertion.
+            {t("samlSp.list.description")}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -136,24 +138,24 @@ function SamlPage() {
             error={listQ.error}
             isEmpty={items.length === 0}
             emptyIcon={WorkflowIcon}
-            emptyTitle="No SAML connections yet."
+            emptyTitle={t("samlSp.list.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>IdP entity ID</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last login</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("samlSp.columns.name")}</TableHead>
+                  <TableHead>{t("samlSp.columns.idpEntityId")}</TableHead>
+                  <TableHead>{t("samlSp.columns.status")}</TableHead>
+                  <TableHead>{t("samlSp.columns.lastLogin")}</TableHead>
+                  <TableHead className="text-right">{t("samlSp.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell className="max-w-[260px] truncate font-mono text-xs text-muted-foreground">
+                    <TableCell className="max-w-65 truncate font-mono text-xs text-muted-foreground">
                       {c.idp_entity_id}
                     </TableCell>
                     <TableCell>
@@ -169,17 +171,17 @@ function SamlPage() {
                         size="sm"
                         onClick={() => window.open(samlLoginUrl(c.id), "_blank", "noopener")}
                         disabled={c.status === "disabled"}
-                        title="Open the IdP login to test this connection"
+                        title={t("samlSp.testSsoTitle")}
                       >
-                        <ExternalLinkIcon /> Test SSO
+                        <ExternalLinkIcon /> {t("samlSp.testSso")}
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => window.open(samlMetadataUrl(c.id), "_blank", "noopener")}
-                        title="Download SP metadata to hand to your IdP"
+                        title={t("samlSp.metadataTitle")}
                       >
-                        <DownloadIcon /> Metadata
+                        <DownloadIcon /> {t("samlSp.metadata")}
                       </Button>
                       <Button
                         variant="ghost"
@@ -192,22 +194,22 @@ function SamlPage() {
                         }
                         disabled={updateM.isPending}
                       >
-                        {c.status === "active" ? "Disable" : "Enable"}
+                        {c.status === "active" ? t("samlSp.disable") : t("samlSp.enable")}
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() =>
                           openConfirm({
-                            title: `Delete SAML connection "${c.name}"?`,
+                            title: t("samlSp.confirm.title", { name: c.name }),
                             variant: "destructive",
-                            confirmLabel: "Delete",
+                            confirmLabel: t("samlSp.confirm.label"),
                             onConfirm: () => deleteM.mutate(c.id),
                           })
                         }
                         disabled={deleteM.isPending}
                       >
-                        <Trash2Icon /> Delete
+                        <Trash2Icon /> {t("samlSp.deleteBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -227,6 +229,7 @@ function SamlPage() {
 // and shows the per-check results in a side panel — complementary to "Test SSO"
 // (a live IdP round-trip), this catches config errors before any login.
 function ValidateConnection({ id }: { id: string }) {
+  const { t } = useTranslation("auth");
   const testM = useTestSamlConnection();
   const [open, setOpen] = useState(false);
 
@@ -240,22 +243,21 @@ function ValidateConnection({ id }: { id: string }) {
           setOpen(true);
           testM.mutate(id);
         }}
-        title="Validate this connection's configuration (offline preflight)"
+        title={t("samlSp.validate.buttonTitle")}
       >
-        {testM.isPending ? <Loader2Icon className="animate-spin" /> : <ShieldCheckIcon />} Validate
+        {testM.isPending ? <Loader2Icon className="animate-spin" /> : <ShieldCheckIcon />} {t("samlSp.validate.button")}
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <div className="flex h-full flex-col">
             <SheetHeader>
-              <SheetTitle>Connection check</SheetTitle>
+              <SheetTitle>{t("samlSp.validate.sheetTitle")}</SheetTitle>
               <SheetDescription>
-                Offline preflight of this connection&apos;s configuration. Run a full Test SSO for
-                an end-to-end check against the IdP.
+                {t("samlSp.validate.sheetDescription")}
               </SheetDescription>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto p-4">
-              {testM.isPending && <p className="text-sm text-muted-foreground">Running checks…</p>}
+              {testM.isPending && <p className="text-sm text-muted-foreground">{t("samlSp.validate.running")}</p>}
               {testM.error && (
                 <p className="text-destructive text-sm">{(testM.error as ApiError).message}</p>
               )}
@@ -291,6 +293,7 @@ function CreateConnectionSheet({
   open: boolean;
   onOpenChange: (o: boolean) => void;
 }) {
+  const { t } = useTranslation("auth");
   const createM = useCreateSamlConnection();
   const [status, setStatus] = useState<SamlConnection["status"]>("draft");
 
@@ -317,30 +320,30 @@ function CreateConnectionSheet({
           }}
         >
           <SheetHeader>
-            <SheetTitle>New SAML connection</SheetTitle>
+            <SheetTitle>{t("samlSp.create.title")}</SheetTitle>
             <SheetDescription>
-              Paste the IdP&apos;s SSO URL, issuer and signing certificate (from its metadata).
+              {t("samlSp.create.description")}
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Connection name</FieldLabel>
-                <Input id="name" name="name" placeholder="Acme — Okta" required />
+                <FieldLabel htmlFor="saml-name">{t("samlSp.create.nameLabel")}</FieldLabel>
+                <Input id="saml-name" name="name" placeholder="Acme — Okta" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="idp_entity_id">IdP entity ID / issuer</FieldLabel>
+                <FieldLabel htmlFor="saml-idp_entity_id">{t("samlSp.create.idpEntityIdLabel")}</FieldLabel>
                 <Input
-                  id="idp_entity_id"
+                  id="saml-idp_entity_id"
                   name="idp_entity_id"
                   placeholder="http://www.okta.com/exk1abc"
                   required
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="idp_sso_url">IdP SSO URL</FieldLabel>
+                <FieldLabel htmlFor="saml-idp_sso_url">{t("samlSp.create.idpSsoUrlLabel")}</FieldLabel>
                 <Input
-                  id="idp_sso_url"
+                  id="saml-idp_sso_url"
                   name="idp_sso_url"
                   type="url"
                   placeholder="https://acme.okta.com/app/.../sso/saml"
@@ -348,9 +351,9 @@ function CreateConnectionSheet({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="idp_certificate">IdP signing certificate</FieldLabel>
+                <FieldLabel htmlFor="saml-idp_certificate">{t("samlSp.create.idpCertLabel")}</FieldLabel>
                 <Textarea
-                  id="idp_certificate"
+                  id="saml-idp_certificate"
                   name="idp_certificate"
                   rows={6}
                   className="font-mono text-xs"
@@ -362,23 +365,23 @@ function CreateConnectionSheet({
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="email_attribute">Email attribute</FieldLabel>
+                <FieldLabel htmlFor="saml-email_attribute">{t("samlSp.create.emailAttrLabel")}</FieldLabel>
                 <Input
-                  id="email_attribute"
+                  id="saml-email_attribute"
                   name="email_attribute"
                   placeholder="email (blank = use NameID)"
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="name_attribute">Display-name attribute</FieldLabel>
+                <FieldLabel htmlFor="saml-name_attribute">{t("samlSp.create.nameAttrLabel")}</FieldLabel>
                 <Input
-                  id="name_attribute"
+                  id="saml-name_attribute"
                   name="name_attribute"
                   placeholder="displayName (optional)"
                 />
               </Field>
               <Field>
-                <FieldLabel>Initial status</FieldLabel>
+                <FieldLabel>{t("samlSp.create.statusLabel")}</FieldLabel>
                 <Select
                   value={status}
                   onValueChange={(v) => setStatus(v as SamlConnection["status"])}
@@ -387,12 +390,12 @@ function CreateConnectionSheet({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="draft">{t("samlSp.create.statusDraft")}</SelectItem>
+                    <SelectItem value="active">{t("samlSp.create.statusActive")}</SelectItem>
                   </SelectContent>
                 </Select>
                 <FieldDescription>
-                  Draft connections accept test logins but aren&apos;t advertised.
+                  {t("samlSp.create.statusHelp")}
                 </FieldDescription>
               </Field>
               {createM.error && (
@@ -403,10 +406,10 @@ function CreateConnectionSheet({
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("samlSp.create.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create connection"}
+              {createM.isPending ? t("samlSp.create.creatingBtn") : t("samlSp.create.createBtn")}
             </Button>
           </SheetFooter>
         </form>

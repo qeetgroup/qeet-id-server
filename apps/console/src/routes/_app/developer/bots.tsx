@@ -1,6 +1,7 @@
 import { Card, CardContent, EmptyState } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 
@@ -13,15 +14,16 @@ export const Route = createFileRoute("/_app/developer/bots")({ component: BotsPa
 // automations backend exists this is a clear "coming soon" surface with no
 // fake data and no dead controls.
 function BotsPage() {
+  const { t } = useTranslation("developer");
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="Event-driven automations stitched together from triggers and actions." />
+      <PageHeader description={t("bots.description")} />
       <Card>
         <CardContent className="py-16">
           <EmptyState
             icon={BotIcon}
-            title="Automations are coming soon"
-            description="Build no-code automations that react to identity events — sign-ins, role changes, risk signals — and run actions in response. This surface isn't available yet; follow the roadmap for availability."
+            title={t("bots.comingSoon.title")}
+            description={t("bots.comingSoon.description")}
           />
         </CardContent>
       </Card>

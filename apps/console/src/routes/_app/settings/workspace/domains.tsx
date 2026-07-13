@@ -18,6 +18,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, ConstructionIcon, GlobeIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
@@ -37,6 +38,7 @@ type Branding = {
 };
 
 function DomainsPage() {
+  const { t } = useTranslation("settings");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [domain, setDomain] = useState("");
@@ -66,22 +68,14 @@ function DomainsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader
-        description={
-          "Bring your own domain for hosted login pages (e.g. auth.acme.com). The DNS + TLS provisioning wizard isn't built yet — for now we just store the hostname against the tenant's branding record."
-        }
-      />
+      <PageHeader description={t("workspace.domains.description")} />
 
       <Card className="border-amber-500/40 bg-amber-50/30 dark:bg-amber-950/20">
         <CardContent className="flex items-start gap-3 p-4">
           <ConstructionIcon className="size-5 text-amber-700 dark:text-amber-500" />
           <div className="text-sm">
-            <p className="font-medium">DNS + TLS automation pending.</p>
-            <p className="text-muted-foreground">
-              Saving here only persists the hostname. The 4-step DNS-verification + ACM-provisioning
-              wizard is on the Phase 3 admin spec — see <code>documents/IMPLEMENTATION-STATUS.md</code>.
-              Today you must front qeet-id with your own reverse proxy.
-            </p>
+            <p className="font-medium">{t("workspace.domains.pendingBanner.title")}</p>
+            <p className="text-muted-foreground">{t("workspace.domains.pendingBanner.description")}</p>
           </div>
         </CardContent>
       </Card>
@@ -97,13 +91,13 @@ function DomainsPage() {
         >
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Custom domain</CardTitle>
-              <CardDescription>One domain per tenant. Leave blank to use the default Qeet ID-hosted URL.</CardDescription>
+              <CardTitle className="text-base">{t("workspace.domains.custom.title")}</CardTitle>
+              <CardDescription>{t("workspace.domains.custom.description")}</CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="custom_domain">Domain</FieldLabel>
+                  <FieldLabel htmlFor="custom_domain">{t("workspace.domains.custom.label")}</FieldLabel>
                   <Input
                     id="custom_domain"
                     value={domain}
@@ -112,19 +106,19 @@ function DomainsPage() {
                   />
                   <FieldDescription>
                     Status: {brandQ.data?.custom_domain ? (
-                      <Badge variant="warning" className="ml-1">configured · TLS not provisioned</Badge>
+                      <Badge variant="warning" className="ml-1">{t("workspace.domains.custom.statusConfigured")}</Badge>
                     ) : (
-                      <Badge variant="muted" className="ml-1">none</Badge>
+                      <Badge variant="muted" className="ml-1">{t("workspace.domains.custom.statusNone")}</Badge>
                     )}
                   </FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel>Required DNS</FieldLabel>
+                  <FieldLabel>{t("workspace.domains.custom.dnsRecords")}</FieldLabel>
                   <div className="rounded-md border bg-muted/50 p-3 text-xs font-mono space-y-1">
                     <div>CNAME @ → {tenantId ? `${tenantId.slice(0, 8)}.tenants.id.qeet.in` : "<tenant>.tenants.id.qeet.in"}</div>
                     <div>TXT _qeetid-verify → {tenantId ? `qeetid-verify=${tenantId.slice(0, 16)}` : "qeetid-verify=<token>"}</div>
                   </div>
-                  <FieldDescription>Records aren&apos;t enforced yet; we&apos;ll start checking them in the DNS-verification wizard.</FieldDescription>
+                  <FieldDescription>{t("workspace.domains.custom.dnsHelp")}</FieldDescription>
                 </Field>
                 {saveM.error && <Field><FieldError>{(saveM.error as ApiError).message}</FieldError></Field>}
               </FieldGroup>
@@ -133,8 +127,10 @@ function DomainsPage() {
 
           <div className="mt-4 flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              {savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : "Unsaved changes"}{" "}
-              · For colors and logo, see{" "}
+              {savedAt
+                ? t("workspace.domains.footer.savedAt", { time: savedAt.toLocaleTimeString() })
+                : t("workspace.domains.footer.unsaved")}{" "}
+              · {t("workspace.domains.footer.brandingLink")}{" "}
               <Link to="/settings/branding" className="underline">Branding</Link>.
             </p>
             <div className="flex items-center gap-2">
@@ -142,7 +138,7 @@ function DomainsPage() {
               <Button type="submit" disabled={saveM.isPending}>
                 {saveM.isPending && <Loader2Icon className="animate-spin" />}
                 {saveM.isSuccess && !saveM.isPending && <CheckIcon />}
-                {saveM.isPending ? "Saving…" : "Save"}
+                {saveM.isPending ? t("workspace.domains.footer.saving") : t("workspace.domains.footer.save")}
               </Button>
             </div>
           </div>

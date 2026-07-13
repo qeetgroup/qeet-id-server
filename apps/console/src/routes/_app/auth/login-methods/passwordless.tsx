@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import type { ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { type AuthPolicy, useAuthPolicy, useUpdateAuthPolicy } from "@/lib/auth-policy";
@@ -28,10 +29,11 @@ export const Route = createFileRoute("/_app/auth/login-methods/passwordless")({
 });
 
 function PasswordlessPage() {
+  const { t } = useTranslation("auth");
   const policyQ = useAuthPolicy();
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="Passwordless sign-in methods your members can use instead of a password." />
+      <PageHeader description={t("loginMethods.passwordless.description")} />
       <DataState
         isLoading={policyQ.isLoading}
         isError={policyQ.isError}
@@ -47,62 +49,47 @@ function PasswordlessPage() {
 
 type MethodKey = "passkey_enabled" | "magic_link_enabled" | "otp_email_enabled" | "otp_sms_enabled";
 
-const METHODS: {
+type MethodDef = {
   key: MethodKey;
-  title: string;
-  description: string;
+  translationKey: "passkeys" | "magicLinks" | "emailOtp" | "smsOtp";
   icon: ComponentType<{ className?: string }>;
-}[] = [
-  {
-    key: "passkey_enabled",
-    title: "Passkeys",
-    description: "WebAuthn / FIDO2 — phishing-resistant, the recommended default.",
-    icon: FingerprintIcon,
-  },
-  {
-    key: "magic_link_enabled",
-    title: "Magic links",
-    description: "A one-time sign-in link sent to the member's email.",
-    icon: WandSparklesIcon,
-  },
-  {
-    key: "otp_email_enabled",
-    title: "Email OTP",
-    description: "A one-time passcode delivered by email.",
-    icon: MailIcon,
-  },
-  {
-    key: "otp_sms_enabled",
-    title: "SMS OTP",
-    description: "A one-time passcode delivered by text message.",
-    icon: MessageSquareIcon,
-  },
+};
+
+const METHOD_DEFS: MethodDef[] = [
+  { key: "passkey_enabled", translationKey: "passkeys", icon: FingerprintIcon },
+  { key: "magic_link_enabled", translationKey: "magicLinks", icon: WandSparklesIcon },
+  { key: "otp_email_enabled", translationKey: "emailOtp", icon: MailIcon },
+  { key: "otp_sms_enabled", translationKey: "smsOtp", icon: MessageSquareIcon },
 ];
 
 function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
+  const { t } = useTranslation("auth");
   const updateM = useUpdateAuthPolicy();
   const [draft, setDraft] = useState<AuthPolicy>(initial);
 
   return (
     <>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {METHODS.map((m) => {
+        {METHOD_DEFS.map((m) => {
           const Icon = m.icon;
           const on = draft[m.key];
+          const methodTitle = t(`loginMethods.passwordless.methods.${m.translationKey}.title`);
           return (
             <Card key={m.key}>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <Icon className="size-4" />
-                  {m.title}
+                  {methodTitle}
                 </CardTitle>
-                <CardDescription>{m.description}</CardDescription>
+                <CardDescription>{t(`loginMethods.passwordless.methods.${m.translationKey}.description`)}</CardDescription>
               </CardHeader>
               <CardContent className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">{on ? "Enabled" : "Off"}</span>
+                <span className="text-sm text-muted-foreground">
+                  {on ? t("loginMethods.passwordless.enabled") : t("loginMethods.passwordless.off")}
+                </span>
                 <Switch
                   checked={on}
-                  aria-label={m.title}
+                  aria-label={methodTitle}
                   onCheckedChange={(v) => setDraft((d) => ({ ...d, [m.key]: v }))}
                 />
               </CardContent>
@@ -114,20 +101,19 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <ShieldCheckIcon className="size-4" /> Trusted devices (adaptive MFA)
+            <ShieldCheckIcon className="size-4" /> {t("loginMethods.passwordless.trustedDevices.title")}
           </CardTitle>
           <CardDescription>
-            Let members who have completed two-factor verification skip the second factor on that
-            device for 30 days. New or unrecognized devices are always challenged. Off by default.
+            {t("loginMethods.passwordless.trustedDevices.description")}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
-            {draft.remember_device_enabled ? "Enabled" : "Off"}
+            {draft.remember_device_enabled ? t("loginMethods.passwordless.enabled") : t("loginMethods.passwordless.off")}
           </span>
           <Switch
             checked={draft.remember_device_enabled}
-            aria-label="Trusted devices (adaptive MFA)"
+            aria-label={t("loginMethods.passwordless.trustedDevices.ariaLabel")}
             onCheckedChange={(v) => setDraft((d) => ({ ...d, remember_device_enabled: v }))}
           />
         </CardContent>
@@ -136,21 +122,20 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <KeyRoundIcon className="size-4" /> Passkeys management
+            <KeyRoundIcon className="size-4" /> {t("loginMethods.passwordless.passkeysMgmt.title")}
           </CardTitle>
           <CardDescription>
-            Individual passkeys are registered and revoked per device under Login methods →
-            Passkeys.
+            {t("loginMethods.passwordless.passkeysMgmt.description")}
           </CardDescription>
         </CardHeader>
       </Card>
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => setDraft(initial)} disabled={updateM.isPending}>
-          Reset
+          {t("loginMethods.passwordless.resetBtn")}
         </Button>
         <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending}>
-          {updateM.isPending ? "Saving…" : "Save changes"}
+          {updateM.isPending ? t("loginMethods.passwordless.savingBtn") : t("loginMethods.passwordless.saveBtn")}
         </Button>
       </div>
     </>

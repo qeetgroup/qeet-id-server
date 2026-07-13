@@ -26,6 +26,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -46,6 +47,7 @@ import { useReviewShadowAIClient, useShadowAICandidates } from "@/lib/oidc-clien
 export const Route = createFileRoute("/_app/developer/agents")({ component: AgentsPage });
 
 function AgentsPage() {
+  const { t } = useTranslation("developer");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const meQ = useMe();
   const agentsQ = useAgents();
@@ -68,17 +70,13 @@ function AgentsPage() {
       {confirmDialog}
       <PageHeader
         title="Agent Governance"
-        description="First-class identities for AI agents / MCP clients, and the primitives that keep them accountable to a human: sponsorship, Shadow-AI discovery, ephemeral tokens, and a tenant-wide kill-switch. An agent authenticates with its secret at POST /v1/agents/token and gets a short-lived, scoped token marked actor_type=&ldquo;agent&rdquo; — ephemeral by design (re-mint, no refresh). Token Vault (3rd-party OAuth on an agent's behalf) and CIBA (backchannel auth) are part of the same governance surface but are API-only today — see the docs."
+        description={t("agents.description")}
       />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Create an agent</CardTitle>
-          <CardDescription>
-            The secret is shown once. Scopes are space-separated; token lifetime is clamped to
-            60&ndash;3600s. You&rsquo;re recorded as the agent&rsquo;s sponsor — its accountable
-            human owner — and can transfer that later if it changes hands.
-          </CardDescription>
+          <CardTitle className="text-base">{t("agents.create.title")}</CardTitle>
+          <CardDescription>{t("agents.create.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -106,27 +104,27 @@ function AgentsPage() {
           >
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <Field className="flex-1">
-                <FieldLabel htmlFor="name">Name</FieldLabel>
+                <FieldLabel htmlFor="agent-name">{t("agents.create.name")}</FieldLabel>
                 <Input
-                  id="name"
-                  placeholder="support-copilot"
+                  id="agent-name"
+                  placeholder={t("agents.create.namePlaceholder")}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
               </Field>
               <Field className="flex-1">
-                <FieldLabel htmlFor="scopes">Scopes</FieldLabel>
+                <FieldLabel htmlFor="agent-scopes">{t("agents.create.scopes")}</FieldLabel>
                 <Input
-                  id="scopes"
-                  placeholder="tickets:read kb:read"
+                  id="agent-scopes"
+                  placeholder={t("agents.create.scopesPlaceholder")}
                   value={scopes}
                   onChange={(e) => setScopes(e.target.value)}
                 />
               </Field>
               <Field className="sm:w-32">
-                <FieldLabel htmlFor="ttl">Token TTL (s)</FieldLabel>
+                <FieldLabel htmlFor="agent-ttl">{t("agents.create.ttl")}</FieldLabel>
                 <Input
-                  id="ttl"
+                  id="agent-ttl"
                   type="number"
                   min={60}
                   max={3600}
@@ -136,7 +134,7 @@ function AgentsPage() {
               </Field>
               <Button type="submit" disabled={createM.isPending || !name.trim() || !sponsorId}>
                 {createM.isPending && <Loader2Icon className="animate-spin" />}
-                Create
+                {t("agents.create.submit")}
               </Button>
             </div>
             {createM.error && (
@@ -147,8 +145,7 @@ function AgentsPage() {
           {created?.secret && (
             <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-50/40 p-4 dark:bg-amber-950/20">
               <p className="mb-2 text-sm font-medium">
-                Agent <span className="font-mono">{created.name}</span> created — copy its
-                credentials now (the secret won&apos;t be shown again):
+                {t("agents.create.secretNotice", { name: created.name })}
               </p>
               <div className="grid gap-2 sm:grid-cols-[auto_1fr]">
                 <span className="text-sm text-muted-foreground">agent_id</span>
@@ -164,8 +161,8 @@ function AgentsPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div>
-            <CardTitle className="text-base">Agents</CardTitle>
-            <CardDescription>AI-agent identities in this tenant.</CardDescription>
+            <CardTitle className="text-base">{t("agents.list.title")}</CardTitle>
+            <CardDescription>{t("agents.list.description")}</CardDescription>
           </div>
           {activeCount > 0 && (
             <Button
@@ -174,10 +171,10 @@ function AgentsPage() {
               disabled={killAllM.isPending}
               onClick={() =>
                 openConfirm({
-                  title: `Suspend all ${activeCount} active agent(s)?`,
-                  description: "Their tokens will stop working immediately.",
+                  title: t("agents.confirm.suspendAll", { count: activeCount }),
+                  description: t("agents.confirm.suspendAllDescription"),
                   variant: "destructive",
-                  confirmLabel: "Suspend All",
+                  confirmLabel: t("agents.confirm.suspendAllLabel"),
                   onConfirm: () => killAllM.mutate(),
                 })
               }
@@ -187,7 +184,7 @@ function AgentsPage() {
               ) : (
                 <SkullIcon />
               )}
-              Suspend All
+              {t("agents.list.suspendAll")}
             </Button>
           )}
         </CardHeader>
@@ -198,8 +195,8 @@ function AgentsPage() {
             error={agentsQ.error}
             isEmpty={items.length === 0}
             emptyIcon={SparklesIcon}
-            emptyTitle="No agents yet."
-            emptyDescription="Create an agent above to issue it ephemeral, scoped tokens."
+            emptyTitle={t("agents.list.empty")}
+            emptyDescription={t("agents.list.emptyDescription")}
             skeletonRows={2}
           >
             <ul className="divide-y">
@@ -210,9 +207,9 @@ function AgentsPage() {
                   onToggle={() => disableM.mutate({ id: a.id, disabled: !a.disabled })}
                   onDelete={() =>
                     openConfirm({
-                      title: `Delete agent "${a.name}"?`,
+                      title: t("agents.confirm.delete", { name: a.name }),
                       variant: "destructive",
-                      confirmLabel: "Delete",
+                      confirmLabel: t("agents.confirm.deleteLabel"),
                       onConfirm: () => deleteM.mutate(a.id),
                     })
                   }
@@ -252,6 +249,7 @@ function useTenantUserOptions() {
 }
 
 function SponsorTransferCard() {
+  const { t } = useTranslation("developer");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const usersQ = useTenantUserOptions();
   const [fromUserId, setFromUserId] = useState<string | null>(null);
@@ -266,34 +264,31 @@ function SponsorTransferCard() {
       {confirmDialog}
       <Card>
       <CardHeader>
-        <CardTitle className="text-base">Sponsor transfer</CardTitle>
-        <CardDescription>
-          Every agent has a named human sponsor. When a sponsor is offboarded, reassign
-          everything they own to a new sponsor in one call — no agent is left ownerless.
-        </CardDescription>
+        <CardTitle className="text-base">{t("agents.sponsor.title")}</CardTitle>
+        <CardDescription>{t("agents.sponsor.description")}</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Field className="flex-1">
-            <FieldLabel htmlFor="sponsor-from">From (departing sponsor)</FieldLabel>
+            <FieldLabel htmlFor="sponsor-from">{t("agents.sponsor.from")}</FieldLabel>
             <Combobox
               id="sponsor-from"
               items={usersQ.data ?? []}
               value={fromUserId}
               onValueChange={setFromUserId}
-              placeholder="Search users…"
-              emptyMessage="No users found."
+              placeholder={t("agents.sponsor.search")}
+              emptyMessage={t("agents.sponsor.noUsers")}
             />
           </Field>
           <Field className="flex-1">
-            <FieldLabel htmlFor="sponsor-to">To (new sponsor)</FieldLabel>
+            <FieldLabel htmlFor="sponsor-to">{t("agents.sponsor.to")}</FieldLabel>
             <Combobox
               id="sponsor-to"
               items={usersQ.data ?? []}
               value={toUserId}
               onValueChange={setToUserId}
-              placeholder="Search users…"
-              emptyMessage="No users found."
+              placeholder={t("agents.sponsor.search")}
+              emptyMessage={t("agents.sponsor.noUsers")}
             />
           </Field>
           <Button
@@ -307,10 +302,10 @@ function SponsorTransferCard() {
             onClick={() => {
               if (!fromUserId || !toUserId) return;
               openConfirm({
-                title: `Transfer ${sponsoredCount} agent(s) to the new sponsor?`,
-                description: "This can't be undone.",
+                title: t("agents.sponsor.confirm.title", { count: sponsoredCount }),
+                description: t("agents.sponsor.confirm.description"),
                 variant: "destructive",
-                confirmLabel: "Transfer",
+                confirmLabel: t("agents.sponsor.confirm.label"),
                 onConfirm: () =>
                   transferM.mutate(
                     { fromUserId, toUserId },
@@ -321,14 +316,14 @@ function SponsorTransferCard() {
           >
             {transferM.isPending && <Loader2Icon className="animate-spin" />}
             <ArrowRightLeftIcon />
-            Transfer
+            {t("agents.sponsor.transfer")}
           </Button>
         </div>
         {fromUserId && (
           <p className="mt-2 text-sm text-muted-foreground">
             {sponsoredQ.isLoading
-              ? "Checking…"
-              : `${sponsoredCount} agent(s) sponsored by this user will move.`}
+              ? t("agents.sponsor.checking")
+              : t("agents.sponsor.count", { count: sponsoredCount })}
           </p>
         )}
         {transferM.error && (
@@ -343,6 +338,7 @@ function SponsorTransferCard() {
 }
 
 function ShadowAICard() {
+  const { t } = useTranslation("developer");
   const candidatesQ = useShadowAICandidates();
   const reviewM = useReviewShadowAIClient();
   const items = candidatesQ.data?.items ?? [];
@@ -350,12 +346,8 @@ function ShadowAICard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Shadow AI discovery</CardTitle>
-        <CardDescription>
-          OAuth clients that picked up a machine grant type (client_credentials /
-          token-exchange) without ever going through the agents/service-accounts registry —
-          unmanaged automation acting under this tenant, ranked by live grants.
-        </CardDescription>
+        <CardTitle className="text-base">{t("agents.shadow.title")}</CardTitle>
+        <CardDescription>{t("agents.shadow.description")}</CardDescription>
       </CardHeader>
       <CardContent className="p-0">
         <DataState
@@ -364,8 +356,8 @@ function ShadowAICard() {
           error={candidatesQ.error}
           isEmpty={items.length === 0}
           emptyIcon={ShieldAlertIcon}
-          emptyTitle="No unreviewed candidates."
-          emptyDescription="Every machine-grant OIDC client has been acknowledged."
+          emptyTitle={t("agents.shadow.empty")}
+          emptyDescription={t("agents.shadow.emptyDescription")}
           skeletonRows={2}
         >
           <ul className="divide-y">
@@ -375,7 +367,7 @@ function ShadowAICard() {
                   <p className="text-sm font-medium">{c.name}</p>
                   <p className="truncate text-xs text-muted-foreground">
                     <span className="font-mono">{c.client_id}</span> · {c.grant_types.join(", ")}{" "}
-                    · {c.live_grants} live grant{c.live_grants === 1 ? "" : "s"}
+                    · {t("agents.shadow.grants", { count: c.live_grants })}
                   </p>
                 </div>
                 <Button
@@ -384,7 +376,7 @@ function ShadowAICard() {
                   disabled={reviewM.isPending}
                   onClick={() => reviewM.mutate(c.id)}
                 >
-                  Acknowledge
+                  {t("agents.shadow.acknowledge")}
                 </Button>
               </li>
             ))}
@@ -406,6 +398,7 @@ function AgentRow({
   onDelete: () => void;
   busy: boolean;
 }) {
+  const { t } = useTranslation("developer");
   return (
     <li className="flex items-center justify-between gap-4 px-6 py-3">
       <div className="min-w-0">
@@ -413,17 +406,17 @@ function AgentRow({
           {a.name}
           {a.disabled ? (
             <Badge variant="outline" className="text-amber-600 border-amber-400">
-              Suspended
+              {t("agents.row.suspended")}
             </Badge>
           ) : (
             <Badge variant="outline" className="text-green-600 border-green-400">
-              Active
+              {t("agents.row.active")}
             </Badge>
           )}
         </p>
         <p className="truncate text-xs text-muted-foreground">
           <span className="font-mono">{a.id}</span> · {a.token_ttl_seconds}s ·{" "}
-          {a.scopes.length ? a.scopes.join(" ") : "no scopes"}
+          {a.scopes.length ? a.scopes.join(" ") : t("agents.row.noScopes")}
         </p>
       </div>
       <div className="flex items-center gap-1">
@@ -432,10 +425,10 @@ function AgentRow({
           size="sm"
           disabled={busy}
           onClick={onToggle}
-          title={a.disabled ? "Resume agent" : "Suspend agent"}
+          title={a.disabled ? t("agents.row.resumeTitle") : t("agents.row.suspendTitle")}
         >
           {a.disabled ? <PlayIcon /> : <PauseIcon />}
-          {a.disabled ? "Resume" : "Suspend"}
+          {a.disabled ? t("agents.row.resume") : t("agents.row.suspend")}
         </Button>
         <Button
           variant="ghost"
@@ -443,7 +436,7 @@ function AgentRow({
           disabled={busy}
           onClick={onDelete}
         >
-          <Trash2Icon /> Delete
+          <Trash2Icon /> {t("agents.row.delete")}
         </Button>
       </div>
     </li>

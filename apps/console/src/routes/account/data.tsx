@@ -9,6 +9,7 @@ import {
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { DownloadIcon, Trash2Icon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ApiError, api } from "@/lib/api";
@@ -16,6 +17,7 @@ import { ApiError, api } from "@/lib/api";
 export const Route = createFileRoute("/account/data")({ component: DataPage });
 
 function DataPage() {
+  const { t } = useTranslation("account");
   const [confirmDialog, openConfirm] = useConfirmDialog();
 
   // Both endpoints below are part of the GDPR roadmap (§B9 data export
@@ -62,12 +64,9 @@ function DataPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <DownloadIcon className="size-5 text-muted-foreground" />
-            <CardTitle className="text-base">Export your data</CardTitle>
+            <CardTitle className="text-base">{t("data.export.title")}</CardTitle>
           </div>
-          <CardDescription>
-            We&apos;ll prepare a JSON / CSV archive of everything we store about your
-            account and email you a one-time download link.
-          </CardDescription>
+          <CardDescription>{t("data.export.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button
@@ -75,7 +74,7 @@ function DataPage() {
             onClick={() => exportM.mutate()}
             disabled={exportM.isPending}
           >
-            <DownloadIcon /> Request export
+            <DownloadIcon /> {t("data.export.button")}
           </Button>
         </CardContent>
       </Card>
@@ -84,13 +83,9 @@ function DataPage() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Trash2Icon className="size-5 text-rose-600 dark:text-rose-400" />
-            <CardTitle className="text-base">Delete your account</CardTitle>
+            <CardTitle className="text-base">{t("data.delete.title")}</CardTitle>
           </div>
-          <CardDescription>
-            Removes your account and personal data after a 30-day grace period. Audit-log
-            references are kept (with PII redacted) so administrators can still verify
-            historical events.
-          </CardDescription>
+          <CardDescription>{t("data.delete.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button
@@ -98,16 +93,16 @@ function DataPage() {
             className="border-rose-500/40 text-rose-700 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/30"
             onClick={() =>
               openConfirm({
-                title: "Schedule account for deletion?",
-                description: "You can cancel within 30 days by signing back in.",
+                title: t("data.delete.confirm.title"),
+                description: t("data.delete.confirm.description"),
                 variant: "destructive",
-                confirmLabel: "Delete my account",
+                confirmLabel: t("data.delete.confirm.label"),
                 onConfirm: () => deleteM.mutate(),
               })
             }
             disabled={deleteM.isPending}
           >
-            <Trash2Icon /> Delete my account
+            <Trash2Icon /> {t("data.delete.button")}
           </Button>
         </CardContent>
       </Card>

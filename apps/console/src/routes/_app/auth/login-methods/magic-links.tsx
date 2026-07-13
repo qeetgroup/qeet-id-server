@@ -19,26 +19,21 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { type AuthPolicy, useAuthPolicy, useUpdateAuthPolicy } from "@/lib/auth-policy";
 
 export const Route = createFileRoute("/_app/auth/login-methods/magic-links")({ component: MagicLinksPage });
 
-const TTL_OPTIONS = [
-  { value: 5, label: "5 minutes" },
-  { value: 15, label: "15 minutes" },
-  { value: 30, label: "30 minutes" },
-  { value: 60, label: "1 hour" },
-  { value: 240, label: "4 hours" },
-  { value: 1440, label: "24 hours" },
-];
+const TTL_VALUES = [5, 15, 30, 60, 240, 1440];
 
 function MagicLinksPage() {
+  const { t } = useTranslation("auth");
   const policyQ = useAuthPolicy();
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="Passwordless sign-in via a one-time link emailed to the user. Links are single-use and expire after the configured lifetime." />
+      <PageHeader description={t("loginMethods.magicLinks.description")} />
       <DataState
         isLoading={policyQ.isLoading}
         isError={policyQ.isError}
@@ -53,8 +48,19 @@ function MagicLinksPage() {
 }
 
 function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
+  const { t } = useTranslation("auth");
   const updateM = useUpdateAuthPolicy();
   const [draft, setDraft] = useState<AuthPolicy>(initial);
+
+  const TTL_OPTIONS = [
+    { value: TTL_VALUES[0], label: t("loginMethods.magicLinks.ttl5m") },
+    { value: TTL_VALUES[1], label: t("loginMethods.magicLinks.ttl15m") },
+    { value: TTL_VALUES[2], label: t("loginMethods.magicLinks.ttl30m") },
+    { value: TTL_VALUES[3], label: t("loginMethods.magicLinks.ttl1h") },
+    { value: TTL_VALUES[4], label: t("loginMethods.magicLinks.ttl4h") },
+    { value: TTL_VALUES[5], label: t("loginMethods.magicLinks.ttl24h") },
+  ];
+
   const dirty =
     draft.magic_link_enabled !== initial.magic_link_enabled ||
     draft.magic_link_ttl_minutes !== initial.magic_link_ttl_minutes;
@@ -70,12 +76,12 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Magic-link sign-in</CardTitle>
-              <CardDescription>Allow members to sign in with a one-time email link.</CardDescription>
+              <CardTitle>{t("loginMethods.magicLinks.title")}</CardTitle>
+              <CardDescription>{t("loginMethods.magicLinks.subtitle")}</CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <StatusPill kind={draft.magic_link_enabled ? "success" : "muted"}>
-                {draft.magic_link_enabled ? "Enabled" : "Disabled"}
+                {draft.magic_link_enabled ? t("loginMethods.magicLinks.enabled") : t("loginMethods.magicLinks.disabled")}
               </StatusPill>
               <Switch
                 checked={draft.magic_link_enabled}
@@ -86,7 +92,7 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
         </CardHeader>
         <CardContent>
           <Field className="max-w-xs">
-            <FieldLabel id="magic-link-ttl-label">Link lifetime</FieldLabel>
+            <FieldLabel id="magic-link-ttl-label">{t("loginMethods.magicLinks.ttlLabel")}</FieldLabel>
             <Select
               value={ttlValue}
               onValueChange={(v) => setDraft((d) => ({ ...d, magic_link_ttl_minutes: Number(v) }))}
@@ -103,14 +109,14 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
                 ))}
               </SelectContent>
             </Select>
-            <FieldDescription>How long a link stays valid after it's sent. Shorter is safer.</FieldDescription>
+            <FieldDescription>{t("loginMethods.magicLinks.ttlHelp")}</FieldDescription>
           </Field>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">How it works</CardTitle>
+          <CardTitle className="text-base">{t("loginMethods.magicLinks.howTitle")}</CardTitle>
           <CardDescription>
             The user enters their email, receives a single-use link, and is signed in when they open it.
             Links are consumed on first use and can&apos;t be replayed. Manage the email&apos;s wording under
@@ -121,10 +127,10 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => setDraft(initial)} disabled={updateM.isPending}>
-          Reset
+          {t("loginMethods.magicLinks.resetBtn")}
         </Button>
         <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending || !dirty}>
-          {updateM.isPending ? "Saving…" : "Save changes"}
+          {updateM.isPending ? t("loginMethods.magicLinks.savingBtn") : t("loginMethods.magicLinks.saveBtn")}
         </Button>
       </div>
     </>

@@ -52,6 +52,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
@@ -74,16 +75,17 @@ type Tenant = {
 };
 
 const tenantCsvColumns: CsvColumn<Tenant>[] = [
-  { header: "id", value: (t) => t.id },
-  { header: "name", value: (t) => t.name },
-  { header: "slug", value: (t) => t.slug },
-  { header: "plan", value: (t) => t.plan },
-  { header: "region", value: (t) => t.region },
-  { header: "status", value: (t) => t.status },
-  { header: "created_at", value: (t) => t.created_at },
+  { header: "id", value: (row) => row.id },
+  { header: "name", value: (row) => row.name },
+  { header: "slug", value: (row) => row.slug },
+  { header: "plan", value: (row) => row.plan },
+  { header: "region", value: (row) => row.region },
+  { header: "status", value: (row) => row.status },
+  { header: "created_at", value: (row) => row.created_at },
 ];
 
 function TenantsPage() {
+  const { t } = useTranslation("organizations");
   const qc = useQueryClient();
   const currentTenantId = tokenStore.getTenantId();
   const [creating, setCreating] = useState(false);
@@ -97,9 +99,9 @@ function TenantsPage() {
 
   const items = listQ.data?.items ?? [];
   const lv = useListView(items, {
-    searchFields: (t) => [t.name, t.slug, t.region],
-    filterFields: { status: (t) => t.status, plan: (t) => t.plan },
-    sortFields: { name: (t) => t.name, plan: (t) => t.plan, created: (t) => t.created_at },
+    searchFields: (row) => [row.name, row.slug, row.region],
+    filterFields: { status: (row) => row.status, plan: (row) => row.plan },
+    sortFields: { name: (row) => row.name, plan: (row) => row.plan, created: (row) => row.created_at },
   });
   const rows = lv.view;
   const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
@@ -116,15 +118,15 @@ function TenantsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Every tenant your account has access to. Click a tenant to switch into it, or create a new one — you become its owner automatically."
+        description={t("tenants.description")}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("tenants.refresh")}
             </Button>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> New tenant
+              <PlusIcon /> {t("tenants.new")}
             </Button>
           </>
         }
@@ -132,46 +134,46 @@ function TenantsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Tenants</CardTitle>
+          <CardTitle className="text-base">{t("tenants.list.title")}</CardTitle>
           <CardDescription>
-            {rows.length} of {items.length} tenant{items.length === 1 ? "" : "s"}
+            {t("tenants.list.count", { shown: rows.length, total: items.length })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <ListToolbar
             search={lv.search}
             onSearchChange={lv.setSearch}
-            searchPlaceholder="Search name, slug, region…"
+            searchPlaceholder={t("tenants.list.searchPlaceholder")}
             filters={[
               {
                 id: "status",
-                label: "Status",
+                label: t("tenants.filters.status.label"),
                 value: lv.filters.status ?? "",
                 options: [
-                  { label: "Active", value: "active" },
-                  { label: "Suspended", value: "suspended" },
-                  { label: "Deleted", value: "deleted" },
+                  { label: t("tenants.filters.status.active"), value: "active" },
+                  { label: t("tenants.filters.status.suspended"), value: "suspended" },
+                  { label: t("tenants.filters.status.deleted"), value: "deleted" },
                 ],
                 onChange: (v) => lv.setFilter("status", v),
               },
               {
                 id: "plan",
-                label: "Plan",
+                label: t("tenants.filters.plan.label"),
                 value: lv.filters.plan ?? "",
                 options: [
-                  { label: "Free", value: "free" },
-                  { label: "Starter", value: "starter" },
-                  { label: "Pro", value: "pro" },
-                  { label: "Enterprise", value: "enterprise" },
+                  { label: t("tenants.filters.plan.free"), value: "free" },
+                  { label: t("tenants.filters.plan.starter"), value: "starter" },
+                  { label: t("tenants.filters.plan.pro"), value: "pro" },
+                  { label: t("tenants.filters.plan.enterprise"), value: "enterprise" },
                 ],
                 onChange: (v) => lv.setFilter("plan", v),
               },
             ]}
             columns={[
-              { id: "slug", label: "Slug" },
-              { id: "plan", label: "Plan" },
-              { id: "region", label: "Region" },
-              { id: "created", label: "Created" },
+              { id: "slug", label: t("tenants.columns.slug") },
+              { id: "plan", label: t("tenants.columns.plan") },
+              { id: "region", label: t("tenants.columns.region") },
+              { id: "created", label: t("tenants.columns.created") },
             ]}
             isColumnVisible={lv.isVisible}
             onToggleColumn={lv.toggleColumn}
@@ -190,84 +192,88 @@ function TenantsPage() {
             error={listQ.error}
             isEmpty={rows.length === 0}
             emptyIcon={Building2Icon}
-            emptyTitle={lv.hasActiveFilters ? "No tenants match your filters." : "No tenants yet."}
+            emptyTitle={
+              lv.hasActiveFilters
+                ? t("tenants.list.emptyFiltered")
+                : t("tenants.list.empty")
+            }
             skeletonRows={3}
           >
             <Table className={denseCls}>
               <TableHeader>
                 <TableRow>
                   <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
-                    Name
+                    {t("tenants.columns.name")}
                   </SortHeader>
-                  {lv.isVisible("slug") && <TableHead>Slug</TableHead>}
+                  {lv.isVisible("slug") && <TableHead>{t("tenants.columns.slug")}</TableHead>}
                   {lv.isVisible("plan") && (
                     <SortHeader columnKey="plan" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Plan
+                      {t("tenants.columns.plan")}
                     </SortHeader>
                   )}
-                  {lv.isVisible("region") && <TableHead>Region</TableHead>}
-                  <TableHead>Status</TableHead>
+                  {lv.isVisible("region") && <TableHead>{t("tenants.columns.region")}</TableHead>}
+                  <TableHead>{t("tenants.columns.status")}</TableHead>
                   {lv.isVisible("created") && (
                     <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
-                      Created
+                      {t("tenants.columns.created")}
                     </SortHeader>
                   )}
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">{t("tenants.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((t) => (
-                  <TableRow key={t.id}>
+                {rows.map((row) => (
+                  <TableRow key={row.id}>
                     <TableCell className="font-medium">
-                      {t.name}
-                      {t.id === currentTenantId && (
+                      {row.name}
+                      {row.id === currentTenantId && (
                         <Badge variant="muted" className="ml-2">
-                          Current
+                          {t("tenants.table.current")}
                         </Badge>
                       )}
                     </TableCell>
                     {lv.isVisible("slug") && (
-                      <TableCell className="font-mono text-xs text-muted-foreground">{t.slug}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{row.slug}</TableCell>
                     )}
                     {lv.isVisible("plan") && (
-                      <TableCell><Badge variant="muted">{t.plan}</Badge></TableCell>
+                      <TableCell><Badge variant="muted">{row.plan}</Badge></TableCell>
                     )}
                     {lv.isVisible("region") && (
-                      <TableCell className="text-muted-foreground">{t.region}</TableCell>
+                      <TableCell className="text-muted-foreground">{row.region}</TableCell>
                     )}
-                    <TableCell><StatusPill status={t.status} /></TableCell>
+                    <TableCell><StatusPill status={row.status} /></TableCell>
                     {lv.isVisible("created") && (
-                      <TableCell><TimeSince value={t.created_at} /></TableCell>
+                      <TableCell><TimeSince value={row.created_at} /></TableCell>
                     )}
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={t.id === currentTenantId}
-                          onClick={() => void switchToTenant(t.id)}
+                          disabled={row.id === currentTenantId}
+                          onClick={() => void switchToTenant(row.id)}
                         >
-                          Switch
+                          {t("tenants.table.switch")}
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          aria-label="Edit tenant"
-                          onClick={() => setEditing(t)}
+                          aria-label={t("tenants.table.editLabel")}
+                          onClick={() => setEditing(row)}
                         >
                           <PencilIcon />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          aria-label="Delete tenant"
-                          disabled={t.id === currentTenantId}
+                          aria-label={t("tenants.table.deleteLabel")}
+                          disabled={row.id === currentTenantId}
                           title={
-                            t.id === currentTenantId
-                              ? "Switch to another tenant before deleting this one"
-                              : "Delete tenant"
+                            row.id === currentTenantId
+                              ? t("tenants.table.deleteSelfTitle")
+                              : t("tenants.table.deleteLabel")
                           }
-                          onClick={() => setConfirmingDelete(t.id)}
+                          onClick={() => setConfirmingDelete(row.id)}
                         >
                           <Trash2Icon className="text-destructive" />
                         </Button>
@@ -304,31 +310,32 @@ function TenantsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this tenant?</AlertDialogTitle>
+            <AlertDialogTitle>{t("tenants.delete.title")}</AlertDialogTitle>
             <AlertDialogDescription>
               {(() => {
-                const target = listQ.data?.items?.find((t) => t.id === confirmingDelete);
+                const target = listQ.data?.items?.find((item) => item.id === confirmingDelete);
                 return target ? (
                   <>
-                    This soft-deletes <span className="font-medium text-foreground">{target.name}</span>{" "}
-                    (<span className="font-mono text-xs">{target.slug}</span>). Audit history is
-                    preserved, but you won&apos;t be able to undo this from the UI.
+                    {t("tenants.delete.descriptionPrefix")}{" "}
+                    <span className="font-medium text-foreground">{target.name}</span>{" "}
+                    (<span className="font-mono text-xs">{target.slug}</span>)
+                    {t("tenants.delete.descriptionSuffix")}
                   </>
                 ) : (
-                  "This soft-deletes the tenant. Audit history is preserved."
+                  t("tenants.delete.descriptionFallback")
                 );
               })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteM.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteM.isPending}>{t("tenants.delete.cancel")}</AlertDialogCancel>
             <Button
               variant="destructive"
               disabled={deleteM.isPending}
               onClick={() => confirmingDelete && deleteM.mutate(confirmingDelete)}
             >
               {deleteM.isPending && <Loader2Icon className="animate-spin" />}
-              {deleteM.isPending ? "Deleting…" : "Delete"}
+              {deleteM.isPending ? t("tenants.delete.deleting") : t("tenants.delete.delete")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -351,6 +358,7 @@ type CreateTenantResponse = {
 };
 
 function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetProps) {
+  const { t } = useTranslation("organizations");
   const [plan, setPlan] = useState("free");
   const createM = useMutation({
     mutationFn: (body: { slug: string; name: string; plan: string; region: string }) =>
@@ -386,46 +394,44 @@ function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetP
           }}
         >
           <SheetHeader>
-            <SheetTitle>New workspace</SheetTitle>
-            <SheetDescription>
-              You&apos;ll become the owner of this workspace and switch into it once it&apos;s created.
-            </SheetDescription>
+            <SheetTitle>{t("tenants.create.title")}</SheetTitle>
+            <SheetDescription>{t("tenants.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Name</FieldLabel>
+                <FieldLabel htmlFor="name">{t("tenants.create.name")}</FieldLabel>
                 <Input id="name" name="name" placeholder="Acme Corp" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="slug">Slug</FieldLabel>
+                <FieldLabel htmlFor="slug">{t("tenants.create.slug")}</FieldLabel>
                 <Input id="slug" name="slug" pattern="[a-z0-9-]+" minLength={2} maxLength={64} placeholder="acme" required />
-                <FieldDescription>Lowercase letters, numbers, dashes. Used in URLs.</FieldDescription>
+                <FieldDescription>{t("tenants.create.slugHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Plan</FieldLabel>
+                <FieldLabel>{t("tenants.create.plan")}</FieldLabel>
                 <Select value={plan} onValueChange={(v) => v && setPlan(v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="free">Free</SelectItem>
-                    <SelectItem value="starter">Starter</SelectItem>
-                    <SelectItem value="pro">Pro</SelectItem>
-                    <SelectItem value="enterprise">Enterprise</SelectItem>
+                    <SelectItem value="free">{t("tenants.filters.plan.free")}</SelectItem>
+                    <SelectItem value="starter">{t("tenants.filters.plan.starter")}</SelectItem>
+                    <SelectItem value="pro">{t("tenants.filters.plan.pro")}</SelectItem>
+                    <SelectItem value="enterprise">{t("tenants.filters.plan.enterprise")}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="region">Region</FieldLabel>
+                <FieldLabel htmlFor="region">{t("tenants.create.region")}</FieldLabel>
                 <Input id="region" name="region" defaultValue="us-east-1" />
               </Field>
               {createM.error && <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("tenants.create.cancel")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create"}
+              {createM.isPending ? t("tenants.create.submitting") : t("tenants.create.submit")}
             </Button>
           </SheetFooter>
         </form>
@@ -448,6 +454,7 @@ type UpdateBody = {
 };
 
 function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps) {
+  const { t } = useTranslation("organizations");
   const [plan, setPlan] = useState<string>(tenant?.plan ?? "free");
   const [status, setStatus] = useState<string>(tenant?.status === "suspended" ? "suspended" : "active");
 
@@ -485,15 +492,13 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
             }}
           >
             <SheetHeader>
-              <SheetTitle>Edit tenant</SheetTitle>
-              <SheetDescription>
-                Slug can't be changed once a tenant is created.
-              </SheetDescription>
+              <SheetTitle>{t("tenants.edit.title")}</SheetTitle>
+              <SheetDescription>{t("tenants.edit.description")}</SheetDescription>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto p-4">
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="edit-name">Name</FieldLabel>
+                  <FieldLabel htmlFor="edit-name">{t("tenants.edit.name")}</FieldLabel>
                   <Input
                     id="edit-name"
                     name="name"
@@ -504,41 +509,39 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="edit-slug">Slug</FieldLabel>
+                  <FieldLabel htmlFor="edit-slug">{t("tenants.edit.slug")}</FieldLabel>
                   <Input id="edit-slug" value={tenant.slug} readOnly disabled />
-                  <FieldDescription>Immutable after creation.</FieldDescription>
+                  <FieldDescription>{t("tenants.edit.slugHelp")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel>Plan</FieldLabel>
+                  <FieldLabel>{t("tenants.edit.plan")}</FieldLabel>
                   <Select value={plan} onValueChange={(v) => v && setPlan(v)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="free">Free</SelectItem>
-                      <SelectItem value="starter">Starter</SelectItem>
-                      <SelectItem value="pro">Pro</SelectItem>
-                      <SelectItem value="enterprise">Enterprise</SelectItem>
+                      <SelectItem value="free">{t("tenants.filters.plan.free")}</SelectItem>
+                      <SelectItem value="starter">{t("tenants.filters.plan.starter")}</SelectItem>
+                      <SelectItem value="pro">{t("tenants.filters.plan.pro")}</SelectItem>
+                      <SelectItem value="enterprise">{t("tenants.filters.plan.enterprise")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel>Status</FieldLabel>
+                  <FieldLabel>{t("tenants.edit.status")}</FieldLabel>
                   <Select value={status} onValueChange={(v) => v && setStatus(v)}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="suspended">Suspended</SelectItem>
+                      <SelectItem value="active">{t("tenants.edit.statusActive")}</SelectItem>
+                      <SelectItem value="suspended">{t("tenants.edit.statusSuspended")}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <FieldDescription>
-                    Use the Delete action to soft-delete a tenant.
-                  </FieldDescription>
+                  <FieldDescription>{t("tenants.edit.statusHelp")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="edit-region">Region</FieldLabel>
+                  <FieldLabel htmlFor="edit-region">{t("tenants.edit.region")}</FieldLabel>
                   <Input
                     id="edit-region"
                     name="region"
@@ -554,10 +557,10 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
               </FieldGroup>
             </div>
             <SheetFooter className="flex-row justify-end gap-2 border-t">
-              <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+              <SheetClose render={<Button type="button" variant="outline" />}>{t("tenants.edit.cancel")}</SheetClose>
               <Button type="submit" disabled={updateM.isPending}>
                 {updateM.isPending && <Loader2Icon className="animate-spin" />}
-                {updateM.isPending ? "Saving…" : "Save changes"}
+                {updateM.isPending ? t("tenants.edit.saving") : t("tenants.edit.save")}
               </Button>
             </SheetFooter>
           </form>

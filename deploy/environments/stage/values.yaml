@@ -1,0 +1,34 @@
+# Staging overrides. Apply with: helm upgrade --install qeet-id ./deploy/base/helm/qeet-id \
+#   -n qeet-id-staging -f deploy/environments/stage/values.yaml
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+resources:
+  requests: { cpu: 50m, memory: 96Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+
+ingress:
+  hosts:
+    - host: api.id.staging.qeet.in
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: qeet-id-staging-tls
+      hosts:
+        - api.id.staging.qeet.in
+
+config:
+  SERVICE_ENV: "staging"
+  APP_BASE_URL: "https://app.id.staging.qeet.in"
+  LOGIN_BASE_URL: "https://login.id.staging.qeet.in"
+  ALLOWED_ORIGINS: "https://app.id.staging.qeet.in,https://login.id.staging.qeet.in"
+  CSRF_COOKIE_DOMAIN: ".id.staging.qeet.in"
+  OTEL_TRACES_SAMPLER_RATIO: "1"
+  WEBAUTHN_RP_ID: "id.staging.qeet.in"
+  WEBAUTHN_RP_ORIGINS: "https://app.id.staging.qeet.in,https://login.id.staging.qeet.in"

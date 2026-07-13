@@ -32,6 +32,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, ScrollTextIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -53,6 +54,7 @@ type PurgeRequest = {
 };
 
 function GdprPage() {
+  const { t } = useTranslation("compliance");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -69,19 +71,21 @@ function GdprPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["gdpr-purges"] }),
   });
 
+  const itemCount = listQ.data?.items?.length ?? 0;
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="GDPR Article 17 (right-to-erasure) requests. Each request enters a 30-day grace window before the background purge job redacts PII while preserving audit references."
+        description={t("gdpr.description")}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("gdpr.refresh")}
             </Button>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> File erasure request
+              <PlusIcon /> {t("gdpr.fileRequest")}
             </Button>
           </>
         }
@@ -91,19 +95,18 @@ function GdprPage() {
         <CardContent className="flex items-start gap-3 p-4">
           <ShieldCheckIcon className="size-5 text-emerald-700 dark:text-emerald-500" />
           <div className="text-sm">
-            <p className="font-medium">Right-to-erasure runs an async background purge.</p>
-            <p className="text-muted-foreground">
-              Requests are recorded with a 30-day grace window; the purge job then redacts PII while
-              preserving the tamper-evident audit trail.
-            </p>
+            <p className="font-medium">{t("gdpr.infoBanner.title")}</p>
+            <p className="text-muted-foreground">{t("gdpr.infoBanner.description")}</p>
           </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Erasure requests</CardTitle>
-          <CardDescription>{listQ.data?.items?.length ?? 0} request{listQ.data?.items?.length === 1 ? "" : "s"}</CardDescription>
+          <CardTitle className="text-base">{t("gdpr.list.title")}</CardTitle>
+          <CardDescription>
+            {t("gdpr.list.count", { count: itemCount })}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {listQ.isLoading ? (
@@ -113,18 +116,18 @@ function GdprPage() {
           ) : !listQ.data?.items?.length ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <ScrollTextIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No GDPR erasure requests on file.</p>
+              <p className="text-sm text-muted-foreground">{t("gdpr.list.empty")}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Reason</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Grace until</TableHead>
-                  <TableHead>Filed</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("gdpr.list.columns.user")}</TableHead>
+                  <TableHead>{t("gdpr.list.columns.reason")}</TableHead>
+                  <TableHead>{t("gdpr.list.columns.status")}</TableHead>
+                  <TableHead>{t("gdpr.list.columns.graceUntil")}</TableHead>
+                  <TableHead>{t("gdpr.list.columns.filed")}</TableHead>
+                  <TableHead className="text-right">{t("gdpr.list.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -149,14 +152,14 @@ function GdprPage() {
                           disabled={r.status !== "pending" || cancelM.isPending}
                           onClick={() =>
                             openConfirm({
-                              title: "Cancel this erasure request?",
+                              title: t("gdpr.confirm.cancelTitle"),
                               variant: "default",
-                              confirmLabel: "Cancel request",
+                              confirmLabel: t("gdpr.confirm.cancelLabel"),
                               onConfirm: () => cancelM.mutate(r.id),
                             })
                           }
                         >
-                          Cancel
+                          {t("gdpr.list.cancelRequest")}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -186,6 +189,7 @@ type CreatePurgeSheetProps = {
 };
 
 function CreatePurgeSheet({ open, onOpenChange, tenantId, onCreated }: CreatePurgeSheetProps) {
+  const { t } = useTranslation("compliance");
   const createM = useMutation({
     mutationFn: (body: { tenant_id: string; user_id: string; reason: string }) =>
       api<PurgeRequest>("/v1/gdpr/purge", { method: "POST", body }),
@@ -212,15 +216,13 @@ function CreatePurgeSheet({ open, onOpenChange, tenantId, onCreated }: CreatePur
           }}
         >
           <SheetHeader>
-            <SheetTitle>File erasure request</SheetTitle>
-            <SheetDescription>
-              Starts the 30-day grace window. The user is not deleted yet — cancel before grace expires to abort.
-            </SheetDescription>
+            <SheetTitle>{t("gdpr.create.title")}</SheetTitle>
+            <SheetDescription>{t("gdpr.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="user_id">User ID</FieldLabel>
+                <FieldLabel htmlFor="user_id">{t("gdpr.create.userId")}</FieldLabel>
                 <Input
                   id="user_id"
                   name="user_id"
@@ -228,21 +230,21 @@ function CreatePurgeSheet({ open, onOpenChange, tenantId, onCreated }: CreatePur
                   placeholder="00000000-0000-0000-0000-000000000000"
                   required
                 />
-                <FieldDescription>UUID of the user to erase. Copy from the Users page.</FieldDescription>
+                <FieldDescription>{t("gdpr.create.userIdHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="reason">Reason</FieldLabel>
+                <FieldLabel htmlFor="reason">{t("gdpr.create.reason")}</FieldLabel>
                 <Textarea id="reason" name="reason" rows={4} placeholder="User requested account deletion via support ticket #1234" />
-                <FieldDescription>Optional but strongly recommended for audit-trail purposes.</FieldDescription>
+                <FieldDescription>{t("gdpr.create.reasonHelp")}</FieldDescription>
               </Field>
               {createM.error && <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("gdpr.create.cancel")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Filing…" : "File request"}
+              {createM.isPending ? t("gdpr.create.submitting") : t("gdpr.create.submit")}
             </Button>
           </SheetFooter>
         </form>

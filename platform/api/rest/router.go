@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/policy"
@@ -107,6 +108,7 @@ type Deps struct {
 	DomainVerify  *domainverify.Handler
 	SIEM          *siem.Handler
 	AuthHook      *authhook.Handler
+	ABAC          *abac.Handler
 	ReBAC         *rebac.Handler
 	AuthZEN       *authzen.Handler
 	Agent         *agent.Handler
@@ -307,6 +309,7 @@ func NewRouter(d Deps) http.Handler {
 			d.DomainVerify.Mount(r) // /tenants/{id}/domains: DNS domain verification
 			d.SIEM.Mount(r)         // /tenants/{id}/log-sinks: SIEM / log streaming
 			d.AuthHook.Mount(r)     // /tenants/{id}/auth-hooks: synchronous login Actions/Hooks
+			d.ABAC.Mount(r)         // /tenants/{id}/abac/policies + /abac/evaluate: ABAC policy store + PDP
 			d.ReBAC.Mount(r)        // /tenants/{id}/relation-tuples: fine-grained (ReBAC) authz
 			d.AuthZEN.Mount(r)      // /tenants/{id}/access/v1/evaluation: OpenID AuthZEN PDP facade over RBAC/ReBAC
 			d.Agent.Mount(r)        // /tenants/{id}/agents: AI-agent identity admin

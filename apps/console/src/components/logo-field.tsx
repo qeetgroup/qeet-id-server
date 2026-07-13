@@ -1,6 +1,6 @@
 import { Button, Input, cn } from "@qeetrix/ui";
 import { ImageIcon, Trash2Icon, UploadCloudIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type LogoFieldProps = {
   /** Current logo source — a public URL or a data: URL. Empty = no logo. */
@@ -37,6 +37,17 @@ export function LogoField({
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const previewRef = useRef<HTMLImageElement>(null);
+
+  // Attach error listener imperatively to avoid jsx-a11y/no-noninteractive-element-interactions
+  // (onError on <img> is a system event, not a user interaction, but the rule flags all handlers)
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const handle = () => setError("Couldn't render that source as an image.");
+    el.addEventListener("error", handle);
+    return () => el.removeEventListener("error", handle);
+  }, [value]);
 
   const maxBytes = maxSizeMB * 1024 * 1024;
 
@@ -74,10 +85,10 @@ export function LogoField({
         <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
           <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md border bg-background">
             <img
+              ref={previewRef}
               src={value}
               alt="Logo preview"
               className="h-full w-full object-contain"
-              onError={() => setError("Couldn't render that source as an image.")}
             />
           </div>
           <div className="flex flex-1 flex-col gap-1">

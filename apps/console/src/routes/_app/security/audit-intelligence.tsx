@@ -33,6 +33,7 @@ import {
   SparklesIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
@@ -50,12 +51,6 @@ export const Route = createFileRoute("/_app/security/audit-intelligence")({
   component: AuditIntelligencePage,
 });
 
-const reasonLabel: Record<AnomalyReason, string> = {
-  new_action_type: "Never done this before",
-  unusual_hour: "Unusual time of day",
-  new_ip: "New IP address",
-};
-
 function scoreBadge(score: number) {
   if (score >= 0.85) return <Badge variant="destructive">{score.toFixed(2)}</Badge>;
   if (score >= 0.7) return <Badge variant="secondary">{score.toFixed(2)}</Badge>;
@@ -63,6 +58,7 @@ function scoreBadge(score: number) {
 }
 
 function AuditIntelligencePage() {
+  const { t } = useTranslation("security");
   const [status, setStatus] = useState<"open" | "resolved">("open");
   const anomaliesQ = useAuditAnomalies(status);
   const summaryQ = useAuditAnomalySummary();
@@ -70,24 +66,20 @@ function AuditIntelligencePage() {
   const items = anomaliesQ.data?.items ?? [];
   const sm = summaryQ.data;
 
+  // Reason labels use translation lookups keyed by the AnomalyReason value
+  const getReasonLabel = (r: AnomalyReason): string =>
+    t(`auditIntelligence.reasonLabels.${r}`, { defaultValue: r });
+
   const summary = [
-    { label: "Open", value: sm?.open ?? 0, icon: <AlertTriangleIcon className="size-4" /> },
-    {
-      label: "High score (open)",
-      value: sm?.high_score_open ?? 0,
-      icon: <SparklesIcon className="size-4" />,
-    },
-    {
-      label: "Resolved (7d)",
-      value: sm?.resolved_7d ?? 0,
-      icon: <ShieldCheckIcon className="size-4" />,
-    },
+    { key: "open", value: sm?.open ?? 0, icon: <AlertTriangleIcon className="size-4" /> },
+    { key: "highScore", value: sm?.high_score_open ?? 0, icon: <SparklesIcon className="size-4" /> },
+    { key: "resolved7d", value: sm?.resolved_7d ?? 0, icon: <ShieldCheckIcon className="size-4" /> },
   ];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
-        description="Behavioral-baseline anomaly detection over the audit log: a first-time action type, an unusual hour, or a new IP for an admin's own history. Distinct from Threat Protection's Anomalies, which watches login/session signals."
+        description={t("auditIntelligence.description")}
         actions={
           <Button
             variant="outline"
@@ -99,16 +91,16 @@ function AuditIntelligencePage() {
             disabled={anomaliesQ.isFetching}
           >
             <RefreshCwIcon className={anomaliesQ.isFetching ? "animate-spin" : ""} />
-            Refresh
+            {t("auditIntelligence.refresh")}
           </Button>
         }
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {summary.map((s) => (
-          <Card key={s.label}>
+          <Card key={s.key}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardDescription>{s.label}</CardDescription>
+              <CardDescription>{t(`auditIntelligence.summary.${s.key}`)}</CardDescription>
               <span className="text-muted-foreground">{s.icon}</span>
             </CardHeader>
             <CardContent>
@@ -121,16 +113,16 @@ function AuditIntelligencePage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <div>
-            <CardTitle>Anomalies</CardTitle>
-            <CardDescription>Scored by a background sweep, newest first.</CardDescription>
+            <CardTitle>{t("auditIntelligence.anomalies.title")}</CardTitle>
+            <CardDescription>{t("auditIntelligence.anomalies.description")}</CardDescription>
           </div>
           <Select value={status} onValueChange={(v) => v && setStatus(v as "open" | "resolved")}>
             <SelectTrigger className="w-36">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="open">Open</SelectItem>
-              <SelectItem value="resolved">Resolved</SelectItem>
+              <SelectItem value="open">{t("auditIntelligence.anomalies.statusOpen")}</SelectItem>
+              <SelectItem value="resolved">{t("auditIntelligence.anomalies.statusResolved")}</SelectItem>
             </SelectContent>
           </Select>
         </CardHeader>
@@ -141,18 +133,22 @@ function AuditIntelligencePage() {
             error={anomaliesQ.error}
             isEmpty={items.length === 0}
             emptyIcon={BrainCircuitIcon}
-            emptyTitle={status === "open" ? "No open anomalies." : "Nothing resolved yet."}
+            emptyTitle={
+              status === "open"
+                ? t("auditIntelligence.anomalies.emptyOpen")
+                : t("auditIntelligence.anomalies.emptyResolved")
+            }
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Why it's flagged</TableHead>
-                  <TableHead>Score</TableHead>
-                  <TableHead>When</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  <TableHead>{t("auditIntelligence.anomalies.columns.action")}</TableHead>
+                  <TableHead>{t("auditIntelligence.anomalies.columns.actor")}</TableHead>
+                  <TableHead>{t("auditIntelligence.anomalies.columns.reason")}</TableHead>
+                  <TableHead>{t("auditIntelligence.anomalies.columns.score")}</TableHead>
+                  <TableHead>{t("auditIntelligence.anomalies.columns.when")}</TableHead>
+                  <TableHead className="text-right">{t("auditIntelligence.anomalies.columns.rowAction")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -173,7 +169,7 @@ function AuditIntelligencePage() {
                       )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {a.reasons.map((r) => reasonLabel[r] ?? r).join(", ")}
+                      {a.reasons.map((r) => getReasonLabel(r)).join(", ")}
                     </TableCell>
                     <TableCell>{scoreBadge(a.score)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
@@ -181,7 +177,9 @@ function AuditIntelligencePage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {a.status === "resolved" ? (
-                        <span className="text-xs text-muted-foreground">Resolved</span>
+                        <span className="text-xs text-muted-foreground">
+                          {t("auditIntelligence.anomalies.resolved")}
+                        </span>
                       ) : (
                         <Button
                           variant="ghost"
@@ -189,7 +187,7 @@ function AuditIntelligencePage() {
                           disabled={resolve.isPending}
                           onClick={() => resolve.mutate(a.id)}
                         >
-                          Resolve
+                          {t("auditIntelligence.anomalies.resolve")}
                         </Button>
                       )}
                     </TableCell>
@@ -208,6 +206,7 @@ function AuditIntelligencePage() {
 }
 
 function SettingsCard() {
+  const { t } = useTranslation("security");
   const settingsQ = useAuditAnomalySettings();
   const updateM = useUpdateAuditAnomalySettings();
   const [enabled, setEnabled] = useState(true);
@@ -226,15 +225,15 @@ function SettingsCard() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-4">
         <div>
-          <CardTitle className="text-base">Detection settings</CardTitle>
-          <CardDescription>Tune sensitivity for this tenant.</CardDescription>
+          <CardTitle className="text-base">{t("auditIntelligence.settings.title")}</CardTitle>
+          <CardDescription>{t("auditIntelligence.settings.description")}</CardDescription>
         </div>
         <Switch checked={enabled} onCheckedChange={setEnabled} />
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Field className="sm:w-48">
-            <FieldLabel htmlFor="threshold">Score threshold</FieldLabel>
+            <FieldLabel htmlFor="threshold">{t("auditIntelligence.settings.scoreThreshold")}</FieldLabel>
             <Input
               id="threshold"
               type="number"
@@ -246,7 +245,7 @@ function SettingsCard() {
             />
           </Field>
           <Field className="sm:w-48">
-            <FieldLabel htmlFor="min-events">Cold-start guard (events)</FieldLabel>
+            <FieldLabel htmlFor="min-events">{t("auditIntelligence.settings.coldStartGuard")}</FieldLabel>
             <Input
               id="min-events"
               type="number"
@@ -265,7 +264,7 @@ function SettingsCard() {
               })
             }
           >
-            Save
+            {t("auditIntelligence.settings.save")}
           </Button>
         </div>
         {updateM.error && (
@@ -277,20 +276,21 @@ function SettingsCard() {
 }
 
 function VerifyCard() {
+  const { t } = useTranslation("security");
   const verifyM = useVerifyAuditChain();
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Chain integrity</CardTitle>
-        <CardDescription>
-          Walk the tenant's hash-chained audit log and confirm no row has been tampered with.
-        </CardDescription>
+        <CardTitle className="text-base">{t("auditIntelligence.verify.title")}</CardTitle>
+        <CardDescription>{t("auditIntelligence.verify.description")}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div>
           <Button variant="outline" disabled={verifyM.isPending} onClick={() => verifyM.mutate()}>
-            {verifyM.isPending ? "Verifying…" : "Verify integrity"}
+            {verifyM.isPending
+              ? t("auditIntelligence.verify.verifying")
+              : t("auditIntelligence.verify.verify")}
           </Button>
         </div>
         {verifyM.data && (

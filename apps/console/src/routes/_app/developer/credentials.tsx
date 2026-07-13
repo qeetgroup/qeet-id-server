@@ -25,6 +25,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -40,6 +41,7 @@ import {
 export const Route = createFileRoute("/_app/developer/credentials")({ component: CredentialsPage });
 
 function CredentialsPage() {
+  const { t } = useTranslation("developer");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useCredentials();
   const issueM = useIssueCredential();
@@ -57,16 +59,13 @@ function CredentialsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
-      <PageHeader description="Issue W3C Verifiable Credentials as ES256-signed JWT-VCs (verifiable via the same JWKS) and revoke them. Relying parties verify a presented credential at POST /v1/credentials/verify." />
+      <PageHeader description={t("credentials.description")} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Issue a credential</CardTitle>
-            <CardDescription>
-              The subject is the credentialSubject id (user uuid, DID, or email). Claims is a JSON
-              object; TTL 0 = non-expiring.
-            </CardDescription>
+            <CardTitle className="text-base">{t("credentials.issue.title")}</CardTitle>
+            <CardDescription>{t("credentials.issue.description")}</CardDescription>
           </CardHeader>
           <CardContent>
             <form
@@ -79,7 +78,7 @@ function CredentialsPage() {
                   try {
                     parsed = JSON.parse(claims);
                   } catch {
-                    setClaimsErr("Claims must be valid JSON.");
+                    setClaimsErr(t("credentials.issue.claimsError"));
                     return;
                   }
                 }
@@ -97,27 +96,27 @@ function CredentialsPage() {
               }}
             >
               <Field>
-                <FieldLabel htmlFor="subject">Subject</FieldLabel>
+                <FieldLabel htmlFor="cred-subject">{t("credentials.issue.subject")}</FieldLabel>
                 <Input
-                  id="subject"
-                  placeholder="user uuid / did:… / email"
+                  id="cred-subject"
+                  placeholder={t("credentials.issue.subjectPlaceholder")}
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="type">Credential type</FieldLabel>
+                <FieldLabel htmlFor="cred-type">{t("credentials.issue.type")}</FieldLabel>
                 <Input
-                  id="type"
-                  placeholder="EmploymentCredential"
+                  id="cred-type"
+                  placeholder={t("credentials.issue.typePlaceholder")}
                   value={type}
                   onChange={(e) => setType(e.target.value)}
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="claims">Claims (JSON)</FieldLabel>
+                <FieldLabel htmlFor="cred-claims">{t("credentials.issue.claims")}</FieldLabel>
                 <Textarea
-                  id="claims"
+                  id="cred-claims"
                   rows={4}
                   className="font-mono text-xs"
                   value={claims}
@@ -128,9 +127,9 @@ function CredentialsPage() {
                 )}
               </Field>
               <Field className="sm:w-40">
-                <FieldLabel htmlFor="ttl">TTL (seconds)</FieldLabel>
+                <FieldLabel htmlFor="cred-ttl">{t("credentials.issue.ttl")}</FieldLabel>
                 <Input
-                  id="ttl"
+                  id="cred-ttl"
                   type="number"
                   min={0}
                   value={ttl}
@@ -142,14 +141,12 @@ function CredentialsPage() {
               )}
               <Button type="submit" disabled={issueM.isPending || !subject.trim() || !type.trim()}>
                 {issueM.isPending && <Loader2Icon className="animate-spin" />}
-                Issue
+                {t("credentials.issue.submit")}
               </Button>
             </form>
             {issued && (
               <div className="mt-4 flex flex-col gap-2 rounded-lg border border-amber-500/40 bg-amber-50/40 p-4 dark:bg-amber-950/20">
-                <p className="text-sm font-medium">
-                  Signed credential (JWT-VC) — give this to the subject:
-                </p>
+                <p className="text-sm font-medium">{t("credentials.issue.signedLabel")}</p>
                 <CopyableSecret value={issued.jwt} size="sm" />
               </div>
             )}
@@ -161,8 +158,8 @@ function CredentialsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Issued credentials</CardTitle>
-          <CardDescription>Registry of credentials issued by this tenant.</CardDescription>
+          <CardTitle className="text-base">{t("credentials.list.title")}</CardTitle>
+          <CardDescription>{t("credentials.list.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -171,7 +168,7 @@ function CredentialsPage() {
             error={listQ.error}
             isEmpty={items.length === 0}
             emptyIcon={BadgeCheckIcon}
-            emptyTitle="No credentials issued yet."
+            emptyTitle={t("credentials.list.empty")}
             skeletonRows={2}
           >
             <ul className="divide-y">
@@ -180,7 +177,7 @@ function CredentialsPage() {
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-medium">
                       {c.type}
-                      {c.revoked && <Badge variant="destructive">revoked</Badge>}
+                      {c.revoked && <Badge variant="destructive">{t("credentials.list.revoked")}</Badge>}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {c.subject} · issued <TimeSince value={c.issued_at} />
@@ -190,7 +187,7 @@ function CredentialsPage() {
                           · expires <TimeSince value={c.expires_at} />
                         </>
                       ) : (
-                        <> · no expiry</>
+                        <>{t("credentials.list.noExpiry")}</>
                       )}
                     </p>
                   </div>
@@ -201,14 +198,14 @@ function CredentialsPage() {
                       disabled={revokeM.isPending}
                       onClick={() =>
                         openConfirm({
-                          title: "Revoke this credential?",
+                          title: t("credentials.confirm.title"),
                           variant: "destructive",
-                          confirmLabel: "Revoke",
+                          confirmLabel: t("credentials.confirm.label"),
                           onConfirm: () => revokeM.mutate(c.id),
                         })
                       }
                     >
-                      <Trash2Icon /> Revoke
+                      <Trash2Icon /> {t("credentials.list.revokeButton")}
                     </Button>
                   )}
                 </li>
@@ -222,6 +219,7 @@ function CredentialsPage() {
 }
 
 function VerifyCard() {
+  const { t } = useTranslation("developer");
   const verifyM = useVerifyCredential();
   const [jwt, setJwt] = useState("");
   const result = verifyM.data;
@@ -229,10 +227,8 @@ function VerifyCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Verify a credential</CardTitle>
-        <CardDescription>
-          Paste a JWT-VC to check its signature, expiry, and revocation.
-        </CardDescription>
+        <CardTitle className="text-base">{t("credentials.verify.title")}</CardTitle>
+        <CardDescription>{t("credentials.verify.description")}</CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -251,7 +247,7 @@ function VerifyCard() {
           />
           <Button type="submit" variant="outline" disabled={verifyM.isPending || !jwt.trim()}>
             {verifyM.isPending && <Loader2Icon className="animate-spin" />}
-            Verify
+            {t("credentials.verify.submit")}
           </Button>
         </form>
         {result && (
@@ -260,12 +256,12 @@ function VerifyCard() {
               {result.valid ? (
                 <>
                   <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
-                  <Badge variant="success">valid</Badge>
+                  <Badge variant="success">{t("credentials.badge.valid")}</Badge>
                 </>
               ) : (
                 <>
                   <XCircleIcon className="text-destructive size-4" />
-                  <Badge variant="destructive">invalid</Badge>
+                  <Badge variant="destructive">{t("credentials.badge.invalid")}</Badge>
                   {result.reason && <span className="text-muted-foreground">{result.reason}</span>}
                 </>
               )}

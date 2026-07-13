@@ -457,7 +457,8 @@ func formatInterval(d time.Duration) string {
 }
 
 type Handler struct {
-	Service *Service
+	Service  *Service
+	Evidence *EvidenceService
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -468,6 +469,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/gdpr/export", h.createExport)
 	r.Get("/tenants/{tenantID}/gdpr/export", h.listExports)
 	r.Get("/tenants/{tenantID}/gdpr/export/{id}", h.getExport)
+
+	// Compliance evidence routes — SOC 2 and ISO 27001 live checks.
+	h.mountEvidence(r)
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {

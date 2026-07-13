@@ -18,6 +18,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MonitorSmartphoneIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -37,6 +38,7 @@ type Session = {
 };
 
 function SessionsPage() {
+  const { t } = useTranslation("security");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const qc = useQueryClient();
 
@@ -50,11 +52,13 @@ function SessionsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
 
+  const itemCount = sessionsQ.data?.items?.length ?? 0;
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="Every active and revoked session for your account. Revoking a session terminates the refresh token immediately."
+        description={t("sessions.description")}
         actions={
           <Button
             variant="outline"
@@ -63,16 +67,16 @@ function SessionsPage() {
             disabled={sessionsQ.isFetching}
           >
             <RefreshCwIcon className={sessionsQ.isFetching ? "animate-spin" : ""} />
-            Refresh
+            {t("sessions.refresh")}
           </Button>
         }
       />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Your sessions</CardTitle>
+          <CardTitle className="text-base">{t("sessions.list.title")}</CardTitle>
           <CardDescription>
-            {sessionsQ.data?.items?.length ?? 0} session{sessionsQ.data?.items?.length === 1 ? "" : "s"}
+            {t("sessions.list.count", { count: itemCount })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -82,19 +86,19 @@ function SessionsPage() {
             error={sessionsQ.error}
             isEmpty={!sessionsQ.data?.items?.length}
             emptyIcon={ShieldIcon}
-            emptyTitle="No sessions recorded."
+            emptyTitle={t("sessions.list.empty")}
             skeletonRows={3}
           >
             {sessionsQ.data && (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User agent</TableHead>
-                  <TableHead>IP</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Last seen</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("sessions.list.columns.userAgent")}</TableHead>
+                  <TableHead>{t("sessions.list.columns.ip")}</TableHead>
+                  <TableHead>{t("sessions.list.columns.created")}</TableHead>
+                  <TableHead>{t("sessions.list.columns.lastSeen")}</TableHead>
+                  <TableHead>{t("sessions.list.columns.status")}</TableHead>
+                  <TableHead className="text-right">{t("sessions.list.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -121,14 +125,14 @@ function SessionsPage() {
                         disabled={!!s.revoked_at || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: "Revoke this session?",
+                            title: t("sessions.confirm.revokeTitle"),
                             variant: "destructive",
-                            confirmLabel: "Revoke",
+                            confirmLabel: t("sessions.confirm.revokeLabel"),
                             onConfirm: () => revokeM.mutate(s.id),
                           })
                         }
                       >
-                        Revoke
+                        {t("sessions.list.revoke")}
                       </Button>
                     </TableCell>
                   </TableRow>

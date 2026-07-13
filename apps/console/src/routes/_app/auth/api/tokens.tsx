@@ -17,6 +17,7 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { KeyRoundIcon, Trash2Icon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -25,6 +26,7 @@ import { useOAuthGrants, useRevokeOAuthGrant } from "@/lib/oauth-grants";
 export const Route = createFileRoute("/_app/auth/api/tokens")({ component: TokensPage });
 
 function TokensPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const listQ = useOAuthGrants();
   const revokeM = useRevokeOAuthGrant();
@@ -33,13 +35,13 @@ function TokensPage() {
   return (
     <div className="flex min-w-0 flex-col gap-6">
       {confirmDialog}
-      <PageHeader description="Active OAuth / OIDC grants. Access tokens are short-lived JWTs that expire on their own; revoking a grant invalidates its refresh-token chain so it can't be renewed." />
+      <PageHeader description={t("tokens.description")} />
 
       <Card>
         <CardHeader>
-          <CardTitle>Active grants</CardTitle>
+          <CardTitle>{t("tokens.list.title")}</CardTitle>
           <CardDescription>
-            One row per (client, user) refresh-token grant. {items.length} active.
+            {t("tokens.list.count", { count: items.length })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -49,24 +51,24 @@ function TokensPage() {
             error={listQ.error}
             isEmpty={items.length === 0}
             emptyIcon={KeyRoundIcon}
-            emptyTitle="No active OAuth grants."
+            emptyTitle={t("tokens.list.empty")}
             skeletonRows={3}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Client</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Scopes</TableHead>
-                  <TableHead>Issued</TableHead>
-                  <TableHead>Expires</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("tokens.columns.client")}</TableHead>
+                  <TableHead>{t("tokens.columns.user")}</TableHead>
+                  <TableHead>{t("tokens.columns.scopes")}</TableHead>
+                  <TableHead>{t("tokens.columns.issued")}</TableHead>
+                  <TableHead>{t("tokens.columns.expires")}</TableHead>
+                  <TableHead className="text-right">{t("tokens.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {items.map((g) => (
                   <TableRow key={g.id}>
-                    <TableCell className="max-w-[200px] truncate font-mono text-xs">{g.client_id}</TableCell>
+                    <TableCell className="max-w-50 truncate font-mono text-xs">{g.client_id}</TableCell>
                     <TableCell>{g.user_email || g.user_id}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
@@ -89,15 +91,18 @@ function TokensPage() {
                         size="sm"
                         onClick={() =>
                           openConfirm({
-                            title: `Revoke ${g.user_email || "this user"}'s grant for ${g.client_id}?`,
+                            title: t("tokens.confirm.title", {
+                              user: g.user_email || t("tokens.confirm.thisUser"),
+                              client: g.client_id,
+                            }),
                             variant: "destructive",
-                            confirmLabel: "Revoke",
+                            confirmLabel: t("tokens.confirm.label"),
                             onConfirm: () => revokeM.mutate(g.id),
                           })
                         }
                         disabled={revokeM.isPending}
                       >
-                        <Trash2Icon /> Revoke
+                        <Trash2Icon /> {t("tokens.revoke")}
                       </Button>
                     </TableCell>
                   </TableRow>

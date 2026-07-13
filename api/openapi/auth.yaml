@@ -31,6 +31,8 @@ tags:
     description: Per-tenant security policy.
   - name: AuthZEN
     description: OpenID AuthZEN core evaluation API — a spec-shaped facade over RBAC/ReBAC for external policy-enforcement points.
+  - name: ABAC
+    description: Attribute-based access control — policy store (CRUD) and the PDP evaluate endpoint.
 paths:
   /v1/auth/forgot-password:
     post:
@@ -2825,6 +2827,231 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/policies:
+    get:
+      operationId: get_v1_tenants_ByTenantID_abac_policies
+      summary: List ABAC policies
+      description: Returns all ABAC policies for the tenant, ordered by priority desc then name.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_abac_policies
+      summary: Create ABAC policy
+      description: Creates a new ABAC policy for the tenant.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ABACPolicyCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/abac/policies/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_abac_policies_ById
+      summary: Get ABAC policy
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_abac_policies_ById
+      summary: Update ABAC policy
+      description: Replaces all mutable fields of a policy. Send the full desired state.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ABACPolicyCreate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_abac_policies_ById
+      summary: Delete ABAC policy
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/evaluate:
+    post:
+      operationId: post_v1_tenants_ByTenantID_abac_evaluate
+      summary: Evaluate ABAC policies
+      description: |
+        Runs the deny-wins ABAC evaluation algorithm against all enabled policies
+        that match the supplied resource type and action. Returns the decision and,
+        when ?explain=true, a trace of every policy evaluated.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: explain
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, the response includes a human-readable trace of each evaluated policy.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ABACEvaluateRequest'
+      responses:
+        '200':
+          description: Decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACDecision'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
 components:
   securitySchemes:
     bearerAuth:
@@ -3172,3 +3399,139 @@ components:
           type: string
         description:
           type: string
+    ABACPolicy:
+      type: object
+      description: One ABAC policy row.
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        effect:
+          type: string
+          enum:
+            - allow
+            - deny
+        resource_type:
+          type: string
+          description: Resource type matched by this policy; '*' matches any.
+        action:
+          type: string
+          description: Action matched by this policy; '*' matches any.
+        condition:
+          type: object
+          description: >-
+            Recursive JSON condition tree. An empty object {} means unconditional.
+            Logical nodes: {"all":[...]}, {"any":[...]}, {"not": node}.
+            Comparison leaf: {"attr":"subject.dept","op":"eq","value":"eng"}.
+          additionalProperties: true
+        priority:
+          type: integer
+          description: Higher priority is evaluated first; deny wins at any priority.
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ABACPolicyCreate:
+      type: object
+      required:
+        - name
+        - effect
+        - resource_type
+        - action
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        effect:
+          type: string
+          enum:
+            - allow
+            - deny
+        resource_type:
+          type: string
+          description: Resource type to match; '*' matches any resource type.
+          minLength: 1
+        action:
+          type: string
+          description: Action to match; '*' matches any action.
+          minLength: 1
+        condition:
+          type: object
+          description: Optional condition tree. Omit or send {} for unconditional.
+          additionalProperties: true
+        priority:
+          type: integer
+          default: 0
+          description: Higher priority policies are evaluated first.
+        enabled:
+          type: boolean
+          default: true
+    ABACEvaluateRequest:
+      type: object
+      required:
+        - action
+      description: Input for an ABAC policy evaluation. Subject/resource/context carry the attribute bags.
+      properties:
+        subject:
+          type: object
+          description: Subject (caller) attributes, e.g. {"id":"user:123","department":"eng"}.
+          additionalProperties: true
+        resource:
+          type: object
+          description: Resource attributes.
+          properties:
+            type:
+              type: string
+              description: Resource type, e.g. "document".
+            id:
+              type: string
+              description: Resource identifier.
+            attrs:
+              type: object
+              description: Additional resource attributes.
+              additionalProperties: true
+        action:
+          type: string
+          description: The action being attempted, e.g. "read".
+        context:
+          type: object
+          description: Request-context attributes, e.g. {"ip":"1.2.3.4","hour":14}.
+          additionalProperties: true
+    ABACDecision:
+      type: object
+      description: Result of an ABAC evaluation.
+      properties:
+        allow:
+          type: boolean
+          description: True when an allow policy matched and no deny policy matched.
+        effect:
+          type: string
+          enum:
+            - allow
+            - deny
+        matched_policy_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: ID of the policy that determined the outcome, if any.
+        reason:
+          type: string
+          description: Human-readable explanation of the decision.
+        trace:
+          type: array
+          description: Grant-path trace (present only when ?explain=true).
+          items:
+            type: string

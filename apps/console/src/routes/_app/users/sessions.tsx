@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@qeetrix/ui";
 import { MonitorSmartphoneIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -40,6 +41,7 @@ type Session = {
 };
 
 function UserSessionsPage() {
+  const { t } = useTranslation("users");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const qc = useQueryClient();
   const sessionsQ = useQuery({
@@ -55,19 +57,19 @@ function UserSessionsPage() {
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="Active sign-in sessions tracked under your user. The backend stores IP, User-Agent, and last-seen-at for each."
+        description={t("sessions.description")}
         actions={
           <Button variant="outline" size="sm" onClick={() => sessionsQ.refetch()} disabled={sessionsQ.isFetching}>
             <RefreshCwIcon className={sessionsQ.isFetching ? "animate-spin" : ""} />
-            Refresh
+            {t("sessions.refreshBtn")}
           </Button>
         }
       />
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Sessions</CardTitle>
+          <CardTitle className="text-base">{t("sessions.title")}</CardTitle>
           <CardDescription>
-            {sessionsQ.data?.items?.length ?? 0} session{sessionsQ.data?.items?.length === 1 ? "" : "s"}
+            {t("sessions.count", { count: sessionsQ.data?.items?.length ?? 0 })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -78,18 +80,18 @@ function UserSessionsPage() {
           ) : !sessionsQ.data?.items?.length ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <ShieldIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No sessions recorded.</p>
+              <p className="text-sm text-muted-foreground">{t("sessions.empty")}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User agent</TableHead>
-                  <TableHead>IP</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Last seen</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("sessions.colAgent")}</TableHead>
+                  <TableHead>{t("sessions.colIp")}</TableHead>
+                  <TableHead>{t("sessions.colCreated")}</TableHead>
+                  <TableHead>{t("sessions.colLastSeen")}</TableHead>
+                  <TableHead>{t("sessions.colStatus")}</TableHead>
+                  <TableHead className="text-right">{t("sessions.colActions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -103,7 +105,7 @@ function UserSessionsPage() {
                     <TableCell className="text-muted-foreground">{new Date(s.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-muted-foreground">{new Date(s.last_seen_at).toLocaleString()}</TableCell>
                     <TableCell>
-                      {s.revoked_at ? <Badge variant="destructive">Revoked</Badge> : <Badge variant="success">Active</Badge>}
+                      {s.revoked_at ? <Badge variant="destructive">{t("sessions.statusRevoked")}</Badge> : <Badge variant="success">{t("sessions.statusActive")}</Badge>}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -112,14 +114,14 @@ function UserSessionsPage() {
                         disabled={!!s.revoked_at || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: "Revoke this session?",
+                            title: t("sessions.confirmTitle"),
                             variant: "destructive",
-                            confirmLabel: "Revoke",
+                            confirmLabel: t("sessions.confirmLabel"),
                             onConfirm: () => revokeM.mutate(s.id),
                           })
                         }
                       >
-                        Revoke
+                        {t("sessions.revokeBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>

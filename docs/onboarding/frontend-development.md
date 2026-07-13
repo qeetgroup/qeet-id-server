@@ -13,7 +13,7 @@ Qeet ID has three frontend apps in a pnpm/Turborepo workspace. All are TypeScrip
 ## Setup
 
 ```bash
-nvm use v22.20.0   # required: Node ≥20.9
+nvm use            # required: Node ≥24 (from the repo .nvmrc)
 make install       # installs all workspace deps (pnpm install at root)
 ```
 

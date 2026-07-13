@@ -11,8 +11,8 @@ End-to-end tests that drive the full stack through a browser. These tests verify
 ## Prerequisites
 
 ```bash
-nvm use v22.20.0
 cd qeet-id
+nvm use   # reads .nvmrc (Node 24)
 make db-up migrate-up
 make seed              # seed demo data
 make dev               # starts all 3 apps + backend in parallel

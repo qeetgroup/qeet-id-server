@@ -15,6 +15,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2Icon, GlobeIcon, Loader2Icon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -30,6 +31,7 @@ import {
 export const Route = createFileRoute("/_app/organizations/domains")({ component: DomainsPage });
 
 function DomainsPage() {
+  const { t } = useTranslation("organizations");
   const domainsQ = useDomains();
   const addM = useAddDomain();
   const [newDomain, setNewDomain] = useState("");
@@ -37,12 +39,12 @@ function DomainsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="Prove ownership of your email domains to enable organization SSO and just-in-time provisioning. Add a DNS TXT record, then verify." />
+      <PageHeader description={t("domains.description")} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Add a domain</CardTitle>
-          <CardDescription>Enter the email domain your members use, e.g. acme.com.</CardDescription>
+          <CardTitle className="text-base">{t("domains.addCard.title")}</CardTitle>
+          <CardDescription>{t("domains.addCard.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -54,7 +56,7 @@ function DomainsPage() {
             }}
           >
             <Field className="flex-1">
-              <FieldLabel htmlFor="domain">Domain</FieldLabel>
+              <FieldLabel htmlFor="domain">{t("domains.addCard.label")}</FieldLabel>
               <Input
                 id="domain"
                 placeholder="acme.com"
@@ -64,7 +66,7 @@ function DomainsPage() {
             </Field>
             <Button type="submit" disabled={addM.isPending || !newDomain.trim()}>
               {addM.isPending && <Loader2Icon className="animate-spin" />}
-              Add domain
+              {t("domains.addCard.submit")}
             </Button>
           </form>
           {addM.error && (
@@ -79,8 +81,8 @@ function DomainsPage() {
         error={domainsQ.error}
         isEmpty={items.length === 0}
         emptyIcon={GlobeIcon}
-        emptyTitle="No domains added yet."
-        emptyDescription="Add a domain above to start the verification flow."
+        emptyTitle={t("domains.empty")}
+        emptyDescription={t("domains.emptyDescription")}
         skeletonRows={2}
       >
         <div className="flex flex-col gap-4">
@@ -94,6 +96,7 @@ function DomainsPage() {
 }
 
 function DomainCard({ domain }: { domain: TenantDomain }) {
+  const { t } = useTranslation("organizations");
   const verifyM = useVerifyDomain();
   const removeM = useRemoveDomain();
   const verified = !!domain.verified_at;
@@ -111,10 +114,10 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
               <span className="font-mono">{domain.domain}</span>
               {verified ? (
                 <Badge variant="success">
-                  <CheckCircle2Icon className="size-3" /> Verified
+                  <CheckCircle2Icon className="size-3" /> {t("domains.card.verified")}
                 </Badge>
               ) : (
-                <Badge variant="outline">Pending</Badge>
+                <Badge variant="outline">{t("domains.card.pending")}</Badge>
               )}
             </CardTitle>
           </div>
@@ -124,29 +127,26 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
             disabled={removeM.isPending}
             onClick={() =>
               openConfirm({
-                title: `Remove ${domain.domain}?`,
+                title: t("domains.card.removeTitleWithDomain", { domain: domain.domain }),
                 variant: "destructive",
-                confirmLabel: "Remove",
+                confirmLabel: t("domains.card.removeConfirm"),
                 onConfirm: () => removeM.mutate(domain.id),
               })
             }
           >
-            <Trash2Icon /> Remove
+            <Trash2Icon /> {t("domains.card.remove")}
           </Button>
         </div>
       </CardHeader>
       {!verified && (
         <CardContent className="flex flex-col gap-3">
-          <CardDescription>
-            Add this TXT record to your DNS, then click Verify. Changes can take a few minutes to
-            propagate.
-          </CardDescription>
+          <CardDescription>{t("domains.card.dnsInstructions")}</CardDescription>
           <div className="grid gap-2 sm:grid-cols-[auto_1fr]">
-            <span className="text-sm text-muted-foreground">Name</span>
+            <span className="text-sm text-muted-foreground">{t("domains.card.dnsName")}</span>
             <CopyableSecret value={domain.dns_record_name} size="sm" />
-            <span className="text-sm text-muted-foreground">Type</span>
+            <span className="text-sm text-muted-foreground">{t("domains.card.dnsType")}</span>
             <span className="font-mono text-sm">{domain.dns_record_type}</span>
-            <span className="text-sm text-muted-foreground">Value</span>
+            <span className="text-sm text-muted-foreground">{t("domains.card.dnsValue")}</span>
             <CopyableSecret value={domain.dns_record_value} size="sm" />
           </div>
           {verifyM.error && (
@@ -155,7 +155,7 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
           <div>
             <Button onClick={() => verifyM.mutate(domain.id)} disabled={verifyM.isPending}>
               {verifyM.isPending && <Loader2Icon className="animate-spin" />}
-              Verify
+              {t("domains.card.verify")}
             </Button>
           </div>
         </CardContent>

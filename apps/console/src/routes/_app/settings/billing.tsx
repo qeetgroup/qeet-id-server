@@ -25,6 +25,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -117,6 +118,7 @@ const PLANS = [
 ];
 
 function BillingPage() {
+  const { t } = useTranslation("settings");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const plansQ = usePlans();
   const subQ = useSubscription();
@@ -142,11 +144,11 @@ function BillingPage() {
     <div className="flex min-w-0 flex-col gap-6">
       {confirmDialog}
       <PageHeader
-        description="Your subscription plan, billed in your chosen currency. Invoices are generated each period."
+        description={t("billing.description")}
         actions={
           currencies.length > 0 ? (
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Currency</span>
+              <span className="text-sm text-muted-foreground">{t("billing.currency")}</span>
               <Select value={activeCurrency} onValueChange={setCurrency}>
                 <SelectTrigger className="w-27.5">
                   <SelectValue />
@@ -169,7 +171,7 @@ function BillingPage() {
         isError={plansQ.isError}
         error={plansQ.error}
         isEmpty={false}
-        emptyTitle="No plans configured."
+        emptyTitle={t("billing.empty")}
         skeletonRows={3}
       >
         {/* Current subscription */}
@@ -178,7 +180,7 @@ function BillingPage() {
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <CardTitle className="text-base">Current plan</CardTitle>
+                  <CardTitle className="text-base">{t("billing.currentPlan.title")}</CardTitle>
                   <CardDescription className="mt-1">
                     <span className="font-medium text-foreground">{sub.plan_name}</span>
                     {" · "}
@@ -186,7 +188,7 @@ function BillingPage() {
                   </CardDescription>
                   {sub.current_period_end && (
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {sub.cancel_at_period_end ? "Cancels" : "Renews"}{" "}
+                      {sub.cancel_at_period_end ? t("billing.currentPlan.cancels") : t("billing.currentPlan.renews")}{" "}
                       <TimeSince value={sub.current_period_end} />
                     </p>
                   )}
@@ -199,16 +201,16 @@ function BillingPage() {
                       size="sm"
                       onClick={() =>
                         openConfirm({
-                          title: "Cancel subscription?",
-                          description: "Access continues until the end of the current period.",
+                          title: t("billing.currentPlan.cancelConfirmTitle"),
+                          description: t("billing.currentPlan.cancelConfirmDescription"),
                           variant: "destructive",
-                          confirmLabel: "Cancel subscription",
+                          confirmLabel: t("billing.currentPlan.cancelConfirmLabel"),
                           onConfirm: () => cancelM.mutate(),
                         })
                       }
                       disabled={cancelM.isPending}
                     >
-                      Cancel plan
+                      {t("billing.currentPlan.cancelPlan")}
                     </Button>
                   )}
                 </div>
@@ -259,7 +261,7 @@ function BillingPage() {
                           variant="outline"
                           className="border-primary/40 text-[10px] text-primary"
                         >
-                          Current
+                          {t("billing.plan.current")}
                         </Badge>
                       )}
                     </div>
@@ -307,7 +309,7 @@ function BillingPage() {
                           href="mailto:sales@qeet.in"
                           className="underline underline-offset-2 hover:text-foreground"
                         >
-                          sales@qeet.in
+                          {t("billing.plan.salesEmail")}
                         </a>
                       </p>
                     </div>
@@ -320,7 +322,7 @@ function BillingPage() {
                         checkoutM.mutate({ plan_code: plan.code, currency: activeCurrency })
                       }
                     >
-                      {isCurrent ? "Current plan" : `Switch to ${plan.name}`}
+                      {isCurrent ? t("billing.plan.isCurrent") : t("billing.plan.switchTo", { name: plan.name })}
                     </Button>
                   )}
                 </CardContent>
@@ -332,8 +334,8 @@ function BillingPage() {
         {/* Invoices */}
         <Card>
           <CardHeader>
-            <CardTitle>Invoices</CardTitle>
-            <CardDescription>Generated at the start of each billing period.</CardDescription>
+            <CardTitle>{t("billing.invoices.title")}</CardTitle>
+            <CardDescription>{t("billing.invoices.description")}</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <DataState
@@ -341,17 +343,17 @@ function BillingPage() {
               isError={invoicesQ.isError}
               error={invoicesQ.error}
               isEmpty={(invoicesQ.data?.items?.length ?? 0) === 0}
-              emptyTitle="No invoices yet."
+              emptyTitle={t("billing.invoices.empty")}
               skeletonRows={2}
             >
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Issued</TableHead>
-                    <TableHead>Period</TableHead>
-                    <TableHead>Plan</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>{t("billing.invoices.columns.issued")}</TableHead>
+                    <TableHead>{t("billing.invoices.columns.period")}</TableHead>
+                    <TableHead>{t("billing.invoices.columns.plan")}</TableHead>
+                    <TableHead>{t("billing.invoices.columns.amount")}</TableHead>
+                    <TableHead>{t("billing.invoices.columns.status")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

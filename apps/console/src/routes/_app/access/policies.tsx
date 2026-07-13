@@ -23,6 +23,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
@@ -52,6 +53,7 @@ const empty: Policy = {
 };
 
 function PoliciesPage() {
+  const { t } = useTranslation("rbac");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Policy>(empty);
@@ -81,7 +83,7 @@ function PoliciesPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="Tenant-wide security policy. Applies to every login, every session, every API call against this tenant." />
+      <PageHeader description={t("policies.description")} />
 
       {policyQ.isLoading ? (
         <Card>
@@ -99,15 +101,13 @@ function PoliciesPage() {
         >
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Network policy</CardTitle>
-              <CardDescription>
-                IP allowlist takes precedence: if non-empty, only matching CIDRs may sign in. Denylist always blocks.
-              </CardDescription>
+              <CardTitle className="text-base">{t("policies.network.title")}</CardTitle>
+              <CardDescription>{t("policies.network.description")}</CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="ip_allowlist">IP allowlist (CIDR, one per line)</FieldLabel>
+                  <FieldLabel htmlFor="ip_allowlist">{t("policies.network.allowlistLabel")}</FieldLabel>
                   <Textarea
                     id="ip_allowlist"
                     rows={3}
@@ -120,10 +120,10 @@ function PoliciesPage() {
                     }
                     placeholder="10.0.0.0/8&#10;203.0.113.0/24"
                   />
-                  <FieldDescription>Empty = allow from anywhere (subject to denylist).</FieldDescription>
+                  <FieldDescription>{t("policies.network.allowlistHelp")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="ip_denylist">IP denylist (CIDR, one per line)</FieldLabel>
+                  <FieldLabel htmlFor="ip_denylist">{t("policies.network.denylistLabel")}</FieldLabel>
                   <Textarea
                     id="ip_denylist"
                     rows={3}
@@ -142,14 +142,14 @@ function PoliciesPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Password policy</CardTitle>
-              <CardDescription>Enforced at signup, password change, and password reset.</CardDescription>
+              <CardTitle className="text-base">{t("policies.password.title")}</CardTitle>
+              <CardDescription>{t("policies.password.description")}</CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field className="grid grid-cols-2 gap-4">
                   <Field>
-                    <FieldLabel htmlFor="password_min_length">Minimum length</FieldLabel>
+                    <FieldLabel htmlFor="password_min_length">{t("policies.password.minLengthLabel")}</FieldLabel>
                     <Input
                       id="password_min_length"
                       type="number"
@@ -160,16 +160,16 @@ function PoliciesPage() {
                     />
                   </Field>
                   <Field>
-                    <FieldLabel>Complexity</FieldLabel>
+                    <FieldLabel>{t("policies.password.complexityLabel")}</FieldLabel>
                     <Select
                       value={draft.password_complexity}
                       onValueChange={(v) => set("password_complexity", v ?? "")}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="basic">Basic — letters only</SelectItem>
-                        <SelectItem value="standard">Standard — mixed case + numbers</SelectItem>
-                        <SelectItem value="strict">Strict — also requires symbols</SelectItem>
+                        <SelectItem value="basic">{t("policies.password.complexityBasic")}</SelectItem>
+                        <SelectItem value="standard">{t("policies.password.complexityStandard")}</SelectItem>
+                        <SelectItem value="strict">{t("policies.password.complexityStrict")}</SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
@@ -180,13 +180,13 @@ function PoliciesPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Session policy</CardTitle>
-              <CardDescription>Affects new sessions only; existing sessions keep their original lifetime.</CardDescription>
+              <CardTitle className="text-base">{t("policies.session.title")}</CardTitle>
+              <CardDescription>{t("policies.session.description")}</CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="session_max_age">Maximum session age</FieldLabel>
+                  <FieldLabel htmlFor="session_max_age">{t("policies.session.maxAgeLabel")}</FieldLabel>
                   <Input
                     id="session_max_age"
                     value={draft.session_max_age}
@@ -201,26 +201,26 @@ function PoliciesPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">MFA enforcement</CardTitle>
-              <CardDescription>How aggressively users are pushed toward enrolling a second factor.</CardDescription>
+              <CardTitle className="text-base">{t("policies.mfa.title")}</CardTitle>
+              <CardDescription>{t("policies.mfa.description")}</CardDescription>
             </CardHeader>
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel>Mode</FieldLabel>
+                  <FieldLabel>{t("policies.mfa.modeLabel")}</FieldLabel>
                   <Select
                     value={draft.mfa_enforcement}
                     onValueChange={(v) => set("mfa_enforcement", v ?? "")}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="disabled">Disabled — users cannot enrol MFA</SelectItem>
-                      <SelectItem value="optional">Optional — users may enrol but aren&apos;t required</SelectItem>
-                      <SelectItem value="required">Required — block login until enrolled</SelectItem>
-                      <SelectItem value="admin_only">Admins only — require MFA for owner/admin roles</SelectItem>
+                      <SelectItem value="disabled">{t("policies.mfa.disabled")}</SelectItem>
+                      <SelectItem value="optional">{t("policies.mfa.optional")}</SelectItem>
+                      <SelectItem value="required">{t("policies.mfa.required")}</SelectItem>
+                      <SelectItem value="admin_only">{t("policies.mfa.adminOnly")}</SelectItem>
                     </SelectContent>
                   </Select>
-                  <FieldDescription>Note: this policy isn&apos;t enforced at login yet — only the separate risk-based step-up (adaptive MFA) applies today.</FieldDescription>
+                  <FieldDescription>{t("policies.mfa.noteHelp")}</FieldDescription>
                 </Field>
               </FieldGroup>
             </CardContent>
@@ -236,7 +236,7 @@ function PoliciesPage() {
 
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              {savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : "Unsaved changes"}
+              {savedAt ? t("policies.savedAt", { time: savedAt.toLocaleTimeString() }) : t("policies.unsaved")}
             </p>
             <div className="flex gap-2">
               <Button
@@ -245,12 +245,12 @@ function PoliciesPage() {
                 onClick={() => policyQ.data && setDraft({ ...empty, ...policyQ.data })}
                 disabled={saveM.isPending}
               >
-                Reset
+                {t("policies.resetBtn")}
               </Button>
               <Button type="submit" disabled={saveM.isPending}>
                 {saveM.isPending && <Loader2Icon className="animate-spin" />}
                 {saveM.isSuccess && !saveM.isPending && <CheckIcon />}
-                {saveM.isPending ? "Saving…" : "Save policy"}
+                {saveM.isPending ? t("policies.savingBtn") : t("policies.saveBtn")}
               </Button>
             </div>
           </div>

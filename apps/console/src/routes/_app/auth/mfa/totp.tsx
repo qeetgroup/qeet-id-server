@@ -18,7 +18,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { CheckIcon, CopyIcon, FingerprintIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react";
 import { toast } from "sonner";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -34,11 +35,24 @@ type ConfirmResult = { recovery_codes: string[] };
 type Stage = "idle" | "enrolling" | "confirmed";
 
 function MfaTotpPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const [stage, setStage] = useState<Stage>("idle");
   const [enrollment, setEnrollment] = useState<EnrollStart | null>(null);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [code, setCode] = useState("");
+  // Focus the OTP input when the enrolling stage becomes active.
+  // Replaces autoFocus (flagged by jsx-a11y/no-autofocus) with an explicit
+  // effect so focus transfers after the card animation settles.
+  const otpWrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (stage === "enrolling") {
+      const id = setTimeout(() => {
+        otpWrapperRef.current?.querySelector<HTMLInputElement>("input:not([disabled])")?.focus();
+      }, 50);
+      return () => clearTimeout(id);
+    }
+  }, [stage]);
 
   const startM = useMutation({
     mutationFn: () => api<EnrollStart>("/v1/mfa/totp/enroll/start", { method: "POST", body: {} }),
@@ -49,8 +63,8 @@ function MfaTotpPage() {
   });
 
   const confirmM = useMutation({
-    mutationFn: (code: string) =>
-      api<ConfirmResult>("/v1/mfa/totp/enroll/confirm", { method: "POST", body: { code } }),
+    mutationFn: (otpCode: string) =>
+      api<ConfirmResult>("/v1/mfa/totp/enroll/confirm", { method: "POST", body: { code: otpCode } }),
     onSuccess: (res) => {
       setRecoveryCodes(res.recovery_codes);
       setStage("confirmed");
@@ -74,10 +88,10 @@ function MfaTotpPage() {
   // Disabling TOTP is RequireRecentMFA-gated — retry after step-up on a 403.
   function disableTotp() {
     disableM.mutate(undefined, {
-      onSuccess: () => toast.success("TOTP disabled"),
+      onSuccess: () => toast.success(t("mfa.totp.toastDisabled")),
       onError: (err) => {
         if (isStepUpRequired(err)) setStepUpOpen(true);
-        else toast.error(err instanceof ApiError ? err.message : "Could not disable TOTP");
+        else toast.error(err instanceof ApiError ? err.message : t("mfa.totp.toastError"));
       },
     });
   }
@@ -85,29 +99,29 @@ function MfaTotpPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
-      <PageHeader description="Time-based One-Time Password (RFC 6238). Use any TOTP authenticator: 1Password, Authy, Google Authenticator, Microsoft Authenticator, etc." />
+      <PageHeader description={t("mfa.totp.description")} />
 
       {stage === "idle" && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base">TOTP authenticator</CardTitle>
-                <CardDescription>Not enrolled yet on this account.</CardDescription>
+                <CardTitle className="text-base">{t("mfa.totp.idle.title")}</CardTitle>
+                <CardDescription>{t("mfa.totp.idle.subtitle")}</CardDescription>
               </div>
               <FingerprintIcon className="size-6 text-muted-foreground" />
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>• Six-digit codes generated locally on your device every 30 seconds.</li>
-              <li>• You&apos;ll get 10 single-use recovery codes after enrollment.</li>
-              <li>• HMAC-SHA1, 30-second time step, ±1 step clock-drift tolerance.</li>
+              <li>{t("mfa.totp.idle.bullet1")}</li>
+              <li>{t("mfa.totp.idle.bullet2")}</li>
+              <li>{t("mfa.totp.idle.bullet3")}</li>
             </ul>
             {startM.error && <FieldError>{(startM.error as ApiError).message}</FieldError>}
             <Button onClick={() => startM.mutate()} disabled={startM.isPending}>
               {startM.isPending && <Loader2Icon className="animate-spin" />}
-              {startM.isPending ? "Generating secret…" : "Begin enrollment"}
+              {startM.isPending ? t("mfa.totp.idle.generatingBtn") : t("mfa.totp.idle.beginBtn")}
             </Button>
           </CardContent>
         </Card>
@@ -116,22 +130,22 @@ function MfaTotpPage() {
       {stage === "enrolling" && enrollment && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Scan or paste into your authenticator</CardTitle>
+            <CardTitle className="text-base">{t("mfa.totp.enrolling.title")}</CardTitle>
             <CardDescription>
-              Add this entry, then enter the 6-digit code your app shows to confirm.
+              {t("mfa.totp.enrolling.subtitle")}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
               <Field>
-                <FieldLabel>otpauth:// URI</FieldLabel>
+                <FieldLabel>{t("mfa.totp.enrolling.uriLabel")}</FieldLabel>
                 <CopyableSecret value={enrollment.provisioning_url} size="sm" />
                 <FieldDescription>
                   Most authenticators support pasting this URL. Or generate a QR from it via your password manager.
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel>Manual secret (base32)</FieldLabel>
+                <FieldLabel>{t("mfa.totp.enrolling.secretLabel")}</FieldLabel>
                 <CopyableSecret value={enrollment.secret} size="sm" />
                 <FieldDescription>Use this if your app asks for a raw shared secret instead.</FieldDescription>
               </Field>
@@ -144,15 +158,16 @@ function MfaTotpPage() {
                 className="contents"
               >
                 <Field>
-                  <FieldLabel>Verification code</FieldLabel>
-                  <OTPInput
-                    value={code}
-                    onChange={setCode}
-                    onComplete={(v) => confirmM.mutate(v)}
-                    autoFocus
-                    aria-label="TOTP verification code"
-                    aria-invalid={!!confirmM.error}
-                  />
+                  <FieldLabel>{t("mfa.totp.enrolling.codeLabel")}</FieldLabel>
+                  <div ref={otpWrapperRef}>
+                    <OTPInput
+                      value={code}
+                      onChange={setCode}
+                      onComplete={(v) => confirmM.mutate(v)}
+                      aria-label={t("mfa.totp.enrolling.codeAriaLabel")}
+                      aria-invalid={!!confirmM.error}
+                    />
+                  </div>
                   <FieldDescription>
                     Six digits — paste the full code or type one digit at a time.
                   </FieldDescription>
@@ -160,11 +175,11 @@ function MfaTotpPage() {
                 {confirmM.error && <Field><FieldError>{(confirmM.error as ApiError).message}</FieldError></Field>}
                 <Field className="flex flex-row justify-end gap-2">
                   <Button type="button" variant="outline" onClick={() => { setStage("idle"); setCode(""); }}>
-                    Cancel
+                    {t("mfa.totp.enrolling.cancelBtn")}
                   </Button>
                   <Button type="submit" disabled={confirmM.isPending || code.length !== 6}>
                     {confirmM.isPending && <Loader2Icon className="animate-spin" />}
-                    {confirmM.isPending ? "Verifying…" : "Confirm"}
+                    {confirmM.isPending ? t("mfa.totp.enrolling.verifyingBtn") : t("mfa.totp.enrolling.confirmBtn")}
                   </Button>
                 </Field>
               </form>
@@ -179,8 +194,10 @@ function MfaTotpPage() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-base">TOTP enrolled <Badge variant="success" className="ml-2">Active</Badge></CardTitle>
-                  <CardDescription>You&apos;ll be asked for a code on every future sign-in.</CardDescription>
+                  <CardTitle className="text-base">
+                    {t("mfa.totp.confirmed.title")} <Badge variant="success" className="ml-2">{t("mfa.totp.confirmed.activeBadge")}</Badge>
+                  </CardTitle>
+                  <CardDescription>{t("mfa.totp.confirmed.subtitle")}</CardDescription>
                 </div>
                 <ShieldCheckIcon className="size-6 text-emerald-600 dark:text-emerald-400" />
               </div>
@@ -188,15 +205,15 @@ function MfaTotpPage() {
           </Card>
           <Card className="border-amber-500/40 bg-amber-50/30 dark:bg-amber-950/20">
             <CardHeader>
-              <CardTitle className="text-base">Save these recovery codes</CardTitle>
+              <CardTitle className="text-base">{t("mfa.totp.confirmed.recoveryTitle")}</CardTitle>
               <CardDescription>
-                Each code is single-use. We&apos;ll never show them again — store them in your password manager.
+                {t("mfa.totp.confirmed.recoveryDescription")}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-2 font-mono text-sm">
-                {recoveryCodes.map((c) => (
-                  <code key={c} className="rounded-md border bg-background px-3 py-2 text-center">{c}</code>
+                {recoveryCodes.map((rc) => (
+                  <code key={rc} className="rounded-md border bg-background px-3 py-2 text-center">{rc}</code>
                 ))}
               </div>
               <div className="mt-4 flex gap-2">
@@ -204,23 +221,23 @@ function MfaTotpPage() {
                   variant="outline"
                   onClick={() => navigator.clipboard.writeText(recoveryCodes.join("\n"))}
                 >
-                  <CopyIcon /> Copy all
+                  <CopyIcon /> {t("mfa.totp.confirmed.copyAllBtn")}
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() =>
                     openConfirm({
-                      title: "Disable TOTP for your account?",
-                      description: "Recovery codes will be wiped.",
+                      title: t("mfa.totp.confirmed.disableConfirmTitle"),
+                      description: t("mfa.totp.confirmed.disableConfirmDescription"),
                       variant: "destructive",
-                      confirmLabel: "Disable TOTP",
+                      confirmLabel: t("mfa.totp.confirmed.disableConfirmLabel"),
                       onConfirm: disableTotp,
                     })
                   }
                   disabled={disableM.isPending}
                 >
                   {disableM.isPending && <Loader2Icon className="animate-spin" />}
-                  Disable TOTP
+                  {t("mfa.totp.confirmed.disableBtn")}
                 </Button>
               </div>
             </CardContent>
@@ -233,7 +250,7 @@ function MfaTotpPage() {
       <StepUpDialog
         open={stepUpOpen}
         onOpenChange={setStepUpOpen}
-        actionLabel="disable TOTP"
+        actionLabel={t("mfa.totp.stepUpLabel")}
         onVerified={disableTotp}
       />
     </div>

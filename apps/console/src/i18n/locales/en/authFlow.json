@@ -1,0 +1,63 @@
+{
+  "signIn": {
+    "mfa": {
+      "title": "Two-factor authentication",
+      "subtitle": "Enter the 6-digit code from your authenticator app, or a recovery code.",
+      "codeLabel": "Verification code",
+      "verifyingBtn": "Verifying…",
+      "verifyBtn": "Verify"
+    }
+  },
+  "forgotPassword": {
+    "title": "Reset your password",
+    "subtitle": "Enter the email address tied to your Qeet ID account and we'll send you a reset link.",
+    "emailLabel": "Email",
+    "sendingBtn": "Sending reset link…",
+    "sendBtn": "Send reset link",
+    "rememberedIt": "Remembered it?",
+    "backToSignIn": "Back to sign in",
+    "successTitle": "Check your inbox",
+    "successText": "If an account exists for that email, we've sent a one-time reset link. The link expires in 60 minutes.",
+    "successResend": "Didn't get it? Check spam, or",
+    "successResendLink": "try again",
+    "successBackBtn": "Back to sign in"
+  },
+  "magic": {
+    "missingTitle": "Missing token",
+    "missingText": "This link doesn't carry a sign-in token. If you got here via a recently-sent email, try copying the URL directly from the message body.",
+    "backToSignIn": "Back to sign in",
+    "loadingTitle": "Signing you in…",
+    "loadingText": "Verifying your one-time sign-in link.",
+    "successTitle": "Welcome back",
+    "successText": "Redirecting to your dashboard…",
+    "expiredTitle": "Link no longer valid",
+    "expiredText": "This link was either already used or has expired. Magic links work once and last 60 minutes.",
+    "errorTitle": "Couldn't sign you in",
+    "sendNewLink": "Send a new link"
+  },
+  "invite": {
+    "invalidTitle": "Invalid invite link",
+    "invalidDescription": "This link is missing its token. Ask your workspace admin to resend the invite.",
+    "backToSignIn": "Back to sign in",
+    "acceptTitle": "Accept your invite",
+    "acceptDescription": "Set a password to finish joining the workspace — you'll be signed in afterwards.",
+    "displayNameLabel": "Display name",
+    "displayNamePlaceholder": "How you'd like to be addressed",
+    "passwordLabel": "Password",
+    "passwordHelp": "At least 8 characters.",
+    "joiningBtn": "Joining…",
+    "acceptBtn": "Accept invite"
+  },
+  "sso": {
+    "noCodeTitle": "No sign-in code",
+    "noCodeText": "This page completes a SAML single sign-on. Start the flow from your identity provider, or sign in directly.",
+    "backToSignIn": "Back to sign in",
+    "loadingTitle": "Signing you in…",
+    "loadingText": "Completing single sign-on.",
+    "successTitle": "Signed in",
+    "successText": "Redirecting to your dashboard…",
+    "errorTitle": "Couldn't complete sign-in",
+    "errorTrailer": "The code is single-use and short-lived — start the SSO flow again from your identity provider.",
+    "tryAgain": "Try again"
+  }
+}

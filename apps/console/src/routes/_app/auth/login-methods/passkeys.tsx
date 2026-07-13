@@ -18,6 +18,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { startRegistration } from "@simplewebauthn/browser";
 import { FingerprintIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -35,6 +36,7 @@ type Passkey = {
 };
 
 function PasskeysPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const qc = useQueryClient();
 
@@ -57,7 +59,7 @@ function PasskeysPage() {
         publicKey: Parameters<typeof startRegistration>[0]["optionsJSON"];
       }>("/v1/passkeys/register/begin", { method: "POST" });
       const credential = await startRegistration({ optionsJSON: begin.publicKey });
-      const name = window.prompt("Name this passkey", "My passkey")?.trim() || undefined;
+      const name = window.prompt(t("loginMethods.passkeys.promptName"), t("loginMethods.passkeys.promptDefault"))?.trim() || undefined;
       await api<void>("/v1/passkeys/register/finish", {
         method: "POST",
         body: { session_id: begin.session_id, credential, name },
@@ -71,15 +73,15 @@ function PasskeysPage() {
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="WebAuthn / FIDO2 credentials registered against your account. Biometric, hardware key, and synced passkeys are all stored here."
+        description={t("loginMethods.passkeys.description")}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("loginMethods.passkeys.refreshBtn")}
             </Button>
             <Button size="sm" onClick={() => registerM.mutate()} disabled={registerM.isPending}>
-              <PlusIcon /> {registerM.isPending ? "Registering…" : "Register passkey"}
+              <PlusIcon /> {registerM.isPending ? t("loginMethods.passkeys.registeringBtn") : t("loginMethods.passkeys.registerBtn")}
             </Button>
           </>
         }
@@ -87,9 +89,9 @@ function PasskeysPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Your passkeys</CardTitle>
+          <CardTitle className="text-base">{t("loginMethods.passkeys.list.title")}</CardTitle>
           <CardDescription>
-            {listQ.data?.items?.length ?? 0} passkey{listQ.data?.items?.length === 1 ? "" : "s"} on file
+            {t("loginMethods.passkeys.list.count", { count: listQ.data?.items?.length ?? 0 })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -100,17 +102,17 @@ function PasskeysPage() {
           ) : !listQ.data?.items?.length ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <FingerprintIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No passkeys registered yet.</p>
+              <p className="text-sm text-muted-foreground">{t("loginMethods.passkeys.list.empty")}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Transports</TableHead>
-                  <TableHead>Last used</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("loginMethods.passkeys.columns.name")}</TableHead>
+                  <TableHead>{t("loginMethods.passkeys.columns.transports")}</TableHead>
+                  <TableHead>{t("loginMethods.passkeys.columns.lastUsed")}</TableHead>
+                  <TableHead>{t("loginMethods.passkeys.columns.created")}</TableHead>
+                  <TableHead className="text-right">{t("loginMethods.passkeys.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -119,11 +121,11 @@ function PasskeysPage() {
                     <TableCell className="font-medium">{p.name}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {(p.transports ?? []).map((t) => <Badge key={t} variant="muted">{t}</Badge>)}
+                        {(p.transports ?? []).map((transport) => <Badge key={transport} variant="muted">{transport}</Badge>)}
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {p.last_used_at ? new Date(p.last_used_at).toLocaleString() : "Never"}
+                      {p.last_used_at ? new Date(p.last_used_at).toLocaleString() : t("loginMethods.passkeys.lastUsedNever")}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</TableCell>
                     <TableCell className="text-right">
@@ -132,15 +134,15 @@ function PasskeysPage() {
                         size="sm"
                         onClick={() =>
                           openConfirm({
-                            title: `Remove passkey "${p.name}"?`,
+                            title: t("loginMethods.passkeys.confirm.title", { name: p.name }),
                             variant: "destructive",
-                            confirmLabel: "Remove",
+                            confirmLabel: t("loginMethods.passkeys.confirm.label"),
                             onConfirm: () => deleteM.mutate(p.id),
                           })
                         }
                         disabled={deleteM.isPending}
                       >
-                        <Trash2Icon /> Remove
+                        <Trash2Icon /> {t("loginMethods.passkeys.removeBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>

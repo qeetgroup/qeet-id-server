@@ -1,4 +1,171 @@
 {
+  "roles": {
+    "description": "RBAC roles scoped to this tenant. Assign permissions per role; users get the union of permissions across all roles they hold.",
+    "refreshBtn": "Refresh",
+    "newButton": "New role",
+    "list": {
+      "title": "Roles",
+      "count_one": "{{filtered}} of {{total}} role",
+      "count_other": "{{filtered}} of {{total}} roles",
+      "searchPlaceholder": "Search name or description…",
+      "filterTypeLabel": "Type",
+      "filterSystem": "System",
+      "filterCustom": "Custom",
+      "colDescription": "Description",
+      "colCreated": "Created",
+      "columnName": "Name",
+      "columnType": "Type",
+      "columnActions": "Actions",
+      "typeSystem": "System",
+      "typeCustom": "Custom",
+      "empty": "No roles defined.",
+      "emptyFiltered": "No roles match your filters.",
+      "permissionsBtn": "Permissions"
+    },
+    "platformPerms": {
+      "title": "Platform permissions",
+      "description": "The global permission keys available for assignment to any role."
+    },
+    "create": {
+      "title": "New role",
+      "description": "Create a custom role for this tenant. Assign permissions afterwards.",
+      "nameLabel": "Name",
+      "descLabel": "Description",
+      "cancelBtn": "Cancel",
+      "createBtn": "Create",
+      "creatingBtn": "Creating…"
+    },
+    "permsSheet": {
+      "title": "Permissions — {{name}}",
+      "description": "Toggle to grant or revoke. Changes apply immediately to every user holding this role.",
+      "closeBtn": "Close"
+    },
+    "detail": {
+      "backLink": "Back to roles",
+      "notFound": "Role not found",
+      "noDescription": "No description.",
+      "systemBadge": "System",
+      "granted": {
+        "title": "Granted permissions",
+        "count_one": "{{count}} permission held by this role.",
+        "count_other": "{{count}} permissions held by this role.",
+        "empty": "No permissions granted yet.",
+        "colKey": "Key",
+        "colDescription": "Description",
+        "colActions": "Actions",
+        "revokeBtn": "Revoke",
+        "confirmTitle": "Revoke \"{{key}}\" from this role?",
+        "confirmLabel": "Revoke"
+      },
+      "available": {
+        "title": "Available permissions",
+        "description": "Permissions you can add to this role. Granting takes effect immediately.",
+        "empty": "Every permission is already granted to this role.",
+        "colKey": "Key",
+        "colDescription": "Description",
+        "colActions": "Actions",
+        "grantBtn": "Grant"
+      }
+    }
+  },
+  "permissions": {
+    "description": "The complete catalogue of permission keys you can grant to roles. These are global to the platform; bindings to roles live under each tenant.",
+    "empty": "No permissions registered yet.",
+    "noDescription": "No description",
+    "count_one": "{{count}} permission",
+    "count_other": "{{count}} permissions"
+  },
+  "policies": {
+    "description": "Tenant-wide security policy. Applies to every login, every session, every API call against this tenant.",
+    "network": {
+      "title": "Network policy",
+      "description": "IP allowlist takes precedence: if non-empty, only matching CIDRs may sign in. Denylist always blocks.",
+      "allowlistLabel": "IP allowlist (CIDR, one per line)",
+      "allowlistHelp": "Empty = allow from anywhere (subject to denylist).",
+      "denylistLabel": "IP denylist (CIDR, one per line)"
+    },
+    "password": {
+      "title": "Password policy",
+      "description": "Enforced at signup, password change, and password reset.",
+      "minLengthLabel": "Minimum length",
+      "complexityLabel": "Complexity",
+      "complexityBasic": "Basic — letters only",
+      "complexityStandard": "Standard — mixed case + numbers",
+      "complexityStrict": "Strict — also requires symbols"
+    },
+    "session": {
+      "title": "Session policy",
+      "description": "Affects new sessions only; existing sessions keep their original lifetime.",
+      "maxAgeLabel": "Maximum session age"
+    },
+    "mfa": {
+      "title": "MFA enforcement",
+      "description": "How aggressively users are pushed toward enrolling a second factor.",
+      "modeLabel": "Mode",
+      "disabled": "Disabled — users cannot enrol MFA",
+      "optional": "Optional — users may enrol but aren't required",
+      "required": "Required — block login until enrolled",
+      "adminOnly": "Admins only — require MFA for owner/admin roles",
+      "noteHelp": "Note: this policy isn't enforced at login yet — only the separate risk-based step-up (adaptive MFA) applies today."
+    },
+    "savedAt": "Saved {{time}}",
+    "unsaved": "Unsaved changes",
+    "resetBtn": "Reset",
+    "savingBtn": "Saving…",
+    "saveBtn": "Save policy"
+  },
+  "relationships": {
+    "description": "Fine-grained, relationship-based access (ReBAC). Tuples assert \"object relation subject\"; a check resolves direct grants and usersets (e.g. group:eng#member) recursively. Complements roles (RBAC) and policies (ABAC).",
+    "write": {
+      "title": "Write a tuple",
+      "objectLabel": "Object",
+      "relationLabel": "Relation",
+      "subjectLabel": "Subject",
+      "subjectHelp": "A user, or a userset (object#relation).",
+      "writeBtn": "Write tuple"
+    },
+    "check": {
+      "title": "Check access",
+      "description": "Does a user have a relation on an object? (resolves usersets)",
+      "objectLabel": "Object",
+      "relationLabel": "Relation",
+      "userLabel": "User ID",
+      "checkBtn": "Check"
+    },
+    "tuples": {
+      "title": "Tuples on an object",
+      "description": "Enter an object to list its relationship tuples.",
+      "empty": "No tuples on this object.",
+      "deleteBtn": "Delete"
+    },
+    "graph": {
+      "title": "Identity Graph",
+      "description": "Expand all subjects reachable from an object+relation — a privilege-path graph showing who/what can reach a resource and through which chain of relationships.",
+      "expandBtn": "Expand",
+      "empty": "No relationships found from this object+relation.",
+      "objectAriaLabel": "Object",
+      "relationAriaLabel": "Relation",
+      "svgAriaLabel": "Identity relationship graph"
+    }
+  },
+  "resources": {
+    "description": "The protected resources RBAC permissions are scoped to. Derived from the permission catalogue — each resource exposes a set of actions you can grant to roles.",
+    "stats": {
+      "resources": "Resources",
+      "actions": "Actions",
+      "keys": "Permission keys"
+    },
+    "catalogue": {
+      "title": "Resource catalogue",
+      "description": "One row per resource, with the actions it exposes.",
+      "empty": "No permissions registered, so no resources to show."
+    },
+    "columns": {
+      "resource": "Resource",
+      "actions": "Actions",
+      "count": "Count"
+    }
+  },
   "check": {
     "title": "Access Tester",
     "description": "Evaluate a permission for a specific user and see exactly why access is granted or denied — including which role granted it and whether it came directly or through a group.",

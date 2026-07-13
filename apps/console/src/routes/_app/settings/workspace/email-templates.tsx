@@ -16,6 +16,7 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import {
@@ -32,15 +33,16 @@ export const Route = createFileRoute("/_app/settings/workspace/email-templates")
 });
 
 function EmailTemplatesPage() {
+  const { t } = useTranslation("settings");
   const listQ = useEmailTemplates();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const items = listQ.data?.items ?? [];
-  const selected = items.find((t) => t.key === selectedKey) ?? items[0];
+  const selected = items.find((item) => item.key === selectedKey) ?? items[0];
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="Customise the transactional emails Qeet ID sends. Unedited templates use the built-in defaults." />
+      <PageHeader description={t("workspace.emailTemplates.description")} />
       <DataState
         isLoading={listQ.isLoading}
         isError={listQ.isError}
@@ -51,22 +53,22 @@ function EmailTemplatesPage() {
         <div className="grid gap-4 md:grid-cols-[260px_1fr]">
           <Card className="h-fit">
             <CardHeader>
-              <CardTitle className="text-base">Templates</CardTitle>
+              <CardTitle className="text-base">{t("workspace.emailTemplates.listTitle")}</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-1 p-2">
-              {items.map((t) => {
-                const active = selected?.key === t.key;
+              {items.map((item) => {
+                const active = selected?.key === item.key;
                 return (
                   <button
-                    key={t.key}
+                    key={item.key}
                     type="button"
-                    onClick={() => setSelectedKey(t.key)}
+                    onClick={() => setSelectedKey(item.key)}
                     className={`flex items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors ${
                       active ? "bg-secondary text-secondary-foreground" : "hover:bg-muted"
                     }`}
                   >
-                    <span>{t.name}</span>
-                    {t.custom && <Badge variant="muted">custom</Badge>}
+                    <span>{item.name}</span>
+                    {item.custom && <Badge variant="muted">{t("workspace.emailTemplates.custom")}</Badge>}
                   </button>
                 );
               })}
@@ -81,6 +83,7 @@ function EmailTemplatesPage() {
 }
 
 function Editor({ template }: { template: EmailTemplate }) {
+  const { t } = useTranslation("settings");
   const upsertM = useUpsertEmailTemplate();
   const resetM = useResetEmailTemplate();
   const previewM = usePreviewEmailTemplate();
@@ -102,22 +105,22 @@ function Editor({ template }: { template: EmailTemplate }) {
             <CardDescription>{template.description}</CardDescription>
           </div>
           <StatusPill kind={template.custom ? "info" : "muted"}>
-            {template.custom ? "Customised" : "Default"}
+            {template.custom ? t("workspace.emailTemplates.editor.customised") : t("workspace.emailTemplates.editor.default")}
           </StatusPill>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <Field>
-          <FieldLabel htmlFor="subject">Subject</FieldLabel>
+          <FieldLabel htmlFor="subject">{t("workspace.emailTemplates.editor.subject")}</FieldLabel>
           <Input id="subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
         </Field>
         <Field>
-          <FieldLabel htmlFor="body">Body</FieldLabel>
+          <FieldLabel htmlFor="body">{t("workspace.emailTemplates.editor.body")}</FieldLabel>
           <Textarea id="body" rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
         </Field>
 
         <Field>
-          <FieldLabel>Variables</FieldLabel>
+          <FieldLabel>{t("workspace.emailTemplates.editor.variables")}</FieldLabel>
           <div className="flex flex-wrap gap-1">
             {template.variables.map((v) => (
               <Badge key={v} variant="outline" className="font-mono text-xs">
@@ -125,10 +128,10 @@ function Editor({ template }: { template: EmailTemplate }) {
               </Badge>
             ))}
             {template.variables.length === 0 && (
-              <span className="text-xs text-muted-foreground">No variables.</span>
+              <span className="text-xs text-muted-foreground">{t("workspace.emailTemplates.editor.noVariables")}</span>
             )}
           </div>
-          <FieldDescription>Insert these placeholders; they&apos;re filled in when the email is sent.</FieldDescription>
+          <FieldDescription>{t("workspace.emailTemplates.editor.variablesHelp")}</FieldDescription>
         </Field>
 
         {previewM.data && (
@@ -140,20 +143,20 @@ function Editor({ template }: { template: EmailTemplate }) {
 
         <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={preview} disabled={previewM.isPending}>
-            Preview
+            {t("workspace.emailTemplates.editor.preview")}
           </Button>
           <Button
             variant="outline"
             onClick={() => resetM.mutate(template.key)}
             disabled={resetM.isPending || !template.custom}
           >
-            Reset to default
+            {t("workspace.emailTemplates.editor.resetToDefault")}
           </Button>
           <Button
             onClick={() => upsertM.mutate({ key: template.key, subject, body })}
             disabled={upsertM.isPending || !dirty}
           >
-            {upsertM.isPending ? "Saving…" : "Save template"}
+            {upsertM.isPending ? t("workspace.emailTemplates.editor.saving") : t("workspace.emailTemplates.editor.save")}
           </Button>
         </div>
       </CardContent>

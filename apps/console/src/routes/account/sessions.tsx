@@ -24,6 +24,7 @@ import {
   TabletIcon,
 } from "lucide-react";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api, tokenStore } from "@/lib/api";
@@ -96,6 +97,7 @@ function getCurrentSessionId(): string | null {
 }
 
 function SessionsPage() {
+  const { t } = useTranslation("account");
   const userId = tokenStore.getUserId();
   const qc = useQueryClient();
   const currentSessionId = useMemo(() => getCurrentSessionId(), []);
@@ -129,7 +131,7 @@ function SessionsPage() {
       ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["account-sessions"] }),
-    meta: { successMessage: "Session revoked" },
+    meta: { successMessage: t("sessions.toast.revoked") },
   });
 
   const revokeAllOtherM = useMutation({
@@ -168,124 +170,119 @@ function SessionsPage() {
     <>
       {confirmDialog}
       <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle className="text-base">Active sessions</CardTitle>
-          <CardDescription>
-            Every place you&apos;re currently signed in. Revoke any session you don&apos;t
-            recognise.
-          </CardDescription>
-        </div>
-        {otherActive.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={revokeAllOtherM.isPending}
-            onClick={() =>
-              openConfirm({
-                title: `Sign out ${otherActive.length} other session${otherActive.length === 1 ? "" : "s"}?`,
-                description: "This won't sign you out of this browser.",
-                variant: "destructive",
-                confirmLabel: "Sign out elsewhere",
-                onConfirm: () => revokeAllOtherM.mutate(otherActive),
-              })
-            }
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">{t("sessions.active.title")}</CardTitle>
+            <CardDescription>{t("sessions.active.description")}</CardDescription>
+          </div>
+          {otherActive.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={revokeAllOtherM.isPending}
+              onClick={() =>
+                openConfirm({
+                  title: t("sessions.revokeAll.title", { count: otherActive.length }),
+                  description: t("sessions.revokeAll.description"),
+                  variant: "destructive",
+                  confirmLabel: t("sessions.revokeAll.label"),
+                  onConfirm: () => revokeAllOtherM.mutate(otherActive),
+                })
+              }
+            >
+              {t("sessions.active.signOutElsewhere", { count: otherActive.length })}
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="p-0">
+          <DataState
+            isLoading={sessionsQ.isLoading}
+            isError={sessionsQ.isError}
+            error={sessionsQ.error}
+            isEmpty={items.filter((s) => !s.revoked_at).length === 0}
+            emptyIcon={MonitorSmartphoneIcon}
+            emptyTitle={t("sessions.active.emptyTitle")}
+            skeletonRows={3}
           >
-            Sign out elsewhere ({otherActive.length})
-          </Button>
-        )}
-      </CardHeader>
-      <CardContent className="p-0">
-        <DataState
-          isLoading={sessionsQ.isLoading}
-          isError={sessionsQ.isError}
-          error={sessionsQ.error}
-          isEmpty={items.filter((s) => !s.revoked_at).length === 0}
-          emptyIcon={MonitorSmartphoneIcon}
-          emptyTitle="No active sessions."
-          skeletonRows={3}
-        >
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Device</TableHead>
-                <TableHead>IP</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Last seen</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((s) => {
-                const device = parseUA(s.user_agent);
-                const isCurrent = currentSessionId === s.id;
-                return (
-                  <TableRow key={s.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <DeviceIcon kind={device.kind} />
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium">
-                            {device.label}
-                            {isCurrent && (
-                              <span className="ml-2 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                                This device
-                              </span>
-                            )}
-                          </span>
-                          <span
-                            className="max-w-md truncate text-xs text-muted-foreground"
-                            title={s.user_agent ?? ""}
-                          >
-                            {s.user_agent ?? "—"}
-                          </span>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("sessions.columns.device")}</TableHead>
+                  <TableHead>{t("sessions.columns.ip")}</TableHead>
+                  <TableHead>{t("sessions.columns.created")}</TableHead>
+                  <TableHead>{t("sessions.columns.lastSeen")}</TableHead>
+                  <TableHead>{t("sessions.columns.status")}</TableHead>
+                  <TableHead className="text-right">{t("sessions.columns.actions")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((s) => {
+                  const device = parseUA(s.user_agent);
+                  const isCurrent = currentSessionId === s.id;
+                  return (
+                    <TableRow key={s.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <DeviceIcon kind={device.kind} />
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">
+                              {device.label}
+                              {isCurrent && (
+                                <span className="ml-2 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                                  {t("sessions.active.thisDevice")}
+                                </span>
+                              )}
+                            </span>
+                            <span
+                              className="max-w-md truncate text-xs text-muted-foreground"
+                              title={s.user_agent ?? ""}
+                            >
+                              {s.user_agent ?? "—"}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {s.ip ?? "—"}
-                    </TableCell>
-                    <TableCell>
-                      <TimeSince value={s.created_at} />
-                    </TableCell>
-                    <TableCell>
-                      <TimeSince value={s.last_seen_at} />
-                    </TableCell>
-                    <TableCell>
-                      <StatusPill status={s.revoked_at ? "revoked" : "active"} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!!s.revoked_at || revokeM.isPending || isCurrent}
-                        title={
-                          isCurrent
-                            ? "Use the sign-out menu to end the session you're currently using."
-                            : undefined
-                        }
-                        onClick={() =>
-                          openConfirm({
-                            title: "Revoke this session?",
-                            description: "Whoever holds it will be signed out.",
-                            variant: "destructive",
-                            confirmLabel: "Revoke",
-                            onConfirm: () => revokeM.mutate(s.id),
-                          })
-                        }
-                      >
-                        Revoke
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </DataState>
-      </CardContent>
-    </Card>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {s.ip ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={s.created_at} />
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={s.last_seen_at} />
+                      </TableCell>
+                      <TableCell>
+                        <StatusPill status={s.revoked_at ? "revoked" : "active"} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!!s.revoked_at || revokeM.isPending || isCurrent}
+                          title={
+                            isCurrent ? t("sessions.revoke.selfHelp") : undefined
+                          }
+                          onClick={() =>
+                            openConfirm({
+                              title: t("sessions.revoke.title"),
+                              description: t("sessions.revoke.description"),
+                              variant: "destructive",
+                              confirmLabel: t("sessions.revoke.label"),
+                              onConfirm: () => revokeM.mutate(s.id),
+                            })
+                          }
+                        >
+                          {t("sessions.revoke.button")}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </DataState>
+        </CardContent>
+      </Card>
     </>
   );
 }

@@ -1,0 +1,104 @@
+{
+  "list": {
+    "description": "Hierarchical groups inside this tenant. Use them to organise members; group-based RBAC inheritance is on the v1.0 roadmap.",
+    "refresh": "Refresh",
+    "new": "New group",
+    "title": "Groups",
+    "count_one": "{{shown}} of {{total}} group",
+    "count_other": "{{shown}} of {{total}} groups",
+    "searchPlaceholder": "Search name or description…",
+    "emptyFiltered": "No groups match your filters.",
+    "empty": "No groups yet.",
+    "filters": {
+      "scope": {
+        "label": "Scope",
+        "topLevel": "Top-level",
+        "nested": "Nested"
+      }
+    },
+    "columns": {
+      "name": "Name",
+      "description": "Description",
+      "parent": "Parent",
+      "created": "Created",
+      "actions": "Actions"
+    }
+  },
+  "table": {
+    "members": "Members",
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "create": {
+    "title": "New group",
+    "description": "Groups can be nested via the parent dropdown.",
+    "name": "Name",
+    "namePlaceholder": "Engineering",
+    "description_field": "Description",
+    "parent": "Parent group",
+    "parentNone": "— None (top-level)",
+    "cancel": "Cancel",
+    "submit": "Create",
+    "submitting": "Creating…"
+  },
+  "edit": {
+    "title": "Edit group",
+    "description": "Update the group name, description, or parent.",
+    "name": "Name",
+    "description_field": "Description",
+    "parent": "Parent group",
+    "parentNone": "— None (top-level)",
+    "cancel": "Cancel",
+    "save": "Save",
+    "saving": "Saving…"
+  },
+  "members": {
+    "title": "Members — {{groupName}}",
+    "description": "Search your workspace users to add them to this group.",
+    "searchPlaceholder": "Search users by name or email…",
+    "loadingUsers": "Loading users…",
+    "noMatch": "No matching users.",
+    "noMembers": "No members yet.",
+    "loading": "Loading…",
+    "close": "Close",
+    "removeLabel": "Remove member"
+  },
+  "confirm": {
+    "delete": "Delete group \"{{name}}\"?",
+    "deleteLabel": "Delete"
+  },
+  "detail": {
+    "back": "All groups",
+    "notFound": "No group with id \"{{id}}\" in this tenant",
+    "notFoundDescription": "It may have been deleted, or you may not have permission to view it. Use the back link above to return to the list.",
+    "noDescription": "No description",
+    "stats": {
+      "members": "Members",
+      "created": "Created"
+    },
+    "metadata": {
+      "title": "Metadata",
+      "groupId": "Group ID",
+      "parentGroup": "Parent group",
+      "tenant": "Tenant"
+    },
+    "members": {
+      "title": "Members",
+      "description": "Users currently belonging to this group.",
+      "manage": "Manage on list",
+      "empty": "No members in this group yet.",
+      "columns": {
+        "user": "User",
+        "email": "Email",
+        "userId": "User ID"
+      }
+    }
+  },
+  "toast": {
+    "created": "Group created",
+    "updated": "Group updated",
+    "deleted": "Group deleted",
+    "memberAdded": "Member added",
+    "memberRemoved": "Member removed"
+  }
+}

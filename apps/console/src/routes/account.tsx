@@ -13,17 +13,11 @@ import {
   UserIcon,
 } from "lucide-react";
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 
 import { isAuthenticated, useMe } from "@/lib/auth";
 
 export const Route = createFileRoute("/account")({ component: AccountLayout });
-
-const NAV = [
-  { to: "/account/profile", label: "Profile", icon: UserIcon },
-  { to: "/account/security", label: "Security", icon: ShieldCheckIcon },
-  { to: "/account/sessions", label: "Sessions", icon: MonitorSmartphoneIcon },
-  { to: "/account/data", label: "Data & deletion", icon: DatabaseIcon },
-] as const;
 
 /**
  * AccountLayout hosts the end-user self-service surface ("My Account").
@@ -35,9 +29,17 @@ const NAV = [
  * otherwise route to sign-in.
  */
 function AccountLayout() {
+  const { t } = useTranslation("account");
   const navigate = useNavigate();
   const me = useMe();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+
+  const NAV = [
+    { to: "/account/profile", label: t("nav.profile"), icon: UserIcon },
+    { to: "/account/security", label: t("nav.security"), icon: ShieldCheckIcon },
+    { to: "/account/sessions", label: t("nav.sessions"), icon: MonitorSmartphoneIcon },
+    { to: "/account/data", label: t("nav.data"), icon: DatabaseIcon },
+  ] as const;
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -58,7 +60,7 @@ function AccountLayout() {
           </Avatar>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">
-              {me.data?.display_name || me.data?.email || "Your account"}
+              {me.data?.display_name || me.data?.email || t("nav.yourAccount")}
             </p>
             {me.data?.email && me.data.email !== me.data?.display_name && (
               <p className="truncate text-xs text-muted-foreground">{me.data.email}</p>
@@ -69,7 +71,7 @@ function AccountLayout() {
           to="/"
           className="text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
-          Back to admin →
+          {t("nav.backToAdmin")}
         </Link>
       </div>
 

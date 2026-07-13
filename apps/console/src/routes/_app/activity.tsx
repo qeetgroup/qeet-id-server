@@ -20,6 +20,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ActivityIcon, RadioIcon } from "lucide-react";
 import { useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
@@ -39,6 +40,7 @@ type AuditEvent = {
 };
 
 function ActivityPage() {
+  const { t } = useTranslation("security");
   const tenantId = useTenantId();
   const eventsQ = useQuery({
     queryKey: ["activity-recent", tenantId],
@@ -72,13 +74,13 @@ function ActivityPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="The 20 most recent events across this tenant. Auto-refreshes every 15 seconds. For full filtering and search, head to Audit Logs." />
+      <PageHeader description={t("activity.description")} />
 
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              Recent activity
+              {t("activity.cardTitle")}
               <span
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium",
@@ -86,7 +88,7 @@ function ActivityPage() {
                     ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
                     : "border-muted-foreground/40 text-muted-foreground",
                 )}
-                title={eventsQ.isFetching ? "Refreshing" : "Idle"}
+                title={eventsQ.isFetching ? t("activity.titleRefreshing") : t("activity.titleIdle")}
               >
                 <RadioIcon
                   className={cn(
@@ -94,7 +96,7 @@ function ActivityPage() {
                     eventsQ.isFetching && "animate-pulse text-emerald-500",
                   )}
                 />
-                live
+                {t("activity.liveBadge")}
               </span>
             </CardTitle>
             <CardDescription>
@@ -104,7 +106,7 @@ function ActivityPage() {
           </div>
           {newCount > 0 && (
             <StatusPill kind="success" dot={false}>
-              {newCount} new since you opened
+              {t("activity.newSince", { count: newCount })}
             </StatusPill>
           )}
         </CardHeader>
@@ -115,16 +117,16 @@ function ActivityPage() {
             error={eventsQ.error}
             isEmpty={!items.length}
             emptyIcon={ActivityIcon}
-            emptyTitle="No recent activity in this tenant yet."
+            emptyTitle={t("activity.empty")}
             skeletonRows={5}
           >
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead>Actor</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Resource</TableHead>
+                  <TableHead>{t("activity.colWhen")}</TableHead>
+                  <TableHead>{t("activity.colActor")}</TableHead>
+                  <TableHead>{t("activity.colAction")}</TableHead>
+                  <TableHead>{t("activity.colResource")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -143,7 +145,7 @@ function ActivityPage() {
                           <TimeSince value={e.created_at} className="font-mono text-xs" />
                           {isNew && (
                             <StatusPill kind="success" dot={false} className="text-[10px]">
-                              New
+                              {t("activity.newBadge")}
                             </StatusPill>
                           )}
                         </div>

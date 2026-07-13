@@ -33,6 +33,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -57,6 +58,7 @@ type ApiKey = {
 type ApiKeysResponse = { items: ApiKey[] };
 
 function ApiKeysPage() {
+  const { t } = useTranslation("auth");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
@@ -98,7 +100,7 @@ function ApiKeysPage() {
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
       <PageHeader
-        description="Long-lived secrets your apps and scripts use to call the Qeet ID API. Send as Authorization: ApiKey <raw>."
+        description={t("keys.description")}
         actions={
           <>
             <Button
@@ -108,10 +110,10 @@ function ApiKeysPage() {
               disabled={keysQ.isFetching}
             >
               <RefreshCwIcon className={keysQ.isFetching ? "animate-spin" : ""} />
-              Refresh
+              {t("keys.refreshBtn")}
             </Button>
             <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> New API key
+              <PlusIcon /> {t("keys.newButton")}
             </Button>
           </>
         }
@@ -120,16 +122,15 @@ function ApiKeysPage() {
       {revealed && (
         <Card className="border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20">
           <CardHeader>
-            <CardTitle className="text-base">Your new key — copy it now</CardTitle>
+            <CardTitle className="text-base">{t("keys.revealed.title")}</CardTitle>
             <CardDescription>
-              This is the only time we&apos;ll show <strong>{revealed.name}</strong>. Store it in
-              your secret manager.
+              {t("keys.revealed.description", { name: revealed.name })}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex items-center gap-2">
             <CopyableSecret value={revealed.raw} className="flex-1" />
             <Button variant="ghost" size="sm" onClick={() => setRevealed(null)}>
-              Dismiss
+              {t("keys.revealed.dismiss")}
             </Button>
           </CardContent>
         </Card>
@@ -137,9 +138,9 @@ function ApiKeysPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Active keys</CardTitle>
+          <CardTitle className="text-base">{t("keys.list.title")}</CardTitle>
           <CardDescription>
-            {keysQ.data?.items?.length ?? 0} key{keysQ.data?.items?.length === 1 ? "" : "s"}
+            {t("keys.list.count", { count: keysQ.data?.items?.length ?? 0 })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -154,18 +155,18 @@ function ApiKeysPage() {
           ) : !keysQ.data?.items?.length ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <KeyRoundIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No API keys yet.</p>
+              <p className="text-sm text-muted-foreground">{t("keys.list.empty")}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Prefix</TableHead>
-                  <TableHead>Scopes</TableHead>
-                  <TableHead>Last used</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead>{t("keys.columns.name")}</TableHead>
+                  <TableHead>{t("keys.columns.prefix")}</TableHead>
+                  <TableHead>{t("keys.columns.scopes")}</TableHead>
+                  <TableHead>{t("keys.columns.lastUsed")}</TableHead>
+                  <TableHead>{t("keys.columns.status")}</TableHead>
+                  <TableHead className="text-right">{t("keys.columns.actions")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -189,7 +190,7 @@ function ApiKeysPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never"}
+                      {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : t("keys.lastUsedNever")}
                     </TableCell>
                     <TableCell>
                       <StatusPill
@@ -209,15 +210,15 @@ function ApiKeysPage() {
                         disabled={!!k.revoked_at || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: `Revoke "${k.name}"?`,
-                            description: "Any service using it will lose access immediately.",
+                            title: t("keys.confirm.title", { name: k.name }),
+                            description: t("keys.confirm.description"),
                             variant: "destructive",
-                            confirmLabel: "Revoke",
+                            confirmLabel: t("keys.confirm.label"),
                             onConfirm: () => revokeM.mutate(k.id),
                           })
                         }
                       >
-                        <Trash2Icon /> Revoke
+                        <Trash2Icon /> {t("keys.revokeBtn")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -251,6 +252,7 @@ type CreateApiKeySheetProps = {
 type CreateApiKeyResponse = ApiKey & { raw: string };
 
 function CreateApiKeySheet({ open, onOpenChange, tenantId, onCreated }: CreateApiKeySheetProps) {
+  const { t } = useTranslation("auth");
   const createM = useMutation({
     mutationFn: (body: {
       tenant_id: string;
@@ -283,28 +285,28 @@ function CreateApiKeySheet({ open, onOpenChange, tenantId, onCreated }: CreateAp
           }}
         >
           <SheetHeader>
-            <SheetTitle>New API key</SheetTitle>
+            <SheetTitle>{t("keys.create.title")}</SheetTitle>
             <SheetDescription>
-              The full key is shown once after creation — we only store a bcrypt hash.
+              {t("keys.create.description")}
             </SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Name</FieldLabel>
-                <Input id="name" name="name" placeholder="CI deploy key" required maxLength={200} />
+                <FieldLabel htmlFor="apikey-name">{t("keys.create.nameLabel")}</FieldLabel>
+                <Input id="apikey-name" name="name" placeholder="CI deploy key" required maxLength={200} />
               </Field>
               <Field>
-                <FieldLabel htmlFor="scopes">Scopes (space-separated)</FieldLabel>
-                <Input id="scopes" name="scopes" placeholder="user.read tenant.read" />
+                <FieldLabel htmlFor="apikey-scopes">{t("keys.create.scopesLabel")}</FieldLabel>
+                <Input id="apikey-scopes" name="scopes" placeholder="user.read tenant.read" />
                 <FieldDescription>
-                  Leave empty for full access (least-privilege scoping recommended).
+                  {t("keys.create.scopesHelp")}
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="expires_at">Expires at</FieldLabel>
-                <Input id="expires_at" name="expires_at" type="datetime-local" />
-                <FieldDescription>Optional. Empty = never expires.</FieldDescription>
+                <FieldLabel htmlFor="apikey-expires_at">{t("keys.create.expiresLabel")}</FieldLabel>
+                <Input id="apikey-expires_at" name="expires_at" type="datetime-local" />
+                <FieldDescription>{t("keys.create.expiresHelp")}</FieldDescription>
               </Field>
               {createM.error && (
                 <Field>
@@ -314,10 +316,10 @@ function CreateApiKeySheet({ open, onOpenChange, tenantId, onCreated }: CreateAp
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>Cancel</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>{t("keys.create.cancelBtn")}</SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              {createM.isPending ? "Creating…" : "Create key"}
+              {createM.isPending ? t("keys.create.creatingBtn") : t("keys.create.createBtn")}
             </Button>
           </SheetFooter>
         </form>

@@ -1,0 +1,263 @@
+{
+  "bots": {
+    "description": "Event-driven automations stitched together from triggers and actions.",
+    "comingSoon": {
+      "title": "Automations are coming soon",
+      "description": "Build no-code automations that react to identity events — sign-ins, role changes, risk signals — and run actions in response. This surface isn't available yet; follow the roadmap for availability."
+    }
+  },
+  "infrastructure": {
+    "description": "Platform health across services, regions, and datastores.",
+    "comingSoon": {
+      "title": "Infrastructure health is coming soon",
+      "description": "Live service, region, and datastore health will surface here once platform telemetry is wired in. For now, use /readyz and /metrics (Prometheus/OTel) from your own observability stack."
+    }
+  },
+  "authHooks": {
+    "description": "Run a synchronous policy endpoint during sign-in. After credentials verify, Qeet POSTs a signed event to your hook (X-Qeet-Signature, HMAC-SHA256); the hook returns {decision:'allow'|'deny'}. Hooks are bounded by a 3s timeout.",
+    "add": {
+      "title": "Add a login hook",
+      "description": "Fired after a password is verified (the “post_login” trigger).",
+      "url": "Hook URL",
+      "urlPlaceholder": "https://policy.acme.com/qeet/login",
+      "secret": "Signing secret",
+      "secretPlaceholder": "write-only",
+      "submit": "Add",
+      "failOpen": "Fail open",
+      "failOpenAriaLabel": "Fail open",
+      "failOpenDescription": "If the hook errors or times out, allow the sign-in (recommended). Turn off to block sign-ins when the hook is unreachable."
+    },
+    "list": {
+      "title": "Hooks",
+      "description": "Toggle enabled / fail-open per hook.",
+      "empty": "No login hooks configured.",
+      "emptyDescription": "Add a hook above to gate sign-ins with your own policy.",
+      "failOpen": "fail-open",
+      "failClosed": "fail-closed",
+      "enabledAriaLabel": "Enabled",
+      "remove": "Remove"
+    },
+    "confirm": {
+      "removeTitle": "Remove this hook?",
+      "removeLabel": "Remove"
+    }
+  },
+  "credentials": {
+    "description": "Issue W3C Verifiable Credentials as ES256-signed JWT-VCs (verifiable via the same JWKS) and revoke them. Relying parties verify a presented credential at POST /v1/credentials/verify.",
+    "issue": {
+      "title": "Issue a credential",
+      "description": "The subject is the credentialSubject id (user uuid, DID, or email). Claims is a JSON object; TTL 0 = non-expiring.",
+      "subject": "Subject",
+      "subjectPlaceholder": "user uuid / did:… / email",
+      "type": "Credential type",
+      "typePlaceholder": "EmploymentCredential",
+      "claims": "Claims (JSON)",
+      "claimsError": "Claims must be valid JSON.",
+      "ttl": "TTL (seconds)",
+      "submit": "Issue",
+      "signedLabel": "Signed credential (JWT-VC) — give this to the subject:"
+    },
+    "verify": {
+      "title": "Verify a credential",
+      "description": "Paste a JWT-VC to check its signature, expiry, and revocation.",
+      "submit": "Verify"
+    },
+    "list": {
+      "title": "Issued credentials",
+      "description": "Registry of credentials issued by this tenant.",
+      "empty": "No credentials issued yet.",
+      "revoked": "revoked",
+      "noExpiry": " · no expiry",
+      "revokeButton": "Revoke"
+    },
+    "confirm": {
+      "title": "Revoke this credential?",
+      "label": "Revoke"
+    },
+    "badge": {
+      "valid": "valid",
+      "invalid": "invalid"
+    },
+    "toast": {
+      "issued": "Credential issued",
+      "revoked": "Credential revoked"
+    }
+  },
+  "agents": {
+    "description": "First-class identities for AI agents / MCP clients, and the primitives that keep them accountable to a human: sponsorship, Shadow-AI discovery, ephemeral tokens, and a tenant-wide kill-switch.",
+    "create": {
+      "title": "Create an agent",
+      "description": "The secret is shown once. Scopes are space-separated; token lifetime is clamped to 60–3600s. You’re recorded as the agent’s sponsor — its accountable human owner — and can transfer that later if it changes hands.",
+      "name": "Name",
+      "namePlaceholder": "support-copilot",
+      "scopes": "Scopes",
+      "scopesPlaceholder": "tickets:read kb:read",
+      "ttl": "Token TTL (s)",
+      "submit": "Create",
+      "secretNotice": "Agent {{name}} created — copy its credentials now (the secret won’t be shown again):"
+    },
+    "list": {
+      "title": "Agents",
+      "description": "AI-agent identities in this tenant.",
+      "suspendAll": "Suspend All",
+      "empty": "No agents yet.",
+      "emptyDescription": "Create an agent above to issue it ephemeral, scoped tokens."
+    },
+    "confirm": {
+      "suspendAll": "Suspend all {{count}} active agent(s)?",
+      "suspendAllDescription": "Their tokens will stop working immediately.",
+      "suspendAllLabel": "Suspend All",
+      "delete": "Delete agent “{{name}}”?",
+      "deleteLabel": "Delete"
+    },
+    "row": {
+      "suspended": "Suspended",
+      "active": "Active",
+      "noScopes": "no scopes",
+      "resume": "Resume",
+      "resumeTitle": "Resume agent",
+      "suspend": "Suspend",
+      "suspendTitle": "Suspend agent",
+      "delete": "Delete"
+    },
+    "sponsor": {
+      "title": "Sponsor transfer",
+      "description": "Every agent has a named human sponsor. When a sponsor is offboarded, reassign everything they own to a new sponsor in one call — no agent is left ownerless.",
+      "from": "From (departing sponsor)",
+      "to": "To (new sponsor)",
+      "search": "Search users…",
+      "noUsers": "No users found.",
+      "transfer": "Transfer",
+      "checking": "Checking…",
+      "count_one": "{{count}} agent sponsored by this user will move.",
+      "count_other": "{{count}} agents sponsored by this user will move.",
+      "confirm": {
+        "title": "Transfer {{count}} agent(s) to the new sponsor?",
+        "description": "This can’t be undone.",
+        "label": "Transfer"
+      }
+    },
+    "shadow": {
+      "title": "Shadow AI discovery",
+      "description": "OAuth clients that picked up a machine grant type (client_credentials / token-exchange) without ever going through the agents/service-accounts registry — unmanaged automation acting under this tenant, ranked by live grants.",
+      "empty": "No unreviewed candidates.",
+      "emptyDescription": "Every machine-grant OIDC client has been acknowledged.",
+      "acknowledge": "Acknowledge",
+      "grants_one": "{{count}} live grant",
+      "grants_other": "{{count}} live grants"
+    },
+    "toast": {
+      "created": "Agent created",
+      "deleted": "Agent deleted",
+      "suspended": "Agent suspended",
+      "resumed": "Agent resumed",
+      "killAll": "All agents suspended",
+      "transferred": "Sponsor transferred"
+    }
+  },
+  "webhooks": {
+    "description": "HTTP endpoints we POST events to. Every delivery is HMAC-SHA256 signed via the X-Signature header and retried with exponential backoff.",
+    "refresh": "Refresh",
+    "new": "New webhook",
+    "list": {
+      "title": "Subscriptions",
+      "count_one": "{{shown}} of {{total}} subscription",
+      "count_other": "{{shown}} of {{total}} subscriptions",
+      "searchPlaceholder": "Search URL or event…",
+      "emptyFiltered": "No webhooks match your filters.",
+      "empty": "No webhooks yet.",
+      "filters": {
+        "status": {
+          "label": "Status",
+          "active": "Active",
+          "disabled": "Disabled"
+        }
+      },
+      "columns": {
+        "url": "URL",
+        "events": "Events",
+        "status": "Status",
+        "created": "Created",
+        "actions": "Actions"
+      }
+    },
+    "table": {
+      "test": "Test",
+      "disable": "Disable"
+    },
+    "confirm": {
+      "disableTitle": "Disable webhook?",
+      "disableDescription": "Disable {{url}}?",
+      "disableLabel": "Disable"
+    },
+    "create": {
+      "title": "New webhook subscription",
+      "description": "We'll POST signed JSON to your URL for each selected event.",
+      "url": "URL",
+      "urlPlaceholder": "https://example.com/webhook",
+      "urlHelp": "Must respond 2xx within 10 seconds; we retry up to 10 times with exponential backoff.",
+      "events": "Events",
+      "eventsCount_one": "Selected {{count}} event.",
+      "eventsCount_other": "Selected {{count}} events.",
+      "cancel": "Cancel",
+      "submit": "Create",
+      "submitting": "Creating…"
+    },
+    "toast": {
+      "created": "Webhook created",
+      "disabled": "Webhook disabled",
+      "testQueued": "Test event queued"
+    }
+  },
+  "webhookDetail": {
+    "back": "Webhooks",
+    "statusActive": "Active",
+    "statusDisabled": "Disabled",
+    "description": "Webhook endpoint configuration and delivery history.",
+    "subscribedCount_one": "Subscribed to {{count}} event.",
+    "subscribedCount_other": "Subscribed to {{count}} events.",
+    "testEvent": "Send test event",
+    "disable": "Disable",
+    "created": "Created",
+    "confirm": {
+      "disableTitle": "Disable webhook?",
+      "disableLabel": "Disable"
+    },
+    "info": {
+      "title": "Endpoint details",
+      "url": "URL",
+      "events": "Subscribed events",
+      "secret": "Signing secret",
+      "secretHelp": "HMAC-SHA256 — verify the X-Signature header with this key.",
+      "created": "Created"
+    },
+    "deliveries": {
+      "title": "Recent deliveries",
+      "description": "Last 50 attempts. Failures are retried with exponential backoff.",
+      "empty": "No deliveries yet.",
+      "emptyDescription": "When this webhook fires, attempts will appear here.",
+      "retry": "Retry",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "requestPayload": "Request payload",
+      "responseBody": "Response body",
+      "statusDelivered": "Delivered",
+      "statusDead": "Dead",
+      "statusPending": "Pending",
+      "columns": {
+        "when": "When",
+        "event": "Event",
+        "status": "Status",
+        "attempts": "Attempts",
+        "duration": "Duration",
+        "attempt": "Attempt",
+        "sentAt": "Sent at",
+        "actions": "Actions"
+      }
+    },
+    "sample": {
+      "title": "Sample payload",
+      "description": "POSTed to the URL above with an HMAC-SHA256 signature in the X-Signature header."
+    }
+  }
+}

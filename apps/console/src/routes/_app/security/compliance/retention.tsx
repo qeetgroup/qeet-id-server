@@ -15,6 +15,7 @@ import {
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -29,10 +30,11 @@ import {
 export const Route = createFileRoute("/_app/security/compliance/retention")({ component: RetentionPage });
 
 function RetentionPage() {
+  const { t } = useTranslation("compliance");
   const policyQ = useRetentionPolicy();
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader description="How long deleted data is kept before it's permanently purged. Retention runs automatically once enabled; you can also preview or run it on demand." />
+      <PageHeader description={t("retention.description")} />
       <DataState
         isLoading={policyQ.isLoading}
         isError={policyQ.isError}
@@ -47,6 +49,7 @@ function RetentionPage() {
 }
 
 function RetentionForm({ initial }: { initial: RetentionPolicy }) {
+  const { t } = useTranslation("compliance");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const updateM = useUpdateRetentionPolicy();
   const previewM = useRetentionPreview();
@@ -63,13 +66,13 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Soft-deleted users</CardTitle>
-              <CardDescription>
-                Permanently purge users that have been in the recycle bin longer than the window.
-              </CardDescription>
+              <CardTitle>{t("retention.deletedUsers.title")}</CardTitle>
+              <CardDescription>{t("retention.deletedUsers.description")}</CardDescription>
             </div>
             <StatusPill kind={draft.deleted_users_enabled ? "success" : "muted"}>
-              {draft.deleted_users_enabled ? "Enabled" : "Disabled"}
+              {draft.deleted_users_enabled
+                ? t("retention.deletedUsers.enabled")
+                : t("retention.deletedUsers.disabled")}
             </StatusPill>
           </div>
         </CardHeader>
@@ -77,8 +80,8 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
           <Field>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <FieldLabel>Automatic purge</FieldLabel>
-                <FieldDescription>A background job purges ripe users hourly when enabled.</FieldDescription>
+                <FieldLabel>{t("retention.deletedUsers.automaticPurge")}</FieldLabel>
+                <FieldDescription>{t("retention.deletedUsers.automaticPurgeHelp")}</FieldDescription>
               </div>
               <Switch
                 checked={draft.deleted_users_enabled}
@@ -87,7 +90,9 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
             </div>
           </Field>
           <Field>
-            <FieldLabel>Retention window: {draft.deleted_users_days} days</FieldLabel>
+            <FieldLabel>
+              {t("retention.deletedUsers.windowLabel", { days: draft.deleted_users_days })}
+            </FieldLabel>
             <Slider
               value={[draft.deleted_users_days]}
               onValueChange={(v) =>
@@ -97,43 +102,45 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
               max={365}
               step={1}
             />
-            <FieldDescription>Users soft-deleted longer ago than this are purged. 1–3650 days.</FieldDescription>
+            <FieldDescription>{t("retention.deletedUsers.windowHelp")}</FieldDescription>
           </Field>
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="ghost" onClick={() => previewM.mutate()} disabled={previewM.isPending}>
-              Preview
+              {t("retention.deletedUsers.preview")}
             </Button>
             <Button
               variant="outline"
               onClick={() =>
                 openConfirm({
-                  title: "Permanently purge soft-deleted users?",
-                  description: "This purges all soft-deleted users older than the retention window. This cannot be undone.",
+                  title: t("retention.deletedUsers.purgeConfirmTitle"),
+                  description: t("retention.deletedUsers.purgeConfirmDescription"),
                   variant: "destructive",
-                  confirmLabel: "Run purge now",
+                  confirmLabel: t("retention.deletedUsers.purgeConfirmLabel"),
                   onConfirm: () => runM.mutate(),
                 })
               }
               disabled={runM.isPending}
             >
-              Run purge now
+              {t("retention.deletedUsers.runPurge")}
             </Button>
             <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending || !dirty}>
-              {updateM.isPending ? "Saving…" : "Save policy"}
+              {updateM.isPending
+                ? t("retention.deletedUsers.saving")
+                : t("retention.deletedUsers.save")}
             </Button>
           </div>
 
           {previewM.data && (
             <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
-              <span className="font-medium">{previewM.data.ripe_deleted_users}</span> user
-              {previewM.data.ripe_deleted_users === 1 ? "" : "s"} would be purged at the current{" "}
-              {previewM.data.deleted_users_days}-day window.
+              {t("retention.deletedUsers.previewResult", {
+                count: previewM.data.ripe_deleted_users,
+                days: previewM.data.deleted_users_days,
+              })}
             </p>
           )}
           {runM.data && (
             <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
-              Purged <span className="font-medium">{runM.data.purged}</span> user
-              {runM.data.purged === 1 ? "" : "s"}.
+              {t("retention.deletedUsers.runResult", { count: runM.data.purged })}
             </p>
           )}
         </CardContent>
@@ -141,11 +148,8 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Other data classes</CardTitle>
-          <CardDescription>
-            Audit logs are append-only and retained for the compliance window; session and event
-            retention are managed by the platform. Configurable per-class policies are on the roadmap.
-          </CardDescription>
+          <CardTitle className="text-base">{t("retention.otherDataClasses.title")}</CardTitle>
+          <CardDescription>{t("retention.otherDataClasses.description")}</CardDescription>
         </CardHeader>
       </Card>
     </>

@@ -20,8 +20,8 @@ if ! command -v nvm &>/dev/null; then
   export NVM_DIR="$HOME/.nvm"
   [ -s "$(brew --prefix)/opt/nvm/nvm.sh" ] && . "$(brew --prefix)/opt/nvm/nvm.sh"
 fi
-nvm install v22.20.0
-nvm use v22.20.0
+nvm install   # reads .nvmrc (Node 24)
+nvm use       # reads .nvmrc (Node 24)
 ok "$(node --version)"
 
 info "pnpm 9.15.4"
@@ -47,7 +47,7 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 ok "govulncheck installed"
 
 info "Playwright browsers"
-nvm use v22.20.0
+nvm use   # reads .nvmrc (Node 24)
 pnpm --filter @qeetid/e2e exec playwright install --with-deps 2>/dev/null || true
 ok "Playwright ready"
 

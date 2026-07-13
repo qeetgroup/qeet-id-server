@@ -23,6 +23,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError, api } from "@/lib/api";
@@ -42,6 +43,7 @@ type Tenant = {
 };
 
 function WorkspaceGeneralPage() {
+  const { t } = useTranslation("settings");
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Partial<Tenant>>({});
@@ -69,7 +71,7 @@ function WorkspaceGeneralPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="The display name, plan, and region for this workspace. The slug is immutable." />
+      <PageHeader description={t("workspace.general.description")} />
 
       {tenantQ.isLoading ? (
         <Card><CardContent className="space-y-3 p-6">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</CardContent></Card>
@@ -89,34 +91,34 @@ function WorkspaceGeneralPage() {
             <div className="space-y-4 lg:col-span-2">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Profile</CardTitle>
-                  <CardDescription>Visible to members of this tenant.</CardDescription>
+                  <CardTitle className="text-base">{t("workspace.general.profile.title")}</CardTitle>
+                  <CardDescription>{t("workspace.general.profile.description")}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <FieldGroup>
                     <Field>
-                      <FieldLabel htmlFor="slug">Slug</FieldLabel>
+                      <FieldLabel htmlFor="slug">{t("workspace.general.profile.slug")}</FieldLabel>
                       <Input id="slug" value={draft.slug ?? ""} disabled className="font-mono" />
-                      <FieldDescription>Immutable. Used in tenant URLs and SCIM/SAML metadata.</FieldDescription>
+                      <FieldDescription>{t("workspace.general.profile.slugHelp")}</FieldDescription>
                     </Field>
                     <Field>
-                      <FieldLabel htmlFor="name">Name</FieldLabel>
+                      <FieldLabel htmlFor="name">{t("workspace.general.profile.name")}</FieldLabel>
                       <Input id="name" value={draft.name ?? ""} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} required />
                     </Field>
                     <Field className="grid grid-cols-2 gap-4">
                       <Field>
-                        <FieldLabel>Plan</FieldLabel>
+                        <FieldLabel>{t("workspace.general.profile.plan")}</FieldLabel>
                         <Select value={draft.plan ?? "free"} onValueChange={(v) => setDraft((d) => ({ ...d, plan: v ?? "free" }))}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="free">Free</SelectItem>
-                            <SelectItem value="pro">Pro</SelectItem>
-                            <SelectItem value="enterprise">Enterprise</SelectItem>
+                            <SelectItem value="free">{t("workspace.general.profile.plans.free")}</SelectItem>
+                            <SelectItem value="pro">{t("workspace.general.profile.plans.pro")}</SelectItem>
+                            <SelectItem value="enterprise">{t("workspace.general.profile.plans.enterprise")}</SelectItem>
                           </SelectContent>
                         </Select>
                       </Field>
                       <Field>
-                        <FieldLabel htmlFor="region">Region</FieldLabel>
+                        <FieldLabel htmlFor="region">{t("workspace.general.profile.region")}</FieldLabel>
                         <Input
                           id="region"
                           value={draft.region ?? ""}
@@ -125,15 +127,15 @@ function WorkspaceGeneralPage() {
                       </Field>
                     </Field>
                     <Field>
-                      <FieldLabel>Status</FieldLabel>
+                      <FieldLabel>{t("workspace.general.profile.status")}</FieldLabel>
                       <Select value={draft.status ?? "active"} onValueChange={(v) => setDraft((d) => ({ ...d, status: v as Tenant["status"] }))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="suspended">Suspended</SelectItem>
+                          <SelectItem value="active">{t("workspace.general.profile.statusActive")}</SelectItem>
+                          <SelectItem value="suspended">{t("workspace.general.profile.statusSuspended")}</SelectItem>
                         </SelectContent>
                       </Select>
-                      <FieldDescription>Suspending blocks new logins for everyone in this tenant.</FieldDescription>
+                      <FieldDescription>{t("workspace.general.profile.statusHelp")}</FieldDescription>
                     </Field>
                   </FieldGroup>
                 </CardContent>
@@ -149,16 +151,18 @@ function WorkspaceGeneralPage() {
 
               <div className="flex items-center justify-between">
                 <p className="text-xs text-muted-foreground">
-                  {savedAt ? `Saved ${savedAt.toLocaleTimeString()}` : "Unsaved changes"}
+                  {savedAt
+                    ? t("workspace.general.footer.savedAt", { time: savedAt.toLocaleTimeString() })
+                    : t("workspace.general.footer.unsaved")}
                 </p>
                 <div className="flex gap-2">
                   <Button type="button" variant="outline" onClick={() => tenantQ.data && setDraft(tenantQ.data)} disabled={saveM.isPending}>
-                    Reset
+                    {t("workspace.general.footer.reset")}
                   </Button>
                   <Button type="submit" disabled={saveM.isPending}>
                     {saveM.isPending && <Loader2Icon className="animate-spin" />}
                     {saveM.isSuccess && !saveM.isPending && <CheckIcon />}
-                    {saveM.isPending ? "Saving…" : "Save changes"}
+                    {saveM.isPending ? t("workspace.general.footer.saving") : t("workspace.general.footer.save")}
                   </Button>
                 </div>
               </div>
@@ -167,13 +171,13 @@ function WorkspaceGeneralPage() {
             <div>
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Tenant ID</CardTitle>
-                  <CardDescription>Reference value used by SCIM, SAML and API calls.</CardDescription>
+                  <CardTitle className="text-base">{t("workspace.general.tenantId.title")}</CardTitle>
+                  <CardDescription>{t("workspace.general.tenantId.description")}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <code className="block break-all rounded-md border bg-muted px-3 py-2 text-xs">{draft.id ?? "—"}</code>
                   <p className="mt-4 text-xs text-muted-foreground">
-                    Created{" "}
+                    {t("workspace.general.tenantId.created")}{" "}
                     {draft.created_at ? <TimeSince value={draft.created_at} className="text-xs" /> : "—"}
                   </p>
                 </CardContent>

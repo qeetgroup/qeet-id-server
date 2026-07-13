@@ -22,6 +22,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, RadioTowerIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -45,6 +46,7 @@ const TYPE_LABELS: Record<SinkType, string> = {
 };
 
 function LogStreamingPage() {
+  const { t } = useTranslation("security");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const sinksQ = useLogSinks();
   const createM = useCreateLogSink();
@@ -60,15 +62,12 @@ function LogStreamingPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
-      <PageHeader description="Stream this tenant's audit events to your SIEM or log platform. New events are forwarded from when a sink is added (no history backfill); delivery is at-least-once." />
+      <PageHeader description={t("logStreaming.description")} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Add a sink</CardTitle>
-          <CardDescription>
-            Splunk HEC (token in the HEC field), Datadog (DD-API-KEY), or a generic HTTP endpoint
-            (optional Bearer token).
-          </CardDescription>
+          <CardTitle className="text-base">{t("logStreaming.addSink.title")}</CardTitle>
+          <CardDescription>{t("logStreaming.addSink.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form
@@ -89,7 +88,7 @@ function LogStreamingPage() {
             }}
           >
             <Field className="sm:w-44">
-              <FieldLabel>Type</FieldLabel>
+              <FieldLabel>{t("logStreaming.addSink.type")}</FieldLabel>
               <Select value={type} onValueChange={(v) => setType(v as SinkType)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -102,7 +101,7 @@ function LogStreamingPage() {
               </Select>
             </Field>
             <Field className="flex-1">
-              <FieldLabel htmlFor="endpoint">Endpoint URL</FieldLabel>
+              <FieldLabel htmlFor="endpoint">{t("logStreaming.addSink.endpointLabel")}</FieldLabel>
               <Input
                 id="endpoint"
                 placeholder="https://http-intake.logs.datadoghq.com/api/v2/logs"
@@ -111,7 +110,7 @@ function LogStreamingPage() {
               />
             </Field>
             <Field className="sm:w-56">
-              <FieldLabel htmlFor="token">Token</FieldLabel>
+              <FieldLabel htmlFor="token">{t("logStreaming.addSink.tokenLabel")}</FieldLabel>
               <Input
                 id="token"
                 type="password"
@@ -119,11 +118,11 @@ function LogStreamingPage() {
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
               />
-              <FieldDescription>Stored write-only; never shown again.</FieldDescription>
+              <FieldDescription>{t("logStreaming.addSink.tokenHelp")}</FieldDescription>
             </Field>
             <Button type="submit" disabled={createM.isPending || !endpoint.trim()}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
-              Add
+              {t("logStreaming.addSink.add")}
             </Button>
           </form>
           {createM.error && (
@@ -134,8 +133,8 @@ function LogStreamingPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Sinks</CardTitle>
-          <CardDescription>Toggle a sink to pause/resume forwarding.</CardDescription>
+          <CardTitle className="text-base">{t("logStreaming.sinks.title")}</CardTitle>
+          <CardDescription>{t("logStreaming.sinks.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -144,8 +143,8 @@ function LogStreamingPage() {
             error={sinksQ.error}
             isEmpty={items.length === 0}
             emptyIcon={RadioTowerIcon}
-            emptyTitle="No log sinks configured."
-            emptyDescription="Add a sink above to start streaming audit events."
+            emptyTitle={t("logStreaming.sinks.empty")}
+            emptyDescription={t("logStreaming.sinks.emptyDescription")}
             skeletonRows={2}
           >
             <ul className="divide-y">
@@ -167,7 +166,7 @@ function LogStreamingPage() {
                       <p className="truncate text-xs text-destructive">{s.last_error}</p>
                     ) : s.last_forwarded_at ? (
                       <p className="text-xs text-muted-foreground">
-                        last forwarded <TimeSince value={s.last_forwarded_at} />
+                        {t("logStreaming.sinks.lastForwarded")} <TimeSince value={s.last_forwarded_at} />
                       </p>
                     ) : null}
                   </div>
@@ -184,14 +183,14 @@ function LogStreamingPage() {
                       disabled={deleteM.isPending}
                       onClick={() =>
                         openConfirm({
-                          title: "Remove this sink?",
+                          title: t("logStreaming.sinks.confirmRemoveTitle"),
                           variant: "destructive",
-                          confirmLabel: "Remove",
+                          confirmLabel: t("logStreaming.sinks.confirmRemoveLabel"),
                           onConfirm: () => deleteM.mutate(s.id),
                         })
                       }
                     >
-                      <Trash2Icon /> Remove
+                      <Trash2Icon /> {t("logStreaming.sinks.remove")}
                     </Button>
                   </div>
                 </li>

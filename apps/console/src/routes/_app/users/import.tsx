@@ -26,6 +26,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
@@ -145,6 +146,7 @@ interface ImportResult {
 }
 
 function ImportUsersPage() {
+  const { t } = useTranslation("users");
   const tenantId = useTenantId()
   const [rows, setRows] = useState<Row[] | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
@@ -193,10 +195,10 @@ function ImportUsersPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <PageHeader
-        description="Bulk-import users from a CSV or newline-delimited JSON file. Email is required; password / display_name / phone are optional."
+        description={t("import.description")}
         actions={
           <Link to="/users" className={buttonVariants({ variant: "outline", size: "sm" })}>
-            <ArrowLeftIcon /> Back to users
+            <ArrowLeftIcon /> {t("import.backLink")}
           </Link>
         }
       />
@@ -229,10 +231,8 @@ function ImportUsersPage() {
               )}
             >
               <UploadCloudIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm font-medium">Drop your CSV or NDJSON file</p>
-              <p className="text-xs text-muted-foreground">
-                or click anywhere in this box to browse
-              </p>
+              <p className="text-sm font-medium">{t("import.dropTitle")}</p>
+              <p className="text-xs text-muted-foreground">{t("import.dropHelp")}</p>
               <input
                 id="user-import-file"
                 type="file"
@@ -254,21 +254,21 @@ function ImportUsersPage() {
           <CardHeader className="flex flex-row items-start justify-between gap-3">
             <div>
               <CardTitle className="text-base">
-                Preview <span className="text-muted-foreground">{fileName}</span>
+                {t("import.previewTitle")} <span className="text-muted-foreground">{fileName}</span>
               </CardTitle>
               <CardDescription>
-                {validRows.length} valid row{validRows.length === 1 ? "" : "s"}
+                {t("import.validRows", { count: validRows.length })}
                 {invalidRows.length > 0 && (
                   <span className="text-rose-600 dark:text-rose-400">
                     {" "}
-                    · {invalidRows.length} skipped (validation errors)
+                    {t("import.skippedRows", { count: invalidRows.length })}
                   </span>
                 )}
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="ghost" size="sm" onClick={reset}>
-                <XIcon /> Cancel
+                <XIcon /> {t("import.cancelBtn")}
               </Button>
               <Button
                 size="sm"
@@ -280,7 +280,7 @@ function ImportUsersPage() {
                 ) : (
                   <FileUpIcon />
                 )}
-                Import {validRows.length} user{validRows.length === 1 ? "" : "s"}
+                {t("import.importBtn", { count: validRows.length })}
               </Button>
             </div>
           </CardHeader>
@@ -293,17 +293,17 @@ function ImportUsersPage() {
             <DataState
               isLoading={false}
               isEmpty={(rows?.length ?? 0) === 0}
-              emptyTitle="No rows in the file."
+              emptyTitle={t("import.previewEmpty")}
             >
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-12">#</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead>Password</TableHead>
-                    <TableHead className="text-right">Status</TableHead>
+                    <TableHead className="w-12">{t("import.colLine")}</TableHead>
+                    <TableHead>{t("import.colEmail")}</TableHead>
+                    <TableHead>{t("import.colName")}</TableHead>
+                    <TableHead>{t("import.colPhone")}</TableHead>
+                    <TableHead>{t("import.colPassword")}</TableHead>
+                    <TableHead className="text-right">{t("import.colStatus")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -330,7 +330,7 @@ function ImportUsersPage() {
             </DataState>
             {rows!.length > 100 && (
               <div className="border-t p-2 text-center text-xs text-muted-foreground">
-                Showing first 100 of {rows!.length} rows.
+                {t("import.showingFirst", { total: rows!.length })}
               </div>
             )}
           </CardContent>
@@ -341,13 +341,13 @@ function ImportUsersPage() {
       {result && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Import complete</CardTitle>
+            <CardTitle className="text-base">{t("import.resultTitle")}</CardTitle>
             <CardDescription>
-              {result.succeeded} succeeded
+              {t("import.resultSucceeded", { count: result.succeeded })}
               {result.failed > 0 && (
                 <span className="text-rose-600 dark:text-rose-400">
                   {" · "}
-                  {result.failed} failed
+                  {t("import.resultFailed", { count: result.failed })}
                 </span>
               )}
             </CardDescription>
@@ -357,9 +357,9 @@ function ImportUsersPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-16">Line</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Error</TableHead>
+                    <TableHead className="w-16">{t("import.errorColLine")}</TableHead>
+                    <TableHead>{t("import.errorColEmail")}</TableHead>
+                    <TableHead>{t("import.errorColError")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -379,10 +379,10 @@ function ImportUsersPage() {
           <CardContent>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={reset}>
-                Import another file
+                {t("import.importAnotherBtn")}
               </Button>
               <Link to="/users" className={buttonVariants({ size: "sm" })}>
-                View users
+                {t("import.viewUsersBtn")}
               </Link>
             </div>
           </CardContent>

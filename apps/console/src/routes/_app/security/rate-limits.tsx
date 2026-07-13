@@ -10,6 +10,7 @@ import {
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { GaugeIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
@@ -36,6 +37,7 @@ const STATIC_LIMITS: { endpoint: string; limit: string; window: string }[] = [
 ];
 
 function RateLimitsPage() {
+  const { t } = useTranslation("security");
   const tenantId = useTenantId();
   const policyQ = useQuery({
     queryKey: ["policy", tenantId],
@@ -43,19 +45,17 @@ function RateLimitsPage() {
     enabled: !!tenantId,
   });
 
+  const allowCount = policyQ.data?.ip_allowlist?.length ?? 0;
+  const denyCount = policyQ.data?.ip_denylist?.length ?? 0;
+
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader
-        description="Per-endpoint rate limits and per-tenant network policy. Per-tenant / per-user / per-api-key overrides are supported by the API; managing them from this screen is coming soon."
-      />
+      <PageHeader description={t("rateLimits.description")} />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Per-endpoint limits</CardTitle>
-          <CardDescription>
-            Built-in token-bucket limits applied at the gateway in
-            <code> backend/internal/platform/ratelimit/limiter.go</code>.
-          </CardDescription>
+          <CardTitle className="text-base">{t("rateLimits.perEndpoint.title")}</CardTitle>
+          <CardDescription>{t("rateLimits.perEndpoint.description")}</CardDescription>
         </CardHeader>
         <CardContent className="divide-y rounded-md border">
           {STATIC_LIMITS.map((row) => (
@@ -72,10 +72,10 @@ function RateLimitsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Network policy</CardTitle>
+          <CardTitle className="text-base">{t("rateLimits.networkPolicy.title")}</CardTitle>
           <CardDescription>
-            Tenant-level IP filtering. Manage in{" "}
-            <Link to="/access/policies" className="underline">Roles & Permissions → Policies</Link>.
+            {t("rateLimits.networkPolicy.description")}{" "}
+            <Link to="/access/policies" className="underline">Roles &amp; Permissions → Policies</Link>.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -86,23 +86,27 @@ function RateLimitsPage() {
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <p className="mb-2 text-xs font-medium text-muted-foreground">Allowlist ({policyQ.data?.ip_allowlist?.length ?? 0})</p>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  {t("rateLimits.networkPolicy.allowlist", { count: allowCount })}
+                </p>
                 {policyQ.data?.ip_allowlist?.length ? (
                   <div className="flex flex-wrap gap-1">
                     {policyQ.data.ip_allowlist.map((c) => <Badge key={c} variant="muted">{c}</Badge>)}
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No allowlist — open to all source IPs.</p>
+                  <p className="text-xs text-muted-foreground">{t("rateLimits.networkPolicy.noAllowlist")}</p>
                 )}
               </div>
               <div>
-                <p className="mb-2 text-xs font-medium text-muted-foreground">Denylist ({policyQ.data?.ip_denylist?.length ?? 0})</p>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">
+                  {t("rateLimits.networkPolicy.denylist", { count: denyCount })}
+                </p>
                 {policyQ.data?.ip_denylist?.length ? (
                   <div className="flex flex-wrap gap-1">
                     {policyQ.data.ip_denylist.map((c) => <Badge key={c} variant="destructive">{c}</Badge>)}
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No denied CIDRs.</p>
+                  <p className="text-xs text-muted-foreground">{t("rateLimits.networkPolicy.noDenylist")}</p>
                 )}
               </div>
             </div>
@@ -114,11 +118,8 @@ function RateLimitsPage() {
         <CardContent className="flex items-start gap-3 p-4">
           <GaugeIcon className="size-5 text-amber-700 dark:text-amber-500" />
           <div className="text-sm">
-            <p className="font-medium">Per-tenant rate-limit controls coming to this screen.</p>
-            <p className="text-muted-foreground">
-              The API already supports per-tenant / per-user / per-api-key overrides (migration
-              <code> 0064_rate_limit_overrides</code>); a UI to view and edit them from here is on the way.
-            </p>
+            <p className="font-medium">{t("rateLimits.comingSoon.title")}</p>
+            <p className="text-muted-foreground">{t("rateLimits.comingSoon.description")}</p>
           </div>
         </CardContent>
       </Card>

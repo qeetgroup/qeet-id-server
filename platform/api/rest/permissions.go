@@ -51,6 +51,16 @@ func permissionMap() map[string]string {
 		"GET /v1/check": "role.read",
 		"GET /v1/tenants/{tenantID}/groups/{groupID}/roles":             "role.read",
 
+		// ABAC: attribute-based access control policy CRUD.
+		// Reads are gated on policy.read; mutations on policy.write. The
+		// evaluate endpoint is a PDP call and is ungated beyond tenant scope
+		// (it gates itself via requirePathTenant in the handler).
+		"GET /v1/tenants/{tenantID}/abac/policies":         "policy.read",
+		"POST /v1/tenants/{tenantID}/abac/policies":        "policy.write",
+		"GET /v1/tenants/{tenantID}/abac/policies/{id}":    "policy.read",
+		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}":  "policy.write",
+		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}": "policy.write",
+
 		// ReBAC: relationship tuples + identity graph.
 		// Reads are gated on role.read (structural authz data). Writes/deletes
 		// and the /check endpoint are ungated beyond tenant scope (they gate

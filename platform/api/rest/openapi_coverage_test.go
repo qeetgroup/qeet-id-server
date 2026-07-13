@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/policy"
@@ -90,6 +91,7 @@ func testDeps() Deps {
 		SCIM:           &scim.Handler{},
 		Secret:         &secret.Handler{},
 		TokenVault:     &tokenvault.Handler{},
+		ABAC:           &abac.Handler{},
 		AuthZEN:        &authzen.Handler{},
 		SAML:           &saml.Handler{IdP: &saml.IdP{}},
 		AdminPortal:    &adminportal.Handler{},

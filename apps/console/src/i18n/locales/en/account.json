@@ -1,0 +1,117 @@
+{
+  "nav": {
+    "profile": "Profile",
+    "security": "Security",
+    "sessions": "Sessions",
+    "data": "Data & deletion",
+    "backToAdmin": "Back to admin →",
+    "yourAccount": "Your account"
+  },
+  "profile": {
+    "title": "Profile",
+    "description": "The name, photo and contact details we show across Qeet ID.",
+    "picture": {
+      "label": "Profile picture",
+      "upload": "Upload photo",
+      "remove": "Remove",
+      "help": "PNG or JPG; a square image works best. Applied when you save.",
+      "errorNotImage": "Please choose an image file.",
+      "errorTooLarge": "Image is too large (max 8 MB).",
+      "errorProcess": "Couldn't process that image — try a different file."
+    },
+    "displayName": "Display name",
+    "displayNamePlaceholder": "How you'd like to be addressed",
+    "email": "Email",
+    "emailHelp": "Change your email from the security tab — it requires re-verification.",
+    "save": "Save changes",
+    "saving": "Saving…",
+    "toast": {
+      "updated": "Profile updated"
+    }
+  },
+  "security": {
+    "title": "Security",
+    "description": "Password, two-factor authentication, and active sessions for your account.",
+    "password": {
+      "title": "Password",
+      "description": "Use a strong, unique password. We recommend a password manager.",
+      "reset": "Reset password"
+    },
+    "passkeys": {
+      "title": "Passkeys",
+      "description": "Faster, phishing-resistant sign-in using Touch ID, Face ID, Windows Hello, or a security key.",
+      "enrolled_one": "{{count}} enrolled",
+      "enrolled_other": "{{count}} enrolled",
+      "notEnrolled": "Not enrolled",
+      "manage": "Manage passkeys"
+    },
+    "mfa": {
+      "title": "Two-factor authentication",
+      "description": "Add a second factor (authenticator app, SMS, or email code) to require a second step on every sign-in.",
+      "totp": "Authenticator app (TOTP)",
+      "smsEmail": "SMS or email codes",
+      "recoveryCodes": "Recovery codes"
+    },
+    "connected": {
+      "title": "Connected accounts",
+      "description": "Social and identity providers linked to your account. You can sign in with any of them; unlink the ones you no longer use.",
+      "empty": "No connected accounts. Link one by signing in with a provider from the sign-in screen.",
+      "linkedAt": "· linked {{date}}",
+      "unlink": "Unlink"
+    }
+  },
+  "sessions": {
+    "title": "Sessions",
+    "description": "All devices and browsers currently signed in to your account. Revoke any you don't recognise.",
+    "active": {
+      "title": "Active sessions",
+      "description": "Every place you're currently signed in. Revoke any session you don't recognise.",
+      "signOutElsewhere": "Sign out elsewhere ({{count}})",
+      "emptyTitle": "No active sessions.",
+      "thisDevice": "This device"
+    },
+    "columns": {
+      "device": "Device",
+      "ip": "IP",
+      "created": "Created",
+      "lastSeen": "Last seen",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "revoke": {
+      "title": "Revoke this session?",
+      "description": "Whoever holds it will be signed out.",
+      "label": "Revoke",
+      "button": "Revoke",
+      "selfHelp": "Use the sign-out menu to end the session you're currently using."
+    },
+    "revokeAll": {
+      "title_one": "Sign out {{count}} other session?",
+      "title_other": "Sign out {{count}} other sessions?",
+      "description": "This won't sign you out of this browser.",
+      "label": "Sign out elsewhere"
+    },
+    "toast": {
+      "revoked": "Session revoked"
+    }
+  },
+  "data": {
+    "title": "Data",
+    "description": "Export or delete your personal data.",
+    "export": {
+      "title": "Export your data",
+      "description": "We'll prepare a JSON / CSV archive of everything we store about your account and email you a one-time download link.",
+      "button": "Request export"
+    },
+    "delete": {
+      "title": "Delete your account",
+      "description": "Removes your account and personal data after a 30-day grace period. Audit-log references are kept (with PII redacted) so administrators can still verify historical events.",
+      "button": "Delete my account",
+      "confirm": {
+        "title": "Schedule account for deletion?",
+        "description": "You can cancel within 30 days by signing back in.",
+        "label": "Delete my account"
+      }
+    }
+  }
+}

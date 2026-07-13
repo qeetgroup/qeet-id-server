@@ -15,6 +15,7 @@ import {
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckCircle2Icon, Loader2Icon, NetworkIcon, Trash2Icon, XCircleIcon } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { ApiError } from "@/lib/api";
@@ -34,6 +35,7 @@ export const Route = createFileRoute("/_app/access/relationships")({
 });
 
 function RelationshipsPage() {
+  const { t } = useTranslation("rbac");
   const [object, setObject] = useState("");
   const [browseObject, setBrowseObject] = useState("");
   const tuplesQ = useRelationTuples(browseObject);
@@ -47,12 +49,12 @@ function RelationshipsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="Fine-grained, relationship-based access (ReBAC). Tuples assert &ldquo;object relation subject&rdquo;; a check resolves direct grants and usersets (e.g. group:eng#member) recursively. Complements roles (RBAC) and policies (ABAC)." />
+      <PageHeader description={t("relationships.description")} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Write a tuple</CardTitle>
+            <CardTitle className="text-base">{t("relationships.write.title")}</CardTitle>
             <CardDescription>
               e.g. object <code>document:readme</code>, relation <code>viewer</code>, subject{" "}
               <code>user:&lt;id&gt;</code> or <code>group:eng#member</code>.
@@ -72,7 +74,7 @@ function RelationshipsPage() {
               }}
             >
               <Field>
-                <FieldLabel htmlFor="object">Object</FieldLabel>
+                <FieldLabel htmlFor="object">{t("relationships.write.objectLabel")}</FieldLabel>
                 <Input
                   id="object"
                   placeholder="document:readme"
@@ -81,7 +83,7 @@ function RelationshipsPage() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="relation">Relation</FieldLabel>
+                <FieldLabel htmlFor="relation">{t("relationships.write.relationLabel")}</FieldLabel>
                 <Input
                   id="relation"
                   placeholder="viewer"
@@ -90,14 +92,14 @@ function RelationshipsPage() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="subject">Subject</FieldLabel>
+                <FieldLabel htmlFor="subject">{t("relationships.write.subjectLabel")}</FieldLabel>
                 <Input
                   id="subject"
                   placeholder="user:… or group:eng#member"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                 />
-                <FieldDescription>A user, or a userset (object#relation).</FieldDescription>
+                <FieldDescription>{t("relationships.write.subjectHelp")}</FieldDescription>
               </Field>
               {writeM.error && (
                 <p className="text-destructive text-sm">{(writeM.error as ApiError).message}</p>
@@ -107,7 +109,7 @@ function RelationshipsPage() {
                 disabled={writeM.isPending || !object.trim() || !relation.trim() || !subject.trim()}
               >
                 {writeM.isPending && <Loader2Icon className="animate-spin" />}
-                Write tuple
+                {t("relationships.write.writeBtn")}
               </Button>
             </form>
           </CardContent>
@@ -118,8 +120,8 @@ function RelationshipsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Tuples on an object</CardTitle>
-          <CardDescription>Enter an object to list its relationship tuples.</CardDescription>
+          <CardTitle className="text-base">{t("relationships.tuples.title")}</CardTitle>
+          <CardDescription>{t("relationships.tuples.description")}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <Input
@@ -134,23 +136,23 @@ function RelationshipsPage() {
               error={tuplesQ.error}
               isEmpty={items.length === 0}
               emptyIcon={NetworkIcon}
-              emptyTitle="No tuples on this object."
+              emptyTitle={t("relationships.tuples.empty")}
               skeletonRows={2}
             >
               <ul className="divide-y">
-                {items.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-4 py-2">
+                {items.map((tuple) => (
+                  <li key={tuple.id} className="flex items-center justify-between gap-4 py-2">
                     <span className="font-mono text-sm">
-                      {t.object} <span className="text-muted-foreground">#{t.relation}</span>{" "}
-                      {t.subject}
+                      {tuple.object} <span className="text-muted-foreground">#{tuple.relation}</span>{" "}
+                      {tuple.subject}
                     </span>
                     <Button
                       variant="ghost"
                       size="sm"
                       disabled={deleteM.isPending}
-                      onClick={() => deleteM.mutate(t.id)}
+                      onClick={() => deleteM.mutate(tuple.id)}
                     >
-                      <Trash2Icon /> Delete
+                      <Trash2Icon /> {t("relationships.tuples.deleteBtn")}
                     </Button>
                   </li>
                 ))}
@@ -166,6 +168,7 @@ function RelationshipsPage() {
 }
 
 function CheckCard() {
+  const { t } = useTranslation("rbac");
   const checkM = useCheckRelation();
   const [object, setObject] = useState("");
   const [relation, setRelation] = useState("");
@@ -175,10 +178,8 @@ function CheckCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Check access</CardTitle>
-        <CardDescription>
-          Does a user have a relation on an object? (resolves usersets)
-        </CardDescription>
+        <CardTitle className="text-base">{t("relationships.check.title")}</CardTitle>
+        <CardDescription>{t("relationships.check.description")}</CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -195,7 +196,7 @@ function CheckCard() {
           }}
         >
           <Field>
-            <FieldLabel htmlFor="c-object">Object</FieldLabel>
+            <FieldLabel htmlFor="c-object">{t("relationships.check.objectLabel")}</FieldLabel>
             <Input
               id="c-object"
               placeholder="document:readme"
@@ -204,7 +205,7 @@ function CheckCard() {
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="c-relation">Relation</FieldLabel>
+            <FieldLabel htmlFor="c-relation">{t("relationships.check.relationLabel")}</FieldLabel>
             <Input
               id="c-relation"
               placeholder="viewer"
@@ -213,7 +214,7 @@ function CheckCard() {
             />
           </Field>
           <Field>
-            <FieldLabel htmlFor="c-user">User ID</FieldLabel>
+            <FieldLabel htmlFor="c-user">{t("relationships.check.userLabel")}</FieldLabel>
             <Input
               id="c-user"
               placeholder="user uuid"
@@ -227,7 +228,7 @@ function CheckCard() {
             disabled={checkM.isPending || !object.trim() || !relation.trim() || !userId.trim()}
           >
             {checkM.isPending && <Loader2Icon className="animate-spin" />}
-            Check
+            {t("relationships.check.checkBtn")}
           </Button>
         </form>
         {result && (
@@ -256,6 +257,7 @@ function CheckCard() {
 // ── Identity Graph ──────────────────────────────────────────────────────────
 
 function GraphCard() {
+  const { t } = useTranslation("rbac");
   const [object, setObject] = useState("");
   const [relation, setRelation] = useState("");
   const [query, setQuery] = useState<{ object: string; relation: string } | null>(null);
@@ -264,11 +266,8 @@ function GraphCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Identity Graph</CardTitle>
-        <CardDescription>
-          Expand all subjects reachable from an object+relation — a privilege-path graph showing
-          who/what can reach a resource and through which chain of relationships.
-        </CardDescription>
+        <CardTitle className="text-base">{t("relationships.graph.title")}</CardTitle>
+        <CardDescription>{t("relationships.graph.description")}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <form
@@ -285,14 +284,14 @@ function GraphCard() {
             placeholder="document:readme"
             value={object}
             onChange={(e) => setObject(e.target.value)}
-            aria-label="Object"
+            aria-label={t("relationships.graph.objectAriaLabel")}
           />
           <Input
             className="w-36"
             placeholder="viewer"
             value={relation}
             onChange={(e) => setRelation(e.target.value)}
-            aria-label="Relation"
+            aria-label={t("relationships.graph.relationAriaLabel")}
           />
           <Button
             type="submit"
@@ -300,7 +299,7 @@ function GraphCard() {
             disabled={graphQ.isFetching || !object.trim() || !relation.trim()}
           >
             {graphQ.isFetching && <Loader2Icon className="animate-spin" />}
-            Expand
+            {t("relationships.graph.expandBtn")}
           </Button>
         </form>
 
@@ -311,10 +310,10 @@ function GraphCard() {
             error={graphQ.error}
             isEmpty={!graphQ.data || graphQ.data.nodes.length === 0}
             emptyIcon={NetworkIcon}
-            emptyTitle="No relationships found from this object+relation."
+            emptyTitle={t("relationships.graph.empty")}
             skeletonRows={3}
           >
-            {graphQ.data && <GraphCanvas graph={graphQ.data} root={query.object} />}
+            {graphQ.data && <GraphCanvas graph={graphQ.data} root={query.object} ariaLabel={t("relationships.graph.svgAriaLabel")} />}
           </DataState>
         )}
       </CardContent>
@@ -395,7 +394,7 @@ function nodeColor(type: string) {
   return NODE_COLORS[type] ?? "fill-muted stroke-muted-foreground";
 }
 
-function GraphCanvas({ graph, root }: { graph: RelationGraph; root: string }) {
+function GraphCanvas({ graph, root, ariaLabel }: { graph: RelationGraph; root: string; ariaLabel: string }) {
   const positions = useMemo(() => layoutGraph(graph, root), [graph, root]);
   const posMap = useMemo(() => new Map(positions.map((p) => [p.node.id, p])), [positions]);
 
@@ -416,7 +415,7 @@ function GraphCanvas({ graph, root }: { graph: RelationGraph; root: string }) {
         viewBox={`${minX} ${minY} ${vw} ${vh}`}
         width={Math.max(vw, 600)}
         height={Math.max(vh, 200)}
-        aria-label="Identity relationship graph"
+        aria-label={ariaLabel}
         role="img"
       >
         <defs>

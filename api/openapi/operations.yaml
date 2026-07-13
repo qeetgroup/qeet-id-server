@@ -33,6 +33,8 @@ tags:
     description: Liveness, readiness, and Prometheus metrics.
   - name: Rate Limits
     description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
+  - name: Compliance
+    description: SOC 2 and ISO 27001 live evidence generation from real tenant system state.
 paths:
   /v1/tenants/{tenantID}/rate-limits:
     get:
@@ -1494,6 +1496,126 @@ paths:
           description: All notifications marked read
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/tenants/{tenantID}/compliance/{framework}/evidence:
+    post:
+      operationId: post_v1_tenants_ByTenantID_compliance_ByFramework_evidence
+      summary: Generate compliance evidence
+      description: >-
+        Runs all controls for the framework against live tenant state (MFA
+        policy, audit log, RBAC, retention, SIEM config, secrets vault, etc.),
+        persists an immutable evidence run, and returns the full per-control
+        report. framework must be 'soc2' or 'iso27001'.
+      tags:
+        - Compliance
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: framework
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [soc2, iso27001]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '201':
+          description: Evidence run generated; body contains the full control-by-control report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceRun'
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_ByFramework_evidence
+      summary: List compliance evidence runs
+      description: >-
+        Returns previous evidence runs for the framework, most recent first.
+        Controls are omitted; call GET .../compliance/evidence/{id} for the
+        full report.
+      tags:
+        - Compliance
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: framework
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [soc2, iso27001]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: List of evidence runs (controls omitted).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EvidenceRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/compliance/evidence/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_evidence_ById
+      summary: Get compliance evidence run (full report)
+      description: >-
+        Returns the full evidence run including per-control results. Carries a
+        Content-Disposition header so browsers treat it as a downloadable JSON
+        evidence report. tenant-scoped; 404 when the run belongs to a different tenant.
+      tags:
+        - Compliance
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Full evidence run with per-control results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     bearerAuth:
@@ -1642,6 +1764,64 @@ components:
           $ref: '#/components/schemas/RateLimitBucket'
         api_key:
           $ref: '#/components/schemas/RateLimitBucket'
+    EvidenceControlResult:
+      type: object
+      description: Outcome of a single compliance control check against live system state.
+      properties:
+        id:
+          type: string
+          description: Unique control identifier within the framework (e.g. CC6.1-MFA).
+        name:
+          type: string
+        category:
+          type: string
+        criteria:
+          type: string
+          description: Framework reference code (e.g. CC6.1 or A.9.4).
+        status:
+          type: string
+          enum: [pass, fail, na]
+          description: >-
+            pass — condition positively confirmed; fail — condition not met;
+            na — data not determinable (never a fabricated pass).
+        detail:
+          type: string
+          description: Human-readable explanation of what was found; always populated.
+    EvidenceRun:
+      type: object
+      description: >-
+        Immutable snapshot of one compliance evidence generation pass for a
+        tenant+framework pair. Controls are populated on GetRun; omitted on
+        ListRuns.
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        framework:
+          type: string
+          enum: [soc2, iso27001]
+        generated_at:
+          type: string
+          format: date-time
+        generated_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: Actor user ID; null when generated by a system or API-key actor.
+        pass_count:
+          type: integer
+        fail_count:
+          type: integer
+        na_count:
+          type: integer
+        controls:
+          type: array
+          description: Per-control results; present on GetRun, omitted on ListRuns.
+          items:
+            $ref: '#/components/schemas/EvidenceControlResult'
     Error:
       type: object
       required:

@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id/domains/access/authorization/policy"
@@ -348,6 +349,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool)                         // forwards audit events to configured log sinks
 	rebacService := rebac.NewService(pool)                       // fine-grained (relationship) authorization
+	abacService := abac.NewService(pool)                         // attribute-based access control (policy store + PDP)
 	authzenService := authzen.NewService(rbacRepo, rebacService) // OpenID AuthZEN PDP facade over RBAC/ReBAC
 	agentService := agent.NewService(pool, issuer)               // AI-agent identities (ephemeral scoped tokens)
 	vcService := vc.NewService(pool, issuer)                     // W3C verifiable credentials (JWT-VC)
@@ -364,6 +366,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	auditReader := audit.NewReader(pool)
 	auditVerifier := audit.NewVerifier(pool)
+	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
 	auditAnomalyService := anomaly.NewService(pool)
 	analyticsReader := analytics.NewReader(pool)
 	outboxReader := outbox.NewReader(pool)
@@ -504,7 +507,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
-		GDPR:          &gdpr.Handler{Service: gdprService},
+		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		AuditAnomaly:  &anomaly.Handler{Service: auditAnomalyService},
 		Billing:       &billing.Handler{Service: billingService},
@@ -529,6 +532,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		DomainVerify:  &domainverify.Handler{Service: domainverify.NewService(pool)},
 		SIEM:          &siem.Handler{Service: siemService},
 		AuthHook:      &authhook.Handler{Service: authHookService},
+		ABAC:          &abac.Handler{Service: abacService},
 		ReBAC:         &rebac.Handler{Service: rebacService},
 		AuthZEN:       &authzen.Handler{Service: authzenService},
 		Agent:         &agent.Handler{Service: agentService},

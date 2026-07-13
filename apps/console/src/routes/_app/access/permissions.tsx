@@ -12,12 +12,14 @@ import { ShieldCheckIcon } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
+import { useTranslation } from "react-i18next";
 
 export const Route = createFileRoute("/_app/access/permissions")({ component: PermissionsPage });
 
 type Permission = { id: string; key: string; description: string };
 
 function PermissionsPage() {
+  const { t } = useTranslation("rbac");
   const permsQ = useQuery({
     queryKey: ["permissions"],
     queryFn: () => api<{ items: Permission[] }>("/v1/permissions"),
@@ -32,7 +34,7 @@ function PermissionsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <PageHeader description="The complete catalogue of permission keys you can grant to roles. These are global to the platform; bindings to roles live under each tenant." />
+      <PageHeader description={t("permissions.description")} />
 
       {permsQ.isLoading ? (
         <Card>
@@ -46,7 +48,7 @@ function PermissionsPage() {
         <Card>
           <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
             <ShieldCheckIcon className="size-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">No permissions registered yet.</p>
+            <p className="text-sm text-muted-foreground">{t("permissions.empty")}</p>
           </CardContent>
         </Card>
       ) : (
@@ -54,14 +56,14 @@ function PermissionsPage() {
           <Card key={resource}>
             <CardHeader>
               <CardTitle className="text-base capitalize">{resource}</CardTitle>
-              <CardDescription>{perms.length} permission{perms.length === 1 ? "" : "s"}</CardDescription>
+              <CardDescription>{t("permissions.count", { count: perms.length })}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid gap-2 sm:grid-cols-2">
                 {perms.map((p) => (
                   <div key={p.id} className="flex flex-col gap-1 rounded-md border p-3">
                     <code className="text-xs font-medium">{p.key}</code>
-                    <span className="text-xs text-muted-foreground">{p.description || "No description"}</span>
+                    <span className="text-xs text-muted-foreground">{p.description || t("permissions.noDescription")}</span>
                   </div>
                 ))}
               </div>

@@ -1,0 +1,33 @@
+# Production overrides. Apply with: helm upgrade --install qeet-id ./deploy/base/helm/qeet-id \
+#   -n qeet-id -f deploy/environments/prod/values.yaml
+replicaCount: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Sync sensitive env from AWS Secrets Manager via External Secrets Operator.
+externalSecrets:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/qeet-id
+
+# Spread across zones so an AZ loss never takes the whole service down.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: qeet-id

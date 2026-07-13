@@ -1,0 +1,123 @@
+{
+  "tenants": {
+    "description": "Every tenant your account has access to. Click a tenant to switch into it, or create a new one — you become its owner automatically.",
+    "refresh": "Refresh",
+    "new": "New tenant",
+    "list": {
+      "title": "Tenants",
+      "count_one": "{{shown}} of {{total}} tenant",
+      "count_other": "{{shown}} of {{total}} tenants",
+      "searchPlaceholder": "Search name, slug, region…",
+      "emptyFiltered": "No tenants match your filters.",
+      "empty": "No tenants yet."
+    },
+    "filters": {
+      "status": {
+        "label": "Status",
+        "active": "Active",
+        "suspended": "Suspended",
+        "deleted": "Deleted"
+      },
+      "plan": {
+        "label": "Plan",
+        "free": "Free",
+        "starter": "Starter",
+        "pro": "Pro",
+        "enterprise": "Enterprise"
+      }
+    },
+    "columns": {
+      "name": "Name",
+      "slug": "Slug",
+      "plan": "Plan",
+      "region": "Region",
+      "status": "Status",
+      "created": "Created",
+      "actions": "Actions"
+    },
+    "table": {
+      "current": "Current",
+      "switch": "Switch",
+      "editLabel": "Edit tenant",
+      "deleteLabel": "Delete tenant",
+      "deleteSelfTitle": "Switch to another tenant before deleting this one"
+    },
+    "delete": {
+      "title": "Delete this tenant?",
+      "descriptionPrefix": "This soft-deletes",
+      "descriptionSuffix": ". Audit history is preserved, but you won't be able to undo this from the UI.",
+      "descriptionFallback": "This soft-deletes the tenant. Audit history is preserved.",
+      "cancel": "Cancel",
+      "deleting": "Deleting…",
+      "delete": "Delete"
+    },
+    "create": {
+      "title": "New workspace",
+      "description": "You'll become the owner of this workspace and switch into it once it's created.",
+      "name": "Name",
+      "slug": "Slug",
+      "slugHelp": "Lowercase letters, numbers, dashes. Used in URLs.",
+      "plan": "Plan",
+      "region": "Region",
+      "cancel": "Cancel",
+      "submit": "Create",
+      "submitting": "Creating…"
+    },
+    "edit": {
+      "title": "Edit tenant",
+      "description": "Slug can't be changed once a tenant is created.",
+      "name": "Name",
+      "slug": "Slug",
+      "slugHelp": "Immutable after creation.",
+      "plan": "Plan",
+      "status": "Status",
+      "statusActive": "Active",
+      "statusSuspended": "Suspended",
+      "statusHelp": "Use the Delete action to soft-delete a tenant.",
+      "region": "Region",
+      "cancel": "Cancel",
+      "save": "Save changes",
+      "saving": "Saving…"
+    },
+    "toast": {
+      "deleted": "Tenant deleted",
+      "created": "Workspace created",
+      "updated": "Tenant updated"
+    }
+  },
+  "domains": {
+    "description": "Prove ownership of your email domains to enable organization SSO and just-in-time provisioning. Add a DNS TXT record, then verify.",
+    "add": "Add domain",
+    "addCard": {
+      "title": "Add a domain",
+      "description": "Enter the email domain your members use, e.g. acme.com.",
+      "label": "Domain",
+      "submit": "Add domain"
+    },
+    "empty": "No domains added yet.",
+    "emptyDescription": "Add a domain above to start the verification flow.",
+    "card": {
+      "verified": "Verified",
+      "pending": "Pending",
+      "remove": "Remove",
+      "removeTitleWithDomain": "Remove {{domain}}?",
+      "removeConfirm": "Remove",
+      "dnsInstructions": "Add this TXT record to your DNS, then click Verify. Changes can take a few minutes to propagate.",
+      "dnsName": "Name",
+      "dnsType": "Type",
+      "dnsValue": "Value",
+      "verify": "Verify"
+    }
+  },
+  "members": {
+    "description": "Users who are members of this organisation.",
+    "columns": {
+      "user": "User",
+      "role": "Role",
+      "joined": "Joined",
+      "actions": "Actions"
+    },
+    "empty": "No members yet.",
+    "remove": "Remove"
+  }
+}
