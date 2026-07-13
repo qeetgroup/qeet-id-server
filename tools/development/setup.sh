@@ -12,21 +12,15 @@ if ! go version 2>/dev/null | grep -q "go1.25"; then
 fi
 ok "$(go version)"
 
-info "Node (nvm v22)"
-if ! command -v nvm &>/dev/null; then
-  brew install nvm
-  echo 'export NVM_DIR="$HOME/.nvm" && [ -s "$(brew --prefix)/opt/nvm/nvm.sh" ] && . "$(brew --prefix)/opt/nvm/nvm.sh"' >> ~/.zshrc
-  # shellcheck disable=SC1091
-  export NVM_DIR="$HOME/.nvm"
-  [ -s "$(brew --prefix)/opt/nvm/nvm.sh" ] && . "$(brew --prefix)/opt/nvm/nvm.sh"
+info "Bun (JS runtime + package manager)"
+if ! command -v bun &>/dev/null; then
+  brew install bun
 fi
-nvm install   # reads .nvmrc (Node 24)
-nvm use       # reads .nvmrc (Node 24)
-ok "$(node --version)"
+ok "$(bun --version)"
 
-info "pnpm 9.15.4"
-npm install -g pnpm@9.15.4
-ok "$(pnpm --version)"
+info "Workspace dependencies (bun install)"
+bun install
+ok "dependencies installed"
 
 info "golang-migrate"
 brew install golang-migrate
@@ -47,9 +41,8 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 ok "govulncheck installed"
 
 info "Playwright browsers"
-nvm use   # reads .nvmrc (Node 24)
-pnpm --filter @qeetid/e2e exec playwright install --with-deps 2>/dev/null || true
+bunx playwright install --with-deps 2>/dev/null || true
 ok "Playwright ready"
 
 echo ""
-echo "Setup complete. Run: make install && make db-up migrate-up && make dev"
+echo "Setup complete. Backend: make db-up migrate-up && make dev  ·  Frontends: bun run dev"

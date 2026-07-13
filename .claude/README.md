@@ -10,7 +10,7 @@ Turns a `FEATURE-PROPOSALS.md` row into shipped, tested, security-reviewed code.
 |---|---|
 | [`agents/feature-architect.md`](agents/feature-architect.md) | Proposal → `docs/specs/<slug>.md` (data model, migration plan, API surface, security/tenant notes, task breakdown). No code. |
 | [`agents/backend-engineer.md`](agents/backend-engineer.md) | Go domain pkg (domain/repo/service/http) + migration pair + OpenAPI + router wiring; gates on build/vet/test + arch test. |
-| [`agents/frontend-engineer.md`](agents/frontend-engineer.md) | React apps (console/login/website) on `@qeetrix/*` + SDK updates; gates on pnpm typecheck/lint/build. |
+| [`agents/frontend-engineer.md`](agents/frontend-engineer.md) | React apps (console/login/website) on `@qeetrix/*` + SDK updates; gates on bun typecheck/lint/build. |
 | [`agents/qa-test-engineer.md`](agents/qa-test-engineer.md) | Unit + testcontainers integration + Postman + Vitest; never weakens tests. |
 | [`agents/security-reviewer.md`](agents/security-reviewer.md) | IAM threat-model audit of the diff (tenant isolation, authz, tokens, CSRF…). **Read-only.** |
 | [`agents/docs-writer.md`](agents/docs-writer.md) | Updates docs/OpenAPI + closes the loop (proposal → `done`, updates `ROADMAP.md`). |

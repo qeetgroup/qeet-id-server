@@ -32,7 +32,7 @@ feature-architect ──► docs/specs/<slug>.md
         ├─► backend-engineer  ─┐
         └─► frontend-engineer ─┤  (implement from the spec; design-reviewer checks UI craft + Qeetrix + WCAG 2.2 AA)
                                ▼
-                       qa-test-engineer   (suite green: build + vet + go test + arch + coverage + pnpm test)
+                       qa-test-engineer   (suite green: build + vet + go test + arch + coverage + bun run test)
                                ▼
                        security-reviewer  (IAM audit of the diff → engineers fix findings)
                                ▼
@@ -56,7 +56,7 @@ Or step by step, reviewing each hand-off. Run one feature at a time.
 - `go build ./... && go vet ./... && go test ./...` green
 - `go test -count=1 ./tests/architecture/...` green (arch boundaries)
 - OpenAPI coverage test green (`api/openapi/` documents every route)
-- `pnpm typecheck && pnpm lint && pnpm test` green (if frontend touched)
+- `bun run typecheck && bun run lint && bun run test` green (if frontend touched)
 - `make test-integration` green (if Docker available)
 - security-reviewer findings resolved (no open Critical/High)
 - `docs/` updated; proposal `Status: done`; `ROADMAP.md` (✅ Shipped section) updated

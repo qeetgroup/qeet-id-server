@@ -46,7 +46,6 @@ coverage.html
 
 # JS/Node — deps, stores, build outputs (merged from frontend/.gitignore on hoist)
 node_modules/
-.pnpm-store/
 dist/
 build/
 .next/
@@ -78,7 +77,6 @@ secrets/
 *.log
 logs/
 npm-debug.log*
-pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 

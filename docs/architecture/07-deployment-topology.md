@@ -93,7 +93,7 @@ The three frontend apps are separate build artifacts deployed independently:
 | `@qeetid/login` (hosted login) | Next.js SSR | Vercel, or Node container |
 | `@qeetid/web` (website) | Next.js SSR | Vercel, or Node container |
 
-Frontend builds: `pnpm build` (Turborepo runs all three in parallel). Node ≥ 24 required (`nvm use` reads the repo `.nvmrc`).
+Frontend builds: `bun run build` (Turborepo runs all three in parallel). Node ≥ 24 required (`nvm use` reads the repo `.nvmrc`).
 
 ---
 

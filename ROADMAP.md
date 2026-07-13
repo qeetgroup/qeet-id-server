@@ -67,7 +67,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 ### 🧰 Platform & delivery
 - ✅ 3 React frontends (admin console ~80 screens, hosted login, marketing site) · **6 SDK packages** (TS server + browser, React w/ full `<SignIn/>`/`<OrgSwitcher/>`/… component suite, Next.js, Go, Python) · per-tenant rate-limit overrides (`0064`)
 - ✅ Transactional outbox **+ DLQ** · webhook dispatcher (HMAC, backoff retry, own dead-letter `dead_at` state — not yet unified with the platform outbox's DLQ, but no longer unbounded) · Prometheus/OTel observability · `config.Validate()` boot-gate
-- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, 100% OpenAPI route coverage, **CodeQL**, `golangci-lint`, `govulncheck`, `gitleaks`, gated integration suite (testcontainers), frontend pnpm lint/typecheck/build/test *(Helm/Terraform/kustomize are in git history, not the tree — see 🚢 Deployment above; coverage-floor enforcement, Spectral spec-lint, Postman/Newman contract tests are not wired)*
+- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, 100% OpenAPI route coverage, **CodeQL**, `golangci-lint`, `govulncheck`, `gitleaks`, gated integration suite (testcontainers), frontend bun lint/typecheck/build/test *(Helm/Terraform/kustomize are in git history, not the tree — see 🚢 Deployment above; coverage-floor enforcement, Spectral spec-lint, Postman/Newman contract tests are not wired)*
 
 ---
 

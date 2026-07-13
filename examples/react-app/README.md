@@ -16,7 +16,7 @@ The flow ([src/qeet.ts](./src/qeet.ts)):
 
 ## Prerequisites
 
-- Node ≥ 24 (`nvm use`); run `pnpm install` from `frontend/`.
+- Node ≥ 24 (`nvm use`); run `bun install` from `frontend/`.
 - The Qeet ID backend running locally **with the dev seed applied** (creates the public
   `qci_example_spa` client this app uses).
 - **`ALLOWED_ORIGINS` must include `http://localhost:3020`.** The browser calls the token + userinfo
@@ -41,11 +41,11 @@ Then, in `frontend/examples/react-app/`:
 
 ```bash
 cp .env.example .env.local        # values already match the seeded public client
-make -C ../../.. dev-example-react   # or: pnpm --filter @qeetid/example-react dev
+make -C ../../.. dev-example-react   # or: bun run --filter @qeetid/example-react dev
 ```
 
 > First run only: build the SDK once so the workspace import resolves —
-> `pnpm --filter @qeetid/react build` (from `frontend/`).
+> `bun run --filter @qeetid/react build` (from `frontend/`).
 
 Open **http://localhost:3020** and click **Sign in with Qeet** → sign in with a seeded account:
 

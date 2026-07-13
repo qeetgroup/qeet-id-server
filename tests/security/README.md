@@ -56,5 +56,5 @@ docker run -t ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py \
 govulncheck ./...
 
 # Node
-pnpm audit --audit-level=high
+bun audit --audit-level=high
 ```

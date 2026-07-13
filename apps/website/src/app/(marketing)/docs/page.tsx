@@ -21,7 +21,7 @@ const quickstartTabs: CodeTab[] = [
     language: "shell",
     caption: "terminal",
     value: `# Install the SDK
-pnpm add @qeet-id/node
+bun add @qeet-id/node
 
 # Initialize the client
 import { QeetID } from "@qeet-id/node";

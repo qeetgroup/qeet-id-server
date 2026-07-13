@@ -74,7 +74,7 @@ A formal bug bounty program will launch alongside v1.0. Until then, we handle re
 If you are deploying Qeet ID yourself, please also:
 - Run TLS 1.2+ on every public endpoint
 - Rotate the JWT signing key set every 90 days
-- Keep dependencies current — `go.mod` and `pnpm-lock.yaml` are version-pinned for reproducibility, not because they should stay stale
+- Keep dependencies current — `go.mod` and `bun.lock` are version-pinned for reproducibility, not because they should stay stale
 - Enable WAF / DDoS protection at the edge (Cloudflare, AWS Shield)
 - Follow a deploy runbook and secrets generation guide before going to production
 

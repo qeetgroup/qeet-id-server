@@ -112,7 +112,7 @@ export function Testimonials() {
                         aria-hidden
                         className="pointer-events-none absolute -left-2 -top-4 font-display text-[9rem] leading-none text-foreground/4 select-none"
                       >
-                        "
+                        {'"'}
                       </span>
                     )}
                     <QuoteIcon aria-hidden className="relative size-7 text-brand/70" />
