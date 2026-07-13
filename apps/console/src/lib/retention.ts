@@ -26,7 +26,10 @@ export function useUpdateRetentionPolicy() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: RetentionPolicy) =>
-      api<RetentionPolicy>(`/v1/tenants/${tenantId}/retention`, { method: "PUT", body }),
+      api<RetentionPolicy>(`/v1/tenants/${tenantId}/retention`, {
+        method: "PUT",
+        body,
+      }),
     onSuccess: (data) => qc.setQueryData(["retention", tenantId], data),
     meta: { successMessage: "Retention policy saved" },
   });
@@ -48,7 +51,9 @@ export function useRunRetention() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api<{ purged: number }>(`/v1/tenants/${tenantId}/retention/run`, { method: "POST" }),
+      api<{ purged: number }>(`/v1/tenants/${tenantId}/retention/run`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users", "deleted"] }),
     meta: { successMessage: "Retention purge complete" },
   });

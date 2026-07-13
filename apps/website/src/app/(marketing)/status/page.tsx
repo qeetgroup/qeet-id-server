@@ -1,4 +1,4 @@
-import { StatusPill, cn } from "@qeetrix/ui";
+import { cn, StatusPill } from "@qeetrix/ui";
 import { CheckCircle2Icon, InfoIcon } from "lucide-react";
 import type { Metadata } from "next";
 
@@ -12,45 +12,49 @@ export const metadata: Metadata = {
 
 type ComponentStatus = "operational" | "degraded";
 
-const components: { name: string; description: string; status: ComponentStatus; uptime: string }[] =
-  [
-    {
-      name: "Authentication API",
-      description: "Token issuance, introspection, and the JWKS endpoint.",
-      status: "operational",
-      uptime: "99.99%",
-    },
-    {
-      name: "Sign-in & SSO",
-      description: "Hosted login, passkeys, SAML, and OIDC federation.",
-      status: "operational",
-      uptime: "99.99%",
-    },
-    {
-      name: "RBAC permission checks",
-      description: "The /check hot-path and effective-permissions queries.",
-      status: "operational",
-      uptime: "100.00%",
-    },
-    {
-      name: "Dashboard",
-      description: "The admin console and tenant management UI.",
-      status: "operational",
-      uptime: "99.98%",
-    },
-    {
-      name: "Webhooks & events",
-      description: "Signed event delivery, the outbox, and retries.",
-      status: "operational",
-      uptime: "99.97%",
-    },
-    {
-      name: "Docs & audit export",
-      description: "Documentation site and streaming audit-log export.",
-      status: "operational",
-      uptime: "99.99%",
-    },
-  ];
+const components: {
+  name: string;
+  description: string;
+  status: ComponentStatus;
+  uptime: string;
+}[] = [
+  {
+    name: "Authentication API",
+    description: "Token issuance, introspection, and the JWKS endpoint.",
+    status: "operational",
+    uptime: "99.99%",
+  },
+  {
+    name: "Sign-in & SSO",
+    description: "Hosted login, passkeys, SAML, and OIDC federation.",
+    status: "operational",
+    uptime: "99.99%",
+  },
+  {
+    name: "RBAC permission checks",
+    description: "The /check hot-path and effective-permissions queries.",
+    status: "operational",
+    uptime: "100.00%",
+  },
+  {
+    name: "Dashboard",
+    description: "The admin console and tenant management UI.",
+    status: "operational",
+    uptime: "99.98%",
+  },
+  {
+    name: "Webhooks & events",
+    description: "Signed event delivery, the outbox, and retries.",
+    status: "operational",
+    uptime: "99.97%",
+  },
+  {
+    name: "Docs & audit export",
+    description: "Documentation site and streaming audit-log export.",
+    status: "operational",
+    uptime: "99.99%",
+  },
+];
 
 // Deterministic 90-day history; a single illustrative degraded day so the
 // legend reads as real rather than a flat green wall.
@@ -131,7 +135,11 @@ export default function StatusPage() {
           </Reveal>
 
           <Reveal delay={0.05}>
-            <div className="mt-6 flex gap-[3px]" role="img" aria-label="90 day uptime history, all operational except one degraded day">
+            <div
+              className="mt-6 flex gap-[3px]"
+              role="img"
+              aria-label="90 day uptime history, all operational except one degraded day"
+            >
               {history.map((day, i) => (
                 <span
                   key={i}
@@ -147,7 +155,8 @@ export default function StatusPage() {
               <span>90 days ago</span>
               <span className="flex items-center gap-4">
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden className="size-2.5 rounded-[2px] bg-emerald-500/70" /> Operational
+                  <span aria-hidden className="size-2.5 rounded-[2px] bg-emerald-500/70" />{" "}
+                  Operational
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span aria-hidden className="size-2.5 rounded-[2px] bg-amber-500/70" /> Degraded

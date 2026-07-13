@@ -19,16 +19,18 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
+  type TenantDomain,
   useAddDomain,
   useDomains,
   useRemoveDomain,
   useVerifyDomain,
-  type TenantDomain,
 } from "@/lib/domains";
 
-export const Route = createFileRoute("/_app/organizations/domains")({ component: DomainsPage });
+export const Route = createFileRoute("/_app/organizations/domains")({
+  component: DomainsPage,
+});
 
 function DomainsPage() {
   const { t } = useTranslation("organizations");
@@ -52,7 +54,9 @@ function DomainsPage() {
             onSubmit={(e) => {
               e.preventDefault();
               if (newDomain.trim())
-                addM.mutate(newDomain.trim(), { onSuccess: () => setNewDomain("") });
+                addM.mutate(newDomain.trim(), {
+                  onSuccess: () => setNewDomain(""),
+                });
             }}
           >
             <Field className="flex-1">
@@ -106,61 +110,63 @@ function DomainCard({ domain }: { domain: TenantDomain }) {
     <>
       {confirmDialog}
       <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <GlobeIcon className="size-4 text-muted-foreground" />
-              <span className="font-mono">{domain.domain}</span>
-              {verified ? (
-                <Badge variant="success">
-                  <CheckCircle2Icon className="size-3" /> {t("domains.card.verified")}
-                </Badge>
-              ) : (
-                <Badge variant="outline">{t("domains.card.pending")}</Badge>
-              )}
-            </CardTitle>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={removeM.isPending}
-            onClick={() =>
-              openConfirm({
-                title: t("domains.card.removeTitleWithDomain", { domain: domain.domain }),
-                variant: "destructive",
-                confirmLabel: t("domains.card.removeConfirm"),
-                onConfirm: () => removeM.mutate(domain.id),
-              })
-            }
-          >
-            <Trash2Icon /> {t("domains.card.remove")}
-          </Button>
-        </div>
-      </CardHeader>
-      {!verified && (
-        <CardContent className="flex flex-col gap-3">
-          <CardDescription>{t("domains.card.dnsInstructions")}</CardDescription>
-          <div className="grid gap-2 sm:grid-cols-[auto_1fr]">
-            <span className="text-sm text-muted-foreground">{t("domains.card.dnsName")}</span>
-            <CopyableSecret value={domain.dns_record_name} size="sm" />
-            <span className="text-sm text-muted-foreground">{t("domains.card.dnsType")}</span>
-            <span className="font-mono text-sm">{domain.dns_record_type}</span>
-            <span className="text-sm text-muted-foreground">{t("domains.card.dnsValue")}</span>
-            <CopyableSecret value={domain.dns_record_value} size="sm" />
-          </div>
-          {verifyM.error && (
-            <p className="text-destructive text-sm">{(verifyM.error as ApiError).message}</p>
-          )}
-          <div>
-            <Button onClick={() => verifyM.mutate(domain.id)} disabled={verifyM.isPending}>
-              {verifyM.isPending && <Loader2Icon className="animate-spin" />}
-              {t("domains.card.verify")}
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <GlobeIcon className="size-4 text-muted-foreground" />
+                <span className="font-mono">{domain.domain}</span>
+                {verified ? (
+                  <Badge variant="success">
+                    <CheckCircle2Icon className="size-3" /> {t("domains.card.verified")}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline">{t("domains.card.pending")}</Badge>
+                )}
+              </CardTitle>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={removeM.isPending}
+              onClick={() =>
+                openConfirm({
+                  title: t("domains.card.removeTitleWithDomain", {
+                    domain: domain.domain,
+                  }),
+                  variant: "destructive",
+                  confirmLabel: t("domains.card.removeConfirm"),
+                  onConfirm: () => removeM.mutate(domain.id),
+                })
+              }
+            >
+              <Trash2Icon /> {t("domains.card.remove")}
             </Button>
           </div>
-        </CardContent>
-      )}
-    </Card>
+        </CardHeader>
+        {!verified && (
+          <CardContent className="flex flex-col gap-3">
+            <CardDescription>{t("domains.card.dnsInstructions")}</CardDescription>
+            <div className="grid gap-2 sm:grid-cols-[auto_1fr]">
+              <span className="text-sm text-muted-foreground">{t("domains.card.dnsName")}</span>
+              <CopyableSecret value={domain.dns_record_name} size="sm" />
+              <span className="text-sm text-muted-foreground">{t("domains.card.dnsType")}</span>
+              <span className="font-mono text-sm">{domain.dns_record_type}</span>
+              <span className="text-sm text-muted-foreground">{t("domains.card.dnsValue")}</span>
+              <CopyableSecret value={domain.dns_record_value} size="sm" />
+            </div>
+            {verifyM.error && (
+              <p className="text-destructive text-sm">{(verifyM.error as ApiError).message}</p>
+            )}
+            <div>
+              <Button onClick={() => verifyM.mutate(domain.id)} disabled={verifyM.isPending}>
+                {verifyM.isPending && <Loader2Icon className="animate-spin" />}
+                {t("domains.card.verify")}
+              </Button>
+            </div>
+          </CardContent>
+        )}
+      </Card>
     </>
   );
 }

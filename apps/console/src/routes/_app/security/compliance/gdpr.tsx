@@ -28,18 +28,26 @@ import {
   TableRow,
   Textarea,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2Icon, PlusIcon, RefreshCwIcon, ScrollTextIcon, ShieldCheckIcon } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import {
+  Loader2Icon,
+  PlusIcon,
+  RefreshCwIcon,
+  ScrollTextIcon,
+  ShieldCheckIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/security/compliance/gdpr")({ component: GdprPage });
+export const Route = createFileRoute("/_app/security/compliance/gdpr")({
+  component: GdprPage,
+});
 
 type PurgeRequest = {
   id: string;
@@ -80,7 +88,12 @@ function GdprPage() {
         description={t("gdpr.description")}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+            >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               {t("gdpr.refresh")}
             </Button>
@@ -104,13 +117,15 @@ function GdprPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("gdpr.list.title")}</CardTitle>
-          <CardDescription>
-            {t("gdpr.list.count", { count: itemCount })}
-          </CardDescription>
+          <CardDescription>{t("gdpr.list.count", { count: itemCount })}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {listQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="space-y-3 p-4">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
           ) : listQ.isError ? (
             <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
           ) : !listQ.data?.items?.length ? (
@@ -133,18 +148,31 @@ function GdprPage() {
               <TableBody>
                 {listQ.data.items.map((r) => {
                   const variant =
-                    r.status === "completed" ? "destructive" :
-                    r.status === "cancelled" ? "muted" :
-                    "warning";
+                    r.status === "completed"
+                      ? "destructive"
+                      : r.status === "cancelled"
+                        ? "muted"
+                        : "warning";
                   return (
                     <TableRow key={r.id}>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{r.user_id.slice(0, 16)}…</TableCell>
-                      <TableCell className="max-w-md truncate text-muted-foreground" title={r.reason ?? ""}>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {r.user_id.slice(0, 16)}…
+                      </TableCell>
+                      <TableCell
+                        className="max-w-md truncate text-muted-foreground"
+                        title={r.reason ?? ""}
+                      >
                         {r.reason ?? "—"}
                       </TableCell>
-                      <TableCell><Badge variant={variant}>{r.status}</Badge></TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(r.grace_until).toLocaleDateString()}</TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(r.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        <Badge variant={variant}>{r.status}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(r.grace_until).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(r.created_at).toLocaleDateString()}
+                      </TableCell>
                       <TableCell className="text-right">
                         <Button
                           variant="ghost"
@@ -234,14 +262,25 @@ function CreatePurgeSheet({ open, onOpenChange, tenantId, onCreated }: CreatePur
               </Field>
               <Field>
                 <FieldLabel htmlFor="reason">{t("gdpr.create.reason")}</FieldLabel>
-                <Textarea id="reason" name="reason" rows={4} placeholder="User requested account deletion via support ticket #1234" />
+                <Textarea
+                  id="reason"
+                  name="reason"
+                  rows={4}
+                  placeholder="User requested account deletion via support ticket #1234"
+                />
                 <FieldDescription>{t("gdpr.create.reasonHelp")}</FieldDescription>
               </Field>
-              {createM.error && <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>}
+              {createM.error && (
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("gdpr.create.cancel")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("gdpr.create.cancel")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("gdpr.create.submitting") : t("gdpr.create.submit")}

@@ -44,7 +44,10 @@ export interface Invoice {
 /** Format integer minor units in the given ISO currency, for any currency. */
 export function formatMoney(amountMinor: number, currency: string): string {
   try {
-    const fmt = new Intl.NumberFormat(undefined, { style: "currency", currency });
+    const fmt = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+    });
     const digits = fmt.resolvedOptions().maximumFractionDigits ?? 2;
     return fmt.format(amountMinor / 10 ** digits);
   } catch {
@@ -83,7 +86,10 @@ export function useChangePlan() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { plan_code: string; currency: string }) =>
-      api<Subscription>(`/v1/tenants/${tenantId}/billing/subscription`, { method: "PUT", body }),
+      api<Subscription>(`/v1/tenants/${tenantId}/billing/subscription`, {
+        method: "PUT",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["billing"] }),
     meta: { successMessage: "Subscription updated" },
   });

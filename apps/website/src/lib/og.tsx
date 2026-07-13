@@ -56,138 +56,142 @@ export function ogCard({ eyebrow, title, description, tags }: OgCardOptions): Im
   const titleFontSize = safeTitle.length > 64 ? 60 : safeTitle.length > 40 ? 70 : 82;
 
   return new ImageResponse(
-    (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        width: "100%",
+        height: "100%",
+        padding: "80px",
+        background: BRAND.bg,
+        color: BRAND.ink,
+        fontFamily: "Geist, 'Geist Sans', system-ui, -apple-system, 'Segoe UI', sans-serif",
+        position: "relative",
+      }}
+    >
+      {/* Warm brand glow, anchored top-right (the hero gradient mood). */}
       <div
         style={{
-          display: "flex",
-          flexDirection: "column",
-          width: "100%",
-          height: "100%",
-          padding: "80px",
-          background: BRAND.bg,
-          color: BRAND.ink,
-          fontFamily:
-            "Geist, 'Geist Sans', system-ui, -apple-system, 'Segoe UI', sans-serif",
-          position: "relative",
+          position: "absolute",
+          top: -260,
+          right: -200,
+          width: 760,
+          height: 760,
+          borderRadius: "9999px",
+          background: `radial-gradient(circle, ${BRAND.core}66 0%, ${BRAND.ember}22 45%, transparent 70%)`,
         }}
-      >
-        {/* Warm brand glow, anchored top-right (the hero gradient mood). */}
-        <div
-          style={{
-            position: "absolute",
-            top: -260,
-            right: -200,
-            width: 760,
-            height: 760,
-            borderRadius: "9999px",
-            background: `radial-gradient(circle, ${BRAND.core}66 0%, ${BRAND.ember}22 45%, transparent 70%)`,
-          }}
-        />
-        {/* Top brand hairline. */}
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 8,
-            background: `linear-gradient(90deg, ${BRAND.amber} 0%, ${BRAND.core} 45%, ${BRAND.ember} 100%)`,
-          }}
-        />
+      />
+      {/* Top brand hairline. */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 8,
+          background: `linear-gradient(90deg, ${BRAND.amber} 0%, ${BRAND.core} 45%, ${BRAND.ember} 100%)`,
+        }}
+      />
 
-        {/* Wordmark row. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 56,
-              height: 56,
-              borderRadius: 14,
-              background: `linear-gradient(135deg, ${BRAND.amber} 0%, ${BRAND.core} 45%, ${BRAND.ember} 100%)`,
-              color: "#FFFFFF",
-              fontSize: 34,
-              fontWeight: 700,
-            }}
-          >
-            Q
-          </div>
-          <div style={{ display: "flex", fontSize: 32, fontWeight: 600, letterSpacing: -0.5 }}>
-            Qeet&nbsp;ID
-          </div>
-        </div>
-
-        {/* Spacer pushes content to the lower two-thirds. */}
-        <div style={{ display: "flex", flex: 1 }} />
-
-        {eyebrow ? (
-          <div
-            style={{
-              display: "flex",
-              fontSize: 24,
-              fontWeight: 600,
-              letterSpacing: 4,
-              textTransform: "uppercase",
-              color: BRAND.core,
-              marginBottom: 22,
-            }}
-          >
-            {eyebrow}
-          </div>
-        ) : null}
-
+      {/* Wordmark row. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
         <div
           style={{
             display: "flex",
-            fontSize: titleFontSize,
+            alignItems: "center",
+            justifyContent: "center",
+            width: 56,
+            height: 56,
+            borderRadius: 14,
+            background: `linear-gradient(135deg, ${BRAND.amber} 0%, ${BRAND.core} 45%, ${BRAND.ember} 100%)`,
+            color: "#FFFFFF",
+            fontSize: 34,
             fontWeight: 700,
-            lineHeight: 1.05,
-            letterSpacing: -1.5,
-            maxWidth: 1000,
           }}
         >
-          {safeTitle}
+          Q
         </div>
-
-        {safeDescription ? (
-          <div
-            style={{
-              display: "flex",
-              marginTop: 28,
-              fontSize: 30,
-              lineHeight: 1.35,
-              color: BRAND.muted,
-              maxWidth: 940,
-            }}
-          >
-            {safeDescription}
-          </div>
-        ) : null}
-
-        {tags && tags.length > 0 ? (
-          <div style={{ display: "flex", gap: 12, marginTop: 34 }}>
-            {tags.slice(0, 4).map((tag) => (
-              <div
-                key={tag}
-                style={{
-                  display: "flex",
-                  padding: "8px 18px",
-                  borderRadius: 9999,
-                  border: `1px solid ${BRAND.core}55`,
-                  color: BRAND.ink,
-                  fontSize: 22,
-                  letterSpacing: 1,
-                  textTransform: "uppercase",
-                }}
-              >
-                {tag}
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <div
+          style={{
+            display: "flex",
+            fontSize: 32,
+            fontWeight: 600,
+            letterSpacing: -0.5,
+          }}
+        >
+          Qeet&nbsp;ID
+        </div>
       </div>
-    ),
+
+      {/* Spacer pushes content to the lower two-thirds. */}
+      <div style={{ display: "flex", flex: 1 }} />
+
+      {eyebrow ? (
+        <div
+          style={{
+            display: "flex",
+            fontSize: 24,
+            fontWeight: 600,
+            letterSpacing: 4,
+            textTransform: "uppercase",
+            color: BRAND.core,
+            marginBottom: 22,
+          }}
+        >
+          {eyebrow}
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "flex",
+          fontSize: titleFontSize,
+          fontWeight: 700,
+          lineHeight: 1.05,
+          letterSpacing: -1.5,
+          maxWidth: 1000,
+        }}
+      >
+        {safeTitle}
+      </div>
+
+      {safeDescription ? (
+        <div
+          style={{
+            display: "flex",
+            marginTop: 28,
+            fontSize: 30,
+            lineHeight: 1.35,
+            color: BRAND.muted,
+            maxWidth: 940,
+          }}
+        >
+          {safeDescription}
+        </div>
+      ) : null}
+
+      {tags && tags.length > 0 ? (
+        <div style={{ display: "flex", gap: 12, marginTop: 34 }}>
+          {tags.slice(0, 4).map((tag) => (
+            <div
+              key={tag}
+              style={{
+                display: "flex",
+                padding: "8px 18px",
+                borderRadius: 9999,
+                border: `1px solid ${BRAND.core}55`,
+                color: BRAND.ink,
+                fontSize: 22,
+                letterSpacing: 1,
+                textTransform: "uppercase",
+              }}
+            >
+              {tag}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>,
     { ...OG_SIZE },
   );
 }

@@ -15,32 +15,19 @@
   ],
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "dev": "turbo run dev --filter=./apps/*",
-    "dev:admin": "turbo run dev --filter=@qeet-id/console",
-    "dev:web": "turbo run dev --filter=@qeet-id/web",
-    "dev:login": "turbo run dev --filter=@qeet-id/login",
-    "build": "turbo run build",
-    "lint": "turbo run lint",
-    "format": "turbo run format",
-    "check": "turbo run check",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "clean": "rm -rf node_modules .turbo apps/*/node_modules apps/*/.turbo apps/*/dist apps/*/.netlify apps/*/.output packages/*/node_modules packages/*/.turbo packages/*/dist sdk/js/*/node_modules sdk/js/*/.turbo sdk/js/*/dist examples/*/node_modules examples/*/.turbo examples/*/dist"
+    "dev": "bun run --filter './apps/*' dev",
+    "dev:console": "bun run --filter '@qeet-id/console' dev",
+    "dev:website": "bun run --filter '@qeet-id/web' dev",
+    "dev:login": "bun run --filter '@qeet-id/login' dev",
+    "build": "bun run --filter './apps/*' build",
+    "lint": "biome lint --diagnostic-level=error .",
+    "format": "biome format --write .",
+    "check": "biome check --diagnostic-level=error .",
+    "typecheck": "bun run --filter './apps/*' typecheck",
+    "test": "bun run --filter './apps/*' test",
+    "clean": "rm -rf node_modules apps/*/node_modules apps/*/dist apps/*/.netlify apps/*/.output packages/*/node_modules"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.4",
-    "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.9",
-    "eslint-plugin-jsx-a11y": "^6.10.2",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.3",
-    "globals": "^17.7.0",
-    "prettier": "^3.8.4",
-    "prettier-plugin-tailwindcss": "^0.8.0",
-    "turbo": "^2.10.0",
-    "typescript-eslint": "^8.62.0"
-  },
-  "engines": {
-    "node": ">=24"
+    "@biomejs/biome": "^2.5.3"
   }
 }

@@ -62,7 +62,9 @@ export function useResolveAnomaly() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/security/anomalies/${id}/resolve`, { method: "POST" }),
+      api<void>(`/v1/tenants/${tenantId}/security/anomalies/${id}/resolve`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

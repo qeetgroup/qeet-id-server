@@ -18,7 +18,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   type GraphEdge,
   type GraphNode,
@@ -67,7 +67,11 @@ function RelationshipsPage() {
                 e.preventDefault();
                 if (object.trim() && relation.trim() && subject.trim()) {
                   writeM.mutate(
-                    { object: object.trim(), relation: relation.trim(), subject: subject.trim() },
+                    {
+                      object: object.trim(),
+                      relation: relation.trim(),
+                      subject: subject.trim(),
+                    },
                     { onSuccess: () => setBrowseObject(object.trim()) },
                   );
                 }
@@ -143,7 +147,8 @@ function RelationshipsPage() {
                 {items.map((tuple) => (
                   <li key={tuple.id} className="flex items-center justify-between gap-4 py-2">
                     <span className="font-mono text-sm">
-                      {tuple.object} <span className="text-muted-foreground">#{tuple.relation}</span>{" "}
+                      {tuple.object}{" "}
+                      <span className="text-muted-foreground">#{tuple.relation}</span>{" "}
                       {tuple.subject}
                     </span>
                     <Button
@@ -260,7 +265,10 @@ function GraphCard() {
   const { t } = useTranslation("rbac");
   const [object, setObject] = useState("");
   const [relation, setRelation] = useState("");
-  const [query, setQuery] = useState<{ object: string; relation: string } | null>(null);
+  const [query, setQuery] = useState<{
+    object: string;
+    relation: string;
+  } | null>(null);
   const graphQ = useRelationGraph(query?.object ?? "", query?.relation ?? "");
 
   return (
@@ -313,7 +321,13 @@ function GraphCard() {
             emptyTitle={t("relationships.graph.empty")}
             skeletonRows={3}
           >
-            {graphQ.data && <GraphCanvas graph={graphQ.data} root={query.object} ariaLabel={t("relationships.graph.svgAriaLabel")} />}
+            {graphQ.data && (
+              <GraphCanvas
+                graph={graphQ.data}
+                root={query.object}
+                ariaLabel={t("relationships.graph.svgAriaLabel")}
+              />
+            )}
           </DataState>
         )}
       </CardContent>
@@ -384,17 +398,25 @@ function layoutGraph(graph: RelationGraph, rootId: string): NodePos[] {
 }
 
 const NODE_COLORS: Record<string, string> = {
-  user:     "fill-blue-100 dark:fill-blue-900 stroke-blue-400",
-  group:    "fill-purple-100 dark:fill-purple-900 stroke-purple-400",
+  user: "fill-blue-100 dark:fill-blue-900 stroke-blue-400",
+  group: "fill-purple-100 dark:fill-purple-900 stroke-purple-400",
   document: "fill-amber-100 dark:fill-amber-900 stroke-amber-400",
-  project:  "fill-green-100 dark:fill-green-900 stroke-green-400",
-  agent:    "fill-rose-100 dark:fill-rose-900 stroke-rose-400",
+  project: "fill-green-100 dark:fill-green-900 stroke-green-400",
+  agent: "fill-rose-100 dark:fill-rose-900 stroke-rose-400",
 };
 function nodeColor(type: string) {
   return NODE_COLORS[type] ?? "fill-muted stroke-muted-foreground";
 }
 
-function GraphCanvas({ graph, root, ariaLabel }: { graph: RelationGraph; root: string; ariaLabel: string }) {
+function GraphCanvas({
+  graph,
+  root,
+  ariaLabel,
+}: {
+  graph: RelationGraph;
+  root: string;
+  ariaLabel: string;
+}) {
   const positions = useMemo(() => layoutGraph(graph, root), [graph, root]);
   const posMap = useMemo(() => new Map(positions.map((p) => [p.node.id, p])), [positions]);
 

@@ -24,7 +24,7 @@ const MAX_MAU = 1_000_000;
 const EXP = Math.log10(MAX_MAU / MIN_MAU);
 
 function sliderToMau(s: number) {
-  return MIN_MAU * Math.pow(10, (s / 100) * EXP);
+  return MIN_MAU * 10 ** ((s / 100) * EXP);
 }
 
 function mauToSlider(m: number) {
@@ -38,7 +38,7 @@ function mauToSlider(m: number) {
 function roundFriendly(n: number) {
   if (n < 100) return Math.round(n);
   const order = Math.floor(Math.log10(n));
-  const step = Math.pow(10, Math.max(0, order - 1));
+  const step = 10 ** Math.max(0, order - 1);
   return Math.round(n / step) * step;
 }
 
@@ -110,7 +110,8 @@ export function PricingCalculator() {
             How much will Qeet ID cost you?
           </h2>
           <p className="mt-3 text-muted-foreground">
-            Drag the slider to your expected monthly active users. The estimate covers core authentication; add-ons quoted separately.
+            Drag the slider to your expected monthly active users. The estimate covers core
+            authentication; add-ons quoted separately.
           </p>
         </div>
 
@@ -142,9 +143,7 @@ export function PricingCalculator() {
               <Slider
                 value={[sliderValue]}
                 onValueChange={(values) =>
-                  setSliderValue(
-                    Array.isArray(values) ? (values[0] ?? 0) : (values as number),
-                  )
+                  setSliderValue(Array.isArray(values) ? (values[0] ?? 0) : (values as number))
                 }
                 min={0}
                 max={100}
@@ -179,9 +178,7 @@ export function PricingCalculator() {
 
             <div className="mt-4 flex items-baseline gap-2">
               {plan.monthly === null ? (
-                <span className="font-display text-4xl font-semibold tracking-tight">
-                  Custom
-                </span>
+                <span className="font-display text-4xl font-semibold tracking-tight">Custom</span>
               ) : (
                 <>
                   <span className="font-display text-5xl font-semibold tracking-tight">
@@ -209,7 +206,8 @@ export function PricingCalculator() {
               <p className="mt-3 text-xs text-muted-foreground">
                 ≈{" "}
                 <strong className="text-foreground">
-                  ${(plan.monthly * 12).toLocaleString("en-US", {
+                  $
+                  {(plan.monthly * 12).toLocaleString("en-US", {
                     minimumFractionDigits: 0,
                     maximumFractionDigits: 0,
                   })}

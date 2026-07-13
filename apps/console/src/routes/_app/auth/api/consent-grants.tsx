@@ -142,7 +142,9 @@ function ConsentGrantsPage() {
                   t={t}
                   i18nKey="revoke.descriptionNamed"
                   values={{ email: confirming.user_email }}
-                  components={{ strong: <span className="font-medium text-foreground" /> }}
+                  components={{
+                    strong: <span className="font-medium text-foreground" />,
+                  }}
                 />
               ) : (
                 t("revoke.descriptionFallback")
@@ -158,7 +160,9 @@ function ConsentGrantsPage() {
               disabled={revokeM.isPending}
               onClick={() =>
                 confirming &&
-                revokeM.mutate(confirming.id, { onSuccess: () => setConfirming(null) })
+                revokeM.mutate(confirming.id, {
+                  onSuccess: () => setConfirming(null),
+                })
               }
             >
               {revokeM.isPending && <Loader2Icon className="animate-spin" />}

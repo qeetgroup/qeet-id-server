@@ -1,7 +1,3 @@
-import { CTA } from "@/components/marketing/sections/cta";
-import { Features } from "@/components/marketing/sections/features";
-import { Integrations } from "@/components/marketing/sections/integrations";
-import type { Metadata } from "next";
 import {
   BarChart3Icon,
   Building2Icon,
@@ -14,6 +10,10 @@ import {
   UsersIcon,
   ZapIcon,
 } from "lucide-react";
+import type { Metadata } from "next";
+import { CTA } from "@/components/marketing/sections/cta";
+import { Features } from "@/components/marketing/sections/features";
+import { Integrations } from "@/components/marketing/sections/integrations";
 
 export const metadata: Metadata = {
   title: "Features",

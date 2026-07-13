@@ -5,6 +5,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  cn,
   DataState,
   StatusPill,
   Table,
@@ -14,10 +15,9 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-  cn,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ActivityIcon, RadioIcon } from "lucide-react";
 import { useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,7 +26,9 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/activity")({ component: ActivityPage });
+export const Route = createFileRoute("/_app/activity")({
+  component: ActivityPage,
+});
 
 type AuditEvent = {
   id: string;
@@ -45,7 +47,9 @@ function ActivityPage() {
   const eventsQ = useQuery({
     queryKey: ["activity-recent", tenantId],
     queryFn: () =>
-      api<{ items: AuditEvent[] }>(`/v1/tenants/${tenantId}/audit`, { query: { limit: 20 } }),
+      api<{ items: AuditEvent[] }>(`/v1/tenants/${tenantId}/audit`, {
+        query: { limit: 20 },
+      }),
     enabled: !!tenantId,
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
@@ -91,17 +95,17 @@ function ActivityPage() {
                 title={eventsQ.isFetching ? t("activity.titleRefreshing") : t("activity.titleIdle")}
               >
                 <RadioIcon
-                  className={cn(
-                    "size-3",
-                    eventsQ.isFetching && "animate-pulse text-emerald-500",
-                  )}
+                  className={cn("size-3", eventsQ.isFetching && "animate-pulse text-emerald-500")}
                 />
                 {t("activity.liveBadge")}
               </span>
             </CardTitle>
             <CardDescription>
               For deep search and export, see{" "}
-              <Link to="/security/audit-logs" className="underline">Audit Logs</Link>.
+              <Link to="/security/audit-logs" className="underline">
+                Audit Logs
+              </Link>
+              .
             </CardDescription>
           </div>
           {newCount > 0 && (

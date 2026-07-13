@@ -57,7 +57,8 @@ export function useDeleteIpRule() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<void>(`/v1/tenants/${tenantId}/ip-rules/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      api<void>(`/v1/tenants/${tenantId}/ip-rules/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ip-rules"] }),
     meta: { successMessage: "Rule removed" },
   });

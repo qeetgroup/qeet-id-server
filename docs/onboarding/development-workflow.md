@@ -17,7 +17,6 @@ git push origin feat/my-feature
 ## Before you start any work
 
 ```bash
-nvm use            # frontend builds require Node ≥24 (from .nvmrc); system default is v18
 make install       # ensure deps are current: go mod tidy + bun install
 ```
 
@@ -49,7 +48,7 @@ make migrate-down   # roll back ONE step (dev only)
 
 **Admin console (`@qeetid/admin`):**
 ```bash
-make dev-admin    # starts Vite dev server on :3002
+bun run dev:console    # starts Vite dev server on :3002
 ```
 
 The admin console uses **TanStack Router with file-based routing**. New route files are auto-detected, but `routeTree.gen.ts` must be regenerated. Do this by starting `vite dev` (which regenerates on startup), then continuing:
@@ -58,17 +57,17 @@ The admin console uses **TanStack Router with file-based routing**. New route fi
 # Regenerate routeTree.gen.ts
 bun --filter @qeetid/admin exec vite dev
 # Wait for "Generated routeTree.gen.ts" in output, then Ctrl+C
-make dev-admin    # now start normally
+bun run dev:console    # now start normally
 ```
 
 **Login app (`@qeetid/login`):**
 ```bash
-make dev-login    # starts Next.js dev on :3004
+bun run dev:login    # starts Next.js dev on :3004
 ```
 
 **Website (`@qeetid/web`):**
 ```bash
-make dev-web      # starts Next.js dev on :3001
+bun run dev:website    # starts Next.js dev on :3001
 ```
 
 ## Adding a new API endpoint
@@ -89,7 +88,7 @@ make test-integration   # Go integration tests (needs Docker, ~2 min)
 make test-api           # Postman/Newman against live API on :4001
 make test-api FOLDER=Auth   # Scope to one Postman folder
 make typecheck          # TypeScript type checking across all frontend apps
-make lint               # Go lint (golangci-lint) + frontend ESLint
+make lint               # Go lint (golangci-lint) + frontend Biome
 ```
 
 Single Go test:
@@ -119,7 +118,7 @@ Never commit `.env` or any file containing secrets. The safety gate (`Config.Val
 ```bash
 make help           # full list of targets
 make kill           # free stuck dev-server ports (kills :3001, :3002, :3004, :4001)
-make format         # gofmt + prettier
+make format         # gofmt + biome format
 make tidy           # go mod tidy
 make build          # compile go binary (ldflags-stamped)
 make db-up          # start Postgres container

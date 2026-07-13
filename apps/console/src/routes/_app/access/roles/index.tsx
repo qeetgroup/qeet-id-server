@@ -29,20 +29,22 @@ import {
   Textarea,
   TimeSince,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, ShieldCheckIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
-import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/access/roles/")({ component: RolesPage });
+export const Route = createFileRoute("/_app/access/roles/")({
+  component: RolesPage,
+});
 
 type Permission = { id: string; key: string; description: string };
 type Role = {
@@ -115,7 +117,11 @@ function RolesPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("roles.list.title")}</CardTitle>
           <CardDescription>
-            {t("roles.list.count", { filtered: rows.length, total: items.length, count: items.length })}
+            {t("roles.list.count", {
+              filtered: rows.length,
+              total: items.length,
+              count: items.length,
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -167,7 +173,9 @@ function RolesPage() {
                   <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
                     {t("roles.list.columnName")}
                   </SortHeader>
-                  {lv.isVisible("description") && <TableHead>{t("roles.list.colDescription")}</TableHead>}
+                  {lv.isVisible("description") && (
+                    <TableHead>{t("roles.list.colDescription")}</TableHead>
+                  )}
                   <TableHead>{t("roles.list.columnType")}</TableHead>
                   {lv.isVisible("created") && (
                     <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
@@ -325,7 +333,9 @@ function CreateRoleSheet({ open, onOpenChange, tenantId, onCreated }: CreateRole
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("roles.create.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("roles.create.cancelBtn")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("roles.create.creatingBtn") : t("roles.create.createBtn")}
@@ -356,12 +366,16 @@ function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsShe
   // a row immediately hits the API.
   const grantM = useMutation({
     mutationFn: (permId: string) =>
-      api<void>(`/v1/roles/${role.id}/permissions/${permId}`, { method: "POST" }),
+      api<void>(`/v1/roles/${role.id}/permissions/${permId}`, {
+        method: "POST",
+      }),
     meta: { successMessage: "Permission granted" },
   });
   const revokeM = useMutation({
     mutationFn: (permId: string) =>
-      api<void>(`/v1/roles/${role.id}/permissions/${permId}`, { method: "DELETE" }),
+      api<void>(`/v1/roles/${role.id}/permissions/${permId}`, {
+        method: "DELETE",
+      }),
     meta: { successMessage: "Permission revoked" },
   });
 
@@ -409,7 +423,9 @@ function RolePermissionsSheet({ role, permissions, onClose }: RolePermissionsShe
                   />
                   <span className="flex-1">
                     <code className="text-xs font-medium">{p.key}</code>
-                    <p id={`perm-desc-${p.id}`} className="text-xs text-muted-foreground">{p.description}</p>
+                    <p id={`perm-desc-${p.id}`} className="text-xs text-muted-foreground">
+                      {p.description}
+                    </p>
                   </span>
                 </label>
               );

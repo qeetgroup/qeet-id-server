@@ -47,10 +47,26 @@ function AnomaliesPage() {
   const sm = summaryQ.data;
 
   const summary = [
-    { key: "openIncidents", value: sm?.open ?? 0, icon: <AlertTriangleIcon className="size-4" /> },
-    { key: "resolved24h", value: sm?.resolved_24h ?? 0, icon: <ShieldAlertIcon className="size-4" /> },
-    { key: "affectedAccounts", value: sm?.affected_accounts ?? 0, icon: <UserXIcon className="size-4" /> },
-    { key: "highSeverity24h", value: sm?.high_severity_24h ?? 0, icon: <MapPinIcon className="size-4" /> },
+    {
+      key: "openIncidents",
+      value: sm?.open ?? 0,
+      icon: <AlertTriangleIcon className="size-4" />,
+    },
+    {
+      key: "resolved24h",
+      value: sm?.resolved_24h ?? 0,
+      icon: <ShieldAlertIcon className="size-4" />,
+    },
+    {
+      key: "affectedAccounts",
+      value: sm?.affected_accounts ?? 0,
+      icon: <UserXIcon className="size-4" />,
+    },
+    {
+      key: "highSeverity24h",
+      value: sm?.high_severity_24h ?? 0,
+      icon: <MapPinIcon className="size-4" />,
+    },
   ];
 
   return (
@@ -111,7 +127,9 @@ function AnomaliesPage() {
                   <TableHead>{t("threats.anomalies.recent.columns.severity")}</TableHead>
                   <TableHead>{t("threats.anomalies.recent.columns.status")}</TableHead>
                   <TableHead>{t("threats.anomalies.recent.columns.when")}</TableHead>
-                  <TableHead className="text-right">{t("threats.anomalies.recent.columns.action")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("threats.anomalies.recent.columns.action")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -131,7 +149,9 @@ function AnomaliesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {i.status === "resolved" ? (
-                        <span className="text-xs text-muted-foreground">{t("threats.anomalies.resolved")}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {t("threats.anomalies.resolved")}
+                        </span>
                       ) : (
                         <Button
                           variant="ghost"

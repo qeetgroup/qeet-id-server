@@ -1,6 +1,7 @@
+import { cn } from "@qeetrix/ui";
 import {
-  Discord,
   Datadog,
+  Discord,
   Figma,
   Google,
   Linear,
@@ -10,7 +11,7 @@ import {
   Stripe,
   Supabase,
 } from "@thesvg/react";
-
+import { QuoteIcon } from "lucide-react";
 import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";
@@ -18,8 +19,6 @@ import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { GlowCard } from "@/components/marketing/effects/glow-card";
 import { Marquee } from "@/components/marketing/effects/marquee";
 import { Reveal, Stagger, StaggerItem, Tilt, WordReveal } from "@/components/marketing/motion";
-import { cn } from "@qeetrix/ui";
-import { QuoteIcon } from "lucide-react";
 
 const quotes = [
   {
@@ -142,7 +141,12 @@ export function Testimonials() {
         >
           <Marquee duration={55} gap="3rem" pauseOnHover>
             {logoRow.map((brand) => (
-              <LogoLockup key={brand.name} name={brand.name} icon={brand.icon} className="text-sm" />
+              <LogoLockup
+                key={brand.name}
+                name={brand.name}
+                icon={brand.icon}
+                className="text-sm"
+              />
             ))}
           </Marquee>
         </Reveal>

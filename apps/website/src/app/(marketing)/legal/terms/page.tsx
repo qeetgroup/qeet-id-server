@@ -1,5 +1,5 @@
-import { LegalPage, LegalSection } from "@/components/marketing/legal-page";
 import type { Metadata } from "next";
+import { LegalPage, LegalSection } from "@/components/marketing/legal-page";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -29,9 +29,9 @@ export default function TermsPage() {
       </LegalSection>
       <LegalSection heading="3. Acceptable use">
         <p>
-          You agree not to misuse the Services, including by interfering with their normal operation,
-          attempting to access them using a method other than the interfaces and instructions we
-          provide, or using them to violate any applicable law.
+          You agree not to misuse the Services, including by interfering with their normal
+          operation, attempting to access them using a method other than the interfaces and
+          instructions we provide, or using them to violate any applicable law.
         </p>
       </LegalSection>
       <LegalSection heading="4. Fees and payment">

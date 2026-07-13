@@ -2,8 +2,8 @@ import { cn } from "@qeetrix/ui";
 import { ArrowRightIcon, QuoteIcon } from "lucide-react";
 
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
-import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { ButtonLink } from "@/components/marketing/button-link";
+import { BorderBeam } from "@/components/marketing/effects/border-beam";
 
 /**
  * One full case-study tile: company badge + headline + summary +
@@ -84,7 +84,9 @@ export function CaseStudyCard({ data, className, featured = false }: CaseStudyCa
             {data.metrics.map((m) => (
               <div key={m.label} className="rounded-xl border border-border/60 p-4">
                 <dt className="text-xs text-muted-foreground">{m.label}</dt>
-                <dd className="mt-1 font-display text-xl font-semibold tracking-tight">{m.value}</dd>
+                <dd className="mt-1 font-display text-xl font-semibold tracking-tight">
+                  {m.value}
+                </dd>
               </div>
             ))}
           </dl>

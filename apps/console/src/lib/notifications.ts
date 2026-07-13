@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError } from "./api";
+import { ApiError, api } from "./api";
 
 export type NotificationKind = "info" | "warning" | "alert" | "success";
 

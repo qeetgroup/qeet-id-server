@@ -24,7 +24,9 @@ import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
 import { useMe } from "@/lib/auth";
 
-export const Route = createFileRoute("/account/profile")({ component: ProfilePage });
+export const Route = createFileRoute("/account/profile")({
+  component: ProfilePage,
+});
 
 const AVATAR_PX = 192; // displayed at ≤64px; 192 keeps it crisp on retina
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -92,7 +94,8 @@ function ProfilePage() {
 
   const name = me.data?.display_name || me.data?.email?.split("@")[0] || "—";
   // What to show now: a pending pick wins; "" means removed → fallback.
-  const shownAvatar = avatar !== undefined ? avatar || undefined : me.data?.avatar_url ?? undefined;
+  const shownAvatar =
+    avatar !== undefined ? avatar || undefined : (me.data?.avatar_url ?? undefined);
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];

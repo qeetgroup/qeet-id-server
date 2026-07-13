@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, API_BASE_URL } from "./api";
+import { API_BASE_URL, api } from "./api";
 import { useTenantId } from "./auth";
 
 export type SamlStatus = "draft" | "active" | "disabled";
@@ -52,7 +52,10 @@ export function useCreateSamlConnection() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateSamlInput) =>
-      api<SamlConnection>(`/v1/tenants/${tenantId}/saml`, { method: "POST", body }),
+      api<SamlConnection>(`/v1/tenants/${tenantId}/saml`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saml"] }),
     meta: { successMessage: "SAML connection created" },
   });
@@ -63,7 +66,10 @@ export function useUpdateSamlConnection() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<CreateSamlInput> & { id: string }) =>
-      api<SamlConnection>(`/v1/tenants/${tenantId}/saml/${id}`, { method: "PATCH", body }),
+      api<SamlConnection>(`/v1/tenants/${tenantId}/saml/${id}`, {
+        method: "PATCH",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saml"] }),
     meta: { successMessage: "SAML connection updated" },
   });
@@ -95,6 +101,8 @@ export function useTestSamlConnection() {
   const tenantId = useTenantId();
   return useMutation({
     mutationFn: (id: string) =>
-      api<SamlTestResult>(`/v1/tenants/${tenantId}/saml/${id}/test`, { method: "POST" }),
+      api<SamlTestResult>(`/v1/tenants/${tenantId}/saml/${id}/test`, {
+        method: "POST",
+      }),
   });
 }

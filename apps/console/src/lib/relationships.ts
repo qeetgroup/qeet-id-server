@@ -32,7 +32,10 @@ export function useWriteTuple() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { object: string; relation: string; subject: string }) =>
-      api<RelationTuple>(`/v1/tenants/${tenantId}/relation-tuples`, { method: "POST", body }),
+      api<RelationTuple>(`/v1/tenants/${tenantId}/relation-tuples`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["relation-tuples"] }),
     meta: { successMessage: "Tuple written" },
   });
@@ -43,7 +46,9 @@ export function useDeleteTuple() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/relation-tuples/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/relation-tuples/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["relation-tuples"] }),
   });
 }
@@ -62,14 +67,14 @@ export function useCheckRelation() {
 // --- Identity Graph types ---
 
 export interface GraphNode {
-  id: string;    // "type:id"
-  type: string;  // the type part
+  id: string; // "type:id"
+  type: string; // the type part
   label: string; // the id part
 }
 
 export interface GraphEdge {
-  from: string;     // "type:id"
-  to: string;       // "type:id"
+  from: string; // "type:id"
+  to: string; // "type:id"
   relation: string; // named relation (may include "→ userset-rel" suffix)
 }
 
@@ -89,10 +94,7 @@ export function useRelationGraph(object: string, relation: string, depth?: numbe
   return useQuery({
     queryKey: ["relation-graph", tenantId, object, relation, depth],
     enabled: !!tenantId && !!object && !!relation,
-    queryFn: () =>
-      api<RelationGraph>(
-        `/v1/tenants/${tenantId}/relation-tuples/graph?${params}`,
-      ),
+    queryFn: () => api<RelationGraph>(`/v1/tenants/${tenantId}/relation-tuples/graph?${params}`),
   });
 }
 

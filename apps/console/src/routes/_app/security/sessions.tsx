@@ -15,8 +15,8 @@ import {
   TableRow,
   TimeSince,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { MonitorSmartphoneIcon, RefreshCwIcon, ShieldIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -24,7 +24,9 @@ import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
-export const Route = createFileRoute("/_app/security/sessions")({ component: SessionsPage });
+export const Route = createFileRoute("/_app/security/sessions")({
+  component: SessionsPage,
+});
 
 type Session = {
   id: string;
@@ -75,9 +77,7 @@ function SessionsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("sessions.list.title")}</CardTitle>
-          <CardDescription>
-            {t("sessions.list.count", { count: itemCount })}
-          </CardDescription>
+          <CardDescription>{t("sessions.list.count", { count: itemCount })}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -90,55 +90,62 @@ function SessionsPage() {
             skeletonRows={3}
           >
             {sessionsQ.data && (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("sessions.list.columns.userAgent")}</TableHead>
-                  <TableHead>{t("sessions.list.columns.ip")}</TableHead>
-                  <TableHead>{t("sessions.list.columns.created")}</TableHead>
-                  <TableHead>{t("sessions.list.columns.lastSeen")}</TableHead>
-                  <TableHead>{t("sessions.list.columns.status")}</TableHead>
-                  <TableHead className="text-right">{t("sessions.list.columns.actions")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessionsQ.data.items.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="max-w-md truncate text-xs text-muted-foreground" title={s.user_agent ?? ""}>
-                      <MonitorSmartphoneIcon className="mr-1 inline size-3" />
-                      {s.user_agent ?? "—"}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{s.ip ?? "—"}</TableCell>
-                    <TableCell>
-                      <TimeSince value={s.created_at} />
-                    </TableCell>
-                    <TableCell>
-                      <TimeSince value={s.last_seen_at} />
-                    </TableCell>
-                    <TableCell>
-                      <StatusPill status={s.revoked_at ? "revoked" : "active"} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!!s.revoked_at || revokeM.isPending}
-                        onClick={() =>
-                          openConfirm({
-                            title: t("sessions.confirm.revokeTitle"),
-                            variant: "destructive",
-                            confirmLabel: t("sessions.confirm.revokeLabel"),
-                            onConfirm: () => revokeM.mutate(s.id),
-                          })
-                        }
-                      >
-                        {t("sessions.list.revoke")}
-                      </Button>
-                    </TableCell>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("sessions.list.columns.userAgent")}</TableHead>
+                    <TableHead>{t("sessions.list.columns.ip")}</TableHead>
+                    <TableHead>{t("sessions.list.columns.created")}</TableHead>
+                    <TableHead>{t("sessions.list.columns.lastSeen")}</TableHead>
+                    <TableHead>{t("sessions.list.columns.status")}</TableHead>
+                    <TableHead className="text-right">
+                      {t("sessions.list.columns.actions")}
+                    </TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {sessionsQ.data.items.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell
+                        className="max-w-md truncate text-xs text-muted-foreground"
+                        title={s.user_agent ?? ""}
+                      >
+                        <MonitorSmartphoneIcon className="mr-1 inline size-3" />
+                        {s.user_agent ?? "—"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {s.ip ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={s.created_at} />
+                      </TableCell>
+                      <TableCell>
+                        <TimeSince value={s.last_seen_at} />
+                      </TableCell>
+                      <TableCell>
+                        <StatusPill status={s.revoked_at ? "revoked" : "active"} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!!s.revoked_at || revokeM.isPending}
+                          onClick={() =>
+                            openConfirm({
+                              title: t("sessions.confirm.revokeTitle"),
+                              variant: "destructive",
+                              confirmLabel: t("sessions.confirm.revokeLabel"),
+                              onConfirm: () => revokeM.mutate(s.id),
+                            })
+                          }
+                        >
+                          {t("sessions.list.revoke")}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
           </DataState>
         </CardContent>

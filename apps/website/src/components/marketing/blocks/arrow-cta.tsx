@@ -1,6 +1,6 @@
 import { cn } from "@qeetrix/ui";
-import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 /**

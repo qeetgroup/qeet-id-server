@@ -27,18 +27,14 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { PageHeader } from "@/components/page-header";
 import { useAnalyticsOverview } from "@/lib/analytics";
 
-export const Route = createFileRoute("/_app/analytics")({ component: AnalyticsPage });
+export const Route = createFileRoute("/_app/analytics")({
+  component: AnalyticsPage,
+});
 
 const mauConfig: ChartConfig = {
   wau: { label: "WAU", color: "var(--chart-1)" },
@@ -81,11 +77,17 @@ function KpiCard({
         <div className="text-2xl font-semibold tracking-tight">{value}</div>
         <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
           {isPositive ? (
-            <ArrowUpRightIcon className={`size-3 ${isGood ? "text-emerald-500" : "text-rose-500"}`} />
+            <ArrowUpRightIcon
+              className={`size-3 ${isGood ? "text-emerald-500" : "text-rose-500"}`}
+            />
           ) : (
-            <ArrowDownRightIcon className={`size-3 ${isGood ? "text-emerald-500" : "text-rose-500"}`} />
+            <ArrowDownRightIcon
+              className={`size-3 ${isGood ? "text-emerald-500" : "text-rose-500"}`}
+            />
           )}
-          <span className={isGood ? "text-emerald-500" : "text-rose-500"}>{formatDelta(delta)}</span>
+          <span className={isGood ? "text-emerald-500" : "text-rose-500"}>
+            {formatDelta(delta)}
+          </span>
           <span>{hint}</span>
         </p>
       </CardContent>
@@ -133,7 +135,8 @@ function AnalyticsPage() {
         <PageHeader description={t("analytics.description")} />
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            {t("analytics.loadError")}{error instanceof Error ? `: ${error.message}` : ""}.
+            {t("analytics.loadError")}
+            {error instanceof Error ? `: ${error.message}` : ""}.
           </CardContent>
         </Card>
       </div>
@@ -287,10 +290,7 @@ function AnalyticsPage() {
             <CardDescription>{t("analytics.appsDesc")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <EmptyChart
-              message={t("analytics.emptyApps")}
-              height="h-[220px]"
-            />
+            <EmptyChart message={t("analytics.emptyApps")} height="h-[220px]" />
           </CardContent>
         </Card>
       </div>

@@ -17,7 +17,7 @@ import {
   TimeSince,
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -25,7 +25,9 @@ import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/access/roles/$roleId")({ component: RoleDetailPage });
+export const Route = createFileRoute("/_app/access/roles/$roleId")({
+  component: RoleDetailPage,
+});
 
 type Role = {
   id: string;
@@ -68,14 +70,18 @@ function RoleDetailPage() {
 
   const revokeM = useMutation({
     mutationFn: (permId: string) =>
-      api<void>(`/v1/roles/${roleId}/permissions/${permId}`, { method: "DELETE" }),
+      api<void>(`/v1/roles/${roleId}/permissions/${permId}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["role-permissions", roleId] }),
     meta: { successMessage: "Permission revoked" },
   });
 
   const grantM = useMutation({
     mutationFn: (permId: string) =>
-      api<void>(`/v1/roles/${roleId}/permissions/${permId}`, { method: "POST" }),
+      api<void>(`/v1/roles/${roleId}/permissions/${permId}`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["role-permissions", roleId] }),
     meta: { successMessage: "Permission granted" },
   });
@@ -105,12 +111,16 @@ function RoleDetailPage() {
                   {role.name}
                   {role.is_system && <Badge variant="muted">{t("roles.detail.systemBadge")}</Badge>}
                 </CardTitle>
-                <CardDescription>{role.description || t("roles.detail.noDescription")}</CardDescription>
+                <CardDescription>
+                  {role.description || t("roles.detail.noDescription")}
+                </CardDescription>
               </div>
               <TimeSince value={role.created_at} className="text-xs" />
             </div>
           ) : (
-            <CardTitle className="text-base text-destructive">{t("roles.detail.notFound")}</CardTitle>
+            <CardTitle className="text-base text-destructive">
+              {t("roles.detail.notFound")}
+            </CardTitle>
           )}
         </CardHeader>
       </Card>
@@ -119,7 +129,9 @@ function RoleDetailPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("roles.detail.granted.title")}</CardTitle>
           <CardDescription>
-            {t("roles.detail.granted.count", { count: rolePermsQ.data?.items?.length ?? 0 })}
+            {t("roles.detail.granted.count", {
+              count: rolePermsQ.data?.items?.length ?? 0,
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -137,7 +149,9 @@ function RoleDetailPage() {
                 <TableRow>
                   <TableHead>{t("roles.detail.granted.colKey")}</TableHead>
                   <TableHead>{t("roles.detail.granted.colDescription")}</TableHead>
-                  <TableHead className="text-right">{t("roles.detail.granted.colActions")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("roles.detail.granted.colActions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -152,7 +166,9 @@ function RoleDetailPage() {
                         disabled={role?.is_system || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: t("roles.detail.granted.confirmTitle", { key: p.key }),
+                            title: t("roles.detail.granted.confirmTitle", {
+                              key: p.key,
+                            }),
                             variant: "destructive",
                             confirmLabel: t("roles.detail.granted.confirmLabel"),
                             onConfirm: () => revokeM.mutate(p.id),
@@ -190,7 +206,9 @@ function RoleDetailPage() {
                 <TableRow>
                   <TableHead>{t("roles.detail.available.colKey")}</TableHead>
                   <TableHead>{t("roles.detail.available.colDescription")}</TableHead>
-                  <TableHead className="text-right">{t("roles.detail.available.colActions")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("roles.detail.available.colActions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, API_BASE_URL } from "./api";
+import { API_BASE_URL, api } from "./api";
 import { useTenantId } from "./auth";
 
 export interface SamlProvider {
@@ -50,7 +50,10 @@ export function useCreateSamlProvider() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateSamlProviderInput) =>
-      api<SamlProvider>(`/v1/tenants/${tenantId}/saml-providers`, { method: "POST", body }),
+      api<SamlProvider>(`/v1/tenants/${tenantId}/saml-providers`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saml-providers"] }),
     meta: { successMessage: "Service provider added" },
   });
@@ -61,7 +64,10 @@ export function useUpdateSamlProvider() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<CreateSamlProviderInput> & { id: string }) =>
-      api<SamlProvider>(`/v1/tenants/${tenantId}/saml-providers/${id}`, { method: "PATCH", body }),
+      api<SamlProvider>(`/v1/tenants/${tenantId}/saml-providers/${id}`, {
+        method: "PATCH",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saml-providers"] }),
     meta: { successMessage: "Service provider updated" },
   });
@@ -72,7 +78,9 @@ export function useDeleteSamlProvider() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/saml-providers/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/saml-providers/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saml-providers"] }),
     meta: { successMessage: "Service provider removed" },
   });

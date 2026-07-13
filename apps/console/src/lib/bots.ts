@@ -44,7 +44,10 @@ export function useBotOverview() {
         );
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
-          return { recent: [], stats: { blocked_24h: 0, challenged_24h: 0, threshold: 0.7 } };
+          return {
+            recent: [],
+            stats: { blocked_24h: 0, challenged_24h: 0, threshold: 0.7 },
+          };
         }
         throw err;
       }

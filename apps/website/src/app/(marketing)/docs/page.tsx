@@ -1,13 +1,7 @@
-import { CodeTabs, type CodeTab } from "@/components/marketing/blocks/code-tabs";
-import { ButtonLink } from "@/components/marketing/button-link";
-import {
-  ArrowRightIcon,
-  BookOpenIcon,
-  CompassIcon,
-  PackageIcon,
-  RocketIcon,
-} from "lucide-react";
+import { ArrowRightIcon, BookOpenIcon, CompassIcon, PackageIcon, RocketIcon } from "lucide-react";
 import type { Metadata } from "next";
+import { type CodeTab, CodeTabs } from "@/components/marketing/blocks/code-tabs";
+import { ButtonLink } from "@/components/marketing/button-link";
 
 export const metadata: Metadata = {
   title: "Documentation",
@@ -164,8 +158,8 @@ export default function DocsPage() {
               A REST API you can hold in your head
             </h2>
             <p className="mt-4 text-muted-foreground text-balance">
-              Predictable resource-oriented URLs, JSON request and response bodies, and standard HTTP
-              status codes. The full OpenAPI spec drives our SDKs and your generated clients.
+              Predictable resource-oriented URLs, JSON request and response bodies, and standard
+              HTTP status codes. The full OpenAPI spec drives our SDKs and your generated clients.
             </p>
           </div>
           <div id="sdks" className="mt-12 scroll-mt-20 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

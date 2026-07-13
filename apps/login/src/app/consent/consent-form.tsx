@@ -7,8 +7,8 @@ import { useTranslation } from "react-i18next";
 import { AuthCard } from "@/components/auth-card";
 import { FormAlert } from "@/components/form-alert";
 import { ScopeList } from "@/components/scope-list";
-import type { Branding } from "@/lib/branding";
 import { ApiError, apiPost } from "@/lib/api";
+import type { Branding } from "@/lib/branding";
 
 export type ConsentParams = {
   client_id: string;

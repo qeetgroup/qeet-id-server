@@ -178,7 +178,12 @@ export function parseBody(body: string): BlogBlock[] {
       continue;
     }
     const buf: string[] = [];
-    while (i < lines.length && (lines[i] ?? "").trim() !== "" && !(lines[i] ?? "").startsWith("## ") && !(lines[i] ?? "").startsWith("```")) {
+    while (
+      i < lines.length &&
+      (lines[i] ?? "").trim() !== "" &&
+      !(lines[i] ?? "").startsWith("## ") &&
+      !(lines[i] ?? "").startsWith("```")
+    ) {
       buf.push(lines[i] ?? "");
       i++;
     }

@@ -98,7 +98,8 @@ const roles = [
     title: "Developer Advocate",
     team: "DevRel",
     location: "Remote · Americas",
-    blurb: "Build SDK samples, write the docs people actually finish, and meet developers where they are.",
+    blurb:
+      "Build SDK samples, write the docs people actually finish, and meet developers where they are.",
   },
   {
     title: "Product Designer",
@@ -154,11 +155,7 @@ export default function CareersPage() {
 
       {/* Benefits */}
       <Section muted>
-        <SectionHeader
-          eyebrow="Benefits"
-          title="Why you'll like it"
-          titleAccent="here"
-        />
+        <SectionHeader eyebrow="Benefits" title="Why you'll like it" titleAccent="here" />
         <Stagger staggerDelay={0.06} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {perks.map(({ icon: Icon, title, body }) => (
             <StaggerItem key={title} className="h-full">

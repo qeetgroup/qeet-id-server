@@ -1,6 +1,6 @@
 # qeet-id — CLAUDE.md
 
-**Qeet ID** — identity platform (Auth0/Okta alternative, passkeys-first), pre-1.0. One Go modular-monolith backend + 3 React frontends (Bun/Turbo), **all hoisted to the repo root** (no `backend/`/`frontend/` wrappers).
+**Qeet ID** — identity platform (Auth0/Okta alternative, passkeys-first), pre-1.0. One Go modular-monolith backend + 3 React frontends (Bun workspaces), **all hoisted to the repo root** (no `backend/`/`frontend/` wrappers).
 
 ## Layout (all at repo root)
 
@@ -9,9 +9,8 @@ cmd/        Go entrypoints: server, worker, scheduler, migrate, seed
 domains/    business logic by bounded context: identity/ access/ federation/ developer/ operations/
 platform/   shared infra: api/rest  database/{postgres,migrations,repositories}  cache/ messaging/ events/ observability/ security/ config/
 apps/       frontends: console (admin), login, website   (docs/, status/ = placeholders)
-sdk/        SDKs: js/{sdk,react,nextjs}, go, python
 api/        contracts: openapi/ (5 split OpenAPI 3.1 specs) · postman/
-packages/   shared JS config (qeetid-tsconfig)   ·   deploy/ examples/ tests/ tools/ bin/
+packages/   shared JS config (qeetid-tsconfig)   ·   deploy/ tests/ tools/ bin/
 ```
 
 ## Commands (run from repo root)
@@ -29,18 +28,18 @@ make kill                            # free a stuck :4001
 
 No `make help`/`install`/`dev-*`/`test-*` exist — don't invent targets. Single Go test: `go test ./domains/access/authentication/... -run TestName`.
 
-**Frontend — Bun + Turborepo:**
+**Frontend — Bun workspaces:**
 
 ```bash
 bun install
-bun run dev         # all apps
-bun run dev:admin   # console  :3002  (@qeet-id/console)
-bun run dev:web     # website  :3001  (@qeet-id/web)
-bun run dev:login   # login    :3004  (@qeet-id/login)
+bun run dev           # all apps
+bun run dev:console   # console  :3002  (@qeet-id/console)
+bun run dev:website   # website  :3001  (@qeet-id/web)
+bun run dev:login     # login    :3004  (@qeet-id/login)
 bun run build | lint | format | check | typecheck | test
 ```
 
-Node **≥24** (`.nvmrc`), Bun **1.3.14**.
+Node **≥24**, Bun **1.3.14**.
 
 ## Architecture
 
@@ -56,7 +55,7 @@ Only packages with real code exist; planned work lives in [ROADMAP.md](ROADMAP.m
 
 Entrypoint [cmd/server/main.go](cmd/server/main.go); HTTP wiring in [platform/api/rest/router.go](platform/api/rest/router.go) (chi v5). Postgres via pgx v5, **multi-tenant by `tenant_id`** across schemas. Config is envconfig-driven ([platform/config/config.go](platform/config/config.go)); `HTTP_PORT` defaults to `4001`. Transactional outbox + webhook dispatcher (DLQ); hash-chained append-only audit log. API contract = 5 bounded-context OpenAPI 3.1 specs in [api/openapi/](api/openapi/) (no monolith spec).
 
-**Frontend** — [apps/console](apps/console/) (Vite + TanStack Router, admin), [apps/website](apps/website/) + [apps/login](apps/login/) (Next.js). React 19; UI comes from the shared **`@qeetrix/*`** design system (a live dependency). Published TS SDKs `@qeet-id/{sdk,react,nextjs}` are in [sdk/js/](sdk/js/) (+ Go/Python SDKs). End-user docs live in the separate `qeet-docs` site.
+**Frontend** — [apps/console](apps/console/) (Vite + TanStack Router, admin), [apps/website](apps/website/) + [apps/login](apps/login/) (Next.js). React 19; UI comes from the shared **`@qeetrix/*`** design system (a live dependency). SDKs (`@qeet-id/{sdk,react,nextjs}` + Go/Python) now live in separate `qeet-sdks/` repos under the parent QG folder — no longer in this repo. End-user docs live in the separate `qeet-docs` site.
 
 ## Deployment
 

@@ -16,8 +16,8 @@ import {
   SelectValue,
   Switch,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { Loader2Icon, PlaneIcon, ShieldCheckIcon, SmartphoneIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -125,7 +125,9 @@ function RiskSettingsPage() {
             >
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field>
-                  <FieldLabel htmlFor="medium">{t("threats.riskSettings.thresholds.medium")}</FieldLabel>
+                  <FieldLabel htmlFor="medium">
+                    {t("threats.riskSettings.thresholds.medium")}
+                  </FieldLabel>
                   <Input
                     id="medium"
                     type="number"
@@ -135,10 +137,14 @@ function RiskSettingsPage() {
                     value={medium}
                     onChange={(e) => setMedium(Number(e.target.value))}
                   />
-                  <FieldDescription>{t("threats.riskSettings.thresholds.mediumHelp")}</FieldDescription>
+                  <FieldDescription>
+                    {t("threats.riskSettings.thresholds.mediumHelp")}
+                  </FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="high">{t("threats.riskSettings.thresholds.high")}</FieldLabel>
+                  <FieldLabel htmlFor="high">
+                    {t("threats.riskSettings.thresholds.high")}
+                  </FieldLabel>
                   <Input
                     id="high"
                     type="number"
@@ -148,22 +154,32 @@ function RiskSettingsPage() {
                     value={high}
                     onChange={(e) => setHigh(Number(e.target.value))}
                   />
-                  <FieldDescription>{t("threats.riskSettings.thresholds.highHelp")}</FieldDescription>
+                  <FieldDescription>
+                    {t("threats.riskSettings.thresholds.highHelp")}
+                  </FieldDescription>
                 </Field>
               </div>
 
               <Field className="max-w-xs">
-                <FieldLabel htmlFor="force-at">{t("threats.riskSettings.thresholds.forceAt")}</FieldLabel>
+                <FieldLabel htmlFor="force-at">
+                  {t("threats.riskSettings.thresholds.forceAt")}
+                </FieldLabel>
                 <Select value={forceAt} onValueChange={(v) => setForceAt(v as "medium" | "high")}>
                   <SelectTrigger id="force-at">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="medium">{t("threats.riskSettings.thresholds.forceAtMedium")}</SelectItem>
-                    <SelectItem value="high">{t("threats.riskSettings.thresholds.forceAtHigh")}</SelectItem>
+                    <SelectItem value="medium">
+                      {t("threats.riskSettings.thresholds.forceAtMedium")}
+                    </SelectItem>
+                    <SelectItem value="high">
+                      {t("threats.riskSettings.thresholds.forceAtHigh")}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
-                <FieldDescription>{t("threats.riskSettings.thresholds.forceAtHelp")}</FieldDescription>
+                <FieldDescription>
+                  {t("threats.riskSettings.thresholds.forceAtHelp")}
+                </FieldDescription>
               </Field>
 
               <div className="flex flex-col gap-4 border-t pt-4">
@@ -171,15 +187,21 @@ function RiskSettingsPage() {
                   <div className="flex items-start gap-2">
                     <PlaneIcon className="mt-0.5 size-4 text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium">{t("threats.riskSettings.impossibleTravel.title")}</p>
-                      <p className="text-sm text-muted-foreground">{t("threats.riskSettings.impossibleTravel.description")}</p>
+                      <p className="text-sm font-medium">
+                        {t("threats.riskSettings.impossibleTravel.title")}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {t("threats.riskSettings.impossibleTravel.description")}
+                      </p>
                     </div>
                   </div>
                   <Switch checked={travelEnabled} onCheckedChange={setTravelEnabled} />
                 </div>
                 {travelEnabled && (
                   <Field className="max-w-xs pl-6">
-                    <FieldLabel htmlFor="min-travel-hours">{t("threats.riskSettings.impossibleTravel.minTravelHours")}</FieldLabel>
+                    <FieldLabel htmlFor="min-travel-hours">
+                      {t("threats.riskSettings.impossibleTravel.minTravelHours")}
+                    </FieldLabel>
                     <Input
                       id="min-travel-hours"
                       type="number"
@@ -195,8 +217,12 @@ function RiskSettingsPage() {
                   <div className="flex items-start gap-2">
                     <SmartphoneIcon className="mt-0.5 size-4 text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium">{t("threats.riskSettings.deviceReputation.title")}</p>
-                      <p className="text-sm text-muted-foreground">{t("threats.riskSettings.deviceReputation.description")}</p>
+                      <p className="text-sm font-medium">
+                        {t("threats.riskSettings.deviceReputation.title")}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {t("threats.riskSettings.deviceReputation.description")}
+                      </p>
                     </div>
                   </div>
                   <Switch checked={deviceEnabled} onCheckedChange={setDeviceEnabled} />

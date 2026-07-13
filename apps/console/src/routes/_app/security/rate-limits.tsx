@@ -7,8 +7,8 @@ import {
   CardTitle,
   Skeleton,
 } from "@qeetrix/ui";
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { GaugeIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -16,7 +16,9 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/security/rate-limits")({ component: RateLimitsPage });
+export const Route = createFileRoute("/_app/security/rate-limits")({
+  component: RateLimitsPage,
+});
 
 type Policy = {
   ip_allowlist: string[] | null;
@@ -28,11 +30,31 @@ type Policy = {
 // (migration 0064_rate_limit_overrides, domains/operations/ratelimits); this
 // admin screen isn't wired to that override API yet.
 const STATIC_LIMITS: { endpoint: string; limit: string; window: string }[] = [
-  { endpoint: "POST /v1/auth/login", limit: "5 req / 20 burst", window: "per IP, sliding" },
-  { endpoint: "POST /v1/auth/refresh", limit: "5 req / 20 burst", window: "per IP, sliding" },
-  { endpoint: "POST /v1/auth/signup", limit: "5 req / 20 burst", window: "per IP, sliding" },
-  { endpoint: "POST /v1/auth/forgot-password", limit: "5 req / 20 burst", window: "per IP, sliding" },
-  { endpoint: "POST /v1/oauth/token (client_credentials)", limit: "5 req / 20 burst", window: "per IP, sliding" },
+  {
+    endpoint: "POST /v1/auth/login",
+    limit: "5 req / 20 burst",
+    window: "per IP, sliding",
+  },
+  {
+    endpoint: "POST /v1/auth/refresh",
+    limit: "5 req / 20 burst",
+    window: "per IP, sliding",
+  },
+  {
+    endpoint: "POST /v1/auth/signup",
+    limit: "5 req / 20 burst",
+    window: "per IP, sliding",
+  },
+  {
+    endpoint: "POST /v1/auth/forgot-password",
+    limit: "5 req / 20 burst",
+    window: "per IP, sliding",
+  },
+  {
+    endpoint: "POST /v1/oauth/token (client_credentials)",
+    limit: "5 req / 20 burst",
+    window: "per IP, sliding",
+  },
   { endpoint: "Other authed endpoints", limit: "unlimited", window: "—" },
 ];
 
@@ -75,26 +97,41 @@ function RateLimitsPage() {
           <CardTitle className="text-base">{t("rateLimits.networkPolicy.title")}</CardTitle>
           <CardDescription>
             {t("rateLimits.networkPolicy.description")}{" "}
-            <Link to="/access/policies" className="underline">Roles &amp; Permissions → Policies</Link>.
+            <Link to="/access/policies" className="underline">
+              Roles &amp; Permissions → Policies
+            </Link>
+            .
           </CardDescription>
         </CardHeader>
         <CardContent>
           {policyQ.isLoading ? (
-            <div className="space-y-3">{[...Array(2)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="space-y-3">
+              {[...Array(2)].map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
           ) : policyQ.isError ? (
             <div className="text-sm text-destructive">{(policyQ.error as Error).message}</div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <p className="mb-2 text-xs font-medium text-muted-foreground">
-                  {t("rateLimits.networkPolicy.allowlist", { count: allowCount })}
+                  {t("rateLimits.networkPolicy.allowlist", {
+                    count: allowCount,
+                  })}
                 </p>
                 {policyQ.data?.ip_allowlist?.length ? (
                   <div className="flex flex-wrap gap-1">
-                    {policyQ.data.ip_allowlist.map((c) => <Badge key={c} variant="muted">{c}</Badge>)}
+                    {policyQ.data.ip_allowlist.map((c) => (
+                      <Badge key={c} variant="muted">
+                        {c}
+                      </Badge>
+                    ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">{t("rateLimits.networkPolicy.noAllowlist")}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("rateLimits.networkPolicy.noAllowlist")}
+                  </p>
                 )}
               </div>
               <div>
@@ -103,10 +140,16 @@ function RateLimitsPage() {
                 </p>
                 {policyQ.data?.ip_denylist?.length ? (
                   <div className="flex flex-wrap gap-1">
-                    {policyQ.data.ip_denylist.map((c) => <Badge key={c} variant="destructive">{c}</Badge>)}
+                    {policyQ.data.ip_denylist.map((c) => (
+                      <Badge key={c} variant="destructive">
+                        {c}
+                      </Badge>
+                    ))}
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">{t("rateLimits.networkPolicy.noDenylist")}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("rateLimits.networkPolicy.noDenylist")}
+                  </p>
                 )}
               </div>
             </div>

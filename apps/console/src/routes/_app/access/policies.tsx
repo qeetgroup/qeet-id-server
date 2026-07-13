@@ -19,17 +19,19 @@ import {
   Skeleton,
   Textarea,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/access/policies")({ component: PoliciesPage });
+export const Route = createFileRoute("/_app/access/policies")({
+  component: PoliciesPage,
+});
 
 type Policy = {
   tenant_id: string;
@@ -78,8 +80,7 @@ function PoliciesPage() {
     },
   });
 
-  const set = <K extends keyof Policy>(k: K, v: Policy[K]) =>
-    setDraft((d) => ({ ...d, [k]: v }));
+  const set = <K extends keyof Policy>(k: K, v: Policy[K]) => setDraft((d) => ({ ...d, [k]: v }));
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -88,7 +89,9 @@ function PoliciesPage() {
       {policyQ.isLoading ? (
         <Card>
           <CardContent className="space-y-3 p-6">
-            {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+            {[...Array(5)].map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
           </CardContent>
         </Card>
       ) : (
@@ -107,7 +110,9 @@ function PoliciesPage() {
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="ip_allowlist">{t("policies.network.allowlistLabel")}</FieldLabel>
+                  <FieldLabel htmlFor="ip_allowlist">
+                    {t("policies.network.allowlistLabel")}
+                  </FieldLabel>
                   <Textarea
                     id="ip_allowlist"
                     rows={3}
@@ -115,7 +120,10 @@ function PoliciesPage() {
                     onChange={(e) =>
                       set(
                         "ip_allowlist",
-                        e.target.value.split(/\n+/).map((s) => s.trim()).filter(Boolean)
+                        e.target.value
+                          .split(/\n+/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
                       )
                     }
                     placeholder="10.0.0.0/8&#10;203.0.113.0/24"
@@ -123,7 +131,9 @@ function PoliciesPage() {
                   <FieldDescription>{t("policies.network.allowlistHelp")}</FieldDescription>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="ip_denylist">{t("policies.network.denylistLabel")}</FieldLabel>
+                  <FieldLabel htmlFor="ip_denylist">
+                    {t("policies.network.denylistLabel")}
+                  </FieldLabel>
                   <Textarea
                     id="ip_denylist"
                     rows={3}
@@ -131,7 +141,10 @@ function PoliciesPage() {
                     onChange={(e) =>
                       set(
                         "ip_denylist",
-                        e.target.value.split(/\n+/).map((s) => s.trim()).filter(Boolean)
+                        e.target.value
+                          .split(/\n+/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
                       )
                     }
                   />
@@ -149,14 +162,18 @@ function PoliciesPage() {
               <FieldGroup>
                 <Field className="grid grid-cols-2 gap-4">
                   <Field>
-                    <FieldLabel htmlFor="password_min_length">{t("policies.password.minLengthLabel")}</FieldLabel>
+                    <FieldLabel htmlFor="password_min_length">
+                      {t("policies.password.minLengthLabel")}
+                    </FieldLabel>
                     <Input
                       id="password_min_length"
                       type="number"
                       min={8}
                       max={128}
                       value={draft.password_min_length}
-                      onChange={(e) => set("password_min_length", parseInt(e.target.value || "8", 10))}
+                      onChange={(e) =>
+                        set("password_min_length", parseInt(e.target.value || "8", 10))
+                      }
                     />
                   </Field>
                   <Field>
@@ -165,11 +182,19 @@ function PoliciesPage() {
                       value={draft.password_complexity}
                       onValueChange={(v) => set("password_complexity", v ?? "")}
                     >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="basic">{t("policies.password.complexityBasic")}</SelectItem>
-                        <SelectItem value="standard">{t("policies.password.complexityStandard")}</SelectItem>
-                        <SelectItem value="strict">{t("policies.password.complexityStrict")}</SelectItem>
+                        <SelectItem value="basic">
+                          {t("policies.password.complexityBasic")}
+                        </SelectItem>
+                        <SelectItem value="standard">
+                          {t("policies.password.complexityStandard")}
+                        </SelectItem>
+                        <SelectItem value="strict">
+                          {t("policies.password.complexityStrict")}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
@@ -186,14 +211,19 @@ function PoliciesPage() {
             <CardContent>
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="session_max_age">{t("policies.session.maxAgeLabel")}</FieldLabel>
+                  <FieldLabel htmlFor="session_max_age">
+                    {t("policies.session.maxAgeLabel")}
+                  </FieldLabel>
                   <Input
                     id="session_max_age"
                     value={draft.session_max_age}
                     onChange={(e) => set("session_max_age", e.target.value)}
                     placeholder="720h"
                   />
-                  <FieldDescription>Go duration string. Examples: <code>24h</code>, <code>720h</code> (30 days), <code>2160h</code> (90 days).</FieldDescription>
+                  <FieldDescription>
+                    Go duration string. Examples: <code>24h</code>, <code>720h</code> (30 days),{" "}
+                    <code>2160h</code> (90 days).
+                  </FieldDescription>
                 </Field>
               </FieldGroup>
             </CardContent>
@@ -212,7 +242,9 @@ function PoliciesPage() {
                     value={draft.mfa_enforcement}
                     onValueChange={(v) => set("mfa_enforcement", v ?? "")}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="disabled">{t("policies.mfa.disabled")}</SelectItem>
                       <SelectItem value="optional">{t("policies.mfa.optional")}</SelectItem>
@@ -236,7 +268,9 @@ function PoliciesPage() {
 
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              {savedAt ? t("policies.savedAt", { time: savedAt.toLocaleTimeString() }) : t("policies.unsaved")}
+              {savedAt
+                ? t("policies.savedAt", { time: savedAt.toLocaleTimeString() })
+                : t("policies.unsaved")}
             </p>
             <div className="flex gap-2">
               <Button

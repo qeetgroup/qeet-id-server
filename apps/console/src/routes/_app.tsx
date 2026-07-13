@@ -1,11 +1,5 @@
-import {
-  Button,
-  Separator,
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@qeetrix/ui";
-import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Button, Separator, SidebarInset, SidebarProvider, SidebarTrigger } from "@qeetrix/ui";
+import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { KeyboardIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 

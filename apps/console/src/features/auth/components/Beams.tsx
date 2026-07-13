@@ -1,10 +1,8 @@
-import { forwardRef, useImperativeHandle, useEffect, useRef, useMemo } from "react";
-import type { FC, ReactNode } from "react";
-
-import * as THREE from "three";
-
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { PerspectiveCamera } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import type { FC, ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import * as THREE from "three";
 
 type UniformValue = THREE.IUniform<unknown> | unknown;
 
@@ -24,7 +22,7 @@ type ShaderWithDefines = THREE.ShaderLibShader & {
 
 function extendMaterial<T extends THREE.Material = THREE.Material>(
   BaseMaterial: new (params?: THREE.MaterialParameters) => T,
-  cfg: ExtendMaterialConfig
+  cfg: ExtendMaterialConfig,
 ): THREE.ShaderMaterial {
   const physical = THREE.ShaderLib.physical as ShaderWithDefines;
   const { vertexShader: baseVert, fragmentShader: baseFrag, uniforms: baseUniforms } = physical;
@@ -69,7 +67,7 @@ function extendMaterial<T extends THREE.Material = THREE.Material>(
     vertexShader: vert,
     fragmentShader: frag,
     lights: true,
-    fog: !!cfg.material?.fog
+    fog: !!cfg.material?.fog,
   });
 
   return mat;
@@ -211,7 +209,7 @@ const Beams: FC<BeamsProps> = ({
   speed = 2,
   noiseIntensity = 1.75,
   scale = 0.2,
-  rotation = 0
+  rotation = 0,
 }) => {
   const meshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null!);
 
@@ -250,12 +248,12 @@ const Beams: FC<BeamsProps> = ({
         fragmentHeader: "",
         vertex: {
           "#include <begin_vertex>": `transformed.z += getPos(transformed.xyz);`,
-          "#include <beginnormal_vertex>": `objectNormal = getNormal(position.xyz);`
+          "#include <beginnormal_vertex>": `objectNormal = getNormal(position.xyz);`,
         },
         fragment: {
           "#include <dithering_fragment>": `
     float randomNoise = noise(gl_FragCoord.xy);
-    gl_FragColor.rgb -= randomNoise / 15. * uNoiseIntensity;`
+    gl_FragColor.rgb -= randomNoise / 15. * uNoiseIntensity;`,
         },
         material: { fog: true },
         uniforms: {
@@ -266,16 +264,22 @@ const Beams: FC<BeamsProps> = ({
           uSpeed: { shared: true, mixed: true, linked: true, value: speed },
           envMapIntensity: 10,
           uNoiseIntensity: noiseIntensity,
-          uScale: scale
-        }
+          uScale: scale,
+        },
       }),
-    [speed, noiseIntensity, scale]
+    [speed, noiseIntensity, scale],
   );
 
   return (
     <CanvasWrapper>
       <group rotation={[0, 0, THREE.MathUtils.degToRad(rotation)]}>
-        <PlaneNoise ref={meshRef} material={beamMaterial} count={beamNumber} width={beamWidth} height={beamHeight} />
+        <PlaneNoise
+          ref={meshRef}
+          material={beamMaterial}
+          count={beamNumber}
+          width={beamWidth}
+          height={beamHeight}
+        />
         <DirLight color={lightColor} position={[0, 3, 10]} />
       </group>
       <ambientLight intensity={1} />
@@ -290,7 +294,7 @@ function createStackedPlanesBufferGeometry(
   width: number,
   height: number,
   spacing: number,
-  heightSegments: number
+  heightSegments: number,
 ): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   const numVertices = n * (heightSegments + 1) * 2;
@@ -352,7 +356,7 @@ const MergedPlanes = forwardRef<
   useImperativeHandle(ref, () => mesh.current);
   const geometry = useMemo(
     () => createStackedPlanesBufferGeometry(count, width, height, 0, 100),
-    [count, width, height]
+    [count, width, height],
   );
   useFrame((_, delta) => {
     mesh.current.material.uniforms.time.value += 0.1 * delta;
@@ -370,11 +374,20 @@ const PlaneNoise = forwardRef<
     height: number;
   }
 >((props, ref) => (
-  <MergedPlanes ref={ref} material={props.material} width={props.width} count={props.count} height={props.height} />
+  <MergedPlanes
+    ref={ref}
+    material={props.material}
+    width={props.width}
+    count={props.count}
+    height={props.height}
+  />
 ));
 PlaneNoise.displayName = "PlaneNoise";
 
-const DirLight: FC<{ position: [number, number, number]; color: string }> = ({ position, color }) => {
+const DirLight: FC<{ position: [number, number, number]; color: string }> = ({
+  position,
+  color,
+}) => {
   const dir = useRef<THREE.DirectionalLight>(null!);
   useEffect(() => {
     if (!dir.current) return;

@@ -11,9 +11,7 @@ import { useTranslation } from "react-i18next";
 export function ScopeList({ scopes }: { scopes: string[] }) {
   const { t } = useTranslation();
   if (scopes.length === 0) {
-    return (
-      <p className="text-muted-foreground text-sm">{t("common:fallbacks.signYouIn")}</p>
-    );
+    return <p className="text-muted-foreground text-sm">{t("common:fallbacks.signYouIn")}</p>;
   }
   return (
     <ul className="border-border/60 divide-border/60 divide-y overflow-hidden rounded-lg border">
@@ -23,7 +21,13 @@ export function ScopeList({ scopes }: { scopes: string[] }) {
             className="bg-primary/10 text-primary flex size-5 shrink-0 items-center justify-center rounded-full"
             aria-hidden
           >
-            <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <svg
+              viewBox="0 0 16 16"
+              className="size-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+            >
               <path d="M3.5 8.5l3 3 6-6.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>

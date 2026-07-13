@@ -61,7 +61,9 @@ export function useRevokeAdminPortalLink() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/admin-portal/links/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/admin-portal/links/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
     meta: { successMessage: "Admin portal link revoked" },
   });

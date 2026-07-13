@@ -1,13 +1,13 @@
 "use client";
 
 import { Button, Input, Spinner } from "@qeetrix/ui";
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuthCard } from "@/components/auth-card";
 import { FormAlert } from "@/components/form-alert";
-import type { Branding } from "@/lib/branding";
 import { ApiError, apiPost } from "@/lib/api";
+import type { Branding } from "@/lib/branding";
 
 type ForgotPasswordFormProps = {
   returnTo: string;
@@ -58,7 +58,6 @@ export function ForgotPasswordForm({ returnTo, tenantId, branding }: ForgotPassw
               id="email"
               type="email"
               autoComplete="email"
-              // eslint-disable-next-line jsx-a11y/no-autofocus -- single-task form; autofocus guides users to the only interactive element without disorienting them
               autoFocus
               required
               value={email}

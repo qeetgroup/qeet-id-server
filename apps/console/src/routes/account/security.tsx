@@ -1,14 +1,14 @@
 import {
   Button,
+  buttonVariants,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
   StatusPill,
-  buttonVariants,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   FingerprintIcon,
   KeyRoundIcon,
@@ -22,7 +22,9 @@ import { useTranslation } from "react-i18next";
 import { usePasskeys } from "@/lib/passkeys";
 import { useSocialIdentities, useUnlinkIdentity } from "@/lib/social-identities";
 
-export const Route = createFileRoute("/account/security")({ component: SecurityPage });
+export const Route = createFileRoute("/account/security")({
+  component: SecurityPage,
+});
 
 function titleCase(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);

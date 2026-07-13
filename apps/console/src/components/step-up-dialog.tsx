@@ -103,7 +103,11 @@ export function StepUpDialog({ open, onOpenChange, onVerified, actionLabel }: St
         </Field>
 
         <DialogFooter className="flex-row justify-end gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={verifyM.isPending}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={verifyM.isPending}
+          >
             Cancel
           </Button>
           <Button onClick={() => submit(code)} disabled={verifyM.isPending || code.length !== 6}>

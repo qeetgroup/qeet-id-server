@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  cn,
   Field,
   FieldDescription,
   FieldError,
@@ -25,11 +26,9 @@ import {
   SheetHeader,
   SheetTitle,
   Skeleton,
-  cn,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2Icon, NetworkIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Apple,
   Atlassian,
@@ -59,14 +58,17 @@ import {
   X,
   Zoom,
 } from "@thesvg/react";
+import { Loader2Icon, NetworkIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/auth/social")({ component: SocialPage });
+export const Route = createFileRoute("/_app/auth/social")({
+  component: SocialPage,
+});
 
 type Provider = {
   tenant_id: string;
@@ -103,34 +105,174 @@ type KnownProvider = {
 };
 
 const KNOWN_PROVIDERS: KnownProvider[] = [
-  { id: "qeet", label: "Qeet", logoLight: "/qeet-logo-on-light.svg", logoDark: "/qeet-logo-on-dark.svg", iconClass: "", discovery: "" },
-  { id: "google", label: "Google", Icon: Google, iconClass: "", discovery: "https://accounts.google.com/.well-known/openid-configuration" },
-  { id: "github", label: "GitHub", Icon: Github, iconClass: "dark:invert", discovery: "", oauth2Only: true },
-  { id: "microsoft", label: "Microsoft", Icon: Microsoft, iconClass: "", discovery: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration" },
-  { id: "apple", label: "Apple", Icon: Apple, iconClass: "invert dark:invert-0", discovery: "https://appleid.apple.com/.well-known/openid-configuration" },
-  { id: "facebook", label: "Facebook", Icon: Facebook, iconClass: "text-[#1877F2]", fill: "currentColor", discovery: "", oauth2Only: true },
-  { id: "x", label: "X (Twitter)", Icon: X, iconClass: "dark:invert", discovery: "", oauth2Only: true },
-  { id: "linkedin", label: "LinkedIn", Icon: Linkedin, iconClass: "", discovery: "https://www.linkedin.com/oauth/.well-known/openid-configuration" },
-  { id: "gitlab", label: "GitLab", Icon: Gitlab, iconClass: "", discovery: "https://gitlab.com/.well-known/openid-configuration" },
-  { id: "bitbucket", label: "Bitbucket", Icon: Bitbucket, iconClass: "", discovery: "", oauth2Only: true },
-  { id: "discord", label: "Discord", Icon: Discord, iconClass: "", discovery: "", oauth2Only: true },
-  { id: "slack", label: "Slack", Icon: Slack, iconClass: "", discovery: "https://slack.com/.well-known/openid-configuration" },
-  { id: "twitch", label: "Twitch", Icon: Twitch, iconClass: "", discovery: "https://id.twitch.tv/oauth2/.well-known/openid-configuration" },
-  { id: "spotify", label: "Spotify", Icon: Spotify, iconClass: "", discovery: "" },
-  { id: "reddit", label: "Reddit", Icon: Reddit, iconClass: "", discovery: "", oauth2Only: true },
-  { id: "atlassian", label: "Atlassian", Icon: Atlassian, iconClass: "", discovery: "" },
-  { id: "salesforce", label: "Salesforce", Icon: Salesforce, iconClass: "", discovery: "https://login.salesforce.com/.well-known/openid-configuration" },
+  {
+    id: "qeet",
+    label: "Qeet",
+    logoLight: "/qeet-logo-on-light.svg",
+    logoDark: "/qeet-logo-on-dark.svg",
+    iconClass: "",
+    discovery: "",
+  },
+  {
+    id: "google",
+    label: "Google",
+    Icon: Google,
+    iconClass: "",
+    discovery: "https://accounts.google.com/.well-known/openid-configuration",
+  },
+  {
+    id: "github",
+    label: "GitHub",
+    Icon: Github,
+    iconClass: "dark:invert",
+    discovery: "",
+    oauth2Only: true,
+  },
+  {
+    id: "microsoft",
+    label: "Microsoft",
+    Icon: Microsoft,
+    iconClass: "",
+    discovery: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
+  },
+  {
+    id: "apple",
+    label: "Apple",
+    Icon: Apple,
+    iconClass: "invert dark:invert-0",
+    discovery: "https://appleid.apple.com/.well-known/openid-configuration",
+  },
+  {
+    id: "facebook",
+    label: "Facebook",
+    Icon: Facebook,
+    iconClass: "text-[#1877F2]",
+    fill: "currentColor",
+    discovery: "",
+    oauth2Only: true,
+  },
+  {
+    id: "x",
+    label: "X (Twitter)",
+    Icon: X,
+    iconClass: "dark:invert",
+    discovery: "",
+    oauth2Only: true,
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn",
+    Icon: Linkedin,
+    iconClass: "",
+    discovery: "https://www.linkedin.com/oauth/.well-known/openid-configuration",
+  },
+  {
+    id: "gitlab",
+    label: "GitLab",
+    Icon: Gitlab,
+    iconClass: "",
+    discovery: "https://gitlab.com/.well-known/openid-configuration",
+  },
+  {
+    id: "bitbucket",
+    label: "Bitbucket",
+    Icon: Bitbucket,
+    iconClass: "",
+    discovery: "",
+    oauth2Only: true,
+  },
+  {
+    id: "discord",
+    label: "Discord",
+    Icon: Discord,
+    iconClass: "",
+    discovery: "",
+    oauth2Only: true,
+  },
+  {
+    id: "slack",
+    label: "Slack",
+    Icon: Slack,
+    iconClass: "",
+    discovery: "https://slack.com/.well-known/openid-configuration",
+  },
+  {
+    id: "twitch",
+    label: "Twitch",
+    Icon: Twitch,
+    iconClass: "",
+    discovery: "https://id.twitch.tv/oauth2/.well-known/openid-configuration",
+  },
+  {
+    id: "spotify",
+    label: "Spotify",
+    Icon: Spotify,
+    iconClass: "",
+    discovery: "",
+  },
+  {
+    id: "reddit",
+    label: "Reddit",
+    Icon: Reddit,
+    iconClass: "",
+    discovery: "",
+    oauth2Only: true,
+  },
+  {
+    id: "atlassian",
+    label: "Atlassian",
+    Icon: Atlassian,
+    iconClass: "",
+    discovery: "",
+  },
+  {
+    id: "salesforce",
+    label: "Salesforce",
+    Icon: Salesforce,
+    iconClass: "",
+    discovery: "https://login.salesforce.com/.well-known/openid-configuration",
+  },
   { id: "okta", label: "Okta", Icon: Okta, iconClass: "", discovery: "" },
   { id: "auth0", label: "Auth0", Icon: Auth0, iconClass: "", discovery: "" },
-  { id: "notion", label: "Notion", Icon: Notion, iconClass: "invert dark:invert-0", discovery: "" },
+  {
+    id: "notion",
+    label: "Notion",
+    Icon: Notion,
+    iconClass: "invert dark:invert-0",
+    discovery: "",
+  },
   { id: "figma", label: "Figma", Icon: Figma, iconClass: "", discovery: "" },
   { id: "zoom", label: "Zoom", Icon: Zoom, iconClass: "", discovery: "" },
   { id: "box", label: "Box", Icon: Box, iconClass: "", discovery: "" },
-  { id: "dropbox", label: "Dropbox", Icon: Dropbox, iconClass: "", discovery: "" },
-  { id: "line", label: "LINE", Icon: Line, iconClass: "", discovery: "https://access.line.me/.well-known/openid-configuration" },
-  { id: "kakao", label: "Kakao", Icon: Kakao, iconClass: "", discovery: "https://kauth.kakao.com/.well-known/openid-configuration" },
+  {
+    id: "dropbox",
+    label: "Dropbox",
+    Icon: Dropbox,
+    iconClass: "",
+    discovery: "",
+  },
+  {
+    id: "line",
+    label: "LINE",
+    Icon: Line,
+    iconClass: "",
+    discovery: "https://access.line.me/.well-known/openid-configuration",
+  },
+  {
+    id: "kakao",
+    label: "Kakao",
+    Icon: Kakao,
+    iconClass: "",
+    discovery: "https://kauth.kakao.com/.well-known/openid-configuration",
+  },
   { id: "naver", label: "Naver", Icon: Naver, iconClass: "", discovery: "" },
-  { id: "coinbase", label: "Coinbase", Icon: Coinbase, iconClass: "", discovery: "" },
+  {
+    id: "coinbase",
+    label: "Coinbase",
+    Icon: Coinbase,
+    iconClass: "",
+    discovery: "",
+  },
 ];
 
 // Qeet ships as a full-bleed app-icon (its own background); the rest sit on a
@@ -147,7 +289,12 @@ function ProviderChip({ provider }: { provider: KnownProvider }) {
   const Icon = provider.Icon;
   return (
     <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40">
-      {Icon && <Icon className={cn("size-5", provider.iconClass)} {...(provider.fill ? { fill: provider.fill } : {})} />}
+      {Icon && (
+        <Icon
+          className={cn("size-5", provider.iconClass)}
+          {...(provider.fill ? { fill: provider.fill } : {})}
+        />
+      )}
     </span>
   );
 }
@@ -171,7 +318,12 @@ function SocialPage() {
       <PageHeader
         description={t("social.description")}
         actions={
-          <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => listQ.refetch()}
+            disabled={listQ.isFetching}
+          >
             <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
             {t("social.refreshBtn")}
           </Button>
@@ -189,15 +341,19 @@ function SocialPage() {
                     <ProviderChip provider={p} />
                     <div>
                       <CardTitle className="text-base">{p.label}</CardTitle>
-                      <CardDescription>{cfg ? t("social.configured") : t("social.notConfigured")}</CardDescription>
+                      <CardDescription>
+                        {cfg ? t("social.configured") : t("social.notConfigured")}
+                      </CardDescription>
                     </div>
                   </div>
                   {p.oauth2Only ? (
                     <Badge variant="outline">{t("social.badges.notSupported")}</Badge>
                   ) : cfg ? (
-                    cfg.enabled
-                      ? <Badge variant="success">{t("social.badges.enabled")}</Badge>
-                      : <Badge variant="muted">{t("social.badges.disabled")}</Badge>
+                    cfg.enabled ? (
+                      <Badge variant="success">{t("social.badges.enabled")}</Badge>
+                    ) : (
+                      <Badge variant="muted">{t("social.badges.disabled")}</Badge>
+                    )
                   ) : (
                     <Badge variant="outline">{t("social.badges.off")}</Badge>
                   )}
@@ -239,9 +395,7 @@ function SocialPage() {
         <Card>
           <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
             <NetworkIcon className="size-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              {t("social.emptyTitle")}
-            </p>
+            <p className="text-sm text-muted-foreground">{t("social.emptyTitle")}</p>
           </CardContent>
         </Card>
       )}
@@ -267,7 +421,13 @@ type ConfigureSheetProps = {
   onSaved: () => void;
 };
 
-function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved }: ConfigureSheetProps) {
+function ConfigureProviderSheet({
+  provider,
+  tenantId,
+  existing,
+  onClose,
+  onSaved,
+}: ConfigureSheetProps) {
   const { t } = useTranslation("auth");
   const meta = KNOWN_PROVIDERS.find((p) => p.id === provider);
   const upsertM = useMutation({
@@ -310,36 +470,62 @@ function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved
                   <img src={meta.logoDark} alt="" className="hidden size-5 dark:block" />
                 </>
               ) : (
-                meta?.Icon && <meta.Icon className={cn("size-5", meta.iconClass)} {...(meta.fill ? { fill: meta.fill } : {})} />
+                meta?.Icon && (
+                  <meta.Icon
+                    className={cn("size-5", meta.iconClass)}
+                    {...(meta.fill ? { fill: meta.fill } : {})}
+                  />
+                )
               )}
               {t("social.configure.title", { label: meta?.label ?? provider })}
             </SheetTitle>
-            <SheetDescription>
-              {t("social.configure.description")}
-            </SheetDescription>
+            <SheetDescription>{t("social.configure.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
                 <FieldLabel>{t("social.configure.providerLabel")}</FieldLabel>
                 <Select value={provider} disabled>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    {KNOWN_PROVIDERS.map((p) => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}
+                    {KNOWN_PROVIDERS.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </Field>
               <Field>
-                <FieldLabel htmlFor="social-client_id">{t("social.configure.clientIdLabel")}</FieldLabel>
-                <Input id="social-client_id" name="client_id" defaultValue={existing?.client_id} required />
+                <FieldLabel htmlFor="social-client_id">
+                  {t("social.configure.clientIdLabel")}
+                </FieldLabel>
+                <Input
+                  id="social-client_id"
+                  name="client_id"
+                  defaultValue={existing?.client_id}
+                  required
+                />
               </Field>
               <Field>
-                <FieldLabel htmlFor="social-client_secret">{t("social.configure.clientSecretLabel")}</FieldLabel>
-                <Input id="social-client_secret" name="client_secret" type="password" required placeholder={existing ? "Leave blank to keep existing" : ""} />
+                <FieldLabel htmlFor="social-client_secret">
+                  {t("social.configure.clientSecretLabel")}
+                </FieldLabel>
+                <Input
+                  id="social-client_secret"
+                  name="client_secret"
+                  type="password"
+                  required
+                  placeholder={existing ? "Leave blank to keep existing" : ""}
+                />
                 <FieldDescription>{t("social.configure.clientSecretHelp")}</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="social-discovery_url">{t("social.configure.discoveryLabel")}</FieldLabel>
+                <FieldLabel htmlFor="social-discovery_url">
+                  {t("social.configure.discoveryLabel")}
+                </FieldLabel>
                 <Input
                   id="social-discovery_url"
                   name="discovery_url"
@@ -354,11 +540,17 @@ function ConfigureProviderSheet({ provider, tenantId, existing, onClose, onSaved
                   OIDC/SSO settings, usually {"{your-domain}"}/.well-known/openid-configuration.
                 </FieldDescription>
               </Field>
-              {upsertM.error && <Field><FieldError>{(upsertM.error as ApiError).message}</FieldError></Field>}
+              {upsertM.error && (
+                <Field>
+                  <FieldError>{(upsertM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("social.configure.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("social.configure.cancelBtn")}
+            </SheetClose>
             <Button type="submit" disabled={upsertM.isPending}>
               {upsertM.isPending && <Loader2Icon className="animate-spin" />}
               {upsertM.isPending ? t("social.configure.savingBtn") : t("social.configure.saveBtn")}

@@ -7,7 +7,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { api, ApiError } from "./api";
+import { ApiError, api } from "./api";
 import { useTenantId } from "./auth";
 
 export interface Metric {
@@ -111,9 +111,7 @@ export function useAnalyticsOverview() {
     staleTime: 60_000,
     queryFn: async (): Promise<AnalyticsOverview> => {
       try {
-        return await api<AnalyticsOverview>(
-          `/v1/tenants/${tenantId}/analytics/overview`,
-        );
+        return await api<AnalyticsOverview>(`/v1/tenants/${tenantId}/analytics/overview`);
       } catch (err) {
         // Backend without §4.8: surface empty data instead of an error
         // page. Anything else (auth, server error) bubbles up so the
@@ -135,5 +133,9 @@ export function useAnalyticsOverview() {
 export function formatShortDate(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }

@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  buttonVariants,
   Card,
   CardContent,
   CardDescription,
@@ -16,10 +17,9 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-  buttonVariants,
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -27,7 +27,9 @@ import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/users/$userId")({ component: UserDetailPage });
+export const Route = createFileRoute("/_app/users/$userId")({
+  component: UserDetailPage,
+});
 
 type User = {
   id: string;
@@ -228,16 +230,10 @@ function UserDetailPage() {
           <CardTitle className="text-base">{t("detail.quickTitle")}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Link
-            to="/users/sessions"
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-          >
+          <Link to="/users/sessions" className={buttonVariants({ variant: "outline", size: "sm" })}>
             {t("detail.allSessionsBtn")}
           </Link>
-          <Link
-            to="/access/roles"
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-          >
+          <Link to="/access/roles" className={buttonVariants({ variant: "outline", size: "sm" })}>
             {t("detail.manageRolesBtn")}
           </Link>
           <Button
@@ -273,9 +269,7 @@ function Field({ label, value, valueNode, mono }: FieldProps) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-xs uppercase tracking-wide text-muted-foreground">{label}</span>
-      {valueNode ?? (
-        <span className={mono ? "font-mono text-xs" : "text-sm"}>{value ?? "—"}</span>
-      )}
+      {valueNode ?? <span className={mono ? "font-mono text-xs" : "text-sm"}>{value ?? "—"}</span>}
     </div>
   );
 }

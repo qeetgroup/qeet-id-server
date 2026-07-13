@@ -11,12 +11,11 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-
+import { SIGN_IN_URL, SIGN_UP_URL } from "@/lib/links";
 import { ArrowCta } from "./blocks/arrow-cta";
 import { ButtonLink } from "./button-link";
 import { QeetMark } from "./qeet-mark";
 import { ThemeToggle } from "./theme-toggle";
-import { SIGN_IN_URL, SIGN_UP_URL } from "@/lib/links";
 
 const nav = [
   { href: "/features", label: "Features" },
@@ -187,7 +186,12 @@ export function SiteHeader() {
               initial="hidden"
               animate="show"
               variants={{
-                show: { transition: { staggerChildren: reduce ? 0 : 0.06, delayChildren: 0.05 } },
+                show: {
+                  transition: {
+                    staggerChildren: reduce ? 0 : 0.06,
+                    delayChildren: 0.05,
+                  },
+                },
               }}
             >
               {nav.map((item) => (
@@ -195,7 +199,11 @@ export function SiteHeader() {
                   key={item.href}
                   variants={{
                     hidden: reduce ? { opacity: 1 } : { opacity: 0, y: 14 },
-                    show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] } },
+                    show: {
+                      opacity: 1,
+                      y: 0,
+                      transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] },
+                    },
                   }}
                 >
                   <Link
@@ -219,7 +227,11 @@ export function SiteHeader() {
               className="mt-auto flex flex-col gap-3 border-t border-border/60 px-6 py-8"
               initial={reduce ? { opacity: 1 } : { opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: reduce ? 0 : 0.28, duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+              transition={{
+                delay: reduce ? 0 : 0.28,
+                duration: 0.5,
+                ease: [0.16, 1, 0.3, 1],
+              }}
             >
               <div className="flex items-center justify-between rounded-full border border-border/60 px-4 py-2 text-sm">
                 <span className="text-muted-foreground">Theme</span>

@@ -2,14 +2,14 @@
 
 import { Button, Input, OTPInput, Separator, Spinner } from "@qeetrix/ui";
 import { IconPasskey } from "@qeetrix/ui/brand";
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuthCard } from "@/components/auth-card";
 import { FormAlert } from "@/components/form-alert";
 import { ProviderIcon } from "@/components/social-providers";
-import type { Branding } from "@/lib/branding";
 import { API_BASE_URL, ApiError, apiPost } from "@/lib/api";
+import type { Branding } from "@/lib/branding";
 
 type LoginFormProps = {
   returnTo: string;
@@ -87,7 +87,10 @@ export function LoginForm({
     setError(null);
     setLoading(true);
     try {
-      const res = await apiPost<SessionResponse>("/v1/auth/session", { email, password });
+      const res = await apiPost<SessionResponse>("/v1/auth/session", {
+        email,
+        password,
+      });
       if (res.mfa_required && res.mfa_token) {
         setMfaToken(res.mfa_token);
         setLoading(false);
@@ -148,7 +151,10 @@ export function LoginForm({
       };
       if (!assertion) throw new Error(t("errors.noPasskeySelected"));
       const credential = assertion.toJSON ? assertion.toJSON() : assertion;
-      await apiPost("/v1/passkeys/login/finish", { session_id: begin.session_id, credential });
+      await apiPost("/v1/passkeys/login/finish", {
+        session_id: begin.session_id,
+        credential,
+      });
       continueToApp();
     } catch (err) {
       setError(
@@ -305,7 +311,11 @@ function MfaChallenge({
     setError(null);
     setLoading(true);
     try {
-      await apiPost("/v1/auth/session/mfa", { mfa_token: mfaToken, code: value, remember });
+      await apiPost("/v1/auth/session/mfa", {
+        mfa_token: mfaToken,
+        code: value,
+        remember,
+      });
       onVerified();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("common:errors.generic"));
@@ -340,7 +350,6 @@ function MfaChallenge({
               id="mfa-code"
               type="text"
               autoComplete="one-time-code"
-              // eslint-disable-next-line jsx-a11y/no-autofocus -- MFA step is a single-task challenge; focus on the code field is intentional and expected
               autoFocus
               required
               value={code}
@@ -352,7 +361,6 @@ function MfaChallenge({
               value={code}
               onChange={setCode}
               onComplete={(v) => void verify(v)}
-              // eslint-disable-next-line jsx-a11y/no-autofocus -- MFA step is a single-task challenge; focus on the code field is intentional and expected
               autoFocus
               disabled={loading}
               aria-label={t("mfa.label")}

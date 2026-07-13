@@ -87,7 +87,6 @@ export function CustomerLogoBlock({
         >
           {logos.map((l) =>
             l.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={l.name}
                 src={l.image}

@@ -49,7 +49,6 @@ function BrandPanel({ branding }: { branding?: Branding }) {
 
       <div className="relative z-10 flex items-center gap-3">
         {branding?.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- tenant logo is a dynamic URL from an arbitrary domain; next/image requires pre-configured remotePatterns per hostname
           <img src={branding.logoUrl} alt="" className="h-8 w-auto max-w-45 object-contain" />
         ) : (
           <>

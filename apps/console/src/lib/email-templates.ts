@@ -45,7 +45,9 @@ export function useResetEmailTemplate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (key: string) =>
-      api<EmailTemplate>(`/v1/tenants/${tenantId}/email-templates/${key}`, { method: "DELETE" }),
+      api<EmailTemplate>(`/v1/tenants/${tenantId}/email-templates/${key}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["email-templates"] }),
     meta: { successMessage: "Reverted to default" },
   });

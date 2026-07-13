@@ -18,7 +18,9 @@ function clientIDFromReturnTo(returnTo: string): string {
 // return_to is present. Absent that, the form still submits — the backend is
 // enumeration-safe and answers identically whether or not the email resolves.
 // We also read the tenant branding so the page renders on-brand.
-async function fetchContext(clientID: string): Promise<{ tenantId: string; branding?: BrandingDTO }> {
+async function fetchContext(
+  clientID: string,
+): Promise<{ tenantId: string; branding?: BrandingDTO }> {
   if (!clientID) return { tenantId: "" };
   try {
     const res = await fetch(
@@ -28,7 +30,10 @@ async function fetchContext(clientID: string): Promise<{ tenantId: string; brand
       },
     );
     if (!res.ok) return { tenantId: "" };
-    const ctx = (await res.json()) as { tenant_id?: string; branding?: BrandingDTO };
+    const ctx = (await res.json()) as {
+      tenant_id?: string;
+      branding?: BrandingDTO;
+    };
     return { tenantId: ctx.tenant_id ?? "", branding: ctx.branding };
   } catch {
     return { tenantId: "" };

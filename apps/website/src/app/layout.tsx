@@ -1,10 +1,7 @@
 import { ThemeProvider } from "@qeetrix/ui";
 import type { Metadata } from "next";
 import { Fira_Code } from "next/font/google";
-import {
-  OrganizationJsonLd,
-  WebSiteJsonLd,
-} from "@/components/marketing/structured-data";
+import { OrganizationJsonLd, WebSiteJsonLd } from "@/components/marketing/structured-data";
 import "./globals.css";
 
 const firaCode = Fira_Code({

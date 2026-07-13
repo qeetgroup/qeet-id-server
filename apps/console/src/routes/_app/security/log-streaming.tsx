@@ -26,13 +26,13 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
+  type SinkType,
   useCreateLogSink,
   useDeleteLogSink,
   useLogSinks,
   useToggleLogSink,
-  type SinkType,
 } from "@/lib/log-sinks";
 
 export const Route = createFileRoute("/_app/security/log-streaming")({
@@ -166,7 +166,8 @@ function LogStreamingPage() {
                       <p className="truncate text-xs text-destructive">{s.last_error}</p>
                     ) : s.last_forwarded_at ? (
                       <p className="text-xs text-muted-foreground">
-                        {t("logStreaming.sinks.lastForwarded")} <TimeSince value={s.last_forwarded_at} />
+                        {t("logStreaming.sinks.lastForwarded")}{" "}
+                        <TimeSince value={s.last_forwarded_at} />
                       </p>
                     ) : null}
                   </div>

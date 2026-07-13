@@ -28,7 +28,11 @@ type LoginInput = { email: string; password: string };
 type SessionResponse = TokenPair & { tenant_id?: string };
 // When the account has a second factor enrolled, /v1/auth/login returns this
 // challenge instead of tokens; complete it at /v1/auth/mfa.
-export type MfaChallenge = { mfa_required: true; mfa_token: string; methods: string[] };
+export type MfaChallenge = {
+  mfa_required: true;
+  mfa_token: string;
+  methods: string[];
+};
 type LoginResponse = SessionResponse | MfaChallenge;
 
 export function isMfaChallenge(r: LoginResponse): r is MfaChallenge {
@@ -104,11 +108,7 @@ export function useAcceptInvite() {
   const navigate = useNavigate();
 
   return useMutation({
-    mutationFn: (in_: {
-      token: string;
-      password: string;
-      display_name?: string;
-    }) =>
+    mutationFn: (in_: { token: string; password: string; display_name?: string }) =>
       api<SessionResponse>("/v1/invites/accept", {
         method: "POST",
         body: in_,
@@ -193,7 +193,11 @@ export function useConsumeSamlCode() {
 export function useForgotPassword() {
   return useMutation({
     mutationFn: (in_: { email: string }) =>
-      api<void>("/v1/auth/forgot-password", { method: "POST", body: in_, anonymous: true }),
+      api<void>("/v1/auth/forgot-password", {
+        method: "POST",
+        body: in_,
+        anonymous: true,
+      }),
     meta: { silent: true },
   });
 }
@@ -214,7 +218,11 @@ export function useSignup() {
   const navigate = useNavigate();
   return useMutation({
     mutationFn: (in_: SignupInput) =>
-      api<SignupResponse>("/v1/auth/signup", { method: "POST", body: in_, anonymous: true }),
+      api<SignupResponse>("/v1/auth/signup", {
+        method: "POST",
+        body: in_,
+        anonymous: true,
+      }),
     onSuccess: (res) => {
       // Tenant-less session; clear any stale tenant id first.
       tokenStore.clear();

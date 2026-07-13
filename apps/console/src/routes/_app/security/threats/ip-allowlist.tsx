@@ -41,7 +41,9 @@ import {
   useSetIpEnforcement,
 } from "@/lib/ip-allowlist";
 
-export const Route = createFileRoute("/_app/security/threats/ip-allowlist")({ component: IpAllowlistPage });
+export const Route = createFileRoute("/_app/security/threats/ip-allowlist")({
+  component: IpAllowlistPage,
+});
 
 function IpAllowlistPage() {
   const { t } = useTranslation("security");
@@ -65,7 +67,9 @@ function IpAllowlistPage() {
         description={t("threats.ipAllowlist.description")}
         actions={
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">{t("threats.ipAllowlist.enforcement")}</span>
+            <span className="text-sm text-muted-foreground">
+              {t("threats.ipAllowlist.enforcement")}
+            </span>
             <Switch
               checked={enabled}
               onCheckedChange={(v) => setEnforce.mutate(v)}
@@ -94,17 +98,31 @@ function IpAllowlistPage() {
               if (!cidr.trim()) return;
               addM.mutate(
                 { cidr: cidr.trim(), label: label.trim(), action },
-                { onSuccess: () => { setCidr(""); setLabel(""); } },
+                {
+                  onSuccess: () => {
+                    setCidr("");
+                    setLabel("");
+                  },
+                },
               );
             }}
           >
             <Field className="flex-1 min-w-45">
               <FieldLabel>{t("threats.ipAllowlist.quickAdd.cidrLabel")}</FieldLabel>
-              <Input value={cidr} onChange={(e) => setCidr(e.target.value)} placeholder="203.0.113.0/24" className="font-mono" />
+              <Input
+                value={cidr}
+                onChange={(e) => setCidr(e.target.value)}
+                placeholder="203.0.113.0/24"
+                className="font-mono"
+              />
             </Field>
             <Field className="flex-1 min-w-40">
               <FieldLabel>{t("threats.ipAllowlist.quickAdd.labelLabel")}</FieldLabel>
-              <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Office NYC" />
+              <Input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Office NYC"
+              />
             </Field>
             <Field>
               <FieldLabel>{t("threats.ipAllowlist.quickAdd.actionLabel")}</FieldLabel>
@@ -113,8 +131,12 @@ function IpAllowlistPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="allow">{t("threats.ipAllowlist.quickAdd.actionAllow")}</SelectItem>
-                  <SelectItem value="deny">{t("threats.ipAllowlist.quickAdd.actionDeny")}</SelectItem>
+                  <SelectItem value="allow">
+                    {t("threats.ipAllowlist.quickAdd.actionAllow")}
+                  </SelectItem>
+                  <SelectItem value="deny">
+                    {t("threats.ipAllowlist.quickAdd.actionDeny")}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -128,7 +150,9 @@ function IpAllowlistPage() {
       <Card>
         <CardHeader>
           <CardTitle>{t("threats.ipAllowlist.rules.title")}</CardTitle>
-          <CardDescription>{t("threats.ipAllowlist.rules.count", { count: rules.length })}</CardDescription>
+          <CardDescription>
+            {t("threats.ipAllowlist.rules.count", { count: rules.length })}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -147,7 +171,9 @@ function IpAllowlistPage() {
                   <TableHead>{t("threats.ipAllowlist.rules.columns.label")}</TableHead>
                   <TableHead>{t("threats.ipAllowlist.rules.columns.action")}</TableHead>
                   <TableHead>{t("threats.ipAllowlist.rules.columns.added")}</TableHead>
-                  <TableHead className="text-right">{t("threats.ipAllowlist.rules.columns.actions")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("threats.ipAllowlist.rules.columns.actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -156,7 +182,9 @@ function IpAllowlistPage() {
                     <TableCell className="font-mono text-xs">{rule.cidr}</TableCell>
                     <TableCell>{rule.label || "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={rule.action === "deny" ? "destructive" : "default"}>{rule.action}</Badge>
+                      <Badge variant={rule.action === "deny" ? "destructive" : "default"}>
+                        {rule.action}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       <TimeSince value={rule.created_at} />
@@ -194,7 +222,12 @@ function IpAllowlistPage() {
           >
             <Field className="flex-1 min-w-50">
               <FieldLabel>{t("threats.ipAllowlist.test.ipLabel")}</FieldLabel>
-              <Input value={testIp} onChange={(e) => setTestIp(e.target.value)} placeholder="198.51.100.7" className="font-mono" />
+              <Input
+                value={testIp}
+                onChange={(e) => setTestIp(e.target.value)}
+                placeholder="198.51.100.7"
+                className="font-mono"
+              />
               <FieldDescription>{t("threats.ipAllowlist.test.ipHelp")}</FieldDescription>
             </Field>
             <Button type="submit" variant="outline" disabled={checkM.isPending || !testIp.trim()}>
@@ -203,7 +236,9 @@ function IpAllowlistPage() {
             {checkM.data && (
               <div className="flex items-center gap-2 pb-2">
                 <StatusPill kind={checkM.data.allowed ? "success" : "danger"}>
-                  {checkM.data.allowed ? t("threats.ipAllowlist.test.allowed") : t("threats.ipAllowlist.test.blocked")}
+                  {checkM.data.allowed
+                    ? t("threats.ipAllowlist.test.allowed")
+                    : t("threats.ipAllowlist.test.blocked")}
                 </StatusPill>
                 <span className="text-xs text-muted-foreground">{checkM.data.reason}</span>
               </div>

@@ -28,21 +28,30 @@ import {
   Textarea,
   TimeSince,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2Icon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon, UserPlusIcon, UsersRoundIcon } from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Loader2Icon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  UserPlusIcon,
+  UsersRoundIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-
-import { ListToolbar, SortHeader } from "@/components/data-table";
 import { useConfirmDialog } from "@/components/confirm-dialog";
+import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
-import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/groups/")({ component: GroupsPage });
+export const Route = createFileRoute("/_app/groups/")({
+  component: GroupsPage,
+});
 
 type Group = {
   id: string;
@@ -91,7 +100,9 @@ function GroupsPage() {
     mutationFn: (id: string) => api<void>(`/v1/groups/${id}`, { method: "DELETE" }),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["groups"] });
-      const snapshots = qc.getQueriesData<{ items: Group[] }>({ queryKey: ["groups"] });
+      const snapshots = qc.getQueriesData<{ items: Group[] }>({
+        queryKey: ["groups"],
+      });
       qc.setQueriesData<{ items: Group[] }>({ queryKey: ["groups"] }, (prev) =>
         prev ? { ...prev, items: prev.items.filter((g) => g.id !== id) } : prev,
       );
@@ -111,7 +122,12 @@ function GroupsPage() {
         description={t("list.description")}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => groupsQ.refetch()} disabled={groupsQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => groupsQ.refetch()}
+              disabled={groupsQ.isFetching}
+            >
               <RefreshCwIcon className={groupsQ.isFetching ? "animate-spin" : ""} />
               {t("list.refresh")}
             </Button>
@@ -140,7 +156,10 @@ function GroupsPage() {
                 label: t("list.filters.scope.label"),
                 value: lv.filters.scope ?? "",
                 options: [
-                  { label: t("list.filters.scope.topLevel"), value: "top-level" },
+                  {
+                    label: t("list.filters.scope.topLevel"),
+                    value: "top-level",
+                  },
                   { label: t("list.filters.scope.nested"), value: "nested" },
                 ],
                 onChange: (v) => lv.setFilter("scope", v),
@@ -156,7 +175,9 @@ function GroupsPage() {
             density={lv.density}
             onDensityChange={lv.setDensity}
             onExport={(fmt) =>
-              fmt === "csv" ? exportToCsv("groups", rows, groupCsvColumns) : exportToJson("groups", rows)
+              fmt === "csv"
+                ? exportToCsv("groups", rows, groupCsvColumns)
+                : exportToJson("groups", rows)
             }
             exportDisabled={rows.length === 0}
             hasActiveFilters={lv.hasActiveFilters}
@@ -177,7 +198,9 @@ function GroupsPage() {
                   <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
                     {t("list.columns.name")}
                   </SortHeader>
-                  {lv.isVisible("description") && <TableHead>{t("list.columns.description")}</TableHead>}
+                  {lv.isVisible("description") && (
+                    <TableHead>{t("list.columns.description")}</TableHead>
+                  )}
                   {lv.isVisible("parent") && <TableHead>{t("list.columns.parent")}</TableHead>}
                   {lv.isVisible("created") && (
                     <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
@@ -200,7 +223,9 @@ function GroupsPage() {
                       </Link>
                     </TableCell>
                     {lv.isVisible("description") && (
-                      <TableCell className="text-muted-foreground">{g.description || "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {g.description || "—"}
+                      </TableCell>
                     )}
                     {lv.isVisible("parent") && (
                       <TableCell className="font-mono text-xs text-muted-foreground">
@@ -208,7 +233,9 @@ function GroupsPage() {
                       </TableCell>
                     )}
                     {lv.isVisible("created") && (
-                      <TableCell><TimeSince value={g.created_at} /></TableCell>
+                      <TableCell>
+                        <TimeSince value={g.created_at} />
+                      </TableCell>
                     )}
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => setExpandedId(g.id)}>
@@ -278,11 +305,21 @@ type CreateGroupSheetProps = {
   onCreated: () => void;
 };
 
-function CreateGroupSheet({ open, onOpenChange, tenantId, groups, onCreated }: CreateGroupSheetProps) {
+function CreateGroupSheet({
+  open,
+  onOpenChange,
+  tenantId,
+  groups,
+  onCreated,
+}: CreateGroupSheetProps) {
   const { t } = useTranslation("groups");
   const createM = useMutation({
-    mutationFn: (body: { tenant_id: string; parent_id: string | null; name: string; description: string }) =>
-      api<Group>("/v1/groups", { method: "POST", body }),
+    mutationFn: (body: {
+      tenant_id: string;
+      parent_id: string | null;
+      name: string;
+      description: string;
+    }) => api<Group>("/v1/groups", { method: "POST", body }),
     onSuccess: () => {
       onCreated();
       onOpenChange(false);
@@ -324,18 +361,30 @@ function CreateGroupSheet({ open, onOpenChange, tenantId, groups, onCreated }: C
               </Field>
               <Field>
                 <FieldLabel htmlFor="parent_id">{t("create.parent")}</FieldLabel>
-                <select id="parent_id" name="parent_id" className="h-9 rounded-md border bg-background px-3 text-sm">
+                <select
+                  id="parent_id"
+                  name="parent_id"
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                >
                   <option value="">{t("create.parentNone")}</option>
                   {groups.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
                   ))}
                 </select>
               </Field>
-              {createM.error && <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>}
+              {createM.error && (
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("create.cancel")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("create.cancel")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("create.submitting") : t("create.submit")}
@@ -421,7 +470,9 @@ function EditGroupSheet({ group, onOpenChange, groups, onSaved }: EditGroupSheet
                   {groups
                     .filter((g) => g.id !== group?.id)
                     .map((g) => (
-                      <option key={g.id} value={g.id}>{g.name}</option>
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
                     ))}
                 </select>
               </Field>
@@ -433,7 +484,9 @@ function EditGroupSheet({ group, onOpenChange, groups, onSaved }: EditGroupSheet
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("edit.cancel")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("edit.cancel")}
+            </SheetClose>
             <Button type="submit" disabled={updateM.isPending}>
               {updateM.isPending && <Loader2Icon className="animate-spin" />}
               {updateM.isPending ? t("edit.saving") : t("edit.save")}
@@ -445,7 +498,11 @@ function EditGroupSheet({ group, onOpenChange, groups, onSaved }: EditGroupSheet
   );
 }
 
-type MembersSheetProps = { groupId: string; groupName: string; onClose: () => void };
+type MembersSheetProps = {
+  groupId: string;
+  groupName: string;
+  onClose: () => void;
+};
 
 type PickUser = { id: string; email: string; display_name?: string | null };
 
@@ -476,7 +533,9 @@ function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
 
   const removeM = useMutation({
     mutationFn: (userId: string) =>
-      api<void>(`/v1/groups/${groupId}/members/${userId}`, { method: "DELETE" }),
+      api<void>(`/v1/groups/${groupId}/members/${userId}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["group-members", groupId] }),
     meta: { successMessage: "Member removed" },
   });
@@ -509,7 +568,9 @@ function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
             {q !== "" && (
               <div className="mt-1 overflow-hidden rounded-md border">
                 {usersQ.isLoading ? (
-                  <p className="px-3 py-2 text-sm text-muted-foreground">{t("members.loadingUsers")}</p>
+                  <p className="px-3 py-2 text-sm text-muted-foreground">
+                    {t("members.loadingUsers")}
+                  </p>
                 ) : candidates.length === 0 ? (
                   <p className="px-3 py-2 text-sm text-muted-foreground">{t("members.noMatch")}</p>
                 ) : (
@@ -541,12 +602,19 @@ function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
           {membersQ.isLoading ? (
             [...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)
           ) : !membersQ.data?.items?.length ? (
-            <p className="text-sm text-muted-foreground text-center py-6">{t("members.noMembers")}</p>
+            <p className="text-sm text-muted-foreground text-center py-6">
+              {t("members.noMembers")}
+            </p>
           ) : (
             membersQ.data.items.map((m) => (
-              <div key={m.user_id} className="flex items-center justify-between rounded-md border p-3 text-sm">
+              <div
+                key={m.user_id}
+                className="flex items-center justify-between rounded-md border p-3 text-sm"
+              >
                 <div className="min-w-0">
-                  <div className="font-medium truncate">{m.display_name ?? m.email ?? m.user_id}</div>
+                  <div className="font-medium truncate">
+                    {m.display_name ?? m.email ?? m.user_id}
+                  </div>
                   <code className="text-xs text-muted-foreground">{m.user_id.slice(0, 16)}…</code>
                 </div>
                 <Button
@@ -563,7 +631,9 @@ function MembersSheet({ groupId, groupName, onClose }: MembersSheetProps) {
           )}
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t">
-          <Button variant="outline" onClick={onClose}>{t("members.close")}</Button>
+          <Button variant="outline" onClick={onClose}>
+            {t("members.close")}
+          </Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>

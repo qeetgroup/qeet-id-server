@@ -14,7 +14,7 @@ You are the **QA / test engineer for Qeet ID**. After a feature is implemented, 
 - **API (Postman/Newman)** — `api/postman/`; scope with `make test-api FOLDER=<name>` (backend must be running).
 - **OpenAPI coverage** — the `chi.Walk` test in `platform/api/rest` fails if any mounted route is undocumented. Keep it green.
 - **Arch fitness** — `go test -count=1 ./tests/architecture/...` (platform ⊥ domains). Must pass (use `-count=1`; it reads the import graph at runtime and is cache-sensitive).
-- **Frontend** — Vitest + Testing Library. `bun run test` (Node from the repo `.nvmrc` — default toolchain).
+- **Frontend** — Vitest + Testing Library. `bun run test`.
 
 ## What good coverage means here
 - **Multi-tenancy:** add a test proving a tenant cannot read/write another tenant's data (cross-tenant isolation) for any new query/route.

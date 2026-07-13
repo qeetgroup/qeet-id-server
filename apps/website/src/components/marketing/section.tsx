@@ -36,12 +36,7 @@ export function Section({
       aria-label={ariaLabel}
       className={cn("border-b border-border/60", muted && "bg-muted/30", className)}
     >
-      <div
-        className={cn(
-          "mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8 lg:py-32",
-          innerClassName,
-        )}
-      >
+      <div className={cn("mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8 lg:py-32", innerClassName)}>
         {children}
       </div>
     </section>
@@ -78,10 +73,7 @@ export function SectionHeader({
   const centered = align === "center";
   return (
     <Reveal
-      className={cn(
-        centered ? "mx-auto max-w-2xl text-center" : "max-w-2xl text-left",
-        className,
-      )}
+      className={cn(centered ? "mx-auto max-w-2xl text-center" : "max-w-2xl text-left", className)}
     >
       {eyebrow && (
         <div className={cn("flex", centered ? "justify-center" : "justify-start")}>
@@ -93,7 +85,11 @@ export function SectionHeader({
         {titleAccent && (
           <>
             {" "}
-            <WordReveal text={titleAccent} wordClassName="text-gradient-brand" initialDelay={0.25} />
+            <WordReveal
+              text={titleAccent}
+              wordClassName="text-gradient-brand"
+              initialDelay={0.25}
+            />
           </>
         )}
       </h2>

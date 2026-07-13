@@ -1,5 +1,5 @@
-import type * as React from "react";
 import { useLocation } from "@tanstack/react-router";
+import type * as React from "react";
 
 import { lookupNavTitle } from "@/config/navigation";
 
@@ -38,10 +38,10 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
             )}
           </div>
         )}
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">{title ?? meta.title}</h1>
-        {description && (
-          <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>
-        )}
+        <h1 className="font-heading text-2xl font-semibold tracking-tight">
+          {title ?? meta.title}
+        </h1>
+        {description && <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </div>

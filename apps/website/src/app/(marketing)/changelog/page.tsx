@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { PageHero } from "@/components/marketing/page-hero";
 import { CTA } from "@/components/marketing/sections/cta";
-import { listGrouped, type ChangelogTag } from "@/lib/changelog";
+import { type ChangelogTag, listGrouped } from "@/lib/changelog";
 
 export const metadata: Metadata = {
   title: "Changelog",
@@ -58,9 +58,7 @@ export default function ChangelogPage() {
                       <article
                         aria-labelledby={`cl-${r.version}`}
                         className={`relative border-l pl-8 ${
-                          last
-                            ? "border-l-transparent pb-2"
-                            : "border-l-border/60 pb-12"
+                          last ? "border-l-transparent pb-2" : "border-l-border/60 pb-12"
                         }`}
                       >
                         {/* Brand accent rail node */}

@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { api, ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
 const DISMISS_KEY = "qeetid-admin-onboarding-dismissed";
@@ -118,11 +118,7 @@ function useSteps(): Step[] {
       description: "Upload a logo and pick your brand colours.",
       ctaLabel: "Open branding",
       ctaHref: "/settings/branding",
-      done: isDoneSafe(
-        branding.data,
-        branding.error,
-        (d) => !!(d.logo_url || d.primary_color),
-      ),
+      done: isDoneSafe(branding.data, branding.error, (d) => !!(d.logo_url || d.primary_color)),
     },
     {
       id: "invite",
@@ -201,17 +197,10 @@ export function OnboardingChecklist() {
             <PartyPopperIcon className="size-6 text-emerald-600 dark:text-emerald-400" />
             <div>
               <CardTitle className="text-base">Workspace fully set up</CardTitle>
-              <CardDescription>
-                Nicely done — every onboarding task is complete.
-              </CardDescription>
+              <CardDescription>Nicely done — every onboarding task is complete.</CardDescription>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Dismiss"
-            onClick={handleDismiss}
-          >
+          <Button variant="ghost" size="icon" aria-label="Dismiss" onClick={handleDismiss}>
             <XIcon />
           </Button>
         </CardHeader>
@@ -225,9 +214,7 @@ export function OnboardingChecklist() {
         <div>
           <CardTitle className="text-base">Get your workspace ready</CardTitle>
           <CardDescription>
-            {stillLoading
-              ? "Checking your setup…"
-              : `${doneCount} of ${total} steps complete.`}
+            {stillLoading ? "Checking your setup…" : `${doneCount} of ${total} steps complete.`}
           </CardDescription>
           <div className="mt-3 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
             <div
@@ -237,12 +224,7 @@ export function OnboardingChecklist() {
             />
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Dismiss"
-          onClick={handleDismiss}
-        >
+        <Button variant="ghost" size="icon" aria-label="Dismiss" onClick={handleDismiss}>
           <XIcon />
         </Button>
       </CardHeader>
@@ -267,12 +249,8 @@ export function OnboardingChecklist() {
               </div>
               <Icon className="size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
-                <p className={cn("text-sm font-medium", isDone && "line-through")}>
-                  {step.title}
-                </p>
-                {!isDone && (
-                  <p className="text-xs text-muted-foreground">{step.description}</p>
-                )}
+                <p className={cn("text-sm font-medium", isDone && "line-through")}>{step.title}</p>
+                {!isDone && <p className="text-xs text-muted-foreground">{step.description}</p>}
               </div>
               {!isDone && (
                 <Link

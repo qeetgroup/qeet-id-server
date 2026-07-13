@@ -1,5 +1,6 @@
 import {
   Button,
+  buttonVariants,
   Card,
   CardContent,
   CardDescription,
@@ -7,20 +8,21 @@ import {
   CardTitle,
   DataState,
   StatusPill,
-  buttonVariants,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, DownloadIcon, KeyRoundIcon, RefreshCwIcon } from "lucide-react";
-import { toast } from "sonner";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import { PageHeader } from "@/components/page-header";
 import { StepUpDialog } from "@/components/step-up-dialog";
 import { ApiError } from "@/lib/api";
 import { isStepUpRequired, useRecoveryStatus, useRegenerateRecoveryCodes } from "@/lib/mfa";
 
-export const Route = createFileRoute("/_app/auth/mfa/recovery-codes")({ component: RecoveryCodesPage });
+export const Route = createFileRoute("/_app/auth/mfa/recovery-codes")({
+  component: RecoveryCodesPage,
+});
 
 function RecoveryCodesPage() {
   const { t } = useTranslation("auth");
@@ -76,13 +78,16 @@ function RecoveryCodesPage() {
         {!status?.enrolled ? (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">{t("mfa.recoveryCodes.notEnrolled.title")}</CardTitle>
-              <CardDescription>
-                {t("mfa.recoveryCodes.notEnrolled.description")}
-              </CardDescription>
+              <CardTitle className="text-base">
+                {t("mfa.recoveryCodes.notEnrolled.title")}
+              </CardTitle>
+              <CardDescription>{t("mfa.recoveryCodes.notEnrolled.description")}</CardDescription>
             </CardHeader>
             <CardContent>
-              <Link to="/auth/mfa/totp" className={buttonVariants({ variant: "default", size: "sm" })}>
+              <Link
+                to="/auth/mfa/totp"
+                className={buttonVariants({ variant: "default", size: "sm" })}
+              >
                 <KeyRoundIcon /> {t("mfa.recoveryCodes.notEnrolled.setupBtn")}
               </Link>
             </CardContent>
@@ -115,7 +120,9 @@ function RecoveryCodesPage() {
               <CardContent>
                 <Button size="sm" onClick={regenerate} disabled={regenM.isPending}>
                   <RefreshCwIcon className={regenM.isPending ? "animate-spin" : ""} />
-                  {status.total > 0 ? t("mfa.recoveryCodes.generate.regenerateBtn") : t("mfa.recoveryCodes.generate.generateBtn")}
+                  {status.total > 0
+                    ? t("mfa.recoveryCodes.generate.regenerateBtn")
+                    : t("mfa.recoveryCodes.generate.generateBtn")}
                 </Button>
               </CardContent>
             </Card>
@@ -126,9 +133,7 @@ function RecoveryCodesPage() {
           <Card className="border-primary">
             <CardHeader>
               <CardTitle className="text-base">{t("mfa.recoveryCodes.fresh.title")}</CardTitle>
-              <CardDescription>
-                {t("mfa.recoveryCodes.fresh.description")}
-              </CardDescription>
+              <CardDescription>{t("mfa.recoveryCodes.fresh.description")}</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="grid grid-cols-2 gap-2 rounded-md border bg-muted/40 p-4 font-mono text-sm">
@@ -141,7 +146,9 @@ function RecoveryCodesPage() {
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => copyAll(fresh)}>
                   {copied ? <CheckIcon /> : <CopyIcon />}
-                  {copied ? t("mfa.recoveryCodes.fresh.copiedBtn") : t("mfa.recoveryCodes.fresh.copyAllBtn")}
+                  {copied
+                    ? t("mfa.recoveryCodes.fresh.copiedBtn")
+                    : t("mfa.recoveryCodes.fresh.copyAllBtn")}
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => download(fresh)}>
                   <DownloadIcon /> {t("mfa.recoveryCodes.fresh.downloadBtn")}

@@ -49,7 +49,11 @@ async function parse<T>(res: Response): Promise<T> {
   const data = text ? safeParse(text) : null;
   if (!res.ok) {
     const err = (data as { error?: { code?: string; message?: string } } | null)?.error;
-    throw new ApiError(res.status, err?.code ?? `http_${res.status}`, err?.message ?? "Request failed");
+    throw new ApiError(
+      res.status,
+      err?.code ?? `http_${res.status}`,
+      err?.message ?? "Request failed",
+    );
   }
   return data as T;
 }
@@ -74,7 +78,11 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
 export async function apiPost<T = unknown>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(apiURL(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json", ...(await csrfHeader()) },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(await csrfHeader()),
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: "include",
   });
@@ -84,7 +92,11 @@ export async function apiPost<T = unknown>(path: string, body?: unknown): Promis
 export async function apiPatch<T = unknown>(path: string, body: unknown): Promise<T> {
   const res = await fetch(apiURL(path), {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", Accept: "application/json", ...(await csrfHeader()) },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...(await csrfHeader()),
+    },
     body: JSON.stringify(body),
     credentials: "include",
   });

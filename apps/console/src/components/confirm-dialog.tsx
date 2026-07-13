@@ -26,7 +26,12 @@ export function useConfirmDialog() {
   }
 
   const dialog = (
-    <AlertDialog open={!!pending} onOpenChange={(o) => { if (!o) setPending(null); }}>
+    <AlertDialog
+      open={!!pending}
+      onOpenChange={(o) => {
+        if (!o) setPending(null);
+      }}
+    >
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{pending?.title}</AlertDialogTitle>

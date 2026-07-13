@@ -86,17 +86,11 @@ const configCode: Record<Lang, ReactNode> = {
       {" { "}
       <Tok.f>QeetID</Tok.f>
       {" } "}
-      <Tok.k>from</Tok.k>
-      {" "}
-      <Tok.s>{'"@qeet-id/node"'}</Tok.s>
+      <Tok.k>from</Tok.k> <Tok.s>{'"@qeet-id/node"'}</Tok.s>
       {";\n\n"}
-      <Tok.k>const</Tok.k>
-      {" "}
-      <Tok.v>qg</Tok.v>
+      <Tok.k>const</Tok.k> <Tok.v>qg</Tok.v>
       {" = "}
-      <Tok.k>new</Tok.k>
-      {" "}
-      <Tok.f>QeetID</Tok.f>
+      <Tok.k>new</Tok.k> <Tok.f>QeetID</Tok.f>
       {"({\n"}
       {"  "}
       <Tok.p>tenant</Tok.p>
@@ -121,9 +115,7 @@ const configCode: Record<Lang, ReactNode> = {
       {" { "}
       <Tok.f>qeetID</Tok.f>
       {" } "}
-      <Tok.k>from</Tok.k>
-      {" "}
-      <Tok.s>{'"@qeet-id/nextjs"'}</Tok.s>
+      <Tok.k>from</Tok.k> <Tok.s>{'"@qeet-id/nextjs"'}</Tok.s>
       {";\n\n"}
       <Tok.k>export const</Tok.k>
       {" { "}
@@ -183,13 +175,7 @@ const configCode: Record<Lang, ReactNode> = {
   ),
   Python: (
     <>
-      <Tok.k>from</Tok.k>
-      {" "}
-      <Tok.v>qeetid</Tok.v>
-      {" "}
-      <Tok.k>import</Tok.k>
-      {" "}
-      <Tok.f>QeetID</Tok.f>
+      <Tok.k>from</Tok.k> <Tok.v>qeetid</Tok.v> <Tok.k>import</Tok.k> <Tok.f>QeetID</Tok.f>
       {"\n\n"}
       <Tok.v>qg</Tok.v>
       {" = "}
@@ -222,20 +208,14 @@ const shipCode: Record<Lang, ReactNode> = {
       {" { "}
       <Tok.t>SignIn</Tok.t>
       {" } "}
-      <Tok.k>from</Tok.k>
-      {" "}
-      <Tok.s>{'"@qeet-id/react"'}</Tok.s>
+      <Tok.k>from</Tok.k> <Tok.s>{'"@qeet-id/react"'}</Tok.s>
       {";\n\n"}
-      <Tok.k>export default function</Tok.k>
-      {" "}
-      <Tok.f>Page</Tok.f>
+      <Tok.k>export default function</Tok.k> <Tok.f>Page</Tok.f>
       {"() {\n"}
       {"  "}
       <Tok.k>return</Tok.k>
       {" <"}
-      <Tok.t>SignIn</Tok.t>
-      {" "}
-      <Tok.p>redirectTo</Tok.p>
+      <Tok.t>SignIn</Tok.t> <Tok.p>redirectTo</Tok.p>
       {"="}
       <Tok.s>{'"/dashboard"'}</Tok.s>
       {" />;\n}"}
@@ -247,20 +227,14 @@ const shipCode: Record<Lang, ReactNode> = {
       {" { "}
       <Tok.t>SignIn</Tok.t>
       {" } "}
-      <Tok.k>from</Tok.k>
-      {" "}
-      <Tok.s>{'"@qeet-id/nextjs"'}</Tok.s>
+      <Tok.k>from</Tok.k> <Tok.s>{'"@qeet-id/nextjs"'}</Tok.s>
       {";\n\n"}
-      <Tok.k>export default function</Tok.k>
-      {" "}
-      <Tok.f>Page</Tok.f>
+      <Tok.k>export default function</Tok.k> <Tok.f>Page</Tok.f>
       {"() {\n"}
       {"  "}
       <Tok.k>return</Tok.k>
       {" <"}
-      <Tok.t>SignIn</Tok.t>
-      {" "}
-      <Tok.p>redirectTo</Tok.p>
+      <Tok.t>SignIn</Tok.t> <Tok.p>redirectTo</Tok.p>
       {"="}
       <Tok.s>{'"/dashboard"'}</Tok.s>
       {" />;\n}"}
@@ -296,14 +270,10 @@ const shipCode: Record<Lang, ReactNode> = {
       {"("}
       <Tok.s>{'"/signin"'}</Tok.s>
       {")\n"}
-      <Tok.k>def</Tok.k>
-      {" "}
-      <Tok.f>signin</Tok.f>
+      <Tok.k>def</Tok.k> <Tok.f>signin</Tok.f>
       {"():\n"}
       {"    "}
-      <Tok.k>return</Tok.k>
-      {" "}
-      <Tok.v>qg</Tok.v>
+      <Tok.k>return</Tok.k> <Tok.v>qg</Tok.v>
       {"."}
       <Tok.f>sign_in</Tok.f>
       {"(\n        "}
@@ -389,10 +359,7 @@ function LangTabs({
           >
             {selected &&
               (reduce ? (
-                <span
-                  aria-hidden
-                  className="absolute inset-0 -z-10 rounded-lg bg-foreground"
-                />
+                <span aria-hidden className="absolute inset-0 -z-10 rounded-lg bg-foreground" />
               ) : (
                 <motion.span
                   aria-hidden

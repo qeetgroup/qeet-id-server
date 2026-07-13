@@ -1,4 +1,4 @@
-import { Button, StatusPill, TimeSince, cn } from "@qeetrix/ui";
+import { Button, cn, StatusPill, TimeSince } from "@qeetrix/ui";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
@@ -112,11 +112,7 @@ export function WhatsNewDropdown() {
       <Button
         variant="ghost"
         size="icon"
-        aria-label={
-          unreadCount > 0
-            ? `What's new (${unreadCount} new)`
-            : "What's new"
-        }
+        aria-label={unreadCount > 0 ? `What's new (${unreadCount} new)` : "What's new"}
         onClick={() => setOpen((o) => !o)}
         className="relative"
       >
@@ -178,9 +174,7 @@ export function WhatsNewDropdown() {
                         refreshIntervalMs={0}
                       />
                     </div>
-                    {entry.href && (
-                      <ArrowRightIcon className="mt-1 size-3 text-muted-foreground" />
-                    )}
+                    {entry.href && <ArrowRightIcon className="mt-1 size-3 text-muted-foreground" />}
                   </button>
                 </li>
               );

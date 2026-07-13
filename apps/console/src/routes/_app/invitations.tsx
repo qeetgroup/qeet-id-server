@@ -43,12 +43,14 @@ import { useTranslation } from "react-i18next";
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
-import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/invitations")({ component: InvitationsPage });
+export const Route = createFileRoute("/_app/invitations")({
+  component: InvitationsPage,
+});
 
 type Invite = {
   id: string;
@@ -88,8 +90,7 @@ function InvitationsPage() {
     meta: { successMessage: t("toast.revoked") },
   });
 
-  const roleName = (id?: string | null) =>
-    rolesQ.data?.items.find((r) => r.id === id)?.name ?? "—";
+  const roleName = (id?: string | null) => rolesQ.data?.items.find((r) => r.id === id)?.name ?? "—";
 
   const items = listQ.data?.items ?? [];
   const lv = useListView(items, {
@@ -155,7 +156,10 @@ function InvitationsPage() {
                 value: lv.filters.status ?? "",
                 options: [
                   { label: t("list.filters.status.pending"), value: "pending" },
-                  { label: t("list.filters.status.accepted"), value: "accepted" },
+                  {
+                    label: t("list.filters.status.accepted"),
+                    value: "accepted",
+                  },
                   { label: t("list.filters.status.expired"), value: "expired" },
                   { label: t("list.filters.status.revoked"), value: "revoked" },
                 ],
@@ -186,9 +190,7 @@ function InvitationsPage() {
             error={listQ.error}
             isEmpty={rows.length === 0}
             emptyIcon={MailIcon}
-            emptyTitle={
-              lv.hasActiveFilters ? t("list.emptyFiltered") : t("list.empty")
-            }
+            emptyTitle={lv.hasActiveFilters ? t("list.emptyFiltered") : t("list.empty")}
             skeletonRows={3}
           >
             <Table className={denseCls}>
@@ -241,7 +243,9 @@ function InvitationsPage() {
                         disabled={inv.status !== "pending" || revokeM.isPending}
                         onClick={() =>
                           openConfirm({
-                            title: t("confirm.revokeTitle", { email: inv.email }),
+                            title: t("confirm.revokeTitle", {
+                              email: inv.email,
+                            }),
                             variant: "destructive",
                             confirmLabel: t("confirm.revokeLabel"),
                             onConfirm: () => revokeM.mutate(inv.id),

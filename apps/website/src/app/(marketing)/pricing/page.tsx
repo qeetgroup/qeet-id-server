@@ -1,16 +1,15 @@
+import { cn } from "@qeetrix/ui";
+import { CheckIcon } from "lucide-react";
+import type { Metadata } from "next";
 import { ButtonLink } from "@/components/marketing/button-link";
 import { tiers } from "@/components/marketing/data/pricing";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { FaqAccordion } from "@/components/marketing/faq-accordion";
 import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
+import { PageHero } from "@/components/marketing/page-hero";
 import { PricingCalculator } from "@/components/marketing/pricing-calculator";
 import { Section, SectionHeader } from "@/components/marketing/section";
 import { FaqJsonLd } from "@/components/marketing/structured-data";
-import { cn } from "@qeetrix/ui";
-import { CheckIcon } from "lucide-react";
-import type { Metadata } from "next";
-
-import { PageHero } from "@/components/marketing/page-hero";
 
 export const metadata: Metadata = {
   title: "Pricing",
@@ -27,13 +26,43 @@ const compare = [
   },
   { feature: "Social providers", free: "All", pro: "All", enterprise: "All" },
   { feature: "Passkeys / WebAuthn", free: "✓", pro: "✓", enterprise: "✓" },
-  { feature: "MFA (TOTP, SMS, Email OTP)", free: "TOTP only", pro: "All", enterprise: "All" },
-  { feature: "Enterprise SSO (SAML/OIDC)", free: "—", pro: "Add-on", enterprise: "✓" },
+  {
+    feature: "MFA (TOTP, SMS, Email OTP)",
+    free: "TOTP only",
+    pro: "All",
+    enterprise: "All",
+  },
+  {
+    feature: "Enterprise SSO (SAML/OIDC)",
+    free: "—",
+    pro: "Add-on",
+    enterprise: "✓",
+  },
   { feature: "SCIM / Directory sync", free: "—", pro: "—", enterprise: "✓" },
-  { feature: "RBAC roles", free: "5", pro: "Unlimited", enterprise: "Unlimited + ABAC" },
-  { feature: "Audit log retention", free: "7 days", pro: "30 days + export", enterprise: "Custom" },
-  { feature: "Data residency", free: "US or EU", pro: "US, EU, APAC", enterprise: "Custom" },
-  { feature: "Support", free: "Community", pro: "Email + chat, 24h", enterprise: "Phone, 24/7" },
+  {
+    feature: "RBAC roles",
+    free: "5",
+    pro: "Unlimited",
+    enterprise: "Unlimited + ABAC",
+  },
+  {
+    feature: "Audit log retention",
+    free: "7 days",
+    pro: "30 days + export",
+    enterprise: "Custom",
+  },
+  {
+    feature: "Data residency",
+    free: "US or EU",
+    pro: "US, EU, APAC",
+    enterprise: "Custom",
+  },
+  {
+    feature: "Support",
+    free: "Community",
+    pro: "Email + chat, 24h",
+    enterprise: "Phone, 24/7",
+  },
   { feature: "Uptime SLA", free: "—", pro: "99.95%", enterprise: "99.99%" },
 ];
 
@@ -73,9 +102,7 @@ export default function PricingPage() {
               <div
                 className={cn(
                   "relative flex h-full flex-col gap-6 overflow-hidden rounded-2xl border bg-background p-6",
-                  t.featured
-                    ? "border-brand/40 shadow-xl shadow-brand/10"
-                    : "border-border/60",
+                  t.featured ? "border-brand/40 shadow-xl shadow-brand/10" : "border-border/60",
                 )}
               >
                 {t.featured && (
@@ -141,7 +168,9 @@ export default function PricingPage() {
 
         <Reveal className="mt-12 overflow-hidden rounded-2xl border border-border/60 bg-background">
           <table className="w-full text-left text-sm">
-            <caption className="sr-only">Feature comparison across Free, Pro, and Enterprise plans</caption>
+            <caption className="sr-only">
+              Feature comparison across Free, Pro, and Enterprise plans
+            </caption>
             <thead>
               <tr className="border-b border-border/60 bg-muted/40 text-xs uppercase tracking-widest text-muted-foreground">
                 <th scope="col" className="px-4 py-3 font-medium">

@@ -54,7 +54,10 @@ export function useCreateLdapConnection() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateLdapInput) =>
-      api<LdapConnection>(`/v1/tenants/${tenantId}/ldap`, { method: "POST", body }),
+      api<LdapConnection>(`/v1/tenants/${tenantId}/ldap`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ldap"] }),
     meta: { successMessage: "LDAP connection created" },
   });
@@ -65,7 +68,10 @@ export function useUpdateLdapConnection() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: Partial<CreateLdapInput> & { id: string }) =>
-      api<LdapConnection>(`/v1/tenants/${tenantId}/ldap/${id}`, { method: "PATCH", body }),
+      api<LdapConnection>(`/v1/tenants/${tenantId}/ldap/${id}`, {
+        method: "PATCH",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ldap"] }),
     meta: { successMessage: "LDAP connection updated" },
   });
@@ -75,7 +81,8 @@ export function useDeleteLdapConnection() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<void>(`/v1/tenants/${tenantId}/ldap/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      api<void>(`/v1/tenants/${tenantId}/ldap/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["ldap"] }),
     meta: { successMessage: "LDAP connection deleted" },
   });
@@ -86,7 +93,9 @@ export function useTestLdapConnection() {
   const tenantId = useTenantId();
   return useMutation({
     mutationFn: (id: string) =>
-      api<{ ok: boolean }>(`/v1/tenants/${tenantId}/ldap/${id}/test`, { method: "POST" }),
+      api<{ ok: boolean }>(`/v1/tenants/${tenantId}/ldap/${id}/test`, {
+        method: "POST",
+      }),
     meta: { successMessage: "Directory bind succeeded" },
   });
 }

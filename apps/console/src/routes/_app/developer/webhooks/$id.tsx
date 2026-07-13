@@ -19,7 +19,7 @@ import {
   TimeSince,
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   ChevronDownIcon,
@@ -88,7 +88,9 @@ function WebhookDetailPage() {
 
   const retryM = useMutation({
     mutationFn: (deliveryId: string) =>
-      api<void>(`/v1/webhooks/${id}/deliveries/${deliveryId}/retry`, { method: "POST" }),
+      api<void>(`/v1/webhooks/${id}/deliveries/${deliveryId}/retry`, {
+        method: "POST",
+      }),
     onSettled: () => qc.invalidateQueries({ queryKey: ["webhook-deliveries", id] }),
     meta: { successMessage: "Delivery re-queued" },
   });
@@ -130,7 +132,9 @@ function WebhookDetailPage() {
                   <span className="break-all font-mono text-sm">{w.url}</span>
                 </CardTitle>
                 <CardDescription>
-                  {t("webhookDetail.subscribedCount", { count: w.events.length })}
+                  {t("webhookDetail.subscribedCount", {
+                    count: w.events.length,
+                  })}
                 </CardDescription>
               </div>
               <StatusPill status={w.disabled_at ? "disabled" : "active"} />
@@ -162,7 +166,9 @@ function WebhookDetailPage() {
                   onClick={() =>
                     openConfirm({
                       title: t("webhookDetail.confirm.disableTitle"),
-                      description: t("webhooks.confirm.disableDescription", { url: w.url }),
+                      description: t("webhooks.confirm.disableDescription", {
+                        url: w.url,
+                      }),
                       variant: "destructive",
                       confirmLabel: t("webhookDetail.confirm.disableLabel"),
                       onConfirm: () => disableM.mutate(),

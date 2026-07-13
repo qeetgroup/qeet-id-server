@@ -155,7 +155,7 @@ For the marketing site ([apps/website](./apps/website/)) and hosted login ([apps
 ## Code style
 
 - **Go:** gofmt-clean. `go vet` clean. Use the existing patterns in `platform/` (errors, logging, HTTP middleware).
-- **TypeScript:** Prettier-formatted. ESLint clean. No `any` without a justification comment.
+- **TypeScript:** Biome-formatted. Biome lint clean. No `any` without a justification comment.
 - **SQL:** lowercase keywords (`select`, not `SELECT`). Migrations are immutable once merged — don't edit them in place; write a new one.
 - **Comments:** the [root README and CLAUDE-style guidance](./README.md) apply — only write a comment when the *why* is non-obvious. Don't restate what the code does.
 

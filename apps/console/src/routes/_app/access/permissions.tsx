@@ -1,20 +1,14 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Skeleton,
-} from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, Skeleton } from "@qeetrix/ui";
 import { useQuery } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { ShieldCheckIcon } from "lucide-react";
-
+import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
-import { useTranslation } from "react-i18next";
 
-export const Route = createFileRoute("/_app/access/permissions")({ component: PermissionsPage });
+export const Route = createFileRoute("/_app/access/permissions")({
+  component: PermissionsPage,
+});
 
 type Permission = { id: string; key: string; description: string };
 
@@ -39,11 +33,17 @@ function PermissionsPage() {
       {permsQ.isLoading ? (
         <Card>
           <CardContent className="p-6 space-y-3">
-            {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
           </CardContent>
         </Card>
       ) : permsQ.isError ? (
-        <Card><CardContent className="p-6 text-sm text-destructive">{(permsQ.error as Error).message}</CardContent></Card>
+        <Card>
+          <CardContent className="p-6 text-sm text-destructive">
+            {(permsQ.error as Error).message}
+          </CardContent>
+        </Card>
       ) : !permsQ.data?.items?.length ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-2 p-10 text-center">
@@ -63,7 +63,9 @@ function PermissionsPage() {
                 {perms.map((p) => (
                   <div key={p.id} className="flex flex-col gap-1 rounded-md border p-3">
                     <code className="text-xs font-medium">{p.key}</code>
-                    <span className="text-xs text-muted-foreground">{p.description || t("permissions.noDescription")}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {p.description || t("permissions.noDescription")}
+                    </span>
                   </div>
                 ))}
               </div>

@@ -1,6 +1,6 @@
-import { LegalPage } from "@/components/marketing/legal-page";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@qeetrix/ui";
 import type { Metadata } from "next";
+import { LegalPage } from "@/components/marketing/legal-page";
 
 export const metadata: Metadata = {
   title: "Subprocessors",
@@ -8,11 +8,31 @@ export const metadata: Metadata = {
 };
 
 const subprocessors = [
-  { name: "Amazon Web Services", purpose: "Cloud infrastructure & hosting", location: "US, EU, APAC" },
-  { name: "Google Cloud Platform", purpose: "Compute & managed databases", location: "US, EU" },
-  { name: "Cloudflare", purpose: "Edge network, DNS & DDoS protection", location: "Global" },
-  { name: "Datadog", purpose: "Observability & monitoring", location: "US, EU" },
-  { name: "Stripe", purpose: "Billing & payment processing", location: "US, EU" },
+  {
+    name: "Amazon Web Services",
+    purpose: "Cloud infrastructure & hosting",
+    location: "US, EU, APAC",
+  },
+  {
+    name: "Google Cloud Platform",
+    purpose: "Compute & managed databases",
+    location: "US, EU",
+  },
+  {
+    name: "Cloudflare",
+    purpose: "Edge network, DNS & DDoS protection",
+    location: "Global",
+  },
+  {
+    name: "Datadog",
+    purpose: "Observability & monitoring",
+    location: "US, EU",
+  },
+  {
+    name: "Stripe",
+    purpose: "Billing & payment processing",
+    location: "US, EU",
+  },
   { name: "Resend", purpose: "Transactional email delivery", location: "US" },
   { name: "Twilio", purpose: "SMS one-time passcodes", location: "US, EU" },
 ];

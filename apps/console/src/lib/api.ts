@@ -80,7 +80,10 @@ async function refreshAccessToken(): Promise<string | null> {
       const url = new URL("v1/auth/refresh", `${API_BASE_URL}/`);
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify({ refresh_token: rt }),
       });
       if (!res.ok) return null;
@@ -110,7 +113,7 @@ async function doFetch(
   method: string,
   body: unknown,
   signal: AbortSignal | undefined,
-  anonymous: boolean
+  anonymous: boolean,
 ): Promise<Response> {
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -156,13 +159,16 @@ export async function api<T = unknown>(path: string, opts: RequestOpts = {}): Pr
   const data = text ? safeParse(text) : null;
 
   if (!res.ok) {
-    const err = (data as { error?: { code?: string; message?: string; details?: unknown } } | null)
-      ?.error;
+    const err = (
+      data as {
+        error?: { code?: string; message?: string; details?: unknown };
+      } | null
+    )?.error;
     throw new ApiError(
       res.status,
       err?.code ?? `http_${res.status}`,
       err?.message ?? res.statusText ?? "Request failed",
-      err?.details
+      err?.details,
     );
   }
 

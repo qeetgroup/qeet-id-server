@@ -24,24 +24,24 @@ import {
   TabsTrigger,
   Textarea,
 } from "@qeetrix/ui";
-import { useEffect, useState, type FormEvent } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { AuthCard } from "@/components/auth-card";
 import { FormAlert } from "@/components/form-alert";
-import { ApiError } from "@/lib/api";
 import {
   createSamlConnection,
   deleteSamlConnection,
   getScimConfig,
   listSamlConnections,
+  type PortalContext,
   revokeScimToken,
   rotateScimToken,
-  testSamlConnection,
-  type PortalContext,
   type SamlConnection,
   type SamlTestResult,
   type ScimConfig,
+  testSamlConnection,
 } from "@/lib/admin-portal";
+import { ApiError } from "@/lib/api";
 
 type Props = {
   token: string;
@@ -52,7 +52,10 @@ type Props = {
 export function AdminPortalView({ token, context, error }: Props) {
   if (error || !context) {
     return (
-      <AuthCard title="This link isn't available" subtitle="It may have expired, been revoked, or the URL is incomplete.">
+      <AuthCard
+        title="This link isn't available"
+        subtitle="It may have expired, been revoked, or the URL is incomplete."
+      >
         <p className="text-sm text-muted-foreground">
           {error ?? "Ask whoever sent you this link to generate a new one."}
         </p>
@@ -108,7 +111,6 @@ function SamlPanel({ token }: { token: string }) {
 
   useEffect(() => {
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   return (
@@ -259,7 +261,12 @@ function CreateSamlCard({ token, onCreated }: { token: string; onCreated: () => 
           </Field>
           <Field>
             <FieldLabel htmlFor="idp_entity_id">IdP entity ID / issuer</FieldLabel>
-            <Input id="idp_entity_id" name="idp_entity_id" placeholder="http://www.okta.com/exk1abc" required />
+            <Input
+              id="idp_entity_id"
+              name="idp_entity_id"
+              placeholder="http://www.okta.com/exk1abc"
+              required
+            />
           </Field>
           <Field>
             <FieldLabel htmlFor="idp_sso_url">IdP SSO URL</FieldLabel>
@@ -282,7 +289,11 @@ function CreateSamlCard({ token, onCreated }: { token: string; onCreated: () => 
           </Field>
           <Field>
             <FieldLabel htmlFor="email_attribute">Email attribute</FieldLabel>
-            <Input id="email_attribute" name="email_attribute" placeholder="email (blank = use NameID)" />
+            <Input
+              id="email_attribute"
+              name="email_attribute"
+              placeholder="email (blank = use NameID)"
+            />
           </Field>
           <Field>
             <FieldLabel htmlFor="name_attribute">Display-name attribute</FieldLabel>
@@ -324,7 +335,6 @@ function ScimPanel({ token }: { token: string }) {
 
   useEffect(() => {
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const rotate = async () => {

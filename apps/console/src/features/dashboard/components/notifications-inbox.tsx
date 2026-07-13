@@ -1,4 +1,4 @@
-import { Button, StatusPill, TimeSince, cn } from "@qeetrix/ui";
+import { Button, cn, StatusPill, TimeSince } from "@qeetrix/ui";
 import { useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangleIcon,
@@ -11,10 +11,10 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import {
-  useMarkAllRead,
-  useNotifications,
   type Notification,
   type NotificationKind,
+  useMarkAllRead,
+  useNotifications,
 } from "@/lib/notifications";
 
 const KIND_ICON: Record<NotificationKind, typeof InfoIcon> = {
@@ -142,13 +142,7 @@ export function NotificationsInbox() {
   );
 }
 
-function NotificationItem({
-  item,
-  onSelect,
-}: {
-  item: Notification;
-  onSelect: () => void;
-}) {
+function NotificationItem({ item, onSelect }: { item: Notification; onSelect: () => void }) {
   const Icon = KIND_ICON[item.kind] ?? InfoIcon;
   return (
     <li>

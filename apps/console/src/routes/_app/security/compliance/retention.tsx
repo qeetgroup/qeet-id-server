@@ -27,7 +27,9 @@ import {
   useUpdateRetentionPolicy,
 } from "@/lib/retention";
 
-export const Route = createFileRoute("/_app/security/compliance/retention")({ component: RetentionPage });
+export const Route = createFileRoute("/_app/security/compliance/retention")({
+  component: RetentionPage,
+});
 
 function RetentionPage() {
   const { t } = useTranslation("compliance");
@@ -81,7 +83,9 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <FieldLabel>{t("retention.deletedUsers.automaticPurge")}</FieldLabel>
-                <FieldDescription>{t("retention.deletedUsers.automaticPurgeHelp")}</FieldDescription>
+                <FieldDescription>
+                  {t("retention.deletedUsers.automaticPurgeHelp")}
+                </FieldDescription>
               </div>
               <Switch
                 checked={draft.deleted_users_enabled}
@@ -91,12 +95,17 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
           </Field>
           <Field>
             <FieldLabel>
-              {t("retention.deletedUsers.windowLabel", { days: draft.deleted_users_days })}
+              {t("retention.deletedUsers.windowLabel", {
+                days: draft.deleted_users_days,
+              })}
             </FieldLabel>
             <Slider
               value={[draft.deleted_users_days]}
               onValueChange={(v) =>
-                setDraft((d) => ({ ...d, deleted_users_days: Array.isArray(v) ? (v[0] ?? 30) : v }))
+                setDraft((d) => ({
+                  ...d,
+                  deleted_users_days: Array.isArray(v) ? (v[0] ?? 30) : v,
+                }))
               }
               min={1}
               max={365}
@@ -140,7 +149,9 @@ function RetentionForm({ initial }: { initial: RetentionPolicy }) {
           )}
           {runM.data && (
             <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
-              {t("retention.deletedUsers.runResult", { count: runM.data.purged })}
+              {t("retention.deletedUsers.runResult", {
+                count: runM.data.purged,
+              })}
             </p>
           )}
         </CardContent>

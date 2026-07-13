@@ -9,7 +9,7 @@ import {
   FieldLabel,
   Input,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { CheckCircle2Icon, Loader2Icon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -61,7 +61,9 @@ function ForgotPasswordPage() {
                 <FieldGroup>
                   <div className="flex flex-col items-center gap-2 text-center">
                     <h1 className="text-2xl font-bold">{t("forgotPassword.title")}</h1>
-                    <p className="text-balance text-muted-foreground">{t("forgotPassword.subtitle")}</p>
+                    <p className="text-balance text-muted-foreground">
+                      {t("forgotPassword.subtitle")}
+                    </p>
                   </div>
 
                   <Field>
@@ -79,7 +81,9 @@ function ForgotPasswordPage() {
                   <Field>
                     <Button type="submit" disabled={forgot.isPending}>
                       {forgot.isPending && <Loader2Icon className="animate-spin" />}
-                      {forgot.isPending ? t("forgotPassword.sendingBtn") : t("forgotPassword.sendBtn")}
+                      {forgot.isPending
+                        ? t("forgotPassword.sendingBtn")
+                        : t("forgotPassword.sendBtn")}
                     </Button>
                   </Field>
 

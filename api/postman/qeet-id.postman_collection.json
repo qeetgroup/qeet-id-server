@@ -371,12 +371,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/healthz",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "healthz"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
             }
           }
         },
@@ -390,12 +386,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/readyz",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "readyz"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["readyz"]
             }
           }
         },
@@ -409,12 +401,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/metrics",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "metrics"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["metrics"]
             },
             "description": "Prometheus exposition format. Public, root-level (no /v1)."
           }
@@ -434,13 +422,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/.well-known/openid-configuration",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                ".well-known",
-                "openid-configuration"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "openid-configuration"]
             }
           }
         },
@@ -454,13 +437,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/.well-known/jwks.json",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                ".well-known",
-                "jwks.json"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "jwks.json"]
             }
           }
         }
@@ -511,14 +489,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/signup",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "signup"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "signup"]
             },
             "description": "Public self-service signup. Takes only `{email, password, display_name?}`. In ONE transaction the backend:\n\n1. Generates a personal tenant for the new user (slug like `personal-<12hex>`, name like `\"Jane's workspace\"`).\n2. Creates the user with a password credential.\n3. Creates a system `owner` role for the personal tenant and grants it every platform permission.\n4. Assigns the user to that owner role.\n5. Issues an access + refresh token pair (auto-login).\n\nThe user can rename their workspace or create more from `Tenants \u2192 New tenant`.\n\n**Email is globally unique** \u2014 same address can't sign up twice across the platform.\n\n**Errors:**\n- 409 \u2014 email already in use\n- 422 \u2014 validation failed (password < 8 chars, invalid email, \u2026)"
           }
@@ -557,14 +529,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/login",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "login"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "login"]
             }
           }
         },
@@ -601,14 +567,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/mfa",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "mfa"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "mfa"]
             }
           }
         },
@@ -645,14 +605,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/refresh",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "refresh"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "refresh"]
             }
           }
         },
@@ -663,14 +617,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/auth/me",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "me"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "me"]
             }
           }
         },
@@ -681,14 +629,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/auth/sessions",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "sessions"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "sessions"]
             }
           },
           "event": [
@@ -719,15 +661,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/auth/sessions/{{sessionId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "sessions",
-                "{{sessionId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "sessions", "{{sessionId}}"]
             }
           }
         },
@@ -738,14 +673,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/auth/logout",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "logout"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "logout"]
             }
           }
         },
@@ -780,14 +709,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/switch-tenant",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "switch-tenant"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "switch-tenant"]
             }
           }
         },
@@ -810,14 +733,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/register",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "register"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "register"]
             },
             "description": "Hosted-login end-user self-registration into an existing tenant (B2C)."
           },
@@ -854,14 +771,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/session",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "session"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "session"]
             },
             "description": "Hosted-login: verifies credentials and sets the HttpOnly SSO cookie (qe_ls). Postman stores the cookie in its jar for subsequent /v1/oauth/authorize calls."
           }
@@ -885,15 +796,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/session/mfa",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "session",
-                "mfa"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "session", "mfa"]
             },
             "description": "Hosted-login: finish a two-step login and set the SSO cookie."
           }
@@ -908,14 +812,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/session",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "session"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "session"]
             },
             "description": "Hosted-login logout: revoke the SSO session and clear the qe_ls cookie."
           }
@@ -944,14 +842,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/forgot-password",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "forgot-password"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "forgot-password"]
             }
           }
         },
@@ -974,14 +866,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/reset-password",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "reset-password"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "reset-password"]
             }
           }
         },
@@ -1004,15 +890,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/magic-link/start",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "magic-link",
-                "start"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "magic-link", "start"]
             }
           }
         },
@@ -1035,15 +914,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/auth/magic-link/consume",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "auth",
-                "magic-link",
-                "consume"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "auth", "magic-link", "consume"]
             }
           }
         }
@@ -1059,13 +931,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants"]
             }
           },
           "event": [
@@ -1117,13 +984,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants"]
             }
           }
         },
@@ -1134,14 +996,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}"]
             }
           }
         },
@@ -1161,14 +1017,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}"]
             }
           }
         },
@@ -1179,14 +1029,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}"]
             }
           }
         }
@@ -1202,13 +1046,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users"]
             }
           },
           "event": [
@@ -1260,13 +1099,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users"]
             }
           }
         },
@@ -1277,14 +1111,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}"]
             }
           }
         },
@@ -1304,14 +1132,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}"]
             }
           }
         },
@@ -1322,14 +1144,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}"]
             }
           }
         },
@@ -1349,15 +1165,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/password",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "password"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "password"]
             }
           }
         },
@@ -1368,15 +1177,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/mfa",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "mfa"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "mfa"]
             },
             "description": "Admin clears a user's MFA (TOTP/recovery/OTP). Requires user.write; audited as mfa.admin_reset."
           }
@@ -1402,17 +1204,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/verify/email/start",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "verify",
-                "email",
-                "start"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "verify", "email", "start"]
             }
           }
         },
@@ -1432,17 +1225,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/verify/email/confirm",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "verify",
-                "email",
-                "confirm"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "verify", "email", "confirm"]
             }
           }
         },
@@ -1462,17 +1246,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/verify/phone/start",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "verify",
-                "phone",
-                "start"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "verify", "phone", "start"]
             }
           }
         },
@@ -1492,17 +1267,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/verify/phone/confirm",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "verify",
-                "phone",
-                "confirm"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "verify", "phone", "confirm"]
             }
           }
         }
@@ -1518,13 +1284,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/permissions",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "permissions"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "permissions"]
             }
           },
           "event": [
@@ -1555,15 +1316,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/roles",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "roles"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "roles"]
             }
           },
           "event": [
@@ -1615,15 +1369,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/roles",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "roles"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "roles"]
             }
           }
         },
@@ -1634,16 +1381,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/roles/{{roleId}}/permissions/{{permissionId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "roles",
-                "{{roleId}}",
-                "permissions",
-                "{{permissionId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "roles", "{{roleId}}", "permissions", "{{permissionId}}"]
             }
           }
         },
@@ -1654,16 +1393,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/roles/{{roleId}}/permissions/{{permissionId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "roles",
-                "{{roleId}}",
-                "permissions",
-                "{{permissionId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "roles", "{{roleId}}", "permissions", "{{permissionId}}"]
             }
           }
         },
@@ -1674,9 +1405,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/tenants/{{tenantId}}/roles/{{roleId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "users",
@@ -1696,9 +1425,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/tenants/{{tenantId}}/roles/{{roleId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "users",
@@ -1718,17 +1445,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/tenants/{{tenantId}}/permissions",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "tenants",
-                "{{tenantId}}",
-                "permissions"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "tenants", "{{tenantId}}", "permissions"]
             }
           }
         },
@@ -1739,13 +1457,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/check?user_id={{userId}}&tenant_id={{tenantId}}&permission=user.read",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "check"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "check"],
               "query": [
                 {
                   "key": "user_id",
@@ -1770,17 +1483,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups/{{groupId}}/roles",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "groups",
-                "{{groupId}}",
-                "roles"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "groups", "{{groupId}}", "roles"]
             }
           }
         },
@@ -1791,9 +1495,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups/{{groupId}}/roles/{{roleId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "tenants",
@@ -1813,9 +1515,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups/{{groupId}}/roles/{{roleId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "tenants",
@@ -1861,13 +1561,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/invites",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "invites"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "invites"]
             }
           }
         },
@@ -1878,15 +1573,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/invites",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "invites"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "invites"]
             }
           },
           "event": [
@@ -1917,14 +1605,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/invites/{{inviteId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "invites",
-                "{{inviteId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "invites", "{{inviteId}}"]
             }
           }
         },
@@ -1947,14 +1629,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/invites/accept",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "invites",
-                "accept"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "invites", "accept"]
             }
           }
         }
@@ -1979,16 +1655,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/totp/enroll/start",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "totp",
-                "enroll",
-                "start"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "totp", "enroll", "start"]
             }
           }
         },
@@ -2008,16 +1676,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/totp/enroll/confirm",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "totp",
-                "enroll",
-                "confirm"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "totp", "enroll", "confirm"]
             }
           }
         },
@@ -2037,15 +1697,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/totp/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "totp",
-                "verify"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "totp", "verify"]
             }
           }
         },
@@ -2056,14 +1709,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/totp",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "totp"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "totp"]
             }
           }
         }
@@ -2079,15 +1726,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/otp/factors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "otp", "factors"]
             }
           }
         },
@@ -2103,15 +1743,8 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/otp/factors",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "otp", "factors"]
             },
             "body": {
               "mode": "raw",
@@ -2144,17 +1777,8 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/otp/factors/{{otpFactorId}}/confirm",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors",
-                "{{otpFactorId}}",
-                "confirm"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "otp", "factors", "{{otpFactorId}}", "confirm"]
             },
             "body": {
               "mode": "raw",
@@ -2169,17 +1793,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/otp/factors/{{otpFactorId}}/challenge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors",
-                "{{otpFactorId}}",
-                "challenge"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "otp", "factors", "{{otpFactorId}}", "challenge"]
             }
           }
         },
@@ -2195,15 +1810,8 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/otp/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "verify"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "otp", "verify"]
             },
             "body": {
               "mode": "raw",
@@ -2218,16 +1826,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/otp/factors/{{otpFactorId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "otp",
-                "factors",
-                "{{otpFactorId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "otp", "factors", "{{otpFactorId}}"]
             }
           }
         },
@@ -2238,14 +1838,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/recovery-codes",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "recovery-codes"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "recovery-codes"]
             }
           }
         },
@@ -2256,15 +1850,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/recovery-codes/regenerate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "recovery-codes",
-                "regenerate"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "recovery-codes", "regenerate"]
             }
           }
         },
@@ -2275,15 +1862,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/webauthn/challenge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "webauthn",
-                "challenge"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "webauthn", "challenge"]
             }
           },
           "event": [
@@ -2312,15 +1892,8 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/webauthn/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "webauthn",
-                "verify"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "webauthn", "verify"]
             },
             "body": {
               "mode": "raw",
@@ -2335,15 +1908,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/mfa/step-up/status",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "mfa",
-                "step-up",
-                "status"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "mfa", "step-up", "status"]
             }
           }
         }
@@ -2381,13 +1947,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/api-keys",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "api-keys"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "api-keys"]
             }
           }
         },
@@ -2398,15 +1959,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/api-keys",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "api-keys"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "api-keys"]
             }
           },
           "event": [
@@ -2437,14 +1991,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/api-keys/{{apiKeyId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "api-keys",
-                "{{apiKeyId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "api-keys", "{{apiKeyId}}"]
             }
           }
         },
@@ -2475,13 +2023,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users"]
             }
           }
         }
@@ -2523,13 +2066,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/service-principals",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "service-principals"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "service-principals"]
             }
           }
         },
@@ -2540,15 +2078,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/service-principals",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "service-principals"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "service-principals"]
             }
           },
           "event": [
@@ -2579,14 +2110,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/service-principals/{{principalId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "service-principals",
-                "{{principalId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "service-principals", "{{principalId}}"]
             }
           }
         },
@@ -2637,14 +2162,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/token",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "token"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "token"]
             }
           }
         }
@@ -2682,14 +2201,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oidc/clients",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oidc",
-                "clients"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oidc", "clients"]
             }
           }
         },
@@ -2700,14 +2213,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/authorize?response_type=code&client_id={{oidcClientId}}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile%20email&state=xyz&code_challenge=REPLACE&code_challenge_method=S256",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "authorize"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "authorize"],
               "query": [
                 {
                   "key": "response_type",
@@ -2783,14 +2290,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/token-code",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "token-code"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "token-code"]
             }
           }
         },
@@ -2801,14 +2302,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/userinfo",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "userinfo"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "userinfo"]
             }
           }
         }
@@ -2824,13 +2319,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/passkeys",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "passkeys"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "passkeys"]
             }
           },
           "event": [
@@ -2861,14 +2351,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/passkeys/{{passkeyId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "passkeys",
-                "{{passkeyId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "passkeys", "{{passkeyId}}"]
             }
           }
         },
@@ -2888,15 +2372,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/passkeys/register/begin",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "passkeys",
-                "register",
-                "begin"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "passkeys", "register", "begin"]
             }
           }
         },
@@ -2916,15 +2393,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/passkeys/register/finish",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "passkeys",
-                "register",
-                "finish"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "passkeys", "register", "finish"]
             }
           }
         },
@@ -2944,15 +2414,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/passkeys/login/begin",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "passkeys",
-                "login",
-                "begin"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "passkeys", "login", "begin"]
             }
           }
         },
@@ -2972,15 +2435,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/passkeys/login/finish",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "passkeys",
-                "login",
-                "finish"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "passkeys", "login", "finish"]
             }
           }
         }
@@ -3005,14 +2461,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/social/providers",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "social",
-                "providers"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "social", "providers"]
             }
           }
         },
@@ -3023,16 +2473,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/social/providers",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "social",
-                "providers"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "social", "providers"]
             }
           }
         },
@@ -3043,16 +2485,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/social/identities",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "social",
-                "identities"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "social", "identities"]
             }
           },
           "event": [
@@ -3083,15 +2517,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/social/identities/{{socialIdentityId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "social",
-                "identities",
-                "{{socialIdentityId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "social", "identities", "{{socialIdentityId}}"]
             }
           }
         },
@@ -3102,15 +2529,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/social/google/start",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "social",
-                "google",
-                "start"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "social", "google", "start"]
             }
           }
         },
@@ -3121,15 +2541,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/social/google/callback",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "social",
-                "google",
-                "callback"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "social", "google", "callback"]
             }
           }
         },
@@ -3152,14 +2565,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/social/exchange",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "social",
-                "exchange"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "social", "exchange"]
             },
             "description": "Exchange a social provider's authorization code for a qeet-id token pair."
           }
@@ -3197,13 +2604,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "webhooks"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "webhooks"]
             }
           }
         },
@@ -3214,15 +2616,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/webhooks",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "webhooks"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "webhooks"]
             }
           },
           "event": [
@@ -3253,14 +2648,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "webhooks",
-                "{{webhookId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "webhooks", "{{webhookId}}"]
             }
           }
         },
@@ -3271,15 +2660,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}/test",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "webhooks",
-                "{{webhookId}}",
-                "test"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "webhooks", "{{webhookId}}", "test"]
             }
           }
         },
@@ -3290,14 +2672,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "webhooks",
-                "{{webhookId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "webhooks", "{{webhookId}}"]
             }
           }
         },
@@ -3308,15 +2684,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}/deliveries",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "webhooks",
-                "{{webhookId}}",
-                "deliveries"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "webhooks", "{{webhookId}}", "deliveries"]
             }
           },
           "event": [
@@ -3340,17 +2709,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/webhooks/{{webhookId}}/deliveries/{{deliveryId}}/retry",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "webhooks",
-                "{{webhookId}}",
-                "deliveries",
-                "{{deliveryId}}",
-                "retry"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "webhooks", "{{webhookId}}", "deliveries", "{{deliveryId}}", "retry"]
             }
           }
         }
@@ -3366,15 +2726,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/branding",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "branding"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "branding"]
             }
           }
         },
@@ -3394,15 +2747,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/branding",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "branding"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "branding"]
             }
           }
         }
@@ -3418,15 +2764,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "policy"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "policy"]
             }
           }
         },
@@ -3446,15 +2785,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "policy"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "policy"]
             }
           }
         }
@@ -3470,15 +2802,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/audit?limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "audit"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "audit"],
               "query": [
                 {
                   "key": "limit",
@@ -3515,16 +2840,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/audit/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "audit",
-                "verify"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "audit", "verify"]
             },
             "description": "Verifies the tamper-evident hash chain across audit events for the tenant. Returns ok=true plus the verified range; ok=false with break_at when a tampered row is detected."
           }
@@ -3541,16 +2858,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/analytics/overview",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "analytics",
-                "overview"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "analytics", "overview"]
             },
             "description": "Returns rollup metrics for the admin dashboard: total users, MAU, signups vs prior period, signins, failure rates, weekly activity (last 8 weeks)."
           }
@@ -3567,15 +2876,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/admin/outbox/dlq?limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "admin",
-                "outbox",
-                "dlq"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "admin", "outbox", "dlq"],
               "query": [
                 {
                   "key": "limit",
@@ -3619,14 +2921,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/gdpr/purge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "gdpr",
-                "purge"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "gdpr", "purge"]
             }
           }
         },
@@ -3637,16 +2933,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/gdpr/purge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "gdpr",
-                "purge"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "gdpr", "purge"]
             }
           },
           "event": [
@@ -3677,15 +2965,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/gdpr/purge/{{gdprRequestId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "gdpr",
-                "purge",
-                "{{gdprRequestId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "gdpr", "purge", "{{gdprRequestId}}"]
             }
           }
         }
@@ -3722,13 +3003,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/groups",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "groups"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "groups"]
             }
           }
         },
@@ -3739,15 +3015,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/groups",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "groups"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "groups"]
             }
           },
           "event": [
@@ -3778,14 +3047,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/groups/{{groupId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "groups",
-                "{{groupId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "groups", "{{groupId}}"]
             }
           }
         },
@@ -3796,16 +3059,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/groups/{{groupId}}/members/{{userId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "groups",
-                "{{groupId}}",
-                "members",
-                "{{userId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "groups", "{{groupId}}", "members", "{{userId}}"]
             }
           }
         },
@@ -3816,16 +3071,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/groups/{{groupId}}/members/{{userId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "groups",
-                "{{groupId}}",
-                "members",
-                "{{userId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "groups", "{{groupId}}", "members", "{{userId}}"]
             }
           }
         },
@@ -3836,15 +3083,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/groups/{{groupId}}/members",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "groups",
-                "{{groupId}}",
-                "members"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "groups", "{{groupId}}", "members"]
             }
           }
         }
@@ -3860,15 +3100,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/scim",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "scim"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "scim"]
             }
           },
           "event": [
@@ -3876,9 +3109,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -3890,16 +3121,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/scim/token",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "scim",
-                "token"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "scim", "token"]
             }
           },
           "event": [
@@ -3923,16 +3146,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/scim/users",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "scim",
-                "users"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "scim", "users"]
             }
           },
           "event": [
@@ -3940,9 +3155,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -3964,14 +3177,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/ServiceProviderConfig",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "ServiceProviderConfig"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "ServiceProviderConfig"]
             }
           },
           "event": [
@@ -3979,9 +3186,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -4012,14 +3217,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Users",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Users"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"]
             }
           },
           "event": [
@@ -4053,14 +3252,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Users",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Users"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users"]
             }
           },
           "event": [
@@ -4083,16 +3276,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/scim/token",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "scim",
-                "token"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "scim", "token"]
             }
           },
           "event": [
@@ -4100,9 +3285,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -4124,14 +3307,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/ResourceTypes",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "ResourceTypes"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "ResourceTypes"]
             }
           }
         },
@@ -4152,14 +3329,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Schemas",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Schemas"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Schemas"]
             }
           }
         },
@@ -4180,15 +3351,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Users",
-                "{{scimUserId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users", "{{scimUserId}}"]
             }
           }
         },
@@ -4218,15 +3382,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Users",
-                "{{scimUserId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users", "{{scimUserId}}"]
             }
           }
         },
@@ -4256,15 +3413,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Users",
-                "{{scimUserId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users", "{{scimUserId}}"]
             }
           }
         },
@@ -4285,15 +3435,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Users/{{scimUserId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Users",
-                "{{scimUserId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Users", "{{scimUserId}}"]
             }
           }
         },
@@ -4314,14 +3457,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Groups",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Groups"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Groups"]
             }
           },
           "event": [
@@ -4362,14 +3499,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Groups",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Groups"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Groups"]
             }
           },
           "event": [
@@ -4402,15 +3533,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Groups",
-                "{{scimGroupId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Groups", "{{scimGroupId}}"]
             }
           }
         },
@@ -4440,15 +3564,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Groups",
-                "{{scimGroupId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Groups", "{{scimGroupId}}"]
             }
           }
         },
@@ -4478,15 +3595,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Groups",
-                "{{scimGroupId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Groups", "{{scimGroupId}}"]
             }
           }
         },
@@ -4507,15 +3617,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/scim/v2/Groups/{{scimGroupId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "scim",
-                "v2",
-                "Groups",
-                "{{scimGroupId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["scim", "v2", "Groups", "{{scimGroupId}}"]
             }
           }
         }
@@ -4540,15 +3643,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml"]
             }
           },
           "event": [
@@ -4572,15 +3668,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml"]
             }
           },
           "event": [
@@ -4588,9 +3677,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -4602,16 +3689,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml/{{samlConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml",
-                "{{samlConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml", "{{samlConnId}}"]
             }
           },
           "event": [
@@ -4619,9 +3698,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -4642,16 +3719,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml/{{samlConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml",
-                "{{samlConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml", "{{samlConnId}}"]
             }
           },
           "event": [
@@ -4659,9 +3728,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -4676,14 +3743,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/metadata/{{samlConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "metadata",
-                "{{samlConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "metadata", "{{samlConnId}}"]
             }
           },
           "event": [
@@ -4708,14 +3769,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/login/{{samlConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "login",
-                "{{samlConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "login", "{{samlConnId}}"]
             }
           },
           "event": [
@@ -4749,13 +3804,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/exchange",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "exchange"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "exchange"]
             }
           },
           "event": [
@@ -4777,16 +3827,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml/{{samlConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml",
-                "{{samlConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml", "{{samlConnId}}"]
             }
           },
           "event": [
@@ -4794,9 +3836,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -4808,17 +3848,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml/{{samlConnId}}/test",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml",
-                "{{samlConnId}}",
-                "test"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml", "{{samlConnId}}", "test"]
             },
             "description": "Preflight-validate an inbound SAML IdP connection before rollout."
           }
@@ -4830,15 +3861,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml-providers"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml-providers"]
             }
           }
         },
@@ -4858,15 +3882,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml-providers"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml-providers"]
             },
             "description": "Register a downstream service provider that trusts Qeet as its SAML IdP."
           },
@@ -4890,16 +3907,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers/{{samlSpId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml-providers",
-                "{{samlSpId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml-providers", "{{samlSpId}}"]
             }
           }
         },
@@ -4919,16 +3928,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers/{{samlSpId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml-providers",
-                "{{samlSpId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml-providers", "{{samlSpId}}"]
             }
           }
         },
@@ -4939,16 +3940,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/saml-providers/{{samlSpId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "saml-providers",
-                "{{samlSpId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "saml-providers", "{{samlSpId}}"]
             }
           }
         },
@@ -4982,14 +3975,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/acs/{{samlConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "acs",
-                "{{samlConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "acs", "{{samlConnId}}"]
             },
             "description": "SP-side ACS (CSRF-exempt, signature-validated). The IdP POSTs the assertion here."
           }
@@ -5004,14 +3991,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/idp/metadata",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "idp",
-                "metadata"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "idp", "metadata"]
             },
             "description": "Qeet-as-IdP metadata XML (public)."
           }
@@ -5026,14 +4007,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/idp/sso?SAMLRequest=<deflated-base64>&RelayState=",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "idp",
-                "sso"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "idp", "sso"],
               "query": [
                 {
                   "key": "SAMLRequest",
@@ -5077,14 +4052,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/saml/idp/sso",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "saml",
-                "idp",
-                "sso"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["saml", "idp", "sso"]
             }
           }
         }
@@ -5109,15 +4078,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ldap",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ldap"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ldap"]
             }
           },
           "event": [
@@ -5141,15 +4103,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ldap",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ldap"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ldap"]
             }
           },
           "event": [
@@ -5157,9 +4112,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5171,16 +4124,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ldap/{{ldapConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ldap",
-                "{{ldapConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ldap", "{{ldapConnId}}"]
             }
           },
           "event": [
@@ -5188,9 +4133,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5211,16 +4154,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ldap/{{ldapConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ldap",
-                "{{ldapConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ldap", "{{ldapConnId}}"]
             }
           },
           "event": [
@@ -5228,9 +4163,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5242,17 +4175,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ldap/{{ldapConnId}}/test",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ldap",
-                "{{ldapConnId}}",
-                "test"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ldap", "{{ldapConnId}}", "test"]
             }
           },
           "event": [
@@ -5286,14 +4210,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/ldap/{{ldapConnId}}/authenticate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ldap",
-                "{{ldapConnId}}",
-                "authenticate"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["ldap", "{{ldapConnId}}", "authenticate"]
             }
           },
           "event": [
@@ -5315,16 +4233,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ldap/{{ldapConnId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ldap",
-                "{{ldapConnId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ldap", "{{ldapConnId}}"]
             }
           },
           "event": [
@@ -5332,9 +4242,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5351,15 +4259,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "auth-policy"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "auth-policy"]
             }
           },
           "event": [
@@ -5367,9 +4268,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5390,15 +4289,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-policy",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "auth-policy"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "auth-policy"]
             }
           },
           "event": [
@@ -5406,9 +4298,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5425,15 +4315,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ip-rules",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ip-rules"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ip-rules"]
             }
           },
           "event": [
@@ -5441,9 +4324,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5464,16 +4345,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ip-rules/config",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ip-rules",
-                "config"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ip-rules", "config"]
             }
           },
           "event": [
@@ -5481,9 +4354,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5504,15 +4375,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ip-rules",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ip-rules"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ip-rules"]
             }
           },
           "event": [
@@ -5545,16 +4409,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ip-rules/check",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ip-rules",
-                "check"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ip-rules", "check"]
             }
           },
           "event": [
@@ -5562,9 +4418,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5576,16 +4430,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/ip-rules/{{ipRuleId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "ip-rules",
-                "{{ipRuleId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "ip-rules", "{{ipRuleId}}"]
             }
           },
           "event": [
@@ -5612,15 +4458,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/email-templates",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "email-templates"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "email-templates"]
             }
           },
           "event": [
@@ -5628,9 +4467,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5642,16 +4479,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/email-templates/{{emailTemplateKey}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "email-templates",
-                "{{emailTemplateKey}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "email-templates", "{{emailTemplateKey}}"]
             }
           },
           "event": [
@@ -5659,9 +4488,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5682,16 +4509,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/email-templates/{{emailTemplateKey}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "email-templates",
-                "{{emailTemplateKey}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "email-templates", "{{emailTemplateKey}}"]
             }
           },
           "event": [
@@ -5699,9 +4518,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5722,9 +4539,7 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/email-templates/{{emailTemplateKey}}/preview",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "tenants",
@@ -5740,9 +4555,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5754,16 +4567,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/email-templates/{{emailTemplateKey}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "email-templates",
-                "{{emailTemplateKey}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "email-templates", "{{emailTemplateKey}}"]
             }
           },
           "event": [
@@ -5771,9 +4576,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5790,15 +4593,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/secrets",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "secrets"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "secrets"]
             }
           },
           "event": [
@@ -5806,9 +4602,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5829,15 +4623,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/secrets",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "secrets"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "secrets"]
             }
           },
           "event": [
@@ -5861,17 +4648,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/secrets/{{secretId}}/reveal",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "secrets",
-                "{{secretId}}",
-                "reveal"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "secrets", "{{secretId}}", "reveal"]
             }
           },
           "event": [
@@ -5879,9 +4657,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5902,16 +4678,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/secrets/{{secretId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "secrets",
-                "{{secretId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "secrets", "{{secretId}}"]
             }
           },
           "event": [
@@ -5919,9 +4687,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -5933,16 +4699,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/secrets/{{secretId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "secrets",
-                "{{secretId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "secrets", "{{secretId}}"]
             }
           },
           "event": [
@@ -5974,14 +4732,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/vault/{{secretName}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "vault",
-                "{{secretName}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "vault", "{{secretName}}"]
             },
             "description": "Token vaulting: fetch a secret by name with a scoped principal (e.g. an AI agent). Requires scope vault:<name> or vault:read \u2014 uses {{agentAccessToken}}. Set {{secretName}} to a secret created in this folder."
           }
@@ -5998,15 +4750,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/retention",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "retention"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "retention"]
             }
           },
           "event": [
@@ -6014,9 +4759,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6037,15 +4780,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/retention",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "retention"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "retention"]
             }
           },
           "event": [
@@ -6053,9 +4789,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6067,16 +4801,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/retention/preview",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "retention",
-                "preview"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "retention", "preview"]
             }
           },
           "event": [
@@ -6084,9 +4810,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6098,16 +4822,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/retention/run",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "retention",
-                "run"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "retention", "run"]
             }
           },
           "event": [
@@ -6115,9 +4831,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6134,14 +4848,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/billing/plans",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "billing",
-                "plans"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "billing", "plans"]
             }
           },
           "event": [
@@ -6149,9 +4857,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6163,16 +4869,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/billing/subscription",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "billing",
-                "subscription"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "billing", "subscription"]
             }
           },
           "event": [
@@ -6180,9 +4878,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6203,16 +4899,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/billing/subscription",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "billing",
-                "subscription"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "billing", "subscription"]
             }
           },
           "event": [
@@ -6220,9 +4908,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6234,16 +4920,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/billing/invoices",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "billing",
-                "invoices"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "billing", "invoices"]
             }
           },
           "event": [
@@ -6251,9 +4929,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6265,17 +4941,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/billing/subscription/cancel",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "billing",
-                "subscription",
-                "cancel"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "billing", "subscription", "cancel"]
             }
           },
           "event": [
@@ -6283,9 +4950,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6306,16 +4971,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/billing/checkout",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "billing",
-                "checkout"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "billing", "checkout"]
             },
             "description": "Begin a paid plan change via hosted Stripe/Razorpay checkout. Requires the provider env keys to be configured server-side."
           }
@@ -6339,15 +4996,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/billing/webhooks/stripe",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "billing",
-                "webhooks",
-                "stripe"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "billing", "webhooks", "stripe"]
             },
             "description": "Provider webhook (path is the provider: stripe | razorpay). Signature-verified server-side \u2014 Postman calls will be rejected without a valid provider signature."
           }
@@ -6364,16 +5014,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oauth/grants",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oauth",
-                "grants"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oauth", "grants"]
             }
           },
           "event": [
@@ -6381,9 +5023,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6395,17 +5035,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oauth/grants/{{grantId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oauth",
-                "grants",
-                "{{grantId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oauth", "grants", "{{grantId}}"]
             }
           },
           "event": [
@@ -6432,14 +5063,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/deleted",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "deleted"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "deleted"]
             }
           },
           "event": [
@@ -6447,9 +5072,7 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": [
-                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"
-                ]
+                "exec": ["pm.test('2xx', () => pm.expect(pm.response.code).to.be.below(300));"]
               }
             }
           ]
@@ -6461,15 +5084,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/restore",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "restore"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "restore"]
             }
           },
           "event": [
@@ -6491,15 +5107,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/users/{{userId}}/purge",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "users",
-                "{{userId}}",
-                "purge"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "users", "{{userId}}", "purge"]
             }
           },
           "event": [
@@ -6529,14 +5138,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/login-context?request_id={{authRequestId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "login-context"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "login-context"],
               "query": [
                 {
                   "key": "request_id",
@@ -6566,15 +5169,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/authorize/decision",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "authorize",
-                "decision"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "authorize", "decision"]
             },
             "description": "Record the user's consent decision; returns the authorization code redirect."
           }
@@ -6614,14 +5210,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/device_authorization",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "device_authorization"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "device_authorization"]
             },
             "description": "RFC 8628 \u00a73.1 device flow initiation."
           },
@@ -6649,14 +5239,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/device?user_code={{userCode}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "device"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "device"],
               "query": [
                 {
                   "key": "user_code",
@@ -6685,15 +5269,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/device/decision",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "device",
-                "decision"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "device", "decision"]
             }
           }
         },
@@ -6707,14 +5284,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/logout?post_logout_redirect_uri=http://localhost:3000/",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "logout"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "logout"],
               "query": [
                 {
                   "key": "post_logout_redirect_uri",
@@ -6743,14 +5314,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/logout",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "logout"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "logout"]
             }
           }
         },
@@ -6794,13 +5359,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/oauth/revoke",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "oauth",
-                "revoke"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["oauth", "revoke"]
             },
             "description": "Root-level (no /v1). Client-authenticated. Always returns 200 per the RFC."
           }
@@ -6840,13 +5400,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/oauth/introspect",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "oauth",
-                "introspect"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["oauth", "introspect"]
             },
             "description": "Root-level (no /v1). Client-authenticated. Returns {active, scope, actor_type, ...}."
           }
@@ -6858,14 +5413,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/oidc/signing-keys",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oidc",
-                "signing-keys"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oidc", "signing-keys"]
             },
             "description": "Issuer signing-key metadata (no private key material)."
           }
@@ -6935,14 +5484,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/token-code",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "token-code"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "token-code"]
             },
             "description": "RFC 8693 token exchange via the shared /v1/oauth/token-code endpoint. Downscope-only (never escalates). Drop actor_token for plain downscoping; include it for delegation (records an `act` claim). Requires the client to be permitted the token-exchange grant."
           },
@@ -6994,14 +5537,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/oauth/token-code",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oauth",
-                "token-code"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oauth", "token-code"]
             },
             "description": "RFC 8628 \u00a73.4 device-code polling against the shared /v1/oauth/token-code endpoint. Poll after Device authorization + Device decision (approve)."
           }
@@ -7018,16 +5555,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oidc",
-                "clients"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oidc", "clients"]
             }
           },
           "event": [
@@ -7060,16 +5589,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oidc",
-                "clients"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oidc", "clients"]
             },
             "description": "Register a confidential OIDC client under the tenant. Returns the row id (used by PATCH/DELETE/rotate) plus the public client_id and one-time client_secret."
           },
@@ -7095,17 +5616,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oidc",
-                "clients",
-                "{{oidcClientRowId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oidc", "clients", "{{oidcClientRowId}}"]
             }
           }
         },
@@ -7125,17 +5637,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oidc",
-                "clients",
-                "{{oidcClientRowId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oidc", "clients", "{{oidcClientRowId}}"]
             }
           }
         },
@@ -7146,9 +5649,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}/rotate-secret",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "tenants",
@@ -7180,17 +5681,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oidc/clients/{{oidcClientRowId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oidc",
-                "clients",
-                "{{oidcClientRowId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oidc", "clients", "{{oidcClientRowId}}"]
             }
           }
         },
@@ -7201,15 +5693,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/oidc/clients/{{oidcClientRowId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oidc",
-                "clients",
-                "{{oidcClientRowId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "oidc", "clients", "{{oidcClientRowId}}"]
             },
             "description": "Tenant-scoped by the caller's token; takes the client row id."
           }
@@ -7221,16 +5706,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oauth/devices",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oauth",
-                "devices"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oauth", "devices"]
             }
           },
           "event": [
@@ -7254,17 +5731,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/oauth/devices/{{deviceAuthId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "oauth",
-                "devices",
-                "{{deviceAuthId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "oauth", "devices", "{{deviceAuthId}}"]
             }
           }
         }
@@ -7280,15 +5748,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples?object=document:readme",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "relation-tuples"
-              ],
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "relation-tuples"],
               "query": [
                 {
                   "key": "object",
@@ -7315,15 +5776,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "relation-tuples"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "relation-tuples"]
             },
             "description": "subject may be 'user:<id>' or a userset like 'team:eng#member'."
           },
@@ -7356,16 +5810,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples/check",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "relation-tuples",
-                "check"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "relation-tuples", "check"]
             },
             "description": "Recursive userset check (with cycle guard). Returns {allowed: bool}."
           }
@@ -7377,16 +5823,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/relation-tuples/{{relationTupleId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "relation-tuples",
-                "{{relationTupleId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "relation-tuples", "{{relationTupleId}}"]
             }
           }
         }
@@ -7402,16 +5840,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/anomalies",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "security",
-                "anomalies"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "security", "anomalies"]
             }
           },
           "event": [
@@ -7435,17 +5865,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/anomalies/summary",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "security",
-                "anomalies",
-                "summary"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "security", "anomalies", "summary"]
             }
           }
         },
@@ -7456,9 +5877,7 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/anomalies/{{anomalyId}}/resolve",
-              "host": [
-                "{{baseUrl}}"
-              ],
+              "host": ["{{baseUrl}}"],
               "path": [
                 "v1",
                 "tenants",
@@ -7478,16 +5897,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/bots",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "security",
-                "bots"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "security", "bots"]
             }
           }
         },
@@ -7498,17 +5909,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/bots/settings",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "security",
-                "bots",
-                "settings"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "security", "bots", "settings"]
             }
           }
         },
@@ -7528,17 +5930,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/security/bots/settings",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "security",
-                "bots",
-                "settings"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "security", "bots", "settings"]
             }
           }
         }
@@ -7554,15 +5947,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "agents"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "agents"]
             }
           },
           "event": [
@@ -7595,15 +5981,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "agents"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "agents"]
             },
             "description": "Registers an AI-agent identity. The plaintext secret is returned ONCE on create."
           },
@@ -7628,16 +6007,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents/{{agentId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "agents",
-                "{{agentId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "agents", "{{agentId}}"]
             }
           }
         },
@@ -7660,14 +6031,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/agents/token",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "agents",
-                "token"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "agents", "token"]
             },
             "description": "Exchange agent credentials for a short-lived, downscoped actor_type=agent token. Use {{agentAccessToken}} for the Vault read."
           },
@@ -7696,15 +6061,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/credentials",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "credentials"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "credentials"]
             }
           },
           "event": [
@@ -7737,15 +6095,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/credentials",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "credentials"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "credentials"]
             },
             "description": "Issue a W3C JWT-VC. Returns {id, credential} \u2014 credential is the signed JWT-VC."
           },
@@ -7770,17 +6121,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/credentials/{{credentialId}}/revoke",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "credentials",
-                "{{credentialId}}",
-                "revoke"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "credentials", "{{credentialId}}", "revoke"]
             }
           }
         },
@@ -7803,14 +6145,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/credentials/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "credentials",
-                "verify"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "credentials", "verify"]
             },
             "description": "Public: any relying party can verify a presented JWT-VC. Returns validity + revocation."
           }
@@ -7827,15 +6163,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "auth-hooks"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "auth-hooks"]
             }
           },
           "event": [
@@ -7868,15 +6197,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "auth-hooks"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "auth-hooks"]
             },
             "description": "Synchronous post-credential allow/deny gate. fail_open=true keeps logins working if the hook endpoint is unreachable."
           },
@@ -7909,16 +6231,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks/{{authHookId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "auth-hooks",
-                "{{authHookId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "auth-hooks", "{{authHookId}}"]
             }
           }
         },
@@ -7929,16 +6243,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/auth-hooks/{{authHookId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "auth-hooks",
-                "{{authHookId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "auth-hooks", "{{authHookId}}"]
             }
           }
         }
@@ -7954,15 +6260,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "domains"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "domains"]
             }
           },
           "event": [
@@ -7995,15 +6294,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "domains"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "domains"]
             },
             "description": "Returns the DNS TXT record (name/type/value) to publish for verification."
           },
@@ -8027,17 +6319,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains/{{domainId}}/verify",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "domains",
-                "{{domainId}}",
-                "verify"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "domains", "{{domainId}}", "verify"]
             },
             "description": "Performs the DNS TXT lookup and marks the domain verified if it matches."
           }
@@ -8049,16 +6332,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/domains/{{domainId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "domains",
-                "{{domainId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "domains", "{{domainId}}"]
             }
           }
         }
@@ -8074,15 +6349,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "log-sinks"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "log-sinks"]
             }
           },
           "event": [
@@ -8115,15 +6383,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "log-sinks"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "log-sinks"]
             },
             "description": "Stream audit/security events to a SIEM. type \u2208 {splunk_hec, datadog, http}."
           },
@@ -8156,16 +6417,8 @@
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks/{{logSinkId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "log-sinks",
-                "{{logSinkId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "log-sinks", "{{logSinkId}}"]
             }
           }
         },
@@ -8176,16 +6429,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/log-sinks/{{logSinkId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "tenants",
-                "{{tenantId}}",
-                "log-sinks",
-                "{{logSinkId}}"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "tenants", "{{tenantId}}", "log-sinks", "{{logSinkId}}"]
             }
           }
         }
@@ -8201,13 +6446,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/notifications",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "notifications"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "notifications"]
             },
             "description": "Current principal's in-app inbox + unread count."
           }
@@ -8219,14 +6459,8 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/v1/notifications/mark-all-read",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "notifications",
-                "mark-all-read"
-              ]
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "notifications", "mark-all-read"]
             }
           }
         }

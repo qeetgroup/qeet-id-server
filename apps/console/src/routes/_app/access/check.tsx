@@ -18,10 +18,12 @@ import { CheckCircle2Icon, Loader2Icon, ShieldCheckIcon, XCircleIcon } from "luc
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
 import { type ExplainPath, useExplainCheck } from "@/lib/access-check";
+import type { ApiError } from "@/lib/api";
 
-export const Route = createFileRoute("/_app/access/check")({ component: AccessCheckPage });
+export const Route = createFileRoute("/_app/access/check")({
+  component: AccessCheckPage,
+});
 
 function AccessCheckPage() {
   const { t } = useTranslation("rbac");
@@ -74,7 +76,11 @@ function AccessCheckPage() {
               </FieldGroup>
               <div className="flex justify-end">
                 <Button type="submit" disabled={checkM.isPending}>
-                  {checkM.isPending ? <Loader2Icon className="animate-spin" /> : <ShieldCheckIcon />}
+                  {checkM.isPending ? (
+                    <Loader2Icon className="animate-spin" />
+                  ) : (
+                    <ShieldCheckIcon />
+                  )}
                   {checkM.isPending ? t("check.evaluating") : t("check.evaluate")}
                 </Button>
               </div>
@@ -122,7 +128,9 @@ function AccessCheckPage() {
                 {result.allowed && (
                   <section>
                     <h3 className="text-sm font-medium">{t("check.grantPathsTitle")}</h3>
-                    <p className="mb-3 text-xs text-muted-foreground">{t("check.grantPathsHint")}</p>
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      {t("check.grantPathsHint")}
+                    </p>
                     {result.paths.length === 0 ? (
                       <p className="text-sm text-muted-foreground">{t("check.noGrantPath")}</p>
                     ) : (

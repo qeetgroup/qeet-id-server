@@ -5,7 +5,9 @@ import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 
-export const Route = createFileRoute("/_app/developer/bots")({ component: BotsPage });
+export const Route = createFileRoute("/_app/developer/bots")({
+  component: BotsPage,
+});
 
 // QID-04: this page previously rendered a fabricated dashboard (hardcoded
 // "Runs (24h): 3,420" stats, a seeded automations table, and New/Play/Edit

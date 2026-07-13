@@ -126,5 +126,8 @@ export function listGrouped(): ChangelogGroup[] {
     if (bucket) bucket.push(entry);
     else groups.set(label, [entry]);
   }
-  return [...groups.entries()].map(([label, groupEntries]) => ({ label, entries: groupEntries }));
+  return [...groups.entries()].map(([label, groupEntries]) => ({
+    label,
+    entries: groupEntries,
+  }));
 }

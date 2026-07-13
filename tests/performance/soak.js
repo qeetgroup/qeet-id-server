@@ -1,5 +1,5 @@
-import http from "k6/http";
 import { check, sleep } from "k6";
+import http from "k6/http";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:4001";
 
@@ -24,11 +24,9 @@ let accessToken = null;
 let refreshToken = null;
 
 function doLogin() {
-  const res = http.post(
-    `${BASE_URL}/v1/auth/login`,
-    JSON.stringify(CREDS),
-    { headers: { "Content-Type": "application/json" } },
-  );
+  const res = http.post(`${BASE_URL}/v1/auth/login`, JSON.stringify(CREDS), {
+    headers: { "Content-Type": "application/json" },
+  });
   if (res.status === 200) {
     const body = JSON.parse(res.body);
     accessToken = body.access_token;

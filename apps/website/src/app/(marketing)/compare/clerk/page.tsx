@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
+import { type ComparisonData, ComparisonPage } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
   title: "Qeet ID vs. Clerk",
@@ -38,46 +38,190 @@ const data: ComparisonData = {
   ],
   rows: [
     // ---- Authentication ----
-    { section: "Authentication", feature: "Email + password", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Passkeys / WebAuthn", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Magic links", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Social login (Google, Apple, GitHub, …)", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "MFA (TOTP, SMS, email, recovery codes)", qeetid: true, competitor: true },
+    {
+      section: "Authentication",
+      feature: "Email + password",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Passkeys / WebAuthn",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Magic links",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Social login (Google, Apple, GitHub, …)",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "MFA (TOTP, SMS, email, recovery codes)",
+      qeetid: true,
+      competitor: true,
+    },
 
     // ---- Frontend ----
-    { section: "Frontend", feature: "Hosted, brandable login + consent UI", qeetid: true, competitor: true, note: "Qeet ID ships a hosted login app (password + passkey + social + scope consent + device-grant)." },
-    { section: "Frontend", feature: "React SDK (sessions, silent refresh)", qeetid: true, competitor: true, note: "@qeet-id/react + @qeet-id/nextjs with HttpOnly sealed-cookie sessions." },
-    { section: "Frontend", feature: "Prebuilt drop-in `<SignIn />` components", qeetid: "partial", competitor: true, note: "Clerk's component kit is its signature strength; Qeet ID's prebuilt components are in progress." },
-    { section: "Frontend", feature: "Native admin dashboard", qeetid: true, competitor: true },
+    {
+      section: "Frontend",
+      feature: "Hosted, brandable login + consent UI",
+      qeetid: true,
+      competitor: true,
+      note: "Qeet ID ships a hosted login app (password + passkey + social + scope consent + device-grant).",
+    },
+    {
+      section: "Frontend",
+      feature: "React SDK (sessions, silent refresh)",
+      qeetid: true,
+      competitor: true,
+      note: "@qeet-id/react + @qeet-id/nextjs with HttpOnly sealed-cookie sessions.",
+    },
+    {
+      section: "Frontend",
+      feature: "Prebuilt drop-in `<SignIn />` components",
+      qeetid: "partial",
+      competitor: true,
+      note: "Clerk's component kit is its signature strength; Qeet ID's prebuilt components are in progress.",
+    },
+    {
+      section: "Frontend",
+      feature: "Native admin dashboard",
+      qeetid: true,
+      competitor: true,
+    },
 
     // ---- B2B / Tenant model ----
-    { section: "B2B / Tenant model", feature: "Multi-tenant by default", qeetid: true, competitor: "Organizations add-on" },
-    { section: "B2B / Tenant model", feature: "Invitations + role assignment", qeetid: true, competitor: true },
-    { section: "B2B / Tenant model", feature: "SAML / OIDC federation", qeetid: true, competitor: "Paid tier" },
-    { section: "B2B / Tenant model", feature: "SCIM provisioning", qeetid: true, competitor: "Paid tier" },
+    {
+      section: "B2B / Tenant model",
+      feature: "Multi-tenant by default",
+      qeetid: true,
+      competitor: "Organizations add-on",
+    },
+    {
+      section: "B2B / Tenant model",
+      feature: "Invitations + role assignment",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "B2B / Tenant model",
+      feature: "SAML / OIDC federation",
+      qeetid: true,
+      competitor: "Paid tier",
+    },
+    {
+      section: "B2B / Tenant model",
+      feature: "SCIM provisioning",
+      qeetid: true,
+      competitor: "Paid tier",
+    },
 
     // ---- Deployment ----
-    { section: "Deployment", feature: "Self-host (single binary + Postgres)", qeetid: true, competitor: false },
-    { section: "Deployment", feature: "Bring-your-own database", qeetid: true, competitor: false },
-    { section: "Deployment", feature: "EU / US data residency", qeetid: true, competitor: true },
-    { section: "Deployment", feature: "Air-gapped / on-prem", qeetid: true, competitor: false },
+    {
+      section: "Deployment",
+      feature: "Self-host (single binary + Postgres)",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Deployment",
+      feature: "Bring-your-own database",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Deployment",
+      feature: "EU / US data residency",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Deployment",
+      feature: "Air-gapped / on-prem",
+      qeetid: true,
+      competitor: false,
+    },
 
     // ---- Pricing ----
-    { section: "Pricing", feature: "Free tier MAU cap", qeetid: "5,000", competitor: "10,000" },
-    { section: "Pricing", feature: "Per-MAU pricing", qeetid: "$0.02 / MAU (Pro)", competitor: "$0.02 / MAU after free" },
-    { section: "Pricing", feature: "B2B SSO included", qeetid: true, competitor: false, note: "Clerk SSO is reserved for higher tiers." },
-    { section: "Pricing", feature: "Audit log retention", qeetid: "7 days / S3 export", competitor: "Paid" },
+    {
+      section: "Pricing",
+      feature: "Free tier MAU cap",
+      qeetid: "5,000",
+      competitor: "10,000",
+    },
+    {
+      section: "Pricing",
+      feature: "Per-MAU pricing",
+      qeetid: "$0.02 / MAU (Pro)",
+      competitor: "$0.02 / MAU after free",
+    },
+    {
+      section: "Pricing",
+      feature: "B2B SSO included",
+      qeetid: true,
+      competitor: false,
+      note: "Clerk SSO is reserved for higher tiers.",
+    },
+    {
+      section: "Pricing",
+      feature: "Audit log retention",
+      qeetid: "7 days / S3 export",
+      competitor: "Paid",
+    },
 
     // ---- Authorization & audit ----
-    { section: "Authorization & audit", feature: "RBAC + single-call /check", qeetid: true, competitor: true },
-    { section: "Authorization & audit", feature: "ABAC policy engine", qeetid: true, competitor: false },
-    { section: "Authorization & audit", feature: "Explainable authz (“why?” grant-path trace)", qeetid: true, competitor: false },
-    { section: "Authorization & audit", feature: "Tamper-evident hash-chained audit + /verify", qeetid: true, competitor: "partial" },
+    {
+      section: "Authorization & audit",
+      feature: "RBAC + single-call /check",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authorization & audit",
+      feature: "ABAC policy engine",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Authorization & audit",
+      feature: "Explainable authz (“why?” grant-path trace)",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Authorization & audit",
+      feature: "Tamper-evident hash-chained audit + /verify",
+      qeetid: true,
+      competitor: "partial",
+    },
 
     // ---- Compliance ----
-    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap (pre-GA)", competitor: true },
-    { section: "Compliance", feature: "GDPR erasure / data export", qeetid: true, competitor: true },
-    { section: "Compliance", feature: "Self-hosted compliance boundary", qeetid: true, competitor: false },
+    {
+      section: "Compliance",
+      feature: "SOC 2 Type II",
+      qeetid: "Roadmap (pre-GA)",
+      competitor: true,
+    },
+    {
+      section: "Compliance",
+      feature: "GDPR erasure / data export",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Compliance",
+      feature: "Self-hosted compliance boundary",
+      qeetid: true,
+      competitor: false,
+    },
   ],
   cta: {
     headline: "Keep the developer experience. Own the infrastructure.",

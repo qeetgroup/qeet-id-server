@@ -70,8 +70,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
   ];
 
   // Competitor comparison landing pages — SEO bait for "Qeet ID vs X".
-  const compareRoutes: MetadataRoute.Sitemap = ["auth0", "clerk", "stytch", "workos"].map(
-    (slug) => entry(`/compare/${slug}`, "monthly", 0.6, now),
+  const compareRoutes: MetadataRoute.Sitemap = ["auth0", "clerk", "stytch", "workos"].map((slug) =>
+    entry(`/compare/${slug}`, "monthly", 0.6, now),
   );
 
   // Dynamic blog posts.

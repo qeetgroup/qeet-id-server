@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  cn,
   DataState,
   Select,
   SelectContent,
@@ -20,7 +21,6 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-  cn,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon } from "lucide-react";
@@ -38,7 +38,9 @@ import {
   useSubscription,
 } from "@/lib/billing";
 
-export const Route = createFileRoute("/_app/settings/billing")({ component: BillingPage });
+export const Route = createFileRoute("/_app/settings/billing")({
+  component: BillingPage,
+});
 
 // Static plan display data — pricing, features, and visual decoration.
 // The backend still controls checkout / subscription state; we match on plan.code.
@@ -188,7 +190,9 @@ function BillingPage() {
                   </CardDescription>
                   {sub.current_period_end && (
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {sub.cancel_at_period_end ? t("billing.currentPlan.cancels") : t("billing.currentPlan.renews")}{" "}
+                      {sub.cancel_at_period_end
+                        ? t("billing.currentPlan.cancels")
+                        : t("billing.currentPlan.renews")}{" "}
                       <TimeSince value={sub.current_period_end} />
                     </p>
                   )}
@@ -230,9 +234,7 @@ function BillingPage() {
                 key={plan.code}
                 className={cn(
                   "relative flex flex-col overflow-hidden transition-shadow",
-                  plan.featured
-                    ? "border-primary shadow-lg shadow-primary/10"
-                    : "border-border/60",
+                  plan.featured ? "border-primary shadow-lg shadow-primary/10" : "border-border/60",
                   isCurrent && "ring-2 ring-primary/30",
                 )}
               >
@@ -319,10 +321,15 @@ function BillingPage() {
                       className="w-full"
                       disabled={isCurrent || checkoutM.isPending}
                       onClick={() =>
-                        checkoutM.mutate({ plan_code: plan.code, currency: activeCurrency })
+                        checkoutM.mutate({
+                          plan_code: plan.code,
+                          currency: activeCurrency,
+                        })
                       }
                     >
-                      {isCurrent ? t("billing.plan.isCurrent") : t("billing.plan.switchTo", { name: plan.name })}
+                      {isCurrent
+                        ? t("billing.plan.isCurrent")
+                        : t("billing.plan.switchTo", { name: plan.name })}
                     </Button>
                   )}
                 </CardContent>

@@ -25,12 +25,12 @@ import {
   Textarea,
   TimeSince,
 } from "@qeetrix/ui";
-import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, KeySquareIcon, Loader2Icon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   type OidcClient,
   useDeleteOidcClient,
@@ -232,11 +232,7 @@ function OidcClientDetail({ client }: { client: OidcClient }) {
                     })
                   }
                 >
-                  {rotateM.isPending ? (
-                    <Loader2Icon className="animate-spin" />
-                  ) : (
-                    <RefreshCwIcon />
-                  )}
+                  {rotateM.isPending ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
                   {t("detail.rotateSecret")}
                 </Button>
               )}
@@ -276,7 +272,9 @@ function OidcClientDetail({ client }: { client: OidcClient }) {
                 t={t}
                 i18nKey="detail.deleteDescription"
                 values={{ name: client.name }}
-                components={{ strong: <span className="font-medium text-foreground" /> }}
+                components={{
+                  strong: <span className="font-medium text-foreground" />,
+                }}
               />
             </AlertDialogDescription>
           </AlertDialogHeader>

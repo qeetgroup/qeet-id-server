@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
-import { useRef, type ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 
 type ParallaxProps = {
   children: ReactNode;

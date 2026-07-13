@@ -14,9 +14,9 @@ import {
   TableHeader,
   TableRow,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { startRegistration } from "@simplewebauthn/browser";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { FingerprintIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -24,7 +24,9 @@ import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
-export const Route = createFileRoute("/_app/auth/login-methods/passkeys")({ component: PasskeysPage });
+export const Route = createFileRoute("/_app/auth/login-methods/passkeys")({
+  component: PasskeysPage,
+});
 
 type Passkey = {
   id: string;
@@ -58,8 +60,13 @@ function PasskeysPage() {
         session_id: string;
         publicKey: Parameters<typeof startRegistration>[0]["optionsJSON"];
       }>("/v1/passkeys/register/begin", { method: "POST" });
-      const credential = await startRegistration({ optionsJSON: begin.publicKey });
-      const name = window.prompt(t("loginMethods.passkeys.promptName"), t("loginMethods.passkeys.promptDefault"))?.trim() || undefined;
+      const credential = await startRegistration({
+        optionsJSON: begin.publicKey,
+      });
+      const name =
+        window
+          .prompt(t("loginMethods.passkeys.promptName"), t("loginMethods.passkeys.promptDefault"))
+          ?.trim() || undefined;
       await api<void>("/v1/passkeys/register/finish", {
         method: "POST",
         body: { session_id: begin.session_id, credential, name },
@@ -76,12 +83,20 @@ function PasskeysPage() {
         description={t("loginMethods.passkeys.description")}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+            >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               {t("loginMethods.passkeys.refreshBtn")}
             </Button>
             <Button size="sm" onClick={() => registerM.mutate()} disabled={registerM.isPending}>
-              <PlusIcon /> {registerM.isPending ? t("loginMethods.passkeys.registeringBtn") : t("loginMethods.passkeys.registerBtn")}
+              <PlusIcon />{" "}
+              {registerM.isPending
+                ? t("loginMethods.passkeys.registeringBtn")
+                : t("loginMethods.passkeys.registerBtn")}
             </Button>
           </>
         }
@@ -91,18 +106,26 @@ function PasskeysPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("loginMethods.passkeys.list.title")}</CardTitle>
           <CardDescription>
-            {t("loginMethods.passkeys.list.count", { count: listQ.data?.items?.length ?? 0 })}
+            {t("loginMethods.passkeys.list.count", {
+              count: listQ.data?.items?.length ?? 0,
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {listQ.isLoading ? (
-            <div className="space-y-3 p-4">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="space-y-3 p-4">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
           ) : listQ.isError ? (
             <div className="p-6 text-sm text-destructive">{(listQ.error as Error).message}</div>
           ) : !listQ.data?.items?.length ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <FingerprintIcon className="size-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">{t("loginMethods.passkeys.list.empty")}</p>
+              <p className="text-sm text-muted-foreground">
+                {t("loginMethods.passkeys.list.empty")}
+              </p>
             </div>
           ) : (
             <Table>
@@ -112,7 +135,9 @@ function PasskeysPage() {
                   <TableHead>{t("loginMethods.passkeys.columns.transports")}</TableHead>
                   <TableHead>{t("loginMethods.passkeys.columns.lastUsed")}</TableHead>
                   <TableHead>{t("loginMethods.passkeys.columns.created")}</TableHead>
-                  <TableHead className="text-right">{t("loginMethods.passkeys.columns.actions")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("loginMethods.passkeys.columns.actions")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -121,20 +146,30 @@ function PasskeysPage() {
                     <TableCell className="font-medium">{p.name}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {(p.transports ?? []).map((transport) => <Badge key={transport} variant="muted">{transport}</Badge>)}
+                        {(p.transports ?? []).map((transport) => (
+                          <Badge key={transport} variant="muted">
+                            {transport}
+                          </Badge>
+                        ))}
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {p.last_used_at ? new Date(p.last_used_at).toLocaleString() : t("loginMethods.passkeys.lastUsedNever")}
+                      {p.last_used_at
+                        ? new Date(p.last_used_at).toLocaleString()
+                        : t("loginMethods.passkeys.lastUsedNever")}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{new Date(p.created_at).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {new Date(p.created_at).toLocaleDateString()}
+                    </TableCell>
                     <TableCell className="text-right">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() =>
                           openConfirm({
-                            title: t("loginMethods.passkeys.confirm.title", { name: p.name }),
+                            title: t("loginMethods.passkeys.confirm.title", {
+                              name: p.name,
+                            }),
                             variant: "destructive",
                             confirmLabel: t("loginMethods.passkeys.confirm.label"),
                             onConfirm: () => deleteM.mutate(p.id),

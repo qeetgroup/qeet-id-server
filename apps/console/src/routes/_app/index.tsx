@@ -44,16 +44,9 @@ import {
   UserPlusIcon,
   UsersIcon,
 } from "lucide-react";
+import type * as React from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-
-import { api } from "@/lib/api";
-
-import { useTenantId } from "@/lib/auth";
-import { useAnalyticsOverview, formatShortDate } from "@/lib/analytics";
-import type * as React from "react";
-import { OnboardingChecklist } from "@/features/dashboard/components/onboarding-checklist";
-import { PasskeyPromptCard } from "@/features/dashboard/components/passkey-prompt-card";
 import {
   Area,
   AreaChart,
@@ -70,6 +63,11 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { OnboardingChecklist } from "@/features/dashboard/components/onboarding-checklist";
+import { PasskeyPromptCard } from "@/features/dashboard/components/passkey-prompt-card";
+import { formatShortDate, useAnalyticsOverview } from "@/lib/analytics";
+import { api } from "@/lib/api";
+import { useTenantId } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app/")({
   component: DashboardPage,
@@ -131,7 +129,8 @@ function formatDelta(pct: number, unit: "%" | "pp" = "%"): string {
 }
 
 // Subtle lift on hover, suppressed for reduced-motion users.
-const cardLift = "motion-safe:transition-transform motion-safe:duration-200 motion-safe:hover:-translate-y-0.5";
+const cardLift =
+  "motion-safe:transition-transform motion-safe:duration-200 motion-safe:hover:-translate-y-0.5";
 
 function getQuickActions(t: (k: string) => string) {
   return [
@@ -177,8 +176,7 @@ type AuditEvent = {
 function useRecentActivity(tenantId: string | undefined) {
   return useQuery({
     queryKey: ["activity-recent-dashboard", tenantId],
-    queryFn: () =>
-      api<{ items: AuditEvent[] }>(`/v1/tenants/${tenantId}/audit?limit=5`),
+    queryFn: () => api<{ items: AuditEvent[] }>(`/v1/tenants/${tenantId}/audit?limit=5`),
     staleTime: 60_000,
     refetchInterval: 15_000,
     refetchIntervalInBackground: false,
@@ -187,11 +185,9 @@ function useRecentActivity(tenantId: string | undefined) {
 }
 
 function activityIcon(action: string): React.ReactNode {
-  if (action.startsWith("user.login") || action.startsWith("session."))
-    return <LogInIcon />;
+  if (action.startsWith("user.login") || action.startsWith("session.")) return <LogInIcon />;
   if (action.startsWith("user.")) return <UserIcon />;
-  if (action.startsWith("mfa.") || action.startsWith("api_key."))
-    return <KeyRoundIcon />;
+  if (action.startsWith("mfa.") || action.startsWith("api_key.")) return <KeyRoundIcon />;
   return <ActivityIcon />;
 }
 
@@ -226,13 +222,14 @@ function StatCard({
 }: StatCardProps) {
   const { t } = useTranslation("dashboard");
   const trend = positive ? ("up" as const) : ("down" as const);
-  const textClass =
-    iconClass.split(" ").find((c) => c.startsWith("text-")) ?? "text-primary";
+  const textClass = iconClass.split(" ").find((c) => c.startsWith("text-")) ?? "text-primary";
   return (
     <Card className={`overflow-hidden ${cardLift}`}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
-        <div className={`grid size-9 shrink-0 place-items-center rounded-lg [&_svg]:size-4 ${iconClass}`}>
+        <div
+          className={`grid size-9 shrink-0 place-items-center rounded-lg [&_svg]:size-4 ${iconClass}`}
+        >
           {icon}
         </div>
       </CardHeader>
@@ -257,7 +254,12 @@ function StatCard({
   );
 }
 
-type MiniStatProps = { icon: React.ReactNode; label: string; value: string; sub?: string };
+type MiniStatProps = {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub?: string;
+};
 
 function MiniStat({ icon, label, value, sub }: MiniStatProps) {
   return (
@@ -333,7 +335,9 @@ function DashboardContent() {
   const navigate = useNavigate();
   const { t } = useTranslation("dashboard");
   const { data, isLoading, isError, error } = useAnalyticsOverview();
-  const { data: activityData, isLoading: activityLoading } = useRecentActivity(tenantId ?? undefined);
+  const { data: activityData, isLoading: activityLoading } = useRecentActivity(
+    tenantId ?? undefined,
+  );
   const [range, setRange] = useState<RangeKey>("14d");
   const take = range === "7d" ? 7 : 14;
   const quickActions = getQuickActions(t);
@@ -343,7 +347,8 @@ function DashboardContent() {
       <div className="flex min-w-0 flex-col gap-4">
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            {t("error")}{error instanceof Error ? `: ${error.message}` : ""}.
+            {t("error")}
+            {error instanceof Error ? `: ${error.message}` : ""}.
           </CardContent>
         </Card>
       </div>
@@ -353,10 +358,22 @@ function DashboardContent() {
   const overview = data;
   const tail = <T,>(arr: T[]): T[] => (arr.length > take ? arr.slice(-take) : arr);
 
-  const sparkUsers = tail(overview?.user_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
-  const sparkLogins = tail(overview?.login_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
-  const sparkMFA = tail(overview?.mfa_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
-  const sparkFailed = tail(overview?.failed_trend_14d ?? []).map((p, i) => ({ d: i, v: p.value }));
+  const sparkUsers = tail(overview?.user_trend_14d ?? []).map((p, i) => ({
+    d: i,
+    v: p.value,
+  }));
+  const sparkLogins = tail(overview?.login_trend_14d ?? []).map((p, i) => ({
+    d: i,
+    v: p.value,
+  }));
+  const sparkMFA = tail(overview?.mfa_trend_14d ?? []).map((p, i) => ({
+    d: i,
+    v: p.value,
+  }));
+  const sparkFailed = tail(overview?.failed_trend_14d ?? []).map((p, i) => ({
+    d: i,
+    v: p.value,
+  }));
 
   const activityRows = tail(overview?.login_activity_14d ?? []).map((p) => ({
     day: formatShortDate(p.date),
@@ -497,8 +514,12 @@ function DashboardContent() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {quickActions.map(({ icon: Icon, label, description, href, iconClass }) => (
             <Link key={href} to={href as never} className="block">
-              <Card className={`flex cursor-pointer items-center gap-3 p-4 transition-colors hover:bg-muted/40 ${cardLift}`}>
-                <div className={`grid size-9 shrink-0 place-items-center rounded-lg [&_svg]:size-4 ${iconClass}`}>
+              <Card
+                className={`flex cursor-pointer items-center gap-3 p-4 transition-colors hover:bg-muted/40 ${cardLift}`}
+              >
+                <div
+                  className={`grid size-9 shrink-0 place-items-center rounded-lg [&_svg]:size-4 ${iconClass}`}
+                >
                   <Icon />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -519,7 +540,11 @@ function DashboardContent() {
             <CardTitle>{t("charts.authActivity.title")}</CardTitle>
             <CardDescription>{t("charts.authActivity.description", { take })}</CardDescription>
             <CardAction>
-              <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/analytics" as never })}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate({ to: "/analytics" as never })}
+              >
                 {t("charts.viewAnalytics")}
               </Button>
             </CardAction>
@@ -593,7 +618,7 @@ function DashboardContent() {
                     strokeWidth={2}
                   >
                     <Label
-                      content={({ viewBox }) => {
+                      content={({ viewBox }: { viewBox?: { cx?: number; cy?: number } }) => {
                         if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
                         return (
                           <text
@@ -614,7 +639,9 @@ function DashboardContent() {
                               y={(viewBox.cy ?? 0) + 22}
                               className="fill-muted-foreground text-xs"
                             >
-                              {t("charts.loginMix.methodCount", { count: mixRows.length })}
+                              {t("charts.loginMix.methodCount", {
+                                count: mixRows.length,
+                              })}
                             </tspan>
                           </text>
                         );
@@ -674,7 +701,11 @@ function DashboardContent() {
             <CardTitle>{t("charts.failedLogins.title")}</CardTitle>
             <CardDescription>{t("charts.failedLogins.description")}</CardDescription>
             <CardAction>
-              <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/security/audit-logs" as never })}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate({ to: "/security/audit-logs" as never })}
+              >
                 {t("charts.viewLogs")}
               </Button>
             </CardAction>
@@ -727,7 +758,11 @@ function DashboardContent() {
           <CardTitle>{t("activity.title")}</CardTitle>
           <CardDescription>{t("activity.description")}</CardDescription>
           <CardAction>
-            <Button variant="ghost" size="sm" onClick={() => navigate({ to: "/security/audit-logs" as never })}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate({ to: "/security/audit-logs" as never })}
+            >
               {t("activity.viewAll")}
             </Button>
           </CardAction>
@@ -765,7 +800,10 @@ function DashboardContent() {
                     <p className="truncate text-sm font-medium">{formatAction(event.action)}</p>
                     <p className="text-xs text-muted-foreground">{event.resource_type}</p>
                   </div>
-                  <TimeSince value={event.created_at} className="shrink-0 text-xs text-muted-foreground" />
+                  <TimeSince
+                    value={event.created_at}
+                    className="shrink-0 text-xs text-muted-foreground"
+                  />
                 </li>
               ))}
             </ul>

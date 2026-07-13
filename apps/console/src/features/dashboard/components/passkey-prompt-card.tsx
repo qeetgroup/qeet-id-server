@@ -1,11 +1,11 @@
 import {
   Button,
+  buttonVariants,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  buttonVariants,
 } from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import { FingerprintIcon, XIcon, ZapIcon } from "lucide-react";
@@ -56,25 +56,17 @@ export function PasskeyPromptCard() {
           <div>
             <CardTitle className="text-base">Speed up sign-in with a passkey</CardTitle>
             <CardDescription>
-              Passkeys are faster than passwords and resist phishing. Your device handles the
-              prompt — Touch ID, Face ID, Windows Hello, or a security key.
+              Passkeys are faster than passwords and resist phishing. Your device handles the prompt
+              — Touch ID, Face ID, Windows Hello, or a security key.
             </CardDescription>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Dismiss"
-          onClick={handleDismiss}
-        >
+        <Button variant="ghost" size="icon" aria-label="Dismiss" onClick={handleDismiss}>
           <XIcon />
         </Button>
       </CardHeader>
       <CardContent className="flex flex-wrap items-center gap-2 border-t pt-3">
-        <Link
-          to="/auth/login-methods/passkeys"
-          className={buttonVariants({ size: "sm" })}
-        >
+        <Link to="/auth/login-methods/passkeys" className={buttonVariants({ size: "sm" })}>
           <ZapIcon /> Add a passkey
         </Link>
         <Button variant="ghost" size="sm" onClick={handleDismiss}>

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
-import { useRef, type PointerEvent, type ReactNode } from "react";
+import { type PointerEvent, type ReactNode, useRef } from "react";
 
 type MagneticButtonProps = {
   children: ReactNode;

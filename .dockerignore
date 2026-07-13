@@ -11,18 +11,12 @@
 node_modules/
 apps/
 packages/
-sdk/
-examples/
 package.json
 bun.lock
-turbo.json
-eslint.config.mjs
+biome.json
 .npmrc
-.prettierrc
-.prettierignore
 .next/
 dist/
-.turbo/
 *.tsbuildinfo
 
 # Infra / deploy / docs / codegen inputs / tests — not needed to build the binary

@@ -55,11 +55,7 @@ export function CodeTabs({ tabs, className }: CodeTabsProps) {
         id={`${baseId}-panel-${active}`}
         aria-labelledby={`${baseId}-tab-${active}`}
       >
-        <CodeBlock
-          value={current.value}
-          language={current.language}
-          caption={current.caption}
-        />
+        <CodeBlock value={current.value} language={current.language} caption={current.caption} />
       </div>
     </div>
   );

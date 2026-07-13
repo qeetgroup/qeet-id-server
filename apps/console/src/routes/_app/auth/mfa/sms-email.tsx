@@ -33,13 +33,20 @@ import {
   TableRow,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2Icon, MailIcon, MessageSquareIcon, PlusIcon, SendIcon, Trash2Icon } from "lucide-react";
+import {
+  Loader2Icon,
+  MailIcon,
+  MessageSquareIcon,
+  PlusIcon,
+  SendIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   type OtpChannel,
   useChallengeOtpFactor,
@@ -49,7 +56,9 @@ import {
   useOtpFactors,
 } from "@/lib/mfa";
 
-export const Route = createFileRoute("/_app/auth/mfa/sms-email")({ component: SmsEmailPage });
+export const Route = createFileRoute("/_app/auth/mfa/sms-email")({
+  component: SmsEmailPage,
+});
 
 function SmsEmailPage() {
   const { t } = useTranslation("auth");
@@ -108,13 +117,17 @@ function SmsEmailPage() {
                         ) : (
                           <MessageSquareIcon className="size-4 text-muted-foreground" />
                         )}
-                        {f.channel === "email" ? t("mfa.smsEmail.channelEmail") : t("mfa.smsEmail.channelSms")}
+                        {f.channel === "email"
+                          ? t("mfa.smsEmail.channelEmail")
+                          : t("mfa.smsEmail.channelSms")}
                       </span>
                     </TableCell>
                     <TableCell className="font-mono text-xs">{f.destination}</TableCell>
                     <TableCell>
                       <StatusPill kind={f.verified ? "success" : "warning"}>
-                        {f.verified ? t("mfa.smsEmail.statusVerified") : t("mfa.smsEmail.statusPending")}
+                        {f.verified
+                          ? t("mfa.smsEmail.statusVerified")
+                          : t("mfa.smsEmail.statusPending")}
                       </StatusPill>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
@@ -132,7 +145,9 @@ function SmsEmailPage() {
                         size="sm"
                         onClick={() =>
                           openConfirm({
-                            title: t("mfa.smsEmail.confirm.title", { channel: f.channel }),
+                            title: t("mfa.smsEmail.confirm.title", {
+                              channel: f.channel,
+                            }),
                             variant: "destructive",
                             confirmLabel: t("mfa.smsEmail.confirm.label"),
                             onConfirm: () => deleteM.mutate(f.id),
@@ -156,7 +171,13 @@ function SmsEmailPage() {
   );
 }
 
-function AddFactorSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function AddFactorSheet({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
   const { t } = useTranslation("auth");
   const enrollM = useEnrollOtpStart();
   const confirmM = useConfirmOtpFactor();
@@ -212,24 +233,36 @@ function AddFactorSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="email">{t("mfa.smsEmail.sheet.channelEmailOption")}</SelectItem>
-                        <SelectItem value="sms">{t("mfa.smsEmail.sheet.channelSmsOption")}</SelectItem>
+                        <SelectItem value="email">
+                          {t("mfa.smsEmail.sheet.channelEmailOption")}
+                        </SelectItem>
+                        <SelectItem value="sms">
+                          {t("mfa.smsEmail.sheet.channelSmsOption")}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
                   <Field>
                     <FieldLabel htmlFor="otp-destination">
-                      {channel === "email" ? t("mfa.smsEmail.sheet.destinationEmailLabel") : t("mfa.smsEmail.sheet.destinationPhoneLabel")}
+                      {channel === "email"
+                        ? t("mfa.smsEmail.sheet.destinationEmailLabel")
+                        : t("mfa.smsEmail.sheet.destinationPhoneLabel")}
                     </FieldLabel>
                     <Input
                       id="otp-destination"
                       value={destination}
                       onChange={(e) => setDestination(e.target.value)}
-                      placeholder={channel === "email" ? t("mfa.smsEmail.sheet.destinationEmailPlaceholder") : t("mfa.smsEmail.sheet.destinationPhonePlaceholder")}
+                      placeholder={
+                        channel === "email"
+                          ? t("mfa.smsEmail.sheet.destinationEmailPlaceholder")
+                          : t("mfa.smsEmail.sheet.destinationPhonePlaceholder")
+                      }
                       required
                     />
                     <FieldDescription>
-                      {channel === "sms" ? t("mfa.smsEmail.sheet.destinationPhoneHelp") : t("mfa.smsEmail.sheet.destinationEmailHelp")}
+                      {channel === "sms"
+                        ? t("mfa.smsEmail.sheet.destinationPhoneHelp")
+                        : t("mfa.smsEmail.sheet.destinationEmailHelp")}
                     </FieldDescription>
                   </Field>
                   {enrollM.error && (
@@ -263,7 +296,9 @@ function AddFactorSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (
                       className="font-mono tracking-widest"
                       required
                     />
-                    <FieldDescription>{t("mfa.smsEmail.sheet.codeSentHelp", { destination })}</FieldDescription>
+                    <FieldDescription>
+                      {t("mfa.smsEmail.sheet.codeSentHelp", { destination })}
+                    </FieldDescription>
                   </Field>
                   {confirmM.error && (
                     <Field>
@@ -276,16 +311,30 @@ function AddFactorSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (
           </div>
 
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("mfa.smsEmail.sheet.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("mfa.smsEmail.sheet.cancelBtn")}
+            </SheetClose>
             {!factorId ? (
-              <Button type="submit" form="otp-start" disabled={enrollM.isPending || !destination.trim()}>
+              <Button
+                type="submit"
+                form="otp-start"
+                disabled={enrollM.isPending || !destination.trim()}
+              >
                 {enrollM.isPending && <Loader2Icon className="animate-spin" />}
-                {enrollM.isPending ? t("mfa.smsEmail.sheet.sendingBtn") : t("mfa.smsEmail.sheet.sendCodeBtn")}
+                {enrollM.isPending
+                  ? t("mfa.smsEmail.sheet.sendingBtn")
+                  : t("mfa.smsEmail.sheet.sendCodeBtn")}
               </Button>
             ) : (
-              <Button type="submit" form="otp-confirm" disabled={confirmM.isPending || !code.trim()}>
+              <Button
+                type="submit"
+                form="otp-confirm"
+                disabled={confirmM.isPending || !code.trim()}
+              >
                 {confirmM.isPending && <Loader2Icon className="animate-spin" />}
-                {confirmM.isPending ? t("mfa.smsEmail.sheet.confirmingBtn") : t("mfa.smsEmail.sheet.confirmBtn")}
+                {confirmM.isPending
+                  ? t("mfa.smsEmail.sheet.confirmingBtn")
+                  : t("mfa.smsEmail.sheet.confirmBtn")}
               </Button>
             )}
           </SheetFooter>

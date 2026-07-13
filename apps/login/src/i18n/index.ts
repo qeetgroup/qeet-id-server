@@ -3,10 +3,10 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 
 import common from "./locales/en/common.json";
-import login from "./locales/en/login.json";
 import consent from "./locales/en/consent.json";
 import device from "./locales/en/device.json";
 import loggedOut from "./locales/en/loggedOut.json";
+import login from "./locales/en/login.json";
 import recovery from "./locales/en/recovery.json";
 import signup from "./locales/en/signup.json";
 

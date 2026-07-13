@@ -36,7 +36,10 @@ export function useCreateLogSink() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { type: SinkType; endpoint: string; token: string }) =>
-      api<LogSink>(`/v1/tenants/${tenantId}/log-sinks`, { method: "POST", body }),
+      api<LogSink>(`/v1/tenants/${tenantId}/log-sinks`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
     meta: { successMessage: "Log sink added" },
   });
@@ -47,7 +50,10 @@ export function useToggleLogSink() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api<void>(`/v1/tenants/${tenantId}/log-sinks/${id}`, { method: "PATCH", body: { enabled } }),
+      api<void>(`/v1/tenants/${tenantId}/log-sinks/${id}`, {
+        method: "PATCH",
+        body: { enabled },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -57,7 +63,9 @@ export function useDeleteLogSink() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/log-sinks/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/log-sinks/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

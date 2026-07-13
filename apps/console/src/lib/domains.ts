@@ -34,7 +34,10 @@ export function useAddDomain() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (domain: string) =>
-      api<TenantDomain>(`/v1/tenants/${tenantId}/domains`, { method: "POST", body: { domain } }),
+      api<TenantDomain>(`/v1/tenants/${tenantId}/domains`, {
+        method: "POST",
+        body: { domain },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -44,7 +47,9 @@ export function useVerifyDomain() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<TenantDomain>(`/v1/tenants/${tenantId}/domains/${id}/verify`, { method: "POST" }),
+      api<TenantDomain>(`/v1/tenants/${tenantId}/domains/${id}/verify`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
     meta: { successMessage: "Domain verified" },
   });

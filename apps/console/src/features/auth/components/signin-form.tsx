@@ -14,8 +14,8 @@ import {
 import { Link } from "@tanstack/react-router";
 import { Apple, Github, Google, Microsoft } from "@thesvg/react";
 import { BuildingIcon, Loader2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
 import type * as React from "react";
+import { useEffect, useState } from "react";
 
 import { useSSODiscovery } from "@/lib/sso";
 
@@ -170,8 +170,14 @@ export function LoginForm({
       </Card>
       <FieldDescription className="px-6 text-center">
         By clicking continue, you agree to our{" "}
-        <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and{" "}
-        <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+        <a href="/terms" target="_blank" rel="noopener noreferrer">
+          Terms of Service
+        </a>{" "}
+        and{" "}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer">
+          Privacy Policy
+        </a>
+        .
       </FieldDescription>
     </div>
   );

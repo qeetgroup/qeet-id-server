@@ -1,17 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage, cn } from "@qeetrix/ui";
-import {
-  Link,
-  Outlet,
-  createFileRoute,
-  useNavigate,
-  useRouterState,
-} from "@tanstack/react-router";
-import {
-  DatabaseIcon,
-  MonitorSmartphoneIcon,
-  ShieldCheckIcon,
-  UserIcon,
-} from "lucide-react";
+import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { DatabaseIcon, MonitorSmartphoneIcon, ShieldCheckIcon, UserIcon } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -36,8 +25,16 @@ function AccountLayout() {
 
   const NAV = [
     { to: "/account/profile", label: t("nav.profile"), icon: UserIcon },
-    { to: "/account/security", label: t("nav.security"), icon: ShieldCheckIcon },
-    { to: "/account/sessions", label: t("nav.sessions"), icon: MonitorSmartphoneIcon },
+    {
+      to: "/account/security",
+      label: t("nav.security"),
+      icon: ShieldCheckIcon,
+    },
+    {
+      to: "/account/sessions",
+      label: t("nav.sessions"),
+      icon: MonitorSmartphoneIcon,
+    },
     { to: "/account/data", label: t("nav.data"), icon: DatabaseIcon },
   ] as const;
 

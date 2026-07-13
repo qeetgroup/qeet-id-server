@@ -10,6 +10,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  cn,
   DataState,
   Skeleton,
   Table,
@@ -19,7 +20,6 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-  cn,
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -121,9 +121,7 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
   const listQ = useQuery({
     queryKey: ["compliance-evidence-list", tenantId, framework],
     queryFn: () =>
-      api<{ items: EvidenceRun[] }>(
-        `/v1/tenants/${tenantId}/compliance/${framework}/evidence`,
-      ),
+      api<{ items: EvidenceRun[] }>(`/v1/tenants/${tenantId}/compliance/${framework}/evidence`),
     enabled: !!tenantId,
   });
 
@@ -141,28 +139,23 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
   const runQ = useQuery({
     queryKey: ["compliance-evidence-run", tenantId, effectiveSelectedId],
     queryFn: () =>
-      api<EvidenceRun>(
-        `/v1/tenants/${tenantId}/compliance/evidence/${effectiveSelectedId}`,
-      ),
+      api<EvidenceRun>(`/v1/tenants/${tenantId}/compliance/evidence/${effectiveSelectedId}`),
     enabled: !!tenantId && !!effectiveSelectedId,
   });
 
   const selectedRun = runQ.data;
   const controls: ControlResult[] = selectedRun?.controls ?? [];
   const total =
-    (selectedRun?.pass_count ?? 0) +
-    (selectedRun?.fail_count ?? 0) +
-    (selectedRun?.na_count ?? 0);
+    (selectedRun?.pass_count ?? 0) + (selectedRun?.fail_count ?? 0) + (selectedRun?.na_count ?? 0);
 
   // ---------- Generate mutation ------------------------------------------
   // POST /v1/tenants/{tenantId}/compliance/{framework}/evidence
   // → EvidenceRun (with controls)
   const generateM = useMutation({
     mutationFn: () =>
-      api<EvidenceRun>(
-        `/v1/tenants/${tenantId}/compliance/${framework}/evidence`,
-        { method: "POST" },
-      ),
+      api<EvidenceRun>(`/v1/tenants/${tenantId}/compliance/${framework}/evidence`, {
+        method: "POST",
+      }),
     onSuccess: (run) => {
       // Refresh the list so the new run appears in the history card.
       qc.invalidateQueries({
@@ -170,10 +163,7 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
       });
       // Also seed the detail cache so we don't need a round-trip —
       // the POST response already includes controls.
-      qc.setQueryData(
-        ["compliance-evidence-run", tenantId, run.id],
-        run,
-      );
+      qc.setQueryData(["compliance-evidence-run", tenantId, run.id], run);
       setSelectedRunId(run.id);
     },
     meta: { successMessage: "Evidence generated" },
@@ -195,15 +185,8 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
         title={t(`${framework}.title`)}
         description={t(`${framework}.description`)}
         actions={
-          <Button
-            onClick={() => generateM.mutate()}
-            disabled={isGenerating || !tenantId}
-          >
-            {isGenerating ? (
-              <Loader2Icon className="animate-spin" />
-            ) : (
-              <RefreshCwIcon />
-            )}
+          <Button onClick={() => generateM.mutate()} disabled={isGenerating || !tenantId}>
+            {isGenerating ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
             {isGenerating ? t("evidence.generating") : t("evidence.generate")}
           </Button>
         }
@@ -234,14 +217,9 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
             <ShieldCheckIcon className="size-10 text-muted-foreground" />
             <div>
               <p className="text-sm font-medium">{t("evidence.emptyTitle")}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {t("evidence.emptyDescription")}
-              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{t("evidence.emptyDescription")}</p>
             </div>
-            <Button
-              onClick={() => generateM.mutate()}
-              disabled={isGenerating || !tenantId}
-            >
+            <Button onClick={() => generateM.mutate()} disabled={isGenerating || !tenantId}>
               {isGenerating && <Loader2Icon className="animate-spin" />}
               {t("evidence.generate")}
             </Button>
@@ -262,9 +240,7 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
                 {selectedRun ? (
                   <div className="text-2xl font-semibold tracking-tight text-emerald-600 dark:text-emerald-400">
                     {selectedRun.pass_count}
-                    <span className="text-base font-medium text-muted-foreground">
-                      /{total}
-                    </span>
+                    <span className="text-base font-medium text-muted-foreground">/{total}</span>
                   </div>
                 ) : (
                   <Skeleton className="h-8 w-20" />
@@ -308,10 +284,7 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
               </CardHeader>
               <CardContent>
                 {selectedRun ? (
-                  <TimeSince
-                    value={selectedRun.generated_at}
-                    className="text-base font-medium"
-                  />
+                  <TimeSince value={selectedRun.generated_at} className="text-base font-medium" />
                 ) : (
                   <Skeleton className="h-6 w-28" />
                 )}
@@ -362,13 +335,9 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
                   <TableBody>
                     {controls.map((c) => (
                       <TableRow key={c.id}>
-                        <TableCell className="font-mono text-xs">
-                          {c.criteria}
-                        </TableCell>
+                        <TableCell className="font-mono text-xs">{c.criteria}</TableCell>
                         <TableCell className="font-medium">{c.name}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {c.category}
-                        </TableCell>
+                        <TableCell className="text-muted-foreground">{c.category}</TableCell>
                         <TableCell>{statusBadge(c.status)}</TableCell>
                         <TableCell className="max-w-sm text-xs text-muted-foreground">
                           {c.detail}
@@ -420,10 +389,7 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
                         aria-selected={isSelected}
                       >
                         <TableCell>
-                          <TimeSince
-                            value={run.generated_at}
-                            className="text-sm"
-                          />
+                          <TimeSince value={run.generated_at} className="text-sm" />
                         </TableCell>
                         <TableCell className="font-medium text-emerald-600 dark:text-emerald-400">
                           {run.pass_count}
@@ -431,9 +397,7 @@ export function ComplianceEvidencePage({ framework }: ComplianceEvidencePageProp
                         <TableCell className="font-medium text-destructive">
                           {run.fail_count}
                         </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {run.na_count}
-                        </TableCell>
+                        <TableCell className="text-muted-foreground">{run.na_count}</TableCell>
                       </TableRow>
                     );
                   })}

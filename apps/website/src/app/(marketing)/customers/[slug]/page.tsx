@@ -6,12 +6,12 @@ import { notFound } from "next/navigation";
 import { caseStudySlug } from "@/components/marketing/blocks/case-study-card";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { ButtonLink } from "@/components/marketing/button-link";
-import { SIGN_UP_URL } from "@/lib/links";
 import { FadeRise, Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { Section } from "@/components/marketing/section";
 import { CTA } from "@/components/marketing/sections/cta";
 import { BreadcrumbJsonLd } from "@/components/marketing/structured-data";
 import { getStory, relatedStories, stories } from "@/lib/customers";
+import { SIGN_UP_URL } from "@/lib/links";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -28,7 +28,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: `${story.company} — customer story`,
     description: story.summary,
-    openGraph: { title: story.headline, description: story.summary, type: "article" },
+    openGraph: {
+      title: story.headline,
+      description: story.summary,
+      type: "article",
+    },
   };
 }
 

@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DataState,
   Field,
   FieldDescription,
   FieldError,
@@ -19,7 +20,6 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
-  DataState,
   StatusPill,
   Table,
   TableBody,
@@ -29,21 +29,30 @@ import {
   TableRow,
   TimeSince,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2Icon, PlayIcon, PlusIcon, RefreshCwIcon, Trash2Icon, WebhookIcon } from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  Loader2Icon,
+  PlayIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  WebhookIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
-import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/developer/webhooks/")({ component: WebhooksPage });
+export const Route = createFileRoute("/_app/developer/webhooks/")({
+  component: WebhooksPage,
+});
 
 type Webhook = {
   id: string;
@@ -103,7 +112,9 @@ function WebhooksPage() {
     // snapshot for rollback. Same pattern as users.tsx.
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["webhooks"] });
-      const snapshots = qc.getQueriesData<{ items: Webhook[] }>({ queryKey: ["webhooks"] });
+      const snapshots = qc.getQueriesData<{ items: Webhook[] }>({
+        queryKey: ["webhooks"],
+      });
       qc.setQueriesData<{ items: Webhook[] }>({ queryKey: ["webhooks"] }, (prev) =>
         prev ? { ...prev, items: prev.items.filter((w) => w.id !== id) } : prev,
       );
@@ -128,7 +139,12 @@ function WebhooksPage() {
         description={t("webhooks.description")}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+            >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               {t("webhooks.refresh")}
             </Button>
@@ -143,7 +159,10 @@ function WebhooksPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("webhooks.list.title")}</CardTitle>
           <CardDescription>
-            {t("webhooks.list.count", { shown: rows.length, total: items.length })}
+            {t("webhooks.list.count", {
+              shown: rows.length,
+              total: items.length,
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -157,8 +176,14 @@ function WebhooksPage() {
                 label: t("webhooks.list.filters.status.label"),
                 value: lv.filters.status ?? "",
                 options: [
-                  { label: t("webhooks.list.filters.status.active"), value: "active" },
-                  { label: t("webhooks.list.filters.status.disabled"), value: "disabled" },
+                  {
+                    label: t("webhooks.list.filters.status.active"),
+                    value: "active",
+                  },
+                  {
+                    label: t("webhooks.list.filters.status.disabled"),
+                    value: "disabled",
+                  },
                 ],
                 onChange: (v) => lv.setFilter("status", v),
               },
@@ -187,9 +212,7 @@ function WebhooksPage() {
             isEmpty={rows.length === 0}
             emptyIcon={WebhookIcon}
             emptyTitle={
-              lv.hasActiveFilters
-                ? t("webhooks.list.emptyFiltered")
-                : t("webhooks.list.empty")
+              lv.hasActiveFilters ? t("webhooks.list.emptyFiltered") : t("webhooks.list.empty")
             }
             skeletonRows={3}
           >
@@ -200,14 +223,18 @@ function WebhooksPage() {
                     <SortHeader columnKey="url" sort={lv.sort} onToggle={lv.toggleSort}>
                       {t("webhooks.list.columns.url")}
                     </SortHeader>
-                    {lv.isVisible("events") && <TableHead>{t("webhooks.list.columns.events")}</TableHead>}
+                    {lv.isVisible("events") && (
+                      <TableHead>{t("webhooks.list.columns.events")}</TableHead>
+                    )}
                     <TableHead>{t("webhooks.list.columns.status")}</TableHead>
                     {lv.isVisible("created") && (
                       <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
                         {t("webhooks.list.columns.created")}
                       </SortHeader>
                     )}
-                    <TableHead className="text-right">{t("webhooks.list.columns.actions")}</TableHead>
+                    <TableHead className="text-right">
+                      {t("webhooks.list.columns.actions")}
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -225,8 +252,14 @@ function WebhooksPage() {
                       {lv.isVisible("events") && (
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
-                            {w.events.slice(0, 3).map((e) => <Badge key={e} variant="muted">{e}</Badge>)}
-                            {w.events.length > 3 && <Badge variant="muted">+{w.events.length - 3}</Badge>}
+                            {w.events.slice(0, 3).map((e) => (
+                              <Badge key={e} variant="muted">
+                                {e}
+                              </Badge>
+                            ))}
+                            {w.events.length > 3 && (
+                              <Badge variant="muted">+{w.events.length - 3}</Badge>
+                            )}
                           </div>
                         </TableCell>
                       )}
@@ -234,7 +267,9 @@ function WebhooksPage() {
                         <StatusPill status={w.disabled_at ? "disabled" : "active"} />
                       </TableCell>
                       {lv.isVisible("created") && (
-                        <TableCell><TimeSince value={w.created_at} /></TableCell>
+                        <TableCell>
+                          <TimeSince value={w.created_at} />
+                        </TableCell>
                       )}
                       <TableCell className="text-right">
                         <Button
@@ -352,11 +387,15 @@ function CreateWebhookSheet({ open, onOpenChange, tenantId, onCreated }: CreateW
                   ))}
                 </div>
                 <FieldDescription>
-                  {t("webhooks.create.eventsCount", { count: selectedEvents.length })}
+                  {t("webhooks.create.eventsCount", {
+                    count: selectedEvents.length,
+                  })}
                 </FieldDescription>
               </Field>
               {createM.error && (
-                <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
               )}
             </FieldGroup>
           </div>

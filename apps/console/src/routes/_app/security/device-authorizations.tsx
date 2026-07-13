@@ -171,7 +171,9 @@ function DeviceAuthorizationsPage() {
               disabled={revokeM.isPending}
               onClick={() =>
                 confirming &&
-                revokeM.mutate(confirming.id, { onSuccess: () => setConfirming(null) })
+                revokeM.mutate(confirming.id, {
+                  onSuccess: () => setConfirming(null),
+                })
               }
             >
               {revokeM.isPending && <Loader2Icon className="animate-spin" />}

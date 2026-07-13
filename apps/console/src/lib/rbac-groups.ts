@@ -37,8 +37,7 @@ export function useGroupRoles(groupId: string) {
   return useQuery({
     queryKey: ["group-roles", tenantId, groupId],
     enabled: !!tenantId && !!groupId,
-    queryFn: () =>
-      api<{ items: GroupRole[] }>(`/v1/tenants/${tenantId}/groups/${groupId}/roles`),
+    queryFn: () => api<{ items: GroupRole[] }>(`/v1/tenants/${tenantId}/groups/${groupId}/roles`),
   });
 }
 
@@ -47,7 +46,9 @@ export function useGrantGroupRole(groupId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (roleId: string) =>
-      api<void>(`/v1/tenants/${tenantId}/groups/${groupId}/roles/${roleId}`, { method: "POST" }),
+      api<void>(`/v1/tenants/${tenantId}/groups/${groupId}/roles/${roleId}`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["group-roles", tenantId, groupId] }),
     meta: { successMessage: "Role granted to group" },
   });
@@ -58,7 +59,9 @@ export function useRevokeGroupRole(groupId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (roleId: string) =>
-      api<void>(`/v1/tenants/${tenantId}/groups/${groupId}/roles/${roleId}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/groups/${groupId}/roles/${roleId}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["group-roles", tenantId, groupId] }),
     meta: { successMessage: "Role revoked from group" },
   });

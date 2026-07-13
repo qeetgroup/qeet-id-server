@@ -2,7 +2,7 @@
 
 import { cn } from "@qeetrix/ui";
 import { useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 
 /**
  * Animated canvas grid of drifting shapes with a cursor-follow hover trail.
@@ -174,7 +174,7 @@ export function ShapeGrid({
           for (let row = -2; row < rows; row++) {
             const cx = col * halfW + offsetX;
             const cy = row * squareSize + squareSize / 2 + offsetY;
-            const flip = ((((col + colShift + row + rowShift) % 2) + 2) % 2) !== 0;
+            const flip = (((col + colShift + row + rowShift) % 2) + 2) % 2 !== 0;
 
             const cellKey = `${col},${row}`;
             const alpha = cellOpacities.current.get(cellKey);
@@ -447,6 +447,10 @@ export function ShapeGrid({
   ]);
 
   return (
-    <canvas ref={canvasRef} className={cn("block h-full w-full border-none", className)} style={style} />
+    <canvas
+      ref={canvasRef}
+      className={cn("block h-full w-full border-none", className)}
+      style={style}
+    />
   );
 }

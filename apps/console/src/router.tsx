@@ -6,8 +6,8 @@ import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query
 // and SSR-safe, so the first server render already has translations.
 import "./i18n";
 
-import { routeTree } from "./routeTree.gen";
 import { getContext } from "./integrations/tanstack-query/root-provider";
+import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {
   const context = getContext();

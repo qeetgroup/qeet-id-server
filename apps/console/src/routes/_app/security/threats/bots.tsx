@@ -24,9 +24,11 @@ import { BotIcon, RefreshCwIcon, ShieldOffIcon, ZapIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { useBotOverview, useBotSettings, useUpdateBotSettings, type BotSettings } from "@/lib/bots";
+import { type BotSettings, useBotOverview, useBotSettings, useUpdateBotSettings } from "@/lib/bots";
 
-export const Route = createFileRoute("/_app/security/threats/bots")({ component: BotsPage });
+export const Route = createFileRoute("/_app/security/threats/bots")({
+  component: BotsPage,
+});
 
 function verdictBadge(v: string) {
   switch (v) {
@@ -50,9 +52,21 @@ function BotsPage() {
   const settings = settingsQ.data;
 
   const stats = [
-    { key: "blocked", value: s?.blocked_24h ?? 0, icon: <ShieldOffIcon className="size-4" /> },
-    { key: "challenged", value: s?.challenged_24h ?? 0, icon: <ZapIcon className="size-4" /> },
-    { key: "threshold", value: (s?.threshold ?? 0.7).toFixed(2), icon: <BotIcon className="size-4" /> },
+    {
+      key: "blocked",
+      value: s?.blocked_24h ?? 0,
+      icon: <ShieldOffIcon className="size-4" />,
+    },
+    {
+      key: "challenged",
+      value: s?.challenged_24h ?? 0,
+      icon: <ZapIcon className="size-4" />,
+    },
+    {
+      key: "threshold",
+      value: (s?.threshold ?? 0.7).toFixed(2),
+      icon: <BotIcon className="size-4" />,
+    },
   ];
 
   // Toggling a switch persists the full settings object (the scorer only

@@ -1,11 +1,4 @@
-import {
-  Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@qeetrix/ui";
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@qeetrix/ui";
 import { useMutation } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { DownloadIcon, Trash2Icon } from "lucide-react";
@@ -27,18 +20,18 @@ function DataPage() {
 
   const exportM = useMutation({
     mutationFn: () =>
-      api<{ download_url?: string }>("/v1/account/export", { method: "POST" }).catch(
-        (err) => {
-          if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
-            throw new ApiError(
-              err.status,
-              "endpoint_unavailable",
-              "Data export isn't enabled yet. We'll email you a download link as soon as it ships.",
-            );
-          }
-          throw err;
-        },
-      ),
+      api<{ download_url?: string }>("/v1/account/export", {
+        method: "POST",
+      }).catch((err) => {
+        if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
+          throw new ApiError(
+            err.status,
+            "endpoint_unavailable",
+            "Data export isn't enabled yet. We'll email you a download link as soon as it ships.",
+          );
+        }
+        throw err;
+      }),
     meta: { successMessage: "We'll email a download link when it's ready" },
   });
 
@@ -69,11 +62,7 @@ function DataPage() {
           <CardDescription>{t("data.export.description")}</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button
-            variant="outline"
-            onClick={() => exportM.mutate()}
-            disabled={exportM.isPending}
-          >
+          <Button variant="outline" onClick={() => exportM.mutate()} disabled={exportM.isPending}>
             <DownloadIcon /> {t("data.export.button")}
           </Button>
         </CardContent>

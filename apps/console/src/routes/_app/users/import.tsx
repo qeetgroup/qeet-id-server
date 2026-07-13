@@ -6,6 +6,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  cn,
   DataState,
   StatusPill,
   Table,
@@ -14,17 +15,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-  cn,
 } from "@qeetrix/ui";
 import { useMutation } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
-import {
-  ArrowLeftIcon,
-  FileUpIcon,
-  Loader2Icon,
-  UploadCloudIcon,
-  XIcon,
-} from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowLeftIcon, FileUpIcon, Loader2Icon, UploadCloudIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -32,7 +26,9 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/users/import")({ component: ImportUsersPage });
+export const Route = createFileRoute("/_app/users/import")({
+  component: ImportUsersPage,
+});
 
 // ---------------------------------------------------------------------------
 // Parsers
@@ -45,67 +41,67 @@ export const Route = createFileRoute("/_app/users/import")({ component: ImportUs
 // ---------------------------------------------------------------------------
 
 interface Row {
-  email: string
-  password?: string
-  display_name?: string
-  phone?: string
+  email: string;
+  password?: string;
+  display_name?: string;
+  phone?: string;
   /** Raw line number from the source file, for error reporting. */
-  _line: number
+  _line: number;
   /** Per-row validation error surfaced in the preview. */
-  _error?: string
+  _error?: string;
 }
 
 function parseCSVLine(line: string): string[] {
-  const out: string[] = []
-  let cur = ""
-  let inQ = false
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
   for (let i = 0; i < line.length; i++) {
-    const c = line[i]
+    const c = line[i];
     if (inQ) {
       if (c === '"' && line[i + 1] === '"') {
-        cur += '"'
-        i++
+        cur += '"';
+        i++;
       } else if (c === '"') {
-        inQ = false
+        inQ = false;
       } else {
-        cur += c
+        cur += c;
       }
     } else if (c === '"') {
-      inQ = true
+      inQ = true;
     } else if (c === ",") {
-      out.push(cur)
-      cur = ""
+      out.push(cur);
+      cur = "";
     } else {
-      cur += c
+      cur += c;
     }
   }
-  out.push(cur)
-  return out.map((s) => s.trim())
+  out.push(cur);
+  return out.map((s) => s.trim());
 }
 
 function parseCSV(text: string): Row[] {
   const lines = text
     .replace(/\r\n?/g, "\n")
     .split("\n")
-    .filter((l) => l.trim() !== "")
-  if (lines.length === 0) return []
-  const header = parseCSVLine(lines[0]).map((h) => h.toLowerCase())
+    .filter((l) => l.trim() !== "");
+  if (lines.length === 0) return [];
+  const header = parseCSVLine(lines[0]).map((h) => h.toLowerCase());
   return lines.slice(1).map((line, idx) => {
-    const cols = parseCSVLine(line)
+    const cols = parseCSVLine(line);
     const get = (key: string) => {
-      const i = header.indexOf(key)
-      return i >= 0 ? cols[i] ?? "" : ""
-    }
+      const i = header.indexOf(key);
+      return i >= 0 ? (cols[i] ?? "") : "";
+    };
     const row: Row = {
       email: get("email"),
       password: get("password") || undefined,
       display_name: get("display_name") || undefined,
       phone: get("phone") || undefined,
       _line: idx + 2, // +1 for 0-index, +1 for the header row
-    }
-    if (!row.email) row._error = "Missing email"
-    return row
-  })
+    };
+    if (!row.email) row._error = "Missing email";
+    return row;
+  });
 }
 
 function parseNDJSON(text: string): Row[] {
@@ -114,44 +110,43 @@ function parseNDJSON(text: string): Row[] {
     .split("\n")
     .map((l) => l.trim())
     .map((line, idx) => {
-      const lineNum = idx + 1
-      if (!line) return null
+      const lineNum = idx + 1;
+      if (!line) return null;
       try {
-        const obj = JSON.parse(line) as Record<string, unknown>
+        const obj = JSON.parse(line) as Record<string, unknown>;
         const row: Row = {
           email: String(obj.email ?? ""),
           password: typeof obj.password === "string" ? obj.password : undefined,
-          display_name:
-            typeof obj.display_name === "string" ? obj.display_name : undefined,
+          display_name: typeof obj.display_name === "string" ? obj.display_name : undefined,
           phone: typeof obj.phone === "string" ? obj.phone : undefined,
           _line: lineNum,
-        }
-        if (!row.email) row._error = "Missing email"
-        return row
+        };
+        if (!row.email) row._error = "Missing email";
+        return row;
       } catch {
         return {
           email: "",
           _line: lineNum,
           _error: "Invalid JSON on this line",
-        } satisfies Row
+        } satisfies Row;
       }
     })
-    .filter((r): r is Row => r !== null)
+    .filter((r): r is Row => r !== null);
 }
 
 interface ImportResult {
-  succeeded: number
-  failed: number
-  errors?: Array<{ line?: number; email?: string; message: string }>
+  succeeded: number;
+  failed: number;
+  errors?: Array<{ line?: number; email?: string; message: string }>;
 }
 
 function ImportUsersPage() {
   const { t } = useTranslation("users");
-  const tenantId = useTenantId()
-  const [rows, setRows] = useState<Row[] | null>(null)
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [dragOver, setDragOver] = useState(false)
-  const [result, setResult] = useState<ImportResult | null>(null)
+  const tenantId = useTenantId();
+  const [rows, setRows] = useState<Row[] | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [result, setResult] = useState<ImportResult | null>(null);
 
   const importM = useMutation({
     mutationFn: async (toSubmit: Row[]): Promise<ImportResult> =>
@@ -160,36 +155,36 @@ function ImportUsersPage() {
         body: {
           tenant_id: tenantId,
           users: toSubmit.map(({ _line, _error, ...rest }) => {
-            void _line
-            void _error
-            return rest
+            void _line;
+            void _error;
+            return rest;
           }),
         },
       }),
     onSuccess: (res) => setResult(res),
     meta: { successMessage: "Bulk import queued" },
-  })
+  });
 
-  const validRows = rows?.filter((r) => !r._error) ?? []
-  const invalidRows = rows?.filter((r) => !!r._error) ?? []
+  const validRows = rows?.filter((r) => !r._error) ?? [];
+  const invalidRows = rows?.filter((r) => !!r._error) ?? [];
 
   async function handleFile(file: File) {
-    setResult(null)
-    setFileName(file.name)
-    const text = await file.text()
-    const lowerName = file.name.toLowerCase()
+    setResult(null);
+    setFileName(file.name);
+    const text = await file.text();
+    const lowerName = file.name.toLowerCase();
     const parsed =
       lowerName.endsWith(".ndjson") || lowerName.endsWith(".jsonl")
         ? parseNDJSON(text)
-        : parseCSV(text)
-    setRows(parsed)
+        : parseCSV(text);
+    setRows(parsed);
   }
 
   function reset() {
-    setRows(null)
-    setFileName(null)
-    setResult(null)
-    importM.reset()
+    setRows(null);
+    setFileName(null);
+    setResult(null);
+    importM.reset();
   }
 
   return (
@@ -212,15 +207,15 @@ function ImportUsersPage() {
             // <input type="file"> below; the wrapper holds the drop handlers so
             // the <label> stays a pure label for the file control.
             onDragOver={(e) => {
-              e.preventDefault()
-              setDragOver(true)
+              e.preventDefault();
+              setDragOver(true);
             }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => {
-              e.preventDefault()
-              setDragOver(false)
-              const file = e.dataTransfer.files[0]
-              if (file) handleFile(file)
+              e.preventDefault();
+              setDragOver(false);
+              const file = e.dataTransfer.files[0];
+              if (file) handleFile(file);
             }}
           >
             <label
@@ -239,8 +234,8 @@ function ImportUsersPage() {
                 accept=".csv,.ndjson,.jsonl,text/csv,application/x-ndjson"
                 className="sr-only"
                 onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (f) handleFile(f)
+                  const f = e.target.files?.[0];
+                  if (f) handleFile(f);
                 }}
               />
             </label>
@@ -275,11 +270,7 @@ function ImportUsersPage() {
                 disabled={validRows.length === 0 || importM.isPending}
                 onClick={() => importM.mutate(validRows)}
               >
-                {importM.isPending ? (
-                  <Loader2Icon className="animate-spin" />
-                ) : (
-                  <FileUpIcon />
-                )}
+                {importM.isPending ? <Loader2Icon className="animate-spin" /> : <FileUpIcon />}
                 {t("import.importBtn", { count: validRows.length })}
               </Button>
             </div>
@@ -389,5 +380,5 @@ function ImportUsersPage() {
         </Card>
       )}
     </div>
-  )
+  );
 }

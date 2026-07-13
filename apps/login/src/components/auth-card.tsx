@@ -33,12 +33,7 @@ export function AuthCard({ branding, title, subtitle, children, className }: Aut
         <div className="space-y-4 text-center">
           <div className="flex justify-center">
             {branding?.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element -- tenant logo is a dynamic URL from an arbitrary domain; next/image requires pre-configured remotePatterns per hostname
-              <img
-                src={branding.logoUrl}
-                alt=""
-                className="h-10 w-auto max-w-50 object-contain"
-              />
+              <img src={branding.logoUrl} alt="" className="h-10 w-auto max-w-50 object-contain" />
             ) : (
               <QeetLogo size={40} />
             )}

@@ -17,19 +17,16 @@ import {
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  MonitorIcon,
-  MonitorSmartphoneIcon,
-  SmartphoneIcon,
-  TabletIcon,
-} from "lucide-react";
+import { MonitorIcon, MonitorSmartphoneIcon, SmartphoneIcon, TabletIcon } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { api, tokenStore } from "@/lib/api";
 
-export const Route = createFileRoute("/account/sessions")({ component: SessionsPage });
+export const Route = createFileRoute("/account/sessions")({
+  component: SessionsPage,
+});
 
 type Session = {
   id: string;
@@ -46,7 +43,10 @@ type Session = {
 // label — full UA parsing requires a 50 KB library we don't ship.
 type DeviceKind = "mobile" | "tablet" | "desktop";
 
-function parseUA(ua: string | null | undefined): { kind: DeviceKind; label: string } {
+function parseUA(ua: string | null | undefined): {
+  kind: DeviceKind;
+  label: string;
+} {
   if (!ua) return { kind: "desktop", label: "Unknown device" };
   const lower = ua.toLowerCase();
   let kind: DeviceKind = "desktop";
@@ -87,7 +87,12 @@ function getCurrentSessionId(): string | null {
   if (parts.length !== 3) return null;
   try {
     const payload = JSON.parse(
-      atob(parts[1]!.replace(/-/g, "+").replace(/_/g, "/").padEnd(parts[1]!.length + ((4 - (parts[1]!.length % 4)) % 4), "=")),
+      atob(
+        parts[1]!
+          .replace(/-/g, "+")
+          .replace(/_/g, "/")
+          .padEnd(parts[1]!.length + ((4 - (parts[1]!.length % 4)) % 4), "="),
+      ),
     );
     const sid = (payload as { sid?: unknown }).sid;
     return typeof sid === "string" ? sid : null;
@@ -115,7 +120,9 @@ function SessionsPage() {
     // status pill flips immediately. Roll back if the server rejects.
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["account-sessions"] });
-      const snapshots = qc.getQueriesData<{ items: Session[] }>({ queryKey: ["account-sessions"] });
+      const snapshots = qc.getQueriesData<{ items: Session[] }>({
+        queryKey: ["account-sessions"],
+      });
       const now = new Date().toISOString();
       qc.setQueriesData<{ items: Session[] }>({ queryKey: ["account-sessions"] }, (prev) =>
         prev
@@ -154,9 +161,7 @@ function SessionsPage() {
           }
         }
       }
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, others.length) }, worker),
-      );
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, others.length) }, worker));
       return { ok, failed };
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["account-sessions"] }),
@@ -182,7 +187,9 @@ function SessionsPage() {
               disabled={revokeAllOtherM.isPending}
               onClick={() =>
                 openConfirm({
-                  title: t("sessions.revokeAll.title", { count: otherActive.length }),
+                  title: t("sessions.revokeAll.title", {
+                    count: otherActive.length,
+                  }),
                   description: t("sessions.revokeAll.description"),
                   variant: "destructive",
                   confirmLabel: t("sessions.revokeAll.label"),
@@ -190,7 +197,9 @@ function SessionsPage() {
                 })
               }
             >
-              {t("sessions.active.signOutElsewhere", { count: otherActive.length })}
+              {t("sessions.active.signOutElsewhere", {
+                count: otherActive.length,
+              })}
             </Button>
           )}
         </CardHeader>
@@ -259,9 +268,7 @@ function SessionsPage() {
                           variant="ghost"
                           size="sm"
                           disabled={!!s.revoked_at || revokeM.isPending || isCurrent}
-                          title={
-                            isCurrent ? t("sessions.revoke.selfHelp") : undefined
-                          }
+                          title={isCurrent ? t("sessions.revoke.selfHelp") : undefined}
                           onClick={() =>
                             openConfirm({
                               title: t("sessions.revoke.title"),

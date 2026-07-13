@@ -76,7 +76,9 @@ export function useKillAllAgents() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api<{ suspended: number }>(`/v1/tenants/${tenantId}/agents/kill-all`, { method: "POST" }),
+      api<{ suspended: number }>(`/v1/tenants/${tenantId}/agents/kill-all`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -87,8 +89,7 @@ export function useAgentsSponsoredBy(userId: string | null) {
   const tenantId = useTenantId();
   return useQuery({
     queryKey: [...KEY, "sponsored-by", tenantId, userId],
-    queryFn: () =>
-      api<{ items: Agent[] }>(`/v1/tenants/${tenantId}/agents/sponsored-by/${userId}`),
+    queryFn: () => api<{ items: Agent[] }>(`/v1/tenants/${tenantId}/agents/sponsored-by/${userId}`),
     enabled: !!tenantId && !!userId,
   });
 }

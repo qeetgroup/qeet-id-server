@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { loginAsAdmin } from "../fixtures/auth";
 
 test.describe("Admin — user management", () => {

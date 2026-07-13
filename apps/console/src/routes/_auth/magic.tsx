@@ -1,11 +1,6 @@
-import { Button, Card, CardContent, buttonVariants } from "@qeetrix/ui";
-import { Link, createFileRoute, useSearch } from "@tanstack/react-router";
-import {
-  AlertTriangleIcon,
-  CheckCircle2Icon,
-  Loader2Icon,
-  MailIcon,
-} from "lucide-react";
+import { Button, buttonVariants, Card, CardContent } from "@qeetrix/ui";
+import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
+import { AlertTriangleIcon, CheckCircle2Icon, Loader2Icon, MailIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -110,10 +105,7 @@ function renderStatus({
         {isExpiredOrUsed ? t("magic.expiredText") : detail}
       </p>
       <div className="mt-4 flex gap-2">
-        <Link
-          to="/sign-in"
-          className={buttonVariants({ variant: "outline", size: "sm" })}
-        >
+        <Link to="/sign-in" className={buttonVariants({ variant: "outline", size: "sm" })}>
           {t("magic.backToSignIn")}
         </Link>
         {/* The "request a new link" entry point is the sign-in form's

@@ -1,5 +1,5 @@
-import { test, expect } from "@playwright/test";
-import { loginAs, DEMO_USERS } from "../fixtures/auth";
+import { expect, test } from "@playwright/test";
+import { DEMO_USERS, loginAs } from "../fixtures/auth";
 
 test.describe("Email + password login", () => {
   test("successful login redirects to dashboard", async ({ page }) => {

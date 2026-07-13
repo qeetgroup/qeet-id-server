@@ -35,7 +35,9 @@ export function useRevokeDeviceAuth() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/oauth/devices/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/oauth/devices/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["device-auth"] }),
     meta: { successMessage: "Device authorization revoked" },
   });

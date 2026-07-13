@@ -36,15 +36,15 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
+  type AnomalyReason,
   useAuditAnomalies,
   useAuditAnomalySettings,
   useAuditAnomalySummary,
   useResolveAuditAnomaly,
   useUpdateAuditAnomalySettings,
   useVerifyAuditChain,
-  type AnomalyReason,
 } from "@/lib/audit-anomalies";
 
 export const Route = createFileRoute("/_app/security/audit-intelligence")({
@@ -71,9 +71,21 @@ function AuditIntelligencePage() {
     t(`auditIntelligence.reasonLabels.${r}`, { defaultValue: r });
 
   const summary = [
-    { key: "open", value: sm?.open ?? 0, icon: <AlertTriangleIcon className="size-4" /> },
-    { key: "highScore", value: sm?.high_score_open ?? 0, icon: <SparklesIcon className="size-4" /> },
-    { key: "resolved7d", value: sm?.resolved_7d ?? 0, icon: <ShieldCheckIcon className="size-4" /> },
+    {
+      key: "open",
+      value: sm?.open ?? 0,
+      icon: <AlertTriangleIcon className="size-4" />,
+    },
+    {
+      key: "highScore",
+      value: sm?.high_score_open ?? 0,
+      icon: <SparklesIcon className="size-4" />,
+    },
+    {
+      key: "resolved7d",
+      value: sm?.resolved_7d ?? 0,
+      icon: <ShieldCheckIcon className="size-4" />,
+    },
   ];
 
   return (
@@ -122,7 +134,9 @@ function AuditIntelligencePage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="open">{t("auditIntelligence.anomalies.statusOpen")}</SelectItem>
-              <SelectItem value="resolved">{t("auditIntelligence.anomalies.statusResolved")}</SelectItem>
+              <SelectItem value="resolved">
+                {t("auditIntelligence.anomalies.statusResolved")}
+              </SelectItem>
             </SelectContent>
           </Select>
         </CardHeader>
@@ -148,7 +162,9 @@ function AuditIntelligencePage() {
                   <TableHead>{t("auditIntelligence.anomalies.columns.reason")}</TableHead>
                   <TableHead>{t("auditIntelligence.anomalies.columns.score")}</TableHead>
                   <TableHead>{t("auditIntelligence.anomalies.columns.when")}</TableHead>
-                  <TableHead className="text-right">{t("auditIntelligence.anomalies.columns.rowAction")}</TableHead>
+                  <TableHead className="text-right">
+                    {t("auditIntelligence.anomalies.columns.rowAction")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -233,7 +249,9 @@ function SettingsCard() {
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <Field className="sm:w-48">
-            <FieldLabel htmlFor="threshold">{t("auditIntelligence.settings.scoreThreshold")}</FieldLabel>
+            <FieldLabel htmlFor="threshold">
+              {t("auditIntelligence.settings.scoreThreshold")}
+            </FieldLabel>
             <Input
               id="threshold"
               type="number"
@@ -245,7 +263,9 @@ function SettingsCard() {
             />
           </Field>
           <Field className="sm:w-48">
-            <FieldLabel htmlFor="min-events">{t("auditIntelligence.settings.coldStartGuard")}</FieldLabel>
+            <FieldLabel htmlFor="min-events">
+              {t("auditIntelligence.settings.coldStartGuard")}
+            </FieldLabel>
             <Input
               id="min-events"
               type="number"
@@ -294,7 +314,9 @@ function VerifyCard() {
           </Button>
         </div>
         {verifyM.data && (
-          <p className={`text-sm ${verifyM.data.ok ? "text-muted-foreground" : "text-destructive"}`}>
+          <p
+            className={`text-sm ${verifyM.data.ok ? "text-muted-foreground" : "text-destructive"}`}
+          >
             {verifyM.data.ok
               ? `OK — ${verifyM.data.rows_checked} row(s) checked, chain intact.`
               : `Broken at row ${verifyM.data.broken_at_id}: ${verifyM.data.broken_reason}`}

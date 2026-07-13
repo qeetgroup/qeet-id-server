@@ -23,7 +23,7 @@ A concise, skimmable spec with these sections:
 3. **Data model & migration plan** — tables/columns/indexes; the **next** migration number (`printf '%04d' $((highest+1))`) and the `NNNN_<name>.{up,down}.sql` pair to add; **every table carries `tenant_id`** (multi-tenant) unless explicitly global.
 4. **API surface** — new/changed routes (method + path under `/v1/...`), request/response shapes, and the exact `api/openapi/` additions. Note that the `chi.Walk` coverage test in `platform/api/rest` requires every mounted route to be documented.
 5. **Security & tenant isolation** — authz (RBAC/ReBAC) needed, `RequireTenant`/`RequireUser` middleware, audit events to emit, secrets/crypto, anything the **security-reviewer** must check.
-6. **Frontend surfaces** — which app(s) (`apps/console|login|website`), screens/components (via `@qeetrix/*`), and whether the SDKs (`sdk/js/*`, `sdk/go`, `sdk/python`) need updating.
+6. **Frontend surfaces** — which app(s) (`apps/console|login|website`) and screens/components (via `@qeetrix/*`).
 7. **Task breakdown & hand-off** — ordered tasks, each tagged with the owning agent (`backend-engineer`, `frontend-engineer`, `qa-test-engineer`), then `security-reviewer`, then `docs-writer`.
 8. **Risks / open questions.**
 

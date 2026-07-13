@@ -10,8 +10,8 @@ import {
   FieldLabel,
   Input,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { GaugeIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -50,7 +50,10 @@ function useUpdateRateLimits() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: TenantLimits) =>
-      api<TenantLimits>(`/v1/tenants/${tenantId}/rate-limits`, { method: "PUT", body }),
+      api<TenantLimits>(`/v1/tenants/${tenantId}/rate-limits`, {
+        method: "PUT",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rate-limits", tenantId] }),
   });
 }
@@ -75,7 +78,16 @@ type LimitRowProps = {
   burstLabel: string;
 };
 
-function LimitRow({ label, description, rate, capacity, onRate, onCapacity, rateLabel, burstLabel }: LimitRowProps) {
+function LimitRow({
+  label,
+  description,
+  rate,
+  capacity,
+  onRate,
+  onCapacity,
+  rateLabel,
+  burstLabel,
+}: LimitRowProps) {
   return (
     <div className="grid gap-3 sm:grid-cols-[1fr_120px_120px] sm:items-end border-b pb-4 last:border-0 last:pb-0">
       <Field>
@@ -223,7 +235,11 @@ function RateLimitsPage() {
                   {update.isPending && <Loader2Icon className="animate-spin" />}
                   {t("threats.rateLimits.card.save")}
                 </Button>
-                {update.isSuccess && <span className="text-sm text-green-600">{t("threats.rateLimits.card.saved")}</span>}
+                {update.isSuccess && (
+                  <span className="text-sm text-green-600">
+                    {t("threats.rateLimits.card.saved")}
+                  </span>
+                )}
               </div>
             </form>
           )}

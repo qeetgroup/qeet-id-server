@@ -21,7 +21,10 @@ const delays = [0, 2.5, 1, 3.5, 0.5, 2, 1.5];
 
 export function Threads({ className, color = "rgba(242,109,14,0.1)" }: ThreadsProps) {
   return (
-    <div aria-hidden className={cn("pointer-events-none absolute inset-0 overflow-hidden", className)}>
+    <div
+      aria-hidden
+      className={cn("pointer-events-none absolute inset-0 overflow-hidden", className)}
+    >
       <svg
         viewBox="0 0 1200 460"
         preserveAspectRatio="xMidYMid slice"

@@ -41,7 +41,7 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   type LdapConnection,
   useCreateLdapConnection,
@@ -51,7 +51,9 @@ import {
   useUpdateLdapConnection,
 } from "@/lib/ldap";
 
-export const Route = createFileRoute("/_app/auth/connections/ldap")({ component: LdapPage });
+export const Route = createFileRoute("/_app/auth/connections/ldap")({
+  component: LdapPage,
+});
 
 function LdapPage() {
   const { t } = useTranslation("auth");
@@ -80,9 +82,7 @@ function LdapPage() {
       <Card>
         <CardHeader>
           <CardTitle>{t("ldap.list.title")}</CardTitle>
-          <CardDescription>
-            {t("ldap.list.description")}
-          </CardDescription>
+          <CardDescription>{t("ldap.list.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -220,25 +220,57 @@ function CreateConnectionSheet({
               </Field>
               <Field>
                 <FieldLabel htmlFor="ldap-server_url">{t("ldap.create.serverLabel")}</FieldLabel>
-                <Input id="ldap-server_url" name="server_url" className="font-mono text-xs" placeholder="ldaps://ldap.corp.example.com:636" required />
+                <Input
+                  id="ldap-server_url"
+                  name="server_url"
+                  className="font-mono text-xs"
+                  placeholder="ldaps://ldap.corp.example.com:636"
+                  required
+                />
                 <FieldDescription>{t("ldap.create.serverHelp")}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="ldap-bind_dn">{t("ldap.create.bindDnLabel")}</FieldLabel>
-                <Input id="ldap-bind_dn" name="bind_dn" className="font-mono text-xs" placeholder="cn=qeetid-svc,ou=ServiceAccounts,dc=corp,dc=example,dc=com" required />
+                <Input
+                  id="ldap-bind_dn"
+                  name="bind_dn"
+                  className="font-mono text-xs"
+                  placeholder="cn=qeetid-svc,ou=ServiceAccounts,dc=corp,dc=example,dc=com"
+                  required
+                />
               </Field>
               <Field>
-                <FieldLabel htmlFor="ldap-bind_password">{t("ldap.create.bindPasswordLabel")}</FieldLabel>
-                <Input id="ldap-bind_password" name="bind_password" type="password" placeholder="••••••••" required />
+                <FieldLabel htmlFor="ldap-bind_password">
+                  {t("ldap.create.bindPasswordLabel")}
+                </FieldLabel>
+                <Input
+                  id="ldap-bind_password"
+                  name="bind_password"
+                  type="password"
+                  placeholder="••••••••"
+                  required
+                />
                 <FieldDescription>{t("ldap.create.bindPasswordHelp")}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="ldap-base_dn">{t("ldap.create.baseDnLabel")}</FieldLabel>
-                <Input id="ldap-base_dn" name="base_dn" className="font-mono text-xs" placeholder="ou=People,dc=corp,dc=example,dc=com" required />
+                <Input
+                  id="ldap-base_dn"
+                  name="base_dn"
+                  className="font-mono text-xs"
+                  placeholder="ou=People,dc=corp,dc=example,dc=com"
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="ldap-user_filter">{t("ldap.create.filterLabel")}</FieldLabel>
-                <Input id="ldap-user_filter" name="user_filter" className="font-mono text-xs" placeholder="(uid=%s)" defaultValue="(uid=%s)" />
+                <Input
+                  id="ldap-user_filter"
+                  name="user_filter"
+                  className="font-mono text-xs"
+                  placeholder="(uid=%s)"
+                  defaultValue="(uid=%s)"
+                />
                 <FieldDescription>
                   <code>%s</code> is replaced with the (escaped) username. AD often uses{" "}
                   <code>(sAMAccountName=%s)</code>.
@@ -246,12 +278,26 @@ function CreateConnectionSheet({
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field>
-                  <FieldLabel htmlFor="ldap-email_attribute">{t("ldap.create.emailAttrLabel")}</FieldLabel>
-                  <Input id="ldap-email_attribute" name="email_attribute" placeholder="mail" defaultValue="mail" />
+                  <FieldLabel htmlFor="ldap-email_attribute">
+                    {t("ldap.create.emailAttrLabel")}
+                  </FieldLabel>
+                  <Input
+                    id="ldap-email_attribute"
+                    name="email_attribute"
+                    placeholder="mail"
+                    defaultValue="mail"
+                  />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="ldap-name_attribute">{t("ldap.create.nameAttrLabel")}</FieldLabel>
-                  <Input id="ldap-name_attribute" name="name_attribute" placeholder="cn" defaultValue="cn" />
+                  <FieldLabel htmlFor="ldap-name_attribute">
+                    {t("ldap.create.nameAttrLabel")}
+                  </FieldLabel>
+                  <Input
+                    id="ldap-name_attribute"
+                    name="name_attribute"
+                    placeholder="cn"
+                    defaultValue="cn"
+                  />
                 </Field>
               </div>
               <Field>
@@ -274,7 +320,10 @@ function CreateConnectionSheet({
               </Field>
               <Field>
                 <FieldLabel>{t("ldap.create.statusLabel")}</FieldLabel>
-                <Select value={status} onValueChange={(v) => setStatus(v as LdapConnection["status"])}>
+                <Select
+                  value={status}
+                  onValueChange={(v) => setStatus(v as LdapConnection["status"])}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -292,7 +341,9 @@ function CreateConnectionSheet({
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("ldap.create.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("ldap.create.cancelBtn")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("ldap.create.creatingBtn") : t("ldap.create.createBtn")}

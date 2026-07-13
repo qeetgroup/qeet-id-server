@@ -1,5 +1,6 @@
 import {
   ActivityIcon,
+  BadgeCheckIcon,
   BotIcon,
   BrainCircuitIcon,
   Building2Icon,
@@ -14,20 +15,19 @@ import {
   MonitorSmartphoneIcon,
   NetworkIcon,
   PaletteIcon,
-  ScanSearchIcon,
-  BadgeCheckIcon,
   RadioTowerIcon,
+  ScanSearchIcon,
   ScrollTextIcon,
-  SparklesIcon,
-  ZapIcon,
   ServerCogIcon,
   Settings2Icon,
   ShieldAlertIcon,
   ShieldCheckIcon,
+  SparklesIcon,
   UsersIcon,
   UsersRoundIcon,
   WebhookIcon,
   WorkflowIcon,
+  ZapIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -48,7 +48,12 @@ export const navGroups: NavGroup[] = [
   {
     label: "Platform",
     items: [
-      { title: "Dashboard", url: "/", icon: <LayoutDashboardIcon />, isActive: true },
+      {
+        title: "Dashboard",
+        url: "/",
+        icon: <LayoutDashboardIcon />,
+        isActive: true,
+      },
       { title: "Activity", url: "/activity", icon: <ActivityIcon /> },
       { title: "Analytics", url: "/analytics", icon: <ChartColumnIcon /> },
     ],
@@ -90,7 +95,11 @@ export const navGroups: NavGroup[] = [
           { title: "Resources", url: "/access/resources" },
         ],
       },
-      { title: "Access Tester", url: "/access/check", icon: <ScanSearchIcon /> },
+      {
+        title: "Access Tester",
+        url: "/access/check",
+        icon: <ScanSearchIcon />,
+      },
     ],
   },
   {
@@ -166,10 +175,26 @@ export const navGroups: NavGroup[] = [
         url: "/security/device-authorizations",
         icon: <MonitorSmartphoneIcon />,
       },
-      { title: "Rate Limit Policies", url: "/security/rate-limits", icon: <GaugeIcon /> },
-      { title: "Audit Logs", url: "/security/audit-logs", icon: <ScrollTextIcon /> },
-      { title: "Audit Intelligence", url: "/security/audit-intelligence", icon: <BrainCircuitIcon /> },
-      { title: "Log Streaming", url: "/security/log-streaming", icon: <RadioTowerIcon /> },
+      {
+        title: "Rate Limit Policies",
+        url: "/security/rate-limits",
+        icon: <GaugeIcon />,
+      },
+      {
+        title: "Audit Logs",
+        url: "/security/audit-logs",
+        icon: <ScrollTextIcon />,
+      },
+      {
+        title: "Audit Intelligence",
+        url: "/security/audit-intelligence",
+        icon: <BrainCircuitIcon />,
+      },
+      {
+        title: "Log Streaming",
+        url: "/security/log-streaming",
+        icon: <RadioTowerIcon />,
+      },
       {
         title: "Compliance",
         url: "/security/compliance",
@@ -188,10 +213,26 @@ export const navGroups: NavGroup[] = [
     items: [
       { title: "Webhooks", url: "/developer/webhooks", icon: <WebhookIcon /> },
       { title: "Auth Hooks", url: "/developer/auth-hooks", icon: <ZapIcon /> },
-      { title: "Agent Governance", url: "/developer/agents", icon: <SparklesIcon /> },
-      { title: "Verifiable Credentials", url: "/developer/credentials", icon: <BadgeCheckIcon /> },
-      { title: "Bots & Automations", url: "/developer/bots", icon: <BotIcon /> },
-      { title: "Infrastructure", url: "/developer/infrastructure", icon: <ServerCogIcon /> },
+      {
+        title: "Agent Governance",
+        url: "/developer/agents",
+        icon: <SparklesIcon />,
+      },
+      {
+        title: "Verifiable Credentials",
+        url: "/developer/credentials",
+        icon: <BadgeCheckIcon />,
+      },
+      {
+        title: "Bots & Automations",
+        url: "/developer/bots",
+        icon: <BotIcon />,
+      },
+      {
+        title: "Infrastructure",
+        url: "/developer/infrastructure",
+        icon: <ServerCogIcon />,
+      },
     ],
   },
   {
@@ -204,11 +245,18 @@ export const navGroups: NavGroup[] = [
         items: [
           { title: "General", url: "/settings/workspace/general" },
           { title: "Domains", url: "/settings/workspace/domains" },
-          { title: "Email Templates", url: "/settings/workspace/email-templates" },
+          {
+            title: "Email Templates",
+            url: "/settings/workspace/email-templates",
+          },
         ],
       },
       { title: "Branding", url: "/settings/branding", icon: <PaletteIcon /> },
-      { title: "Billing & Plan", url: "/settings/billing", icon: <CreditCardIcon /> },
+      {
+        title: "Billing & Plan",
+        url: "/settings/billing",
+        icon: <CreditCardIcon />,
+      },
     ],
   },
 ];

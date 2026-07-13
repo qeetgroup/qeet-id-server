@@ -37,9 +37,7 @@ export function useListView<T>(rows: T[], config: ListViewConfig<T>) {
     const q = search.trim().toLowerCase();
     if (q) {
       out = out.filter((row) =>
-        config
-          .searchFields(row)
-          .some((f) => (f ?? "").toLowerCase().includes(q)),
+        config.searchFields(row).some((f) => (f ?? "").toLowerCase().includes(q)),
       );
     }
 

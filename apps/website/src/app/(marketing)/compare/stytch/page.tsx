@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
+import { type ComparisonData, ComparisonPage } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
   title: "Qeet ID vs. Stytch",
@@ -38,45 +38,183 @@ const data: ComparisonData = {
   ],
   rows: [
     // ---- Authentication ----
-    { section: "Authentication", feature: "Passkeys / WebAuthn", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Magic links", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Email / SMS OTP", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Password (optional)", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "Social login", qeetid: true, competitor: true },
-    { section: "Authentication", feature: "MFA (TOTP, SMS, email)", qeetid: true, competitor: true },
+    {
+      section: "Authentication",
+      feature: "Passkeys / WebAuthn",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Magic links",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Email / SMS OTP",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Password (optional)",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "Social login",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Authentication",
+      feature: "MFA (TOTP, SMS, email)",
+      qeetid: true,
+      competitor: true,
+    },
 
     // ---- Federation ----
-    { section: "Federation", feature: "OAuth 2.0 / OIDC", qeetid: true, competitor: true },
-    { section: "Federation", feature: "SAML 2.0", qeetid: true, competitor: "B2B product" },
-    { section: "Federation", feature: "SCIM 2.0", qeetid: true, competitor: "B2B product" },
-    { section: "Federation", feature: "JIT provisioning", qeetid: true, competitor: true },
+    {
+      section: "Federation",
+      feature: "OAuth 2.0 / OIDC",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Federation",
+      feature: "SAML 2.0",
+      qeetid: true,
+      competitor: "B2B product",
+    },
+    {
+      section: "Federation",
+      feature: "SCIM 2.0",
+      qeetid: true,
+      competitor: "B2B product",
+    },
+    {
+      section: "Federation",
+      feature: "JIT provisioning",
+      qeetid: true,
+      competitor: true,
+    },
 
     // ---- B2B ----
-    { section: "B2B", feature: "Multi-tenant by default", qeetid: true, competitor: "B2B product (separate SKU)" },
-    { section: "B2B", feature: "Invitations + role assignment", qeetid: true, competitor: true },
-    { section: "B2B", feature: "RBAC engine", qeetid: true, competitor: "Limited" },
+    {
+      section: "B2B",
+      feature: "Multi-tenant by default",
+      qeetid: true,
+      competitor: "B2B product (separate SKU)",
+    },
+    {
+      section: "B2B",
+      feature: "Invitations + role assignment",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "B2B",
+      feature: "RBAC engine",
+      qeetid: true,
+      competitor: "Limited",
+    },
 
     // ---- Operator UX ----
-    { section: "Operator UX", feature: "Admin dashboard", qeetid: true, competitor: false, note: "Stytch is API-first; you build the admin." },
-    { section: "Operator UX", feature: "Audit log viewer + export", qeetid: true, competitor: "Logs API" },
-    { section: "Operator UX", feature: "Webhook events", qeetid: true, competitor: true },
-    { section: "Operator UX", feature: "Branding customisation (logo, colours)", qeetid: true, competitor: "Hosted email templates" },
+    {
+      section: "Operator UX",
+      feature: "Admin dashboard",
+      qeetid: true,
+      competitor: false,
+      note: "Stytch is API-first; you build the admin.",
+    },
+    {
+      section: "Operator UX",
+      feature: "Audit log viewer + export",
+      qeetid: true,
+      competitor: "Logs API",
+    },
+    {
+      section: "Operator UX",
+      feature: "Webhook events",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Operator UX",
+      feature: "Branding customisation (logo, colours)",
+      qeetid: true,
+      competitor: "Hosted email templates",
+    },
 
     // ---- Security ----
-    { section: "Security", feature: "Tamper-evident audit log (SHA-256 chain) + /verify", qeetid: true, competitor: "partial", note: "Qeet ID hash-chains every audit row; an integrity endpoint proves the chain is intact." },
-    { section: "Security", feature: "Refresh-token theft detection", qeetid: true, competitor: true },
-    { section: "Security", feature: "Breached-password rejection (HIBP)", qeetid: true, competitor: true },
-    { section: "Security", feature: "Device fingerprinting", qeetid: "Roadmap", competitor: true, note: "Device intelligence is Stytch's signature strength; Qeet ID's is planned." },
-    { section: "Security", feature: "Impossible-travel / adaptive risk signals", qeetid: "Roadmap", competitor: true },
+    {
+      section: "Security",
+      feature: "Tamper-evident audit log (SHA-256 chain) + /verify",
+      qeetid: true,
+      competitor: "partial",
+      note: "Qeet ID hash-chains every audit row; an integrity endpoint proves the chain is intact.",
+    },
+    {
+      section: "Security",
+      feature: "Refresh-token theft detection",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Security",
+      feature: "Breached-password rejection (HIBP)",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Security",
+      feature: "Device fingerprinting",
+      qeetid: "Roadmap",
+      competitor: true,
+      note: "Device intelligence is Stytch's signature strength; Qeet ID's is planned.",
+    },
+    {
+      section: "Security",
+      feature: "Impossible-travel / adaptive risk signals",
+      qeetid: "Roadmap",
+      competitor: true,
+    },
 
     // ---- Deployment ----
-    { section: "Deployment", feature: "Self-host (single binary + Postgres)", qeetid: true, competitor: false },
-    { section: "Deployment", feature: "Bring-your-own database", qeetid: true, competitor: false },
-    { section: "Deployment", feature: "Air-gapped / on-prem", qeetid: true, competitor: false },
+    {
+      section: "Deployment",
+      feature: "Self-host (single binary + Postgres)",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Deployment",
+      feature: "Bring-your-own database",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Deployment",
+      feature: "Air-gapped / on-prem",
+      qeetid: true,
+      competitor: false,
+    },
 
     // ---- Pricing ----
-    { section: "Pricing", feature: "Free tier", qeetid: "5,000 MAU", competitor: "1,000 MAU + 25 orgs (B2B)" },
-    { section: "Pricing", feature: "Per-MAU pricing", qeetid: "$0.02 / MAU (Pro)", competitor: "Variable by product" },
+    {
+      section: "Pricing",
+      feature: "Free tier",
+      qeetid: "5,000 MAU",
+      competitor: "1,000 MAU + 25 orgs (B2B)",
+    },
+    {
+      section: "Pricing",
+      feature: "Per-MAU pricing",
+      qeetid: "$0.02 / MAU (Pro)",
+      competitor: "Variable by product",
+    },
   ],
   cta: {
     headline: "Modern auth methods you can self-host",

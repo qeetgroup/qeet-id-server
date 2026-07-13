@@ -12,12 +12,11 @@
     }
   },
   "typescript.tsdk": "node_modules/typescript/lib",
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "editor.defaultFormatter": "biomejs.biome",
+  "[typescript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[typescriptreact]": { "editor.defaultFormatter": "biomejs.biome" },
   "files.exclude": {
     "**/node_modules": true,
-    "**/.turbo": true,
     "**/dist": true,
     "**/.next": true,
     "**/bin": true

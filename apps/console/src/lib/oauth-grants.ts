@@ -31,7 +31,9 @@ export function useRevokeOAuthGrant() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/oauth/grants/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/oauth/grants/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["oauth-grants"] }),
     meta: { successMessage: "Grant revoked" },
   });

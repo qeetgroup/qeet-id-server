@@ -1,5 +1,5 @@
-import { QeetLogoOnDark, QeetLogoOnLight } from "@qeetrix/ui/brand";
 import { cn } from "@qeetrix/ui";
+import { QeetLogoOnDark, QeetLogoOnLight } from "@qeetrix/ui/brand";
 
 type QeetMarkProps = {
   /** Pixel size of the square mark. */

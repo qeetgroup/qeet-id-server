@@ -38,28 +38,24 @@ import {
   TimeSince,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import {
-  Loader2Icon,
-  PencilIcon,
-  PlusIcon,
-  ServerIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { Loader2Icon, PencilIcon, PlusIcon, ServerIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
-  type SamlProvider,
   idpMetadataUrl,
+  type SamlProvider,
   useCreateSamlProvider,
   useDeleteSamlProvider,
   useSamlProviders,
   useUpdateSamlProvider,
 } from "@/lib/saml-idp";
 
-export const Route = createFileRoute("/_app/auth/connections/saml-idp")({ component: SamlIdpPage });
+export const Route = createFileRoute("/_app/auth/connections/saml-idp")({
+  component: SamlIdpPage,
+});
 
 function SamlIdpPage() {
   const { t } = useTranslation("saml");
@@ -180,7 +176,9 @@ function SamlIdpPage() {
                   t={t}
                   i18nKey="delete.descriptionNamed"
                   values={{ name: confirmingDelete.name }}
-                  components={{ strong: <span className="font-medium text-foreground" /> }}
+                  components={{
+                    strong: <span className="font-medium text-foreground" />,
+                  }}
                 />
               ) : (
                 t("delete.descriptionFallback")
@@ -196,7 +194,9 @@ function SamlIdpPage() {
               disabled={deleteM.isPending}
               onClick={() =>
                 confirmingDelete &&
-                deleteM.mutate(confirmingDelete.id, { onSuccess: () => setConfirmingDelete(null) })
+                deleteM.mutate(confirmingDelete.id, {
+                  onSuccess: () => setConfirmingDelete(null),
+                })
               }
             >
               {deleteM.isPending && <Loader2Icon className="animate-spin" />}

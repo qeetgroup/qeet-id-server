@@ -1,4 +1,4 @@
-import { TableHead, cn } from "@qeetrix/ui";
+import { cn, TableHead } from "@qeetrix/ui";
 import { ArrowDownIcon, ArrowUpIcon, ChevronsUpDownIcon } from "lucide-react";
 
 import type { SortState } from "@/lib/list-view";

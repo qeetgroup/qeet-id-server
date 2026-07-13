@@ -6,17 +6,8 @@ Code generation scripts and configurations for Qeet ID.
 
 | Tool | How to run | Output |
 |---|---|---|
-| OpenAPI client | `tools/codegen/openapi-gen.sh` | `sdk/js/sdk/src/generated/` |
 | Protobuf / gRPC | _planned_ | see [ROADMAP.md](../../ROADMAP.md) |
 
 > Data access is **hand-written SQL via pgx** — there is no sqlc/ORM codegen step (see [ADR-0003](../../docs/adr/0003-postgresql-hand-written-sql.md)).
 
-## OpenAPI
-
-The contract is split into five bounded-context files under `api/openapi/`. The generator merges them into one document (via `tools/openapi-split merge`) and produces TypeScript types for the JS SDK:
-
-```bash
-./tools/codegen/openapi-gen.sh
-```
-
-Requires `openapi-typescript` (`bun add -g openapi-typescript`).
+> SDK type generation moved out with the SDKs — the TypeScript/client SDKs now live in separate `qeet-sdks/` repos, which own their own codegen from the published OpenAPI contract. The five bounded-context specs under `api/openapi/` can still be merged into one document via `tools/openapi-split merge`.

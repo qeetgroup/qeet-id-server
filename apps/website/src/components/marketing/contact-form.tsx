@@ -1,15 +1,21 @@
 "use client";
 
-import { Button, Input, Label, Textarea, cn } from "@qeetrix/ui";
+import { Button, cn, Input, Label, Textarea } from "@qeetrix/ui";
 import { CheckCircle2Icon } from "lucide-react";
-import { useId, useState, type FormEvent } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 type FieldName = "firstName" | "lastName" | "email" | "topic" | "message";
 type Errors = Partial<Record<FieldName, string>>;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const topics = ["Sales enquiry", "Technical support", "Partnership", "Press & media", "Something else"];
+const topics = [
+  "Sales enquiry",
+  "Technical support",
+  "Partnership",
+  "Press & media",
+  "Something else",
+];
 
 function validate(data: FormData): Errors {
   const errors: Errors = {};
@@ -22,7 +28,8 @@ function validate(data: FormData): Errors {
   if (!get("topic")) errors.topic = "Pick a topic so we can route you.";
   const message = get("message");
   if (!message) errors.message = "Message is required.";
-  else if (message.length < 10) errors.message = "Please add a little more detail (10+ characters).";
+  else if (message.length < 10)
+    errors.message = "Please add a little more detail (10+ characters).";
   return errors;
 }
 
@@ -61,7 +68,9 @@ export function ContactForm() {
         form.reset();
         return;
       }
-      const body = (await res.json().catch(() => null)) as { errors?: Errors } | null;
+      const body = (await res.json().catch(() => null)) as {
+        errors?: Errors;
+      } | null;
       if (body?.errors) setErrors(body.errors);
       setFormError("Please fix the highlighted fields and try again.");
       setStatus("idle");
@@ -105,8 +114,20 @@ export function ContactForm() {
       </h2>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field id="firstName" label="First name" autoComplete="given-name" error={errors.firstName} required />
-        <Field id="lastName" label="Last name" autoComplete="family-name" error={errors.lastName} required />
+        <Field
+          id="firstName"
+          label="First name"
+          autoComplete="given-name"
+          error={errors.firstName}
+          required
+        />
+        <Field
+          id="lastName"
+          label="Last name"
+          autoComplete="family-name"
+          error={errors.lastName}
+          required
+        />
       </div>
 
       <Field

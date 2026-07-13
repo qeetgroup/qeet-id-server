@@ -1,5 +1,5 @@
-import http from "k6/http";
 import { check, sleep } from "k6";
+import http from "k6/http";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:4001";
 
@@ -29,16 +29,18 @@ export const options = {
 const CREDS = { email: "rohan@qeet.in", password: "Password123!" };
 
 export function setup() {
-  const res = http.post(
-    `${BASE_URL}/v1/auth/login`,
-    JSON.stringify(CREDS),
-    { headers: { "Content-Type": "application/json" } },
-  );
+  const res = http.post(`${BASE_URL}/v1/auth/login`, JSON.stringify(CREDS), {
+    headers: { "Content-Type": "application/json" },
+  });
   if (res.status !== 200) {
     throw new Error(`setup login failed: ${res.status} ${res.body}`);
   }
   const body = JSON.parse(res.body);
-  return { accessToken: body.access_token, userId: body.user_id, tenantId: body.tenant_id };
+  return {
+    accessToken: body.access_token,
+    userId: body.user_id,
+    tenantId: body.tenant_id,
+  };
 }
 
 export default function (data) {

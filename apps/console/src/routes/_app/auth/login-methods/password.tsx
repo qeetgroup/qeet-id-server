@@ -19,7 +19,9 @@ import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/page-header";
 import { type AuthPolicy, useAuthPolicy, useUpdateAuthPolicy } from "@/lib/auth-policy";
 
-export const Route = createFileRoute("/_app/auth/login-methods/password")({ component: PasswordPage });
+export const Route = createFileRoute("/_app/auth/login-methods/password")({
+  component: PasswordPage,
+});
 
 function PasswordPage() {
   const { t } = useTranslation("auth");
@@ -44,7 +46,8 @@ function PasswordForm({ initial }: { initial: AuthPolicy }) {
   const { t } = useTranslation("auth");
   const updateM = useUpdateAuthPolicy();
   const [draft, setDraft] = useState<AuthPolicy>(initial);
-  const set = <K extends keyof AuthPolicy>(k: K, v: AuthPolicy[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const set = <K extends keyof AuthPolicy>(k: K, v: AuthPolicy[K]) =>
+    setDraft((d) => ({ ...d, [k]: v }));
 
   return (
     <>
@@ -54,7 +57,10 @@ function PasswordForm({ initial }: { initial: AuthPolicy }) {
             <CardTitle>{t("password.authTitle")}</CardTitle>
             <CardDescription>{t("password.authDescription")}</CardDescription>
           </div>
-          <Switch checked={draft.password_enabled} onCheckedChange={(v) => set("password_enabled", v)} />
+          <Switch
+            checked={draft.password_enabled}
+            onCheckedChange={(v) => set("password_enabled", v)}
+          />
         </CardHeader>
       </Card>
 

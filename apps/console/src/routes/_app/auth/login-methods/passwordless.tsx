@@ -17,8 +17,8 @@ import {
   ShieldCheckIcon,
   WandSparklesIcon,
 } from "lucide-react";
-import { useState } from "react";
 import type { ComponentType } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
@@ -57,7 +57,11 @@ type MethodDef = {
 
 const METHOD_DEFS: MethodDef[] = [
   { key: "passkey_enabled", translationKey: "passkeys", icon: FingerprintIcon },
-  { key: "magic_link_enabled", translationKey: "magicLinks", icon: WandSparklesIcon },
+  {
+    key: "magic_link_enabled",
+    translationKey: "magicLinks",
+    icon: WandSparklesIcon,
+  },
   { key: "otp_email_enabled", translationKey: "emailOtp", icon: MailIcon },
   { key: "otp_sms_enabled", translationKey: "smsOtp", icon: MessageSquareIcon },
 ];
@@ -81,7 +85,9 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
                   <Icon className="size-4" />
                   {methodTitle}
                 </CardTitle>
-                <CardDescription>{t(`loginMethods.passwordless.methods.${m.translationKey}.description`)}</CardDescription>
+                <CardDescription>
+                  {t(`loginMethods.passwordless.methods.${m.translationKey}.description`)}
+                </CardDescription>
               </CardHeader>
               <CardContent className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
@@ -101,7 +107,8 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <ShieldCheckIcon className="size-4" /> {t("loginMethods.passwordless.trustedDevices.title")}
+            <ShieldCheckIcon className="size-4" />{" "}
+            {t("loginMethods.passwordless.trustedDevices.title")}
           </CardTitle>
           <CardDescription>
             {t("loginMethods.passwordless.trustedDevices.description")}
@@ -109,7 +116,9 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
         </CardHeader>
         <CardContent className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">
-            {draft.remember_device_enabled ? t("loginMethods.passwordless.enabled") : t("loginMethods.passwordless.off")}
+            {draft.remember_device_enabled
+              ? t("loginMethods.passwordless.enabled")
+              : t("loginMethods.passwordless.off")}
           </span>
           <Switch
             checked={draft.remember_device_enabled}
@@ -135,7 +144,9 @@ function PasswordlessForm({ initial }: { initial: AuthPolicy }) {
           {t("loginMethods.passwordless.resetBtn")}
         </Button>
         <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending}>
-          {updateM.isPending ? t("loginMethods.passwordless.savingBtn") : t("loginMethods.passwordless.saveBtn")}
+          {updateM.isPending
+            ? t("loginMethods.passwordless.savingBtn")
+            : t("loginMethods.passwordless.saveBtn")}
         </Button>
       </div>
     </>

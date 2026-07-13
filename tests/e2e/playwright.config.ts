@@ -28,9 +28,9 @@ export default defineConfig({
 
   // Commands run from the repo root (two levels up from tests/e2e). These match
   // the real Makefile / package.json targets — the previous `make dev-backend`
-  // / `make dev-login` / `make dev-admin` targets never existed (QID-08), so the
+  // / `make dev-login` / `make dev-console` targets never existed (QID-08), so the
   // harness could not start a stack on its own. `reuseExistingServer` means a
-  // stack already up via `make dev` + `bun run dev:login` + `bun run dev:admin` is
+  // stack already up via `make dev` + `bun run dev:login` + `bun run dev:console` is
   // reused locally; CI starts them fresh.
   webServer: [
     {
@@ -48,7 +48,7 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: "bun run dev:admin",
+      command: "bun run dev:console",
       cwd: "../..",
       url: "http://localhost:3002",
       reuseExistingServer: !process.env.CI,

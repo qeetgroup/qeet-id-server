@@ -1,5 +1,5 @@
-import { Button, Card, CardContent, buttonVariants } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Button, buttonVariants, Card, CardContent } from "@qeetrix/ui";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { AlertTriangleIcon, CheckCircle2Icon, Loader2Icon, ShieldXIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -8,7 +8,9 @@ import { BrandHero } from "@/features/auth/components/brand-hero";
 import { ApiError } from "@/lib/api";
 import { useConsumeSamlCode } from "@/lib/auth";
 
-export const Route = createFileRoute("/_auth/sso/callback")({ component: SsoCallbackPage });
+export const Route = createFileRoute("/_auth/sso/callback")({
+  component: SsoCallbackPage,
+});
 
 // The SAML ACS redirects here with the one-time code in the URL fragment
 // (#saml_code=…), which — unlike a query string — is never sent to the server
@@ -89,7 +91,8 @@ function renderStatus({
     );
   }
 
-  const detail = consume.error instanceof ApiError ? consume.error.message : "Single sign-on failed.";
+  const detail =
+    consume.error instanceof ApiError ? consume.error.message : "Single sign-on failed.";
   return (
     <>
       <ShieldXIcon className="size-10 text-rose-500" />

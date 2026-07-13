@@ -1,10 +1,10 @@
+import { CompassIcon, HeartHandshakeIcon, ShieldCheckIcon, ZapIcon } from "lucide-react";
+import type { Metadata } from "next";
 import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { PageHero } from "@/components/marketing/page-hero";
 import { Section, SectionHeader } from "@/components/marketing/section";
 import { CTA } from "@/components/marketing/sections/cta";
-import { CompassIcon, HeartHandshakeIcon, ShieldCheckIcon, ZapIcon } from "lucide-react";
-import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "About",
@@ -109,7 +109,9 @@ export default function AboutPage() {
                   aria-hidden
                   className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-[image:var(--brand-gradient)] transition-transform duration-500 group-hover:scale-x-100"
                 />
-                <span className="font-display text-3xl font-semibold tracking-tight">{s.value}</span>
+                <span className="font-display text-3xl font-semibold tracking-tight">
+                  {s.value}
+                </span>
                 <span className="text-xs text-muted-foreground">{s.label}</span>
               </div>
             </StaggerItem>

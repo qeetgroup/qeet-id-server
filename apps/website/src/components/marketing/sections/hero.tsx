@@ -1,13 +1,12 @@
 "use client";
 
+import { cn } from "@qeetrix/ui";
 import {
   IconMfaShield,
   IconPasskey,
   IconSamlConnector,
   type QeetIconProps,
 } from "@qeetrix/ui/brand";
-import { cn } from "@qeetrix/ui";
-import { SIGN_UP_URL } from "@/lib/links";
 import {
   ArrowRightIcon,
   CheckCircle2Icon,
@@ -16,14 +15,13 @@ import {
   ZapIcon,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
-
 import { ArrowCta } from "@/components/marketing/blocks/arrow-cta";
+import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import { ButtonLink } from "@/components/marketing/button-link";
 import { Aurora } from "@/components/marketing/effects/aurora";
 import { BlurText } from "@/components/marketing/effects/blur-text";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { ShapeGrid } from "@/components/marketing/effects/shape-grid";
-import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
 import {
   MagneticButton,
   Parallax,
@@ -33,6 +31,7 @@ import {
   Tilt,
   WordReveal,
 } from "@/components/marketing/motion";
+import { SIGN_UP_URL } from "@/lib/links";
 
 const trustPeople = [
   { name: "Priya Anand", photo: "/avatars/priya.jpg" },
@@ -268,7 +267,9 @@ function FloatingChip({
 
 function StatBadge({ children }: { children: ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">{children}</span>
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {children}
+    </span>
   );
 }
 
@@ -292,10 +293,7 @@ export function Hero() {
         {/* Left — copy */}
         <div className="flex flex-col items-center gap-7 text-center sm:text-left lg:items-start">
           {/* Announcement pill */}
-          <Reveal
-            duration={0.5}
-            className="mx-auto sm:mx-0"
-          >
+          <Reveal duration={0.5} className="mx-auto sm:mx-0">
             <a
               href="/changelog"
               className="group inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 py-1 pl-1 pr-3 text-xs font-medium shadow-sm backdrop-blur transition-colors hover:bg-background focus-ring-brand"
@@ -323,7 +321,11 @@ export function Hero() {
           </h1>
 
           {/* Subhead + CTAs + social proof — staggered. */}
-          <Stagger staggerDelay={0.1} delayChildren={0.6} className="flex flex-col items-center gap-7 sm:items-start">
+          <Stagger
+            staggerDelay={0.1}
+            delayChildren={0.6}
+            className="flex flex-col items-center gap-7 sm:items-start"
+          >
             <StaggerItem>
               <p className="max-w-xl text-base text-muted-foreground text-balance sm:text-lg">
                 <BlurText

@@ -40,7 +40,10 @@ export function useRotateSecret() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, value }: { id: string; value: string }) =>
-      api<Secret>(`/v1/tenants/${tenantId}/secrets/${id}`, { method: "PATCH", body: { value } }),
+      api<Secret>(`/v1/tenants/${tenantId}/secrets/${id}`, {
+        method: "PATCH",
+        body: { value },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["secrets"] }),
     meta: { successMessage: "Secret rotated" },
   });
@@ -50,7 +53,9 @@ export function useRevealSecret() {
   const tenantId = useTenantId();
   return useMutation({
     mutationFn: (id: string) =>
-      api<{ value: string }>(`/v1/tenants/${tenantId}/secrets/${id}/reveal`, { method: "POST" }),
+      api<{ value: string }>(`/v1/tenants/${tenantId}/secrets/${id}/reveal`, {
+        method: "POST",
+      }),
   });
 }
 
@@ -58,7 +63,8 @@ export function useDeleteSecret() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api<void>(`/v1/tenants/${tenantId}/secrets/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      api<void>(`/v1/tenants/${tenantId}/secrets/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["secrets"] }),
     meta: { successMessage: "Secret deleted" },
   });

@@ -41,13 +41,13 @@ import {
   TableRow,
   Textarea,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   type OidcClient,
   useCreateOidcClient,
@@ -55,7 +55,9 @@ import {
   useOidcClients,
 } from "@/lib/oidc-clients";
 
-export const Route = createFileRoute("/_app/auth/connections/oidc/")({ component: OidcPage });
+export const Route = createFileRoute("/_app/auth/connections/oidc/")({
+  component: OidcPage,
+});
 
 function OidcPage() {
   const { t } = useTranslation("oidc");
@@ -63,7 +65,10 @@ function OidcPage() {
   const deleteM = useDeleteOidcClient();
   const [creating, setCreating] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<OidcClient | null>(null);
-  const [revealed, setRevealed] = useState<{ client: OidcClient; secret: string } | null>(null);
+  const [revealed, setRevealed] = useState<{
+    client: OidcClient;
+    secret: string;
+  } | null>(null);
 
   const items = listQ.data?.items ?? [];
 
@@ -165,7 +170,9 @@ function OidcPage() {
                             {s}
                           </Badge>
                         ))}
-                        {c.scopes.length > 3 && <Badge variant="muted">+{c.scopes.length - 3}</Badge>}
+                        {c.scopes.length > 3 && (
+                          <Badge variant="muted">+{c.scopes.length - 3}</Badge>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="text-right whitespace-nowrap">
@@ -209,7 +216,9 @@ function OidcPage() {
                   t={t}
                   i18nKey="delete.descriptionNamed"
                   values={{ name: confirmingDelete.name }}
-                  components={{ strong: <span className="font-medium text-foreground" /> }}
+                  components={{
+                    strong: <span className="font-medium text-foreground" />,
+                  }}
                 />
               ) : (
                 t("delete.descriptionFallback")

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 // three/R3F is heavy + WebGL-only, so load the Beams canvas lazily, client-side only.
 const Beams = lazy(() => import("./Beams"));

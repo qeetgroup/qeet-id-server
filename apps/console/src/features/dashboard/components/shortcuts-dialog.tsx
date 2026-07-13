@@ -1,10 +1,4 @@
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@qeetrix/ui";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@qeetrix/ui";
 
 import { SHORTCUT_GROUPS } from "@/lib/shortcuts";
 

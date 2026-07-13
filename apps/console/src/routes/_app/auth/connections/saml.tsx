@@ -51,7 +51,7 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   type SamlConnection,
   samlLoginUrl,
@@ -63,7 +63,9 @@ import {
   useUpdateSamlConnection,
 } from "@/lib/saml";
 
-export const Route = createFileRoute("/_app/auth/connections/saml")({ component: SamlPage });
+export const Route = createFileRoute("/_app/auth/connections/saml")({
+  component: SamlPage,
+});
 
 function SamlPage() {
   const { t } = useTranslation("auth");
@@ -127,9 +129,7 @@ function SamlPage() {
       <Card>
         <CardHeader>
           <CardTitle>{t("samlSp.list.title")}</CardTitle>
-          <CardDescription>
-            {t("samlSp.list.description")}
-          </CardDescription>
+          <CardDescription>{t("samlSp.list.description")}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -245,19 +245,20 @@ function ValidateConnection({ id }: { id: string }) {
         }}
         title={t("samlSp.validate.buttonTitle")}
       >
-        {testM.isPending ? <Loader2Icon className="animate-spin" /> : <ShieldCheckIcon />} {t("samlSp.validate.button")}
+        {testM.isPending ? <Loader2Icon className="animate-spin" /> : <ShieldCheckIcon />}{" "}
+        {t("samlSp.validate.button")}
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="w-full sm:max-w-md">
           <div className="flex h-full flex-col">
             <SheetHeader>
               <SheetTitle>{t("samlSp.validate.sheetTitle")}</SheetTitle>
-              <SheetDescription>
-                {t("samlSp.validate.sheetDescription")}
-              </SheetDescription>
+              <SheetDescription>{t("samlSp.validate.sheetDescription")}</SheetDescription>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto p-4">
-              {testM.isPending && <p className="text-sm text-muted-foreground">{t("samlSp.validate.running")}</p>}
+              {testM.isPending && (
+                <p className="text-sm text-muted-foreground">{t("samlSp.validate.running")}</p>
+              )}
               {testM.error && (
                 <p className="text-destructive text-sm">{(testM.error as ApiError).message}</p>
               )}
@@ -321,9 +322,7 @@ function CreateConnectionSheet({
         >
           <SheetHeader>
             <SheetTitle>{t("samlSp.create.title")}</SheetTitle>
-            <SheetDescription>
-              {t("samlSp.create.description")}
-            </SheetDescription>
+            <SheetDescription>{t("samlSp.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
@@ -332,7 +331,9 @@ function CreateConnectionSheet({
                 <Input id="saml-name" name="name" placeholder="Acme — Okta" required />
               </Field>
               <Field>
-                <FieldLabel htmlFor="saml-idp_entity_id">{t("samlSp.create.idpEntityIdLabel")}</FieldLabel>
+                <FieldLabel htmlFor="saml-idp_entity_id">
+                  {t("samlSp.create.idpEntityIdLabel")}
+                </FieldLabel>
                 <Input
                   id="saml-idp_entity_id"
                   name="idp_entity_id"
@@ -341,7 +342,9 @@ function CreateConnectionSheet({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="saml-idp_sso_url">{t("samlSp.create.idpSsoUrlLabel")}</FieldLabel>
+                <FieldLabel htmlFor="saml-idp_sso_url">
+                  {t("samlSp.create.idpSsoUrlLabel")}
+                </FieldLabel>
                 <Input
                   id="saml-idp_sso_url"
                   name="idp_sso_url"
@@ -351,7 +354,9 @@ function CreateConnectionSheet({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="saml-idp_certificate">{t("samlSp.create.idpCertLabel")}</FieldLabel>
+                <FieldLabel htmlFor="saml-idp_certificate">
+                  {t("samlSp.create.idpCertLabel")}
+                </FieldLabel>
                 <Textarea
                   id="saml-idp_certificate"
                   name="idp_certificate"
@@ -365,7 +370,9 @@ function CreateConnectionSheet({
                 </FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="saml-email_attribute">{t("samlSp.create.emailAttrLabel")}</FieldLabel>
+                <FieldLabel htmlFor="saml-email_attribute">
+                  {t("samlSp.create.emailAttrLabel")}
+                </FieldLabel>
                 <Input
                   id="saml-email_attribute"
                   name="email_attribute"
@@ -373,7 +380,9 @@ function CreateConnectionSheet({
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="saml-name_attribute">{t("samlSp.create.nameAttrLabel")}</FieldLabel>
+                <FieldLabel htmlFor="saml-name_attribute">
+                  {t("samlSp.create.nameAttrLabel")}
+                </FieldLabel>
                 <Input
                   id="saml-name_attribute"
                   name="name_attribute"
@@ -394,9 +403,7 @@ function CreateConnectionSheet({
                     <SelectItem value="active">{t("samlSp.create.statusActive")}</SelectItem>
                   </SelectContent>
                 </Select>
-                <FieldDescription>
-                  {t("samlSp.create.statusHelp")}
-                </FieldDescription>
+                <FieldDescription>{t("samlSp.create.statusHelp")}</FieldDescription>
               </Field>
               {createM.error && (
                 <Field>
@@ -406,7 +413,9 @@ function CreateConnectionSheet({
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("samlSp.create.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("samlSp.create.cancelBtn")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("samlSp.create.creatingBtn") : t("samlSp.create.createBtn")}

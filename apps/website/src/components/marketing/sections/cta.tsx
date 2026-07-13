@@ -5,7 +5,13 @@ import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { BorderBeam } from "@/components/marketing/effects/border-beam";
 import { Orb } from "@/components/marketing/effects/orb";
 import { ShapeGrid } from "@/components/marketing/effects/shape-grid";
-import { MagneticButton, Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
+import {
+  MagneticButton,
+  Reveal,
+  Stagger,
+  StaggerItem,
+  WordReveal,
+} from "@/components/marketing/motion";
 import { SIGN_UP_URL } from "@/lib/links";
 
 const trust = ["No credit card", "5,000 MAU free", "SOC 2 · GDPR ready"];

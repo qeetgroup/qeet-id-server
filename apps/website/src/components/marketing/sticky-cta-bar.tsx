@@ -4,9 +4,9 @@ import { Button } from "@qeetrix/ui";
 import { ArrowRightIcon, SparklesIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "motion/react";
 import { useState } from "react";
-import { ButtonLink } from "./button-link";
-import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { SIGN_UP_URL } from "@/lib/links";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
+import { ButtonLink } from "./button-link";
 
 /**
  * Premium bottom CTA that animates in once the visitor scrolls past the hero
@@ -39,9 +39,7 @@ export function StickyCtaBar() {
           animate={shown}
           exit={hidden}
           transition={
-            reduce
-              ? { duration: 0 }
-              : { type: "spring", stiffness: 260, damping: 26, mass: 0.6 }
+            reduce ? { duration: 0 } : { type: "spring", stiffness: 260, damping: 26, mass: 0.6 }
           }
           className="fixed inset-x-0 bottom-0 z-40 px-4 pb-4 sm:px-6 lg:px-8"
         >

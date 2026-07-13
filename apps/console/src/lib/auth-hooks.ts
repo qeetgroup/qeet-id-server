@@ -33,7 +33,10 @@ export function useCreateAuthHook() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { url: string; secret: string; fail_open: boolean }) =>
-      api<AuthHook>(`/v1/tenants/${tenantId}/auth-hooks`, { method: "POST", body }),
+      api<AuthHook>(`/v1/tenants/${tenantId}/auth-hooks`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
     meta: { successMessage: "Hook added" },
   });
@@ -65,7 +68,9 @@ export function useDeleteAuthHook() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/auth-hooks/${id}`, { method: "DELETE" }),
+      api<void>(`/v1/tenants/${tenantId}/auth-hooks/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

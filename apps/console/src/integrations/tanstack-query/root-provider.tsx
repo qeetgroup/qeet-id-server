@@ -50,7 +50,8 @@ export function getContext() {
     }),
     mutationCache: new MutationCache({
       onError: (error, _vars, _ctx, mutation) => reportError(error, mutation.meta),
-      onSuccess: (_data, _vars, _ctx, mutation) => reportSuccess(mutation.meta as MutationMeta | undefined),
+      onSuccess: (_data, _vars, _ctx, mutation) =>
+        reportSuccess(mutation.meta as MutationMeta | undefined),
     }),
   });
 

@@ -13,13 +13,7 @@ import type { CustomerStory } from "@/lib/customers";
  * pointer devices (no-op for touch / reduced motion). Server-rendered shell —
  * only the `Tilt` wrapper is a client island.
  */
-export function CustomerCard({
-  story,
-  className,
-}: {
-  story: CustomerStory;
-  className?: string;
-}) {
+export function CustomerCard({ story, className }: { story: CustomerStory; className?: string }) {
   const slug = caseStudySlug(story.company);
   const metric = story.metrics?.[0];
 
@@ -61,7 +55,10 @@ export function CustomerCard({
 
         <span className="inline-flex items-center gap-1 text-sm font-medium text-brand-text">
           Read the story
-          <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+          <ArrowRightIcon
+            className="size-4 transition-transform group-hover:translate-x-0.5"
+            aria-hidden
+          />
         </span>
       </Link>
     </Tilt>

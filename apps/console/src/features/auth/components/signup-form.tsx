@@ -71,8 +71,8 @@ export function SignupForm({
               <div className="flex flex-col items-center gap-2 text-center">
                 <h1 className="text-2xl font-bold">Create your account</h1>
                 <p className="text-sm text-balance text-muted-foreground">
-                  We&apos;ll set up a personal workspace for you automatically. You can rename it
-                  or create more later.
+                  We&apos;ll set up a personal workspace for you automatically. You can rename it or
+                  create more later.
                 </p>
               </div>
 
@@ -90,7 +90,9 @@ export function SignupForm({
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
                 <Input id="email" name="email" type="email" placeholder="jane@acme.test" required />
-                <FieldDescription>We&apos;ll use this for sign-in and notifications.</FieldDescription>
+                <FieldDescription>
+                  We&apos;ll use this for sign-in and notifications.
+                </FieldDescription>
               </Field>
 
               <Field className="grid grid-cols-2 gap-4">
@@ -182,8 +184,14 @@ export function SignupForm({
       </Card>
       <FieldDescription className="px-6 text-center">
         By clicking continue, you agree to our{" "}
-        <a href="/terms" target="_blank" rel="noopener noreferrer">Terms of Service</a> and{" "}
-        <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.
+        <a href="/terms" target="_blank" rel="noopener noreferrer">
+          Terms of Service
+        </a>{" "}
+        and{" "}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer">
+          Privacy Policy
+        </a>
+        .
       </FieldDescription>
     </div>
   );

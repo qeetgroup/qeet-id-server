@@ -8,7 +8,6 @@ export default async function Image() {
   return ogCard({
     eyebrow: "Engineering",
     title: "Notes from the team building Qeet ID",
-    description:
-      "Security, identity, and the boring infra it takes to make auth feel boring.",
+    description: "Security, identity, and the boring infra it takes to make auth feel boring.",
   });
 }

@@ -7,16 +7,11 @@ Get Qeet ID running locally in about 10 minutes.
 | Tool | Version | Install |
 |---|---|---|
 | Go | 1.25+ | [go.dev/dl](https://go.dev/dl) |
-| Node.js | ≥24 | `nvm install` (reads `.nvmrc`) |
 | Bun | 1.3.14 | `brew install bun` |
 | Docker | any recent | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | golang-migrate | any | `brew install golang-migrate` |
 
-Node version is critical — the frontend fails to build on Node 18 (the macOS default). Always activate the correct version first:
-
-```bash
-nvm use   # reads the repo .nvmrc (Node 24)
-```
+Bun is the JS runtime and package manager; its version is pinned via `packageManager` in `package.json`.
 
 ## Setup (5 commands)
 

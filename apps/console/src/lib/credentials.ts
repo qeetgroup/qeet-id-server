@@ -50,7 +50,11 @@ export function useIssueCredential() {
       type: string;
       claims: Record<string, unknown>;
       ttl_seconds: number;
-    }) => api<IssueResult>(`/v1/tenants/${tenantId}/credentials`, { method: "POST", body }),
+    }) =>
+      api<IssueResult>(`/v1/tenants/${tenantId}/credentials`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -60,7 +64,9 @@ export function useRevokeCredential() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/credentials/${id}/revoke`, { method: "POST" }),
+      api<void>(`/v1/tenants/${tenantId}/credentials/${id}/revoke`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
@@ -68,6 +74,9 @@ export function useRevokeCredential() {
 export function useVerifyCredential() {
   return useMutation({
     mutationFn: (credential: string) =>
-      api<VerifyResult>(`/v1/credentials/verify`, { method: "POST", body: { credential } }),
+      api<VerifyResult>(`/v1/credentials/verify`, {
+        method: "POST",
+        body: { credential },
+      }),
   });
 }

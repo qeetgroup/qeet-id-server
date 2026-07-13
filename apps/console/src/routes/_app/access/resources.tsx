@@ -16,12 +16,13 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { BoxesIcon, KeyRoundIcon, ShieldCheckIcon } from "lucide-react";
-
+import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
-import { useTranslation } from "react-i18next";
 
-export const Route = createFileRoute("/_app/access/resources")({ component: ResourcesPage });
+export const Route = createFileRoute("/_app/access/resources")({
+  component: ResourcesPage,
+});
 
 type Permission = { id: string; key: string; description: string };
 
@@ -43,7 +44,11 @@ function groupResources(perms: Permission[]): Resource[] {
     map.get(resource)!.add(action);
   }
   return [...map.entries()]
-    .map(([name, actions]) => ({ name, actions: [...actions].sort(), count: actions.size }))
+    .map(([name, actions]) => ({
+      name,
+      actions: [...actions].sort(),
+      count: actions.size,
+    }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -128,7 +133,9 @@ function ResourcesPage() {
                         ))}
                       </div>
                     </TableCell>
-                    <TableCell className="text-right text-sm text-muted-foreground">{r.count}</TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">
+                      {r.count}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

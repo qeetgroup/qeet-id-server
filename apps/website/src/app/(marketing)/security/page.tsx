@@ -1,3 +1,4 @@
+import { Badge } from "@qeetrix/ui";
 import {
   IconApiKey,
   IconAuditLog,
@@ -7,8 +8,6 @@ import {
   IconTenant,
   IconWebhook,
 } from "@qeetrix/ui/brand";
-import { Badge } from "@qeetrix/ui";
-import type { Metadata } from "next";
 import {
   CheckCircle2Icon,
   FingerprintIcon,
@@ -17,11 +16,11 @@ import {
   LockKeyholeIcon,
   ShieldAlertIcon,
 } from "lucide-react";
-
-import { CTA } from "@/components/marketing/sections/cta";
+import type { Metadata } from "next";
 import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { PageHero } from "@/components/marketing/page-hero";
 import { Section, SectionHeader } from "@/components/marketing/section";
+import { CTA } from "@/components/marketing/sections/cta";
 
 export const metadata: Metadata = {
   title: "Security & compliance",
@@ -164,10 +163,7 @@ export default function SecurityPage() {
           titleAccent="identity"
           subtitle="Each pillar below is implemented and tested in the platform today — not a brochure promise."
         />
-        <Stagger
-          staggerDelay={0.06}
-          className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3"
-        >
+        <Stagger staggerDelay={0.06} className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {pillars.map(({ icon: Icon, title, body, badge }) => (
             <StaggerItem key={title} className="h-full">
               <article className="flex h-full flex-col gap-3 rounded-2xl border border-border/60 bg-card p-6">

@@ -1,6 +1,6 @@
+import { ArrowRightIcon, CheckIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon, CheckIcon } from "lucide-react";
 
 import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
 import { PageHero } from "@/components/marketing/page-hero";

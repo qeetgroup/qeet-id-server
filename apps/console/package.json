@@ -2,17 +2,11 @@
   "name": "@qeet-id/console",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=24"
-  },
   "scripts": {
     "dev": "vite dev --port 3002",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "lint": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs",
-    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
-    "check": "eslint . --ext .js,.jsx,.ts,.tsx,.mjs,.cjs && prettier --check \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc,css,html,mdx,yml,yaml}\" --ignore-path ../../.prettierignore",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

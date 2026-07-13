@@ -1,7 +1,7 @@
 import { ThemeProvider } from "@qeetrix/ui";
-import type { QueryClient } from "@tanstack/react-query";
 import { TanStackDevtools } from "@tanstack/react-devtools";
-import { HeadContent, Scripts, createRootRouteWithContext } from "@tanstack/react-router";
+import type { QueryClient } from "@tanstack/react-query";
+import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { Toaster } from "sonner";
 
@@ -65,7 +65,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
           <TanStackDevtools
             config={{ position: "bottom-right" }}
             plugins={[
-              { name: "Tanstack Router", render: <TanStackRouterDevtoolsPanel /> },
+              {
+                name: "Tanstack Router",
+                render: <TanStackRouterDevtoolsPanel />,
+              },
               TanStackQueryDevtools,
             ]}
           />

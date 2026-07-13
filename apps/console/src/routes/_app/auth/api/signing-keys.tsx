@@ -24,22 +24,24 @@ import {
   TableRow,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertTriangleIcon, InfoIcon, KeyRoundIcon, Loader2Icon, RotateCcwIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  InfoIcon,
+  KeyRoundIcon,
+  Loader2Icon,
+  RotateCcwIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 import { type RotateKeyResult, useRotateKey, useSigningKeys } from "@/lib/signing-keys";
 
-export const Route = createFileRoute("/_app/auth/api/signing-keys")({ component: SigningKeysPage });
+export const Route = createFileRoute("/_app/auth/api/signing-keys")({
+  component: SigningKeysPage,
+});
 
-function PEMDialog({
-  result,
-  onClose,
-}: {
-  result: RotateKeyResult;
-  onClose: () => void;
-}) {
+function PEMDialog({ result, onClose }: { result: RotateKeyResult; onClose: () => void }) {
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-2xl">
@@ -148,11 +150,7 @@ function SigningKeysPage() {
             disabled={rotate.isPending}
             onClick={handleRotateClick}
           >
-            {rotate.isPending ? (
-              <Loader2Icon className="animate-spin" />
-            ) : (
-              <RotateCcwIcon />
-            )}
+            {rotate.isPending ? <Loader2Icon className="animate-spin" /> : <RotateCcwIcon />}
             Rotate Key
           </Button>
         </CardHeader>
@@ -224,9 +222,7 @@ function SigningKeysPage() {
       </Dialog>
 
       {/* PEM reveal dialog */}
-      {rotateResult && (
-        <PEMDialog result={rotateResult} onClose={() => setRotateResult(null)} />
-      )}
+      {rotateResult && <PEMDialog result={rotateResult} onClose={() => setRotateResult(null)} />}
     </div>
   );
 }

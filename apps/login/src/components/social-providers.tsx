@@ -42,7 +42,11 @@ const ICONS: Record<string, IconDef> = {
   github: { Icon: Github, iconClass: "dark:invert" },
   microsoft: { Icon: Microsoft },
   apple: { Icon: Apple, iconClass: "invert dark:invert-0" },
-  facebook: { Icon: Facebook, iconClass: "text-[#1877F2]", fill: "currentColor" },
+  facebook: {
+    Icon: Facebook,
+    iconClass: "text-[#1877F2]",
+    fill: "currentColor",
+  },
   x: { Icon: X, iconClass: "dark:invert" },
   linkedin: { Icon: Linkedin },
   gitlab: { Icon: Gitlab },

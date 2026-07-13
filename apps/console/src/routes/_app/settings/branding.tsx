@@ -14,18 +14,20 @@ import {
   Input,
   Skeleton,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, Loader2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LogoField } from "@/components/logo-field";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/settings/branding")({ component: BrandingPage });
+export const Route = createFileRoute("/_app/settings/branding")({
+  component: BrandingPage,
+});
 
 type Branding = {
   tenant_id: string;
@@ -67,7 +69,10 @@ function BrandingPage() {
 
   const saveM = useMutation({
     mutationFn: (body: Branding) =>
-      api<Branding>(`/v1/tenants/${tenantId}/branding`, { method: "PUT", body }),
+      api<Branding>(`/v1/tenants/${tenantId}/branding`, {
+        method: "PUT",
+        body,
+      }),
     onSuccess: () => {
       setSavedAt(new Date());
       qc.invalidateQueries({ queryKey: ["branding", tenantId] });
@@ -125,7 +130,9 @@ function BrandingPage() {
                           placeholder="#5b21b6"
                           ariaLabel={t("branding.visualIdentity.primaryColor")}
                         />
-                        <FieldDescription>{t("branding.visualIdentity.primaryColorHelp")}</FieldDescription>
+                        <FieldDescription>
+                          {t("branding.visualIdentity.primaryColorHelp")}
+                        </FieldDescription>
                       </Field>
                       <Field>
                         <FieldLabel>{t("branding.visualIdentity.secondaryColor")}</FieldLabel>
@@ -135,7 +142,9 @@ function BrandingPage() {
                           placeholder="#ffffff"
                           ariaLabel={t("branding.visualIdentity.secondaryColor")}
                         />
-                        <FieldDescription>{t("branding.visualIdentity.secondaryColorHelp")}</FieldDescription>
+                        <FieldDescription>
+                          {t("branding.visualIdentity.secondaryColorHelp")}
+                        </FieldDescription>
                       </Field>
                     </Field>
                   </FieldGroup>
@@ -145,14 +154,14 @@ function BrandingPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">{t("branding.customDomain.title")}</CardTitle>
-                  <CardDescription>
-                    {t("branding.customDomain.description")}
-                  </CardDescription>
+                  <CardDescription>{t("branding.customDomain.description")}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <FieldGroup>
                     <Field>
-                      <FieldLabel htmlFor="custom_domain">{t("branding.customDomain.label")}</FieldLabel>
+                      <FieldLabel htmlFor="custom_domain">
+                        {t("branding.customDomain.label")}
+                      </FieldLabel>
                       <Input
                         id="custom_domain"
                         name="custom_domain"
@@ -182,7 +191,9 @@ function BrandingPage() {
                   <FieldGroup>
                     <Field className="grid grid-cols-2 gap-4">
                       <Field>
-                        <FieldLabel htmlFor="email_from_name">{t("branding.outgoingEmail.fromName")}</FieldLabel>
+                        <FieldLabel htmlFor="email_from_name">
+                          {t("branding.outgoingEmail.fromName")}
+                        </FieldLabel>
                         <Input
                           id="email_from_name"
                           name="email_from_name"
@@ -192,7 +203,9 @@ function BrandingPage() {
                         />
                       </Field>
                       <Field>
-                        <FieldLabel htmlFor="email_from_address">{t("branding.outgoingEmail.fromAddress")}</FieldLabel>
+                        <FieldLabel htmlFor="email_from_address">
+                          {t("branding.outgoingEmail.fromAddress")}
+                        </FieldLabel>
                         <Input
                           id="email_from_address"
                           name="email_from_address"
@@ -242,7 +255,9 @@ function BrandingPage() {
                     {/* Login card preview */}
                     <div
                       className="flex items-center justify-center p-6"
-                      style={{ backgroundColor: draft.secondary_color || "#f8fafc" }}
+                      style={{
+                        backgroundColor: draft.secondary_color || "#f8fafc",
+                      }}
                     >
                       <div className="w-full max-w-60 overflow-hidden rounded-xl border bg-white shadow-lg">
                         {/* Card header with logo */}
@@ -256,13 +271,17 @@ function BrandingPage() {
                           ) : (
                             <div
                               className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg text-sm font-bold text-white"
-                              style={{ backgroundColor: draft.primary_color || "#5b21b6" }}
+                              style={{
+                                backgroundColor: draft.primary_color || "#5b21b6",
+                              }}
                             >
                               {(draft.email_from_name || "Q").slice(0, 1).toUpperCase()}
                             </div>
                           )}
                           <h3 className="text-sm font-semibold text-slate-900">
-                            {t("branding.preview.signInTo", { name: draft.email_from_name || "your account" })}
+                            {t("branding.preview.signInTo", {
+                              name: draft.email_from_name || "your account",
+                            })}
                           </h3>
                           <p className="mt-0.5 text-[10px] text-slate-500">
                             {t("branding.preview.emailPlaceholder")}
@@ -271,12 +290,16 @@ function BrandingPage() {
                         {/* Form fields */}
                         <div className="space-y-2 px-5 pb-5">
                           <div className="flex h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-3">
-                            <span className="text-[10px] text-slate-400">{t("branding.preview.emailPlaceholder")}</span>
+                            <span className="text-[10px] text-slate-400">
+                              {t("branding.preview.emailPlaceholder")}
+                            </span>
                           </div>
                           <button
                             type="button"
                             className="h-8 w-full rounded-md text-[11px] font-medium text-white transition-opacity hover:opacity-90"
-                            style={{ backgroundColor: draft.primary_color || "#5b21b6" }}
+                            style={{
+                              backgroundColor: draft.primary_color || "#5b21b6",
+                            }}
                           >
                             {t("branding.preview.continue")}
                           </button>
@@ -289,11 +312,7 @@ function BrandingPage() {
                           </div>
                           {/* Social button mock */}
                           <div className="flex h-8 items-center justify-center gap-2 rounded-md border border-slate-200">
-                            <svg
-                              className="h-3 w-3"
-                              viewBox="0 0 24 24"
-                              aria-hidden="true"
-                            >
+                            <svg className="h-3 w-3" viewBox="0 0 24 24" aria-hidden="true">
                               <path
                                 d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
                                 fill="#4285F4"
@@ -311,7 +330,9 @@ function BrandingPage() {
                                 fill="#EA4335"
                               />
                             </svg>
-                            <span className="text-[10px] text-slate-600">{t("branding.preview.continueWithGoogle")}</span>
+                            <span className="text-[10px] text-slate-600">
+                              {t("branding.preview.continueWithGoogle")}
+                            </span>
                           </div>
                         </div>
                         {/* Footer */}
@@ -325,7 +346,9 @@ function BrandingPage() {
                             {t("branding.preview.securedBy")}{" "}
                             <span
                               className="font-medium"
-                              style={{ color: draft.primary_color || "#5b21b6" }}
+                              style={{
+                                color: draft.primary_color || "#5b21b6",
+                              }}
                             >
                               {draft.email_from_name || "Qeet ID"}
                             </span>
@@ -346,7 +369,9 @@ function BrandingPage() {
                   <div className="flex items-center gap-3">
                     <div
                       className="h-10 w-10 shrink-0 rounded-lg border shadow-sm"
-                      style={{ backgroundColor: draft.primary_color || "#5b21b6" }}
+                      style={{
+                        backgroundColor: draft.primary_color || "#5b21b6",
+                      }}
                     />
                     <div>
                       <p className="text-xs font-medium">{t("branding.palette.primary")}</p>
@@ -358,7 +383,9 @@ function BrandingPage() {
                   <div className="flex items-center gap-3">
                     <div
                       className="h-10 w-10 shrink-0 rounded-lg border shadow-sm"
-                      style={{ backgroundColor: draft.secondary_color || "#ffffff" }}
+                      style={{
+                        backgroundColor: draft.secondary_color || "#ffffff",
+                      }}
                     />
                     <div>
                       <p className="text-xs font-medium">{t("branding.palette.background")}</p>
@@ -376,7 +403,9 @@ function BrandingPage() {
           <div className="sticky bottom-0 z-10 mt-4 flex items-center justify-between rounded-b-lg border-t bg-background/95 px-4 py-3 backdrop-blur-sm">
             <p className="text-xs text-muted-foreground">
               {savedAt
-                ? t("branding.footer.savedAt", { time: savedAt.toLocaleTimeString() })
+                ? t("branding.footer.savedAt", {
+                    time: savedAt.toLocaleTimeString(),
+                  })
                 : t("branding.footer.unsaved")}
             </p>
             <div className="flex gap-2">

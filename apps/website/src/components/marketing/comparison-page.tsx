@@ -246,8 +246,8 @@ export function ComparisonPage({ data }: { data: ComparisonData }) {
 
         {/* Honesty disclaimer */}
         <p className="mt-4 text-xs text-muted-foreground">
-          Comparison is based on publicly-available product information at the time of writing.
-          We do our best to be accurate — if anything above is wrong, please{" "}
+          Comparison is based on publicly-available product information at the time of writing. We
+          do our best to be accurate — if anything above is wrong, please{" "}
           <a href="/contact" className="underline">
             let us know
           </a>{" "}
@@ -332,7 +332,9 @@ function SectionRows({ name, rows }: { name: string; rows: ComparisonRow[] }) {
         <tr key={r.feature} className="border-t border-border/60">
           <th scope="row" className="px-4 py-3 text-left align-top font-medium">
             <div className="font-medium">{r.feature}</div>
-            {r.note && <div className="mt-1 text-xs font-normal text-muted-foreground">{r.note}</div>}
+            {r.note && (
+              <div className="mt-1 text-xs font-normal text-muted-foreground">{r.note}</div>
+            )}
           </th>
           <td className="px-4 py-3 text-center align-top">
             <CellIcon value={r.qeetid} />

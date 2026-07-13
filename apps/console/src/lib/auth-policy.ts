@@ -40,7 +40,10 @@ export function useUpdateAuthPolicy() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: AuthPolicy) =>
-      api<AuthPolicy>(`/v1/tenants/${tenantId}/auth-policy`, { method: "PUT", body }),
+      api<AuthPolicy>(`/v1/tenants/${tenantId}/auth-policy`, {
+        method: "PUT",
+        body,
+      }),
     onSuccess: (data) => {
       qc.setQueryData(["auth-policy", tenantId], data);
       qc.invalidateQueries({ queryKey: ["auth-policy"] });

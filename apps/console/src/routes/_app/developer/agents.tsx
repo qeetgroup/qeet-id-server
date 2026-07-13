@@ -30,9 +30,8 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { api, ApiError } from "@/lib/api";
-import { useMe, useTenantId } from "@/lib/auth";
 import {
+  type Agent,
   useAgents,
   useAgentsSponsoredBy,
   useCreateAgent,
@@ -40,11 +39,14 @@ import {
   useKillAllAgents,
   useSetAgentDisabled,
   useTransferSponsor,
-  type Agent,
 } from "@/lib/agents";
+import { type ApiError, api } from "@/lib/api";
+import { useMe, useTenantId } from "@/lib/auth";
 import { useReviewShadowAIClient, useShadowAICandidates } from "@/lib/oidc-clients";
 
-export const Route = createFileRoute("/_app/developer/agents")({ component: AgentsPage });
+export const Route = createFileRoute("/_app/developer/agents")({
+  component: AgentsPage,
+});
 
 function AgentsPage() {
   const { t } = useTranslation("developer");
@@ -68,10 +70,7 @@ function AgentsPage() {
   return (
     <div className="flex min-w-0 flex-col gap-4">
       {confirmDialog}
-      <PageHeader
-        title="Agent Governance"
-        description={t("agents.description")}
-      />
+      <PageHeader title="Agent Governance" description={t("agents.description")} />
 
       <Card>
         <CardHeader>
@@ -179,11 +178,7 @@ function AgentsPage() {
                 })
               }
             >
-              {killAllM.isPending ? (
-                <Loader2Icon className="animate-spin" />
-              ) : (
-                <SkullIcon />
-              )}
+              {killAllM.isPending ? <Loader2Icon className="animate-spin" /> : <SkullIcon />}
               {t("agents.list.suspendAll")}
             </Button>
           )}
@@ -238,7 +233,9 @@ function useTenantUserOptions() {
   return useQuery({
     queryKey: ["agent-governance-users", tenantId],
     queryFn: () =>
-      api<{ items: TenantUserOption[] }>("/v1/users", { query: { limit: "200" } }),
+      api<{ items: TenantUserOption[] }>("/v1/users", {
+        query: { limit: "200" },
+      }),
     enabled: !!tenantId,
     select: (data) =>
       data.items.map((u) => ({
@@ -263,76 +260,81 @@ function SponsorTransferCard() {
     <>
       {confirmDialog}
       <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("agents.sponsor.title")}</CardTitle>
-        <CardDescription>{t("agents.sponsor.description")}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Field className="flex-1">
-            <FieldLabel htmlFor="sponsor-from">{t("agents.sponsor.from")}</FieldLabel>
-            <Combobox
-              id="sponsor-from"
-              items={usersQ.data ?? []}
-              value={fromUserId}
-              onValueChange={setFromUserId}
-              placeholder={t("agents.sponsor.search")}
-              emptyMessage={t("agents.sponsor.noUsers")}
-            />
-          </Field>
-          <Field className="flex-1">
-            <FieldLabel htmlFor="sponsor-to">{t("agents.sponsor.to")}</FieldLabel>
-            <Combobox
-              id="sponsor-to"
-              items={usersQ.data ?? []}
-              value={toUserId}
-              onValueChange={setToUserId}
-              placeholder={t("agents.sponsor.search")}
-              emptyMessage={t("agents.sponsor.noUsers")}
-            />
-          </Field>
-          <Button
-            disabled={
-              !fromUserId ||
-              !toUserId ||
-              fromUserId === toUserId ||
-              sponsoredCount === 0 ||
-              transferM.isPending
-            }
-            onClick={() => {
-              if (!fromUserId || !toUserId) return;
-              openConfirm({
-                title: t("agents.sponsor.confirm.title", { count: sponsoredCount }),
-                description: t("agents.sponsor.confirm.description"),
-                variant: "destructive",
-                confirmLabel: t("agents.sponsor.confirm.label"),
-                onConfirm: () =>
-                  transferM.mutate(
-                    { fromUserId, toUserId },
-                    { onSuccess: () => { setFromUserId(null); setToUserId(null); } },
-                  ),
-              });
-            }}
-          >
-            {transferM.isPending && <Loader2Icon className="animate-spin" />}
-            <ArrowRightLeftIcon />
-            {t("agents.sponsor.transfer")}
-          </Button>
-        </div>
-        {fromUserId && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            {sponsoredQ.isLoading
-              ? t("agents.sponsor.checking")
-              : t("agents.sponsor.count", { count: sponsoredCount })}
-          </p>
-        )}
-        {transferM.error && (
-          <p className="mt-2 text-destructive text-sm">
-            {(transferM.error as ApiError).message}
-          </p>
-        )}
-      </CardContent>
-    </Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("agents.sponsor.title")}</CardTitle>
+          <CardDescription>{t("agents.sponsor.description")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <Field className="flex-1">
+              <FieldLabel htmlFor="sponsor-from">{t("agents.sponsor.from")}</FieldLabel>
+              <Combobox
+                id="sponsor-from"
+                items={usersQ.data ?? []}
+                value={fromUserId}
+                onValueChange={setFromUserId}
+                placeholder={t("agents.sponsor.search")}
+                emptyMessage={t("agents.sponsor.noUsers")}
+              />
+            </Field>
+            <Field className="flex-1">
+              <FieldLabel htmlFor="sponsor-to">{t("agents.sponsor.to")}</FieldLabel>
+              <Combobox
+                id="sponsor-to"
+                items={usersQ.data ?? []}
+                value={toUserId}
+                onValueChange={setToUserId}
+                placeholder={t("agents.sponsor.search")}
+                emptyMessage={t("agents.sponsor.noUsers")}
+              />
+            </Field>
+            <Button
+              disabled={
+                !fromUserId ||
+                !toUserId ||
+                fromUserId === toUserId ||
+                sponsoredCount === 0 ||
+                transferM.isPending
+              }
+              onClick={() => {
+                if (!fromUserId || !toUserId) return;
+                openConfirm({
+                  title: t("agents.sponsor.confirm.title", {
+                    count: sponsoredCount,
+                  }),
+                  description: t("agents.sponsor.confirm.description"),
+                  variant: "destructive",
+                  confirmLabel: t("agents.sponsor.confirm.label"),
+                  onConfirm: () =>
+                    transferM.mutate(
+                      { fromUserId, toUserId },
+                      {
+                        onSuccess: () => {
+                          setFromUserId(null);
+                          setToUserId(null);
+                        },
+                      },
+                    ),
+                });
+              }}
+            >
+              {transferM.isPending && <Loader2Icon className="animate-spin" />}
+              <ArrowRightLeftIcon />
+              {t("agents.sponsor.transfer")}
+            </Button>
+          </div>
+          {fromUserId && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              {sponsoredQ.isLoading
+                ? t("agents.sponsor.checking")
+                : t("agents.sponsor.count", { count: sponsoredCount })}
+            </p>
+          )}
+          {transferM.error && (
+            <p className="mt-2 text-destructive text-sm">{(transferM.error as ApiError).message}</p>
+          )}
+        </CardContent>
+      </Card>
     </>
   );
 }
@@ -366,8 +368,8 @@ function ShadowAICard() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{c.name}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    <span className="font-mono">{c.client_id}</span> · {c.grant_types.join(", ")}{" "}
-                    · {t("agents.shadow.grants", { count: c.live_grants })}
+                    <span className="font-mono">{c.client_id}</span> · {c.grant_types.join(", ")} ·{" "}
+                    {t("agents.shadow.grants", { count: c.live_grants })}
                   </p>
                 </div>
                 <Button
@@ -430,12 +432,7 @@ function AgentRow({
           {a.disabled ? <PlayIcon /> : <PauseIcon />}
           {a.disabled ? t("agents.row.resume") : t("agents.row.suspend")}
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={onDelete}
-        >
+        <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete}>
           <Trash2Icon /> {t("agents.row.delete")}
         </Button>
       </div>

@@ -1,5 +1,5 @@
-import { LegalPage, LegalSection } from "@/components/marketing/legal-page";
 import type { Metadata } from "next";
+import { LegalPage, LegalSection } from "@/components/marketing/legal-page";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -36,8 +36,8 @@ export default function PrivacyPage() {
       <LegalSection heading="4. Retention">
         <p>
           We retain personal data for as long as your account is active and as needed to provide the
-          Services, then delete or anonymize it in line with our retention schedule, subject to legal
-          requirements.
+          Services, then delete or anonymize it in line with our retention schedule, subject to
+          legal requirements.
         </p>
       </LegalSection>
       <LegalSection heading="5. Your rights">

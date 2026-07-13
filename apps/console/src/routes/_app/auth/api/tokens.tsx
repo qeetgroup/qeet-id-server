@@ -23,7 +23,9 @@ import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
 import { useOAuthGrants, useRevokeOAuthGrant } from "@/lib/oauth-grants";
 
-export const Route = createFileRoute("/_app/auth/api/tokens")({ component: TokensPage });
+export const Route = createFileRoute("/_app/auth/api/tokens")({
+  component: TokensPage,
+});
 
 function TokensPage() {
   const { t } = useTranslation("auth");
@@ -40,9 +42,7 @@ function TokensPage() {
       <Card>
         <CardHeader>
           <CardTitle>{t("tokens.list.title")}</CardTitle>
-          <CardDescription>
-            {t("tokens.list.count", { count: items.length })}
-          </CardDescription>
+          <CardDescription>{t("tokens.list.count", { count: items.length })}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -68,7 +68,9 @@ function TokensPage() {
               <TableBody>
                 {items.map((g) => (
                   <TableRow key={g.id}>
-                    <TableCell className="max-w-50 truncate font-mono text-xs">{g.client_id}</TableCell>
+                    <TableCell className="max-w-50 truncate font-mono text-xs">
+                      {g.client_id}
+                    </TableCell>
                     <TableCell>{g.user_email || g.user_id}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">

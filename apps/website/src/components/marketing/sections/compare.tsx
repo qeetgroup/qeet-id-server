@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { ArrowRightIcon } from "lucide-react";
+import Link from "next/link";
 
 import { ButtonLink } from "@/components/marketing/button-link";
 import { SpotlightCard } from "@/components/marketing/effects/spotlight-card";

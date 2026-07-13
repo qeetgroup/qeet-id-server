@@ -18,7 +18,10 @@ async function fetchContext(
       { cache: "no-store" },
     );
     if (!res.ok) return { clientName: "" };
-    const ctx = (await res.json()) as { client_name?: string; branding?: BrandingDTO };
+    const ctx = (await res.json()) as {
+      client_name?: string;
+      branding?: BrandingDTO;
+    };
     return { clientName: ctx.client_name ?? "", branding: ctx.branding };
   } catch {
     return { clientName: "" };

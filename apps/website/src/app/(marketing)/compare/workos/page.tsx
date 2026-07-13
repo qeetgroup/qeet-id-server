@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { ComparisonPage, type ComparisonData } from "@/components/marketing/comparison-page";
+import { type ComparisonData, ComparisonPage } from "@/components/marketing/comparison-page";
 
 export const metadata: Metadata = {
   title: "Qeet ID vs. WorkOS",
@@ -38,41 +38,170 @@ const data: ComparisonData = {
   ],
   rows: [
     // ---- Scope ----
-    { section: "What you get", feature: "User store (users, sessions, passwords)", qeetid: true, competitor: false, note: "WorkOS doesn't store users — you bring your own DB." },
-    { section: "What you get", feature: "Built-in MFA (TOTP, SMS, email, recovery)", qeetid: true, competitor: false },
-    { section: "What you get", feature: "Hosted admin dashboard", qeetid: true, competitor: "AdminPortal (per-customer)" },
-    { section: "What you get", feature: "RBAC permissions engine", qeetid: true, competitor: false },
+    {
+      section: "What you get",
+      feature: "User store (users, sessions, passwords)",
+      qeetid: true,
+      competitor: false,
+      note: "WorkOS doesn't store users — you bring your own DB.",
+    },
+    {
+      section: "What you get",
+      feature: "Built-in MFA (TOTP, SMS, email, recovery)",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "What you get",
+      feature: "Hosted admin dashboard",
+      qeetid: true,
+      competitor: "AdminPortal (per-customer)",
+    },
+    {
+      section: "What you get",
+      feature: "RBAC permissions engine",
+      qeetid: true,
+      competitor: false,
+    },
 
     // ---- Federation ----
-    { section: "Federation", feature: "SAML 2.0 SSO", qeetid: true, competitor: true },
-    { section: "Federation", feature: "OIDC SSO", qeetid: true, competitor: true },
-    { section: "Federation", feature: "SCIM 2.0 (Users + Groups)", qeetid: true, competitor: true },
-    { section: "Federation", feature: "SAML 2.0 IdP (be an SSO source)", qeetid: true, competitor: "partial", note: "Qeet ID is both a SAML SP and a SAML IdP; WorkOS focuses on consuming customer IdPs." },
-    { section: "Federation", feature: "LDAP / AD federation", qeetid: true, competitor: true },
-    { section: "Federation", feature: "Hosted Directory Sync connectors (Google, Okta, Entra)", qeetid: "partial", competitor: true, note: "Qeet ID consumes SCIM today; turnkey directory-sync connectors are on the roadmap." },
-    { section: "Federation", feature: "Magic links", qeetid: true, competitor: true },
+    {
+      section: "Federation",
+      feature: "SAML 2.0 SSO",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Federation",
+      feature: "OIDC SSO",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Federation",
+      feature: "SCIM 2.0 (Users + Groups)",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Federation",
+      feature: "SAML 2.0 IdP (be an SSO source)",
+      qeetid: true,
+      competitor: "partial",
+      note: "Qeet ID is both a SAML SP and a SAML IdP; WorkOS focuses on consuming customer IdPs.",
+    },
+    {
+      section: "Federation",
+      feature: "LDAP / AD federation",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Federation",
+      feature: "Hosted Directory Sync connectors (Google, Okta, Entra)",
+      qeetid: "partial",
+      competitor: true,
+      note: "Qeet ID consumes SCIM today; turnkey directory-sync connectors are on the roadmap.",
+    },
+    {
+      section: "Federation",
+      feature: "Magic links",
+      qeetid: true,
+      competitor: true,
+    },
 
     // ---- Auth methods ----
-    { section: "Auth methods", feature: "Email + password", qeetid: true, competitor: "via AuthKit" },
-    { section: "Auth methods", feature: "Passkeys / WebAuthn", qeetid: true, competitor: "via AuthKit" },
-    { section: "Auth methods", feature: "Social login", qeetid: true, competitor: "via AuthKit" },
+    {
+      section: "Auth methods",
+      feature: "Email + password",
+      qeetid: true,
+      competitor: "via AuthKit",
+    },
+    {
+      section: "Auth methods",
+      feature: "Passkeys / WebAuthn",
+      qeetid: true,
+      competitor: "via AuthKit",
+    },
+    {
+      section: "Auth methods",
+      feature: "Social login",
+      qeetid: true,
+      competitor: "via AuthKit",
+    },
 
     // ---- Compliance ----
-    { section: "Compliance", feature: "Audit logs (search, export)", qeetid: true, competitor: true },
-    { section: "Compliance", feature: "Tamper-evident audit chain (SHA-256) + /verify", qeetid: true, competitor: "partial", note: "Qeet ID chains every audit row by hash; tampering breaks the chain, and /verify proves it." },
-    { section: "Compliance", feature: "SOC 2 Type II", qeetid: "Roadmap (pre-GA)", competitor: true },
-    { section: "Compliance", feature: "Self-hosted = your compliance boundary", qeetid: true, competitor: false },
+    {
+      section: "Compliance",
+      feature: "Audit logs (search, export)",
+      qeetid: true,
+      competitor: true,
+    },
+    {
+      section: "Compliance",
+      feature: "Tamper-evident audit chain (SHA-256) + /verify",
+      qeetid: true,
+      competitor: "partial",
+      note: "Qeet ID chains every audit row by hash; tampering breaks the chain, and /verify proves it.",
+    },
+    {
+      section: "Compliance",
+      feature: "SOC 2 Type II",
+      qeetid: "Roadmap (pre-GA)",
+      competitor: true,
+    },
+    {
+      section: "Compliance",
+      feature: "Self-hosted = your compliance boundary",
+      qeetid: true,
+      competitor: false,
+    },
 
     // ---- Deployment ----
-    { section: "Deployment", feature: "Self-host (single binary + Postgres)", qeetid: true, competitor: false },
-    { section: "Deployment", feature: "Bring-your-own database", qeetid: true, competitor: false },
-    { section: "Deployment", feature: "Air-gapped / on-prem", qeetid: true, competitor: false },
+    {
+      section: "Deployment",
+      feature: "Self-host (single binary + Postgres)",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Deployment",
+      feature: "Bring-your-own database",
+      qeetid: true,
+      competitor: false,
+    },
+    {
+      section: "Deployment",
+      feature: "Air-gapped / on-prem",
+      qeetid: true,
+      competitor: false,
+    },
 
     // ---- Pricing ----
-    { section: "Pricing", feature: "Free tier", qeetid: "5,000 MAU", competitor: "1 million events / month" },
-    { section: "Pricing", feature: "B2B SSO included", qeetid: true, competitor: "Per-connection pricing" },
-    { section: "Pricing", feature: "SCIM included", qeetid: true, competitor: "Per-connection pricing" },
-    { section: "Pricing", feature: "Audit-log export", qeetid: true, competitor: "Paid tier" },
+    {
+      section: "Pricing",
+      feature: "Free tier",
+      qeetid: "5,000 MAU",
+      competitor: "1 million events / month",
+    },
+    {
+      section: "Pricing",
+      feature: "B2B SSO included",
+      qeetid: true,
+      competitor: "Per-connection pricing",
+    },
+    {
+      section: "Pricing",
+      feature: "SCIM included",
+      qeetid: true,
+      competitor: "Per-connection pricing",
+    },
+    {
+      section: "Pricing",
+      feature: "Audit-log export",
+      qeetid: true,
+      competitor: "Paid tier",
+    },
   ],
   cta: {
     headline: "One binary, one bill, one identity stack",

@@ -1,6 +1,6 @@
 # Frontend Development
 
-Qeet ID has three frontend apps in a Bun/Turborepo workspace. All are TypeScript + React 19.
+Qeet ID has three frontend apps in Bun workspaces. All are TypeScript + React 19.
 
 ## Apps
 
@@ -13,17 +13,16 @@ Qeet ID has three frontend apps in a Bun/Turborepo workspace. All are TypeScript
 ## Setup
 
 ```bash
-nvm use            # required: Node ≥24 (from the repo .nvmrc)
 make install       # installs all workspace deps (bun install at root)
 ```
 
 ## Starting apps
 
 ```bash
-make dev           # all three apps + backend simultaneously
-make dev-admin     # admin console only (:3002)
-make dev-login     # login app only (:3004)
-make dev-web       # website only (:3001)
+make dev              # all three apps + backend simultaneously
+bun run dev:console   # admin console only (:3002)
+bun run dev:login     # login app only (:3004)
+bun run dev:website   # website only (:3001)
 ```
 
 ## Admin console (`@qeetid/admin`)
@@ -154,15 +153,14 @@ The design system is in `../../qeetrix/` (a sibling repo). It's referenced via t
 ## Shared config packages
 
 - `packages/qeetid-tsconfig/` — shared `tsconfig.json` base
-- `packages/qeetid-eslint/` — shared ESLint config
 
-These are workspace packages referenced as `"@qeetid/tsconfig": "workspace:*"` in each app's `package.json`.
+This is a workspace package referenced as `"@qeet-id/tsconfig": "workspace:*"` in each app's `package.json`. Linting and formatting are handled by Biome from the repo root (`biome.json`).
 
 ## Building for production
 
 ```bash
 make build            # builds Go binary + all frontend apps
-bun run build         # frontend apps only (Turborepo parallel build)
+bun run build         # frontend apps only (Bun runs all three in parallel via `bun run --filter`)
 bun run --filter @qeetid/admin build   # one app only
 ```
 
@@ -170,7 +168,7 @@ bun run --filter @qeetid/admin build   # one app only
 
 ```bash
 make typecheck        # tsc --noEmit across all apps
-make lint             # ESLint across all apps + Go golangci-lint
+make lint             # Biome lint across all apps + Go golangci-lint
 ```
 
 Fix TypeScript errors before opening a PR — the CI pipeline runs `typecheck` and will fail on errors.

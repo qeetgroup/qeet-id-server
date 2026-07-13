@@ -12,7 +12,7 @@ import {
   FieldLabel,
   Input,
 } from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Loader2Icon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";

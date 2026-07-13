@@ -31,7 +31,7 @@ Qeet ID is a passkeys-first, multi-tenant identity platform — a self-hostable 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  Frontends (Bun/Turbo workspace)                                         │
+│  Frontends (Bun workspaces)                                              │
 │  ┌───────────────┐  ┌────────────────┐  ┌──────────────────────────┐   │
 │  │ @qeetid/admin │  │  @qeetid/login │  │     @qeetid/web          │   │
 │  │  Vite :3002   │  │  Next.js :3004 │  │   Next.js :3001          │   │

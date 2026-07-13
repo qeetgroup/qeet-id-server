@@ -8,7 +8,7 @@ Development environment setup, editor configs, and local tooling.
 ./tools/development/setup.sh
 ```
 
-Installs: Go 1.25, Node v22 (via nvm), bun 1.3.14, golang-migrate, k6, semgrep,
+Installs: Go 1.25, Bun 1.3.14, golang-migrate, k6, semgrep,
 govulncheck, Playwright browsers.
 
 ## Contents

@@ -16,7 +16,9 @@ import { useTranslation } from "react-i18next";
 import { LoginForm } from "@/features/auth/components/signin-form";
 import { isMfaChallenge, useCompleteMfaLogin, useLogin } from "@/lib/auth";
 
-export const Route = createFileRoute("/_auth/sign-in")({ component: SignInPage });
+export const Route = createFileRoute("/_auth/sign-in")({
+  component: SignInPage,
+});
 
 function SignInPage() {
   const login = useLogin();

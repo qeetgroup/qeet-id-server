@@ -90,10 +90,10 @@ The three frontend apps are separate build artifacts deployed independently:
 | App | Build output | Recommended hosting |
 |:----|:-------------|:--------------------|
 | `@qeetid/admin` (console) | `apps/console/dist/` (Vite SPA) | S3 + CloudFront, or Nginx on the same EC2 |
-| `@qeetid/login` (hosted login) | Next.js SSR | Vercel, or Node container |
-| `@qeetid/web` (website) | Next.js SSR | Vercel, or Node container |
+| `@qeetid/login` (hosted login) | Next.js SSR | Bun container (self-hosted), or Vercel (runs Next on Node) |
+| `@qeetid/web` (website) | Next.js SSR | Bun container (self-hosted), or Vercel (runs Next on Node) |
 
-Frontend builds: `bun run build` (Turborepo runs all three in parallel). Node ≥ 24 required (`nvm use` reads the repo `.nvmrc`).
+Frontend builds: `bun run build` (Bun runs all three in parallel via `bun run --filter`).
 
 ---
 

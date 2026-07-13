@@ -10,6 +10,7 @@ import {
   AvatarFallback,
   Badge,
   Button,
+  buttonVariants,
   Card,
   CardContent,
   CardDescription,
@@ -28,10 +29,9 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-  buttonVariants,
 } from "@qeetrix/ui";
 import { useQuery } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, FolderIcon, Loader2Icon, ShieldCheckIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
@@ -162,7 +162,9 @@ function GroupDetailPage() {
                 </div>
                 {group.parent_id && (
                   <div>
-                    <p className="text-xs text-muted-foreground">{t("detail.metadata.parentGroup")}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("detail.metadata.parentGroup")}
+                    </p>
                     <Link
                       to="/groups/$groupId"
                       params={{ groupId: group.parent_id }}
@@ -185,10 +187,7 @@ function GroupDetailPage() {
                   <CardTitle className="text-base">{t("detail.members.title")}</CardTitle>
                   <CardDescription>{t("detail.members.description")}</CardDescription>
                 </div>
-                <Link
-                  to="/groups"
-                  className={buttonVariants({ variant: "outline", size: "sm" })}
-                >
+                <Link to="/groups" className={buttonVariants({ variant: "outline", size: "sm" })}>
                   {t("detail.members.manage")}
                 </Link>
               </CardHeader>
@@ -207,7 +206,9 @@ function GroupDetailPage() {
                       <TableRow>
                         <TableHead>{t("detail.members.columns.user")}</TableHead>
                         <TableHead>{t("detail.members.columns.email")}</TableHead>
-                        <TableHead className="text-right">{t("detail.members.columns.userId")}</TableHead>
+                        <TableHead className="text-right">
+                          {t("detail.members.columns.userId")}
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -281,9 +282,7 @@ function GroupRolesCard({ groupId }: { groupId: string }) {
             <SelectContent>
               {grantable.length === 0 ? (
                 <SelectItem value="__none" disabled>
-                  {allRolesQ.isLoading
-                    ? t("groupRoles.loadingRoles")
-                    : t("groupRoles.allGranted")}
+                  {allRolesQ.isLoading ? t("groupRoles.loadingRoles") : t("groupRoles.allGranted")}
                 </SelectItem>
               ) : (
                 grantable.map((r) => (
@@ -299,7 +298,9 @@ function GroupRolesCard({ groupId }: { groupId: string }) {
             disabled={!selectedRoleId || grantM.isPending}
             onClick={() =>
               selectedRoleId &&
-              grantM.mutate(selectedRoleId, { onSuccess: () => setSelectedRoleId("") })
+              grantM.mutate(selectedRoleId, {
+                onSuccess: () => setSelectedRoleId(""),
+              })
             }
           >
             {grantM.isPending && <Loader2Icon className="animate-spin" />}
@@ -367,7 +368,9 @@ function GroupRolesCard({ groupId }: { groupId: string }) {
                   t={t}
                   i18nKey="groupRoles.revokeDescriptionNamed"
                   values={{ name: confirmingRevoke.name }}
-                  components={{ strong: <span className="font-medium text-foreground" /> }}
+                  components={{
+                    strong: <span className="font-medium text-foreground" />,
+                  }}
                 />
               ) : (
                 t("groupRoles.revokeDescriptionFallback")

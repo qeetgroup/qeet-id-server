@@ -24,7 +24,9 @@ import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/users/deleted")({ component: DeletedUsersPage });
+export const Route = createFileRoute("/_app/users/deleted")({
+  component: DeletedUsersPage,
+});
 
 type DeletedUser = {
   id: string;
@@ -106,7 +108,9 @@ function DeletedUsersPage() {
                   <TableRow key={u.id}>
                     <TableCell>
                       <div className="font-medium">{u.display_name || u.email}</div>
-                      {u.display_name && <div className="text-xs text-muted-foreground">{u.email}</div>}
+                      {u.display_name && (
+                        <div className="text-xs text-muted-foreground">{u.email}</div>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       <TimeSince value={u.deleted_at} />

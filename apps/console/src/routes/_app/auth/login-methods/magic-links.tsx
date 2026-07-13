@@ -24,7 +24,9 @@ import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/page-header";
 import { type AuthPolicy, useAuthPolicy, useUpdateAuthPolicy } from "@/lib/auth-policy";
 
-export const Route = createFileRoute("/_app/auth/login-methods/magic-links")({ component: MagicLinksPage });
+export const Route = createFileRoute("/_app/auth/login-methods/magic-links")({
+  component: MagicLinksPage,
+});
 
 const TTL_VALUES = [5, 15, 30, 60, 240, 1440];
 
@@ -81,7 +83,9 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
             </div>
             <div className="flex items-center gap-2">
               <StatusPill kind={draft.magic_link_enabled ? "success" : "muted"}>
-                {draft.magic_link_enabled ? t("loginMethods.magicLinks.enabled") : t("loginMethods.magicLinks.disabled")}
+                {draft.magic_link_enabled
+                  ? t("loginMethods.magicLinks.enabled")
+                  : t("loginMethods.magicLinks.disabled")}
               </StatusPill>
               <Switch
                 checked={draft.magic_link_enabled}
@@ -92,7 +96,9 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
         </CardHeader>
         <CardContent>
           <Field className="max-w-xs">
-            <FieldLabel id="magic-link-ttl-label">{t("loginMethods.magicLinks.ttlLabel")}</FieldLabel>
+            <FieldLabel id="magic-link-ttl-label">
+              {t("loginMethods.magicLinks.ttlLabel")}
+            </FieldLabel>
             <Select
               value={ttlValue}
               onValueChange={(v) => setDraft((d) => ({ ...d, magic_link_ttl_minutes: Number(v) }))}
@@ -118,9 +124,9 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
         <CardHeader>
           <CardTitle className="text-base">{t("loginMethods.magicLinks.howTitle")}</CardTitle>
           <CardDescription>
-            The user enters their email, receives a single-use link, and is signed in when they open it.
-            Links are consumed on first use and can&apos;t be replayed. Manage the email&apos;s wording under
-            Settings → Email templates (the <code>magic_link</code> template).
+            The user enters their email, receives a single-use link, and is signed in when they open
+            it. Links are consumed on first use and can&apos;t be replayed. Manage the email&apos;s
+            wording under Settings → Email templates (the <code>magic_link</code> template).
           </CardDescription>
         </CardHeader>
       </Card>
@@ -130,7 +136,9 @@ function MagicLinkForm({ initial }: { initial: AuthPolicy }) {
           {t("loginMethods.magicLinks.resetBtn")}
         </Button>
         <Button onClick={() => updateM.mutate(draft)} disabled={updateM.isPending || !dirty}>
-          {updateM.isPending ? t("loginMethods.magicLinks.savingBtn") : t("loginMethods.magicLinks.saveBtn")}
+          {updateM.isPending
+            ? t("loginMethods.magicLinks.savingBtn")
+            : t("loginMethods.magicLinks.saveBtn")}
         </Button>
       </div>
     </>

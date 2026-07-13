@@ -44,7 +44,10 @@ export function useRegenerateRecoveryCodes() {
 export function useStepUpVerify() {
   return useMutation({
     mutationFn: (code: string) =>
-      api<{ verified: boolean }>("/v1/mfa/totp/verify", { method: "POST", body: { code } }),
+      api<{ verified: boolean }>("/v1/mfa/totp/verify", {
+        method: "POST",
+        body: { code },
+      }),
     meta: { silent: true },
   });
 }
@@ -100,7 +103,9 @@ export function useConfirmOtpFactor() {
 export function useChallengeOtpFactor() {
   return useMutation({
     mutationFn: (id: string) =>
-      api<{ message: string }>(`/v1/mfa/otp/factors/${id}/challenge`, { method: "POST" }),
+      api<{ message: string }>(`/v1/mfa/otp/factors/${id}/challenge`, {
+        method: "POST",
+      }),
     meta: { successMessage: "Test code sent" },
   });
 }

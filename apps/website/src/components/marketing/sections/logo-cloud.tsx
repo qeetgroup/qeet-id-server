@@ -1,20 +1,20 @@
 import {
   Cloudflare,
   Datadog,
+  Discord,
   Figma,
   Google,
   Linear,
   Loom,
   Microsoft,
   Netlify,
-  Spotify,
   Sentry,
   Shopify,
   Slack,
+  Spotify,
   Stripe,
   Supabase,
   Zapier,
-  Discord,
 } from "@thesvg/react";
 
 import { LogoLockup } from "@/components/marketing/blocks/logo-wall";

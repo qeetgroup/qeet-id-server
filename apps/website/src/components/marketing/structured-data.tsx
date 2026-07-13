@@ -18,13 +18,7 @@ function JsonLd({ data }: JsonLdProps) {
   // of the script tag via injected content. Cheaper than pulling in
   // serialize-javascript and sufficient because our payloads are static.
   const json = JSON.stringify(data).replace(/</g, "\\u003c");
-  return (
-    <script
-      type="application/ld+json"
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: json }}
-    />
-  );
+  return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />;
 }
 
 /**
@@ -40,10 +34,7 @@ export function OrganizationJsonLd() {
         name: "Qeet ID",
         url: BASE,
         logo: `${BASE}/icon.png`,
-        sameAs: [
-          "https://github.com/qeetid",
-          "https://x.com/qeetid",
-        ],
+        sameAs: ["https://github.com/qeetid", "https://x.com/qeetid"],
       }}
     />
   );

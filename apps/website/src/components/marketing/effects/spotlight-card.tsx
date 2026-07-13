@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, type MouseEvent, type ReactNode } from "react";
 import { cn } from "@qeetrix/ui";
+import { type MouseEvent, type ReactNode, useRef } from "react";
 
 type SpotlightCardProps = {
   children: ReactNode;

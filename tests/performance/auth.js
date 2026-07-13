@@ -1,5 +1,5 @@
-import http from "k6/http";
 import { check, sleep } from "k6";
+import http from "k6/http";
 import { Rate, Trend } from "k6/metrics";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:4001";

@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, API_BASE_URL } from "./api";
+import { API_BASE_URL, api } from "./api";
 import { useTenantId } from "./auth";
 
 export interface ScimConfig {

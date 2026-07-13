@@ -88,7 +88,10 @@ export function useUpdateOidcClient(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: UpdateOidcInput) =>
-      api<OidcClient>(`/v1/tenants/${tenantId}/oidc/clients/${id}`, { method: "PATCH", body }),
+      api<OidcClient>(`/v1/tenants/${tenantId}/oidc/clients/${id}`, {
+        method: "PATCH",
+        body,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["oidc-clients"] });
       qc.invalidateQueries({ queryKey: ["oidc-client"] });
@@ -146,7 +149,9 @@ export function useReviewShadowAIClient() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      api<void>(`/v1/tenants/${tenantId}/oidc/clients/${id}/review`, { method: "POST" }),
+      api<void>(`/v1/tenants/${tenantId}/oidc/clients/${id}/review`, {
+        method: "POST",
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["oidc-shadow-ai"] }),
     meta: { successMessage: "Acknowledged" },
   });

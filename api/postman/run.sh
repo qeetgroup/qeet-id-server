@@ -10,7 +10,7 @@
 #   ./run.sh --bail                   # stop on first failure
 #   ./run.sh --skip-501               # skip routes whose name starts with [501]
 #
-# Requires: node >= 18. Newman is fetched on demand via npx.
+# Requires: Bun. Newman is fetched on demand via bunx.
 
 set -euo pipefail
 
@@ -43,7 +43,7 @@ if [[ ! -f "$ENVIRONMENT" ]]; then
   echo "environment not found: $ENVIRONMENT" >&2; exit 1
 fi
 
-CMD=(npx --yes newman@6 run "$COLLECTION" -e "$ENVIRONMENT")
+CMD=(bunx newman@6 run "$COLLECTION" -e "$ENVIRONMENT")
 
 if [[ -n "$BASE_URL" ]]; then
   CMD+=(--env-var "baseUrl=$BASE_URL")

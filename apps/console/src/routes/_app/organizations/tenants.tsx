@@ -41,8 +41,8 @@ import {
   TableRow,
   TimeSince,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import {
   Building2Icon,
   Loader2Icon,
@@ -56,13 +56,14 @@ import { useTranslation } from "react-i18next";
 
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
-import { tokenStore } from "@/lib/api";
+import { type ApiError, api, tokenStore } from "@/lib/api";
 import { switchToTenant } from "@/lib/auth";
-import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 
-export const Route = createFileRoute("/_app/organizations/tenants")({ component: TenantsPage });
+export const Route = createFileRoute("/_app/organizations/tenants")({
+  component: TenantsPage,
+});
 
 type Tenant = {
   id: string;
@@ -101,7 +102,11 @@ function TenantsPage() {
   const lv = useListView(items, {
     searchFields: (row) => [row.name, row.slug, row.region],
     filterFields: { status: (row) => row.status, plan: (row) => row.plan },
-    sortFields: { name: (row) => row.name, plan: (row) => row.plan, created: (row) => row.created_at },
+    sortFields: {
+      name: (row) => row.name,
+      plan: (row) => row.plan,
+      created: (row) => row.created_at,
+    },
   });
   const rows = lv.view;
   const denseCls = lv.density === "compact" ? "[&_td]:py-1.5 [&_th]:py-2" : undefined;
@@ -121,7 +126,12 @@ function TenantsPage() {
         description={t("tenants.description")}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => listQ.refetch()} disabled={listQ.isFetching}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => listQ.refetch()}
+              disabled={listQ.isFetching}
+            >
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               {t("tenants.refresh")}
             </Button>
@@ -136,7 +146,10 @@ function TenantsPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("tenants.list.title")}</CardTitle>
           <CardDescription>
-            {t("tenants.list.count", { shown: rows.length, total: items.length })}
+            {t("tenants.list.count", {
+              shown: rows.length,
+              total: items.length,
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -150,9 +163,18 @@ function TenantsPage() {
                 label: t("tenants.filters.status.label"),
                 value: lv.filters.status ?? "",
                 options: [
-                  { label: t("tenants.filters.status.active"), value: "active" },
-                  { label: t("tenants.filters.status.suspended"), value: "suspended" },
-                  { label: t("tenants.filters.status.deleted"), value: "deleted" },
+                  {
+                    label: t("tenants.filters.status.active"),
+                    value: "active",
+                  },
+                  {
+                    label: t("tenants.filters.status.suspended"),
+                    value: "suspended",
+                  },
+                  {
+                    label: t("tenants.filters.status.deleted"),
+                    value: "deleted",
+                  },
                 ],
                 onChange: (v) => lv.setFilter("status", v),
               },
@@ -162,9 +184,15 @@ function TenantsPage() {
                 value: lv.filters.plan ?? "",
                 options: [
                   { label: t("tenants.filters.plan.free"), value: "free" },
-                  { label: t("tenants.filters.plan.starter"), value: "starter" },
+                  {
+                    label: t("tenants.filters.plan.starter"),
+                    value: "starter",
+                  },
                   { label: t("tenants.filters.plan.pro"), value: "pro" },
-                  { label: t("tenants.filters.plan.enterprise"), value: "enterprise" },
+                  {
+                    label: t("tenants.filters.plan.enterprise"),
+                    value: "enterprise",
+                  },
                 ],
                 onChange: (v) => lv.setFilter("plan", v),
               },
@@ -180,7 +208,9 @@ function TenantsPage() {
             density={lv.density}
             onDensityChange={lv.setDensity}
             onExport={(fmt) =>
-              fmt === "csv" ? exportToCsv("tenants", rows, tenantCsvColumns) : exportToJson("tenants", rows)
+              fmt === "csv"
+                ? exportToCsv("tenants", rows, tenantCsvColumns)
+                : exportToJson("tenants", rows)
             }
             exportDisabled={rows.length === 0}
             hasActiveFilters={lv.hasActiveFilters}
@@ -193,9 +223,7 @@ function TenantsPage() {
             isEmpty={rows.length === 0}
             emptyIcon={Building2Icon}
             emptyTitle={
-              lv.hasActiveFilters
-                ? t("tenants.list.emptyFiltered")
-                : t("tenants.list.empty")
+              lv.hasActiveFilters ? t("tenants.list.emptyFiltered") : t("tenants.list.empty")
             }
             skeletonRows={3}
           >
@@ -233,17 +261,25 @@ function TenantsPage() {
                       )}
                     </TableCell>
                     {lv.isVisible("slug") && (
-                      <TableCell className="font-mono text-xs text-muted-foreground">{row.slug}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {row.slug}
+                      </TableCell>
                     )}
                     {lv.isVisible("plan") && (
-                      <TableCell><Badge variant="muted">{row.plan}</Badge></TableCell>
+                      <TableCell>
+                        <Badge variant="muted">{row.plan}</Badge>
+                      </TableCell>
                     )}
                     {lv.isVisible("region") && (
                       <TableCell className="text-muted-foreground">{row.region}</TableCell>
                     )}
-                    <TableCell><StatusPill status={row.status} /></TableCell>
+                    <TableCell>
+                      <StatusPill status={row.status} />
+                    </TableCell>
                     {lv.isVisible("created") && (
-                      <TableCell><TimeSince value={row.created_at} /></TableCell>
+                      <TableCell>
+                        <TimeSince value={row.created_at} />
+                      </TableCell>
                     )}
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -317,8 +353,8 @@ function TenantsPage() {
                 return target ? (
                   <>
                     {t("tenants.delete.descriptionPrefix")}{" "}
-                    <span className="font-medium text-foreground">{target.name}</span>{" "}
-                    (<span className="font-mono text-xs">{target.slug}</span>)
+                    <span className="font-medium text-foreground">{target.name}</span> (
+                    <span className="font-mono text-xs">{target.slug}</span>)
                     {t("tenants.delete.descriptionSuffix")}
                   </>
                 ) : (
@@ -328,7 +364,9 @@ function TenantsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteM.isPending}>{t("tenants.delete.cancel")}</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteM.isPending}>
+              {t("tenants.delete.cancel")}
+            </AlertDialogCancel>
             <Button
               variant="destructive"
               disabled={deleteM.isPending}
@@ -405,18 +443,30 @@ function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetP
               </Field>
               <Field>
                 <FieldLabel htmlFor="slug">{t("tenants.create.slug")}</FieldLabel>
-                <Input id="slug" name="slug" pattern="[a-z0-9-]+" minLength={2} maxLength={64} placeholder="acme" required />
+                <Input
+                  id="slug"
+                  name="slug"
+                  pattern="[a-z0-9-]+"
+                  minLength={2}
+                  maxLength={64}
+                  placeholder="acme"
+                  required
+                />
                 <FieldDescription>{t("tenants.create.slugHelp")}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel>{t("tenants.create.plan")}</FieldLabel>
                 <Select value={plan} onValueChange={(v) => v && setPlan(v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="free">{t("tenants.filters.plan.free")}</SelectItem>
                     <SelectItem value="starter">{t("tenants.filters.plan.starter")}</SelectItem>
                     <SelectItem value="pro">{t("tenants.filters.plan.pro")}</SelectItem>
-                    <SelectItem value="enterprise">{t("tenants.filters.plan.enterprise")}</SelectItem>
+                    <SelectItem value="enterprise">
+                      {t("tenants.filters.plan.enterprise")}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -424,11 +474,17 @@ function CreateTenantSheet({ open, onOpenChange, onCreated }: CreateTenantSheetP
                 <FieldLabel htmlFor="region">{t("tenants.create.region")}</FieldLabel>
                 <Input id="region" name="region" defaultValue="us-east-1" />
               </Field>
-              {createM.error && <Field><FieldError>{(createM.error as ApiError).message}</FieldError></Field>}
+              {createM.error && (
+                <Field>
+                  <FieldError>{(createM.error as ApiError).message}</FieldError>
+                </Field>
+              )}
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("tenants.create.cancel")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("tenants.create.cancel")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("tenants.create.submitting") : t("tenants.create.submit")}
@@ -456,7 +512,9 @@ type UpdateBody = {
 function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps) {
   const { t } = useTranslation("organizations");
   const [plan, setPlan] = useState<string>(tenant?.plan ?? "free");
-  const [status, setStatus] = useState<string>(tenant?.status === "suspended" ? "suspended" : "active");
+  const [status, setStatus] = useState<string>(
+    tenant?.status === "suspended" ? "suspended" : "active",
+  );
 
   // Reset selects when the editing target changes — without this the sheet
   // would keep the previous tenant's plan/status on the second open.
@@ -523,7 +581,9 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
                       <SelectItem value="free">{t("tenants.filters.plan.free")}</SelectItem>
                       <SelectItem value="starter">{t("tenants.filters.plan.starter")}</SelectItem>
                       <SelectItem value="pro">{t("tenants.filters.plan.pro")}</SelectItem>
-                      <SelectItem value="enterprise">{t("tenants.filters.plan.enterprise")}</SelectItem>
+                      <SelectItem value="enterprise">
+                        {t("tenants.filters.plan.enterprise")}
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </Field>
@@ -557,7 +617,9 @@ function EditTenantSheet({ tenant, onOpenChange, onSaved }: EditTenantSheetProps
               </FieldGroup>
             </div>
             <SheetFooter className="flex-row justify-end gap-2 border-t">
-              <SheetClose render={<Button type="button" variant="outline" />}>{t("tenants.edit.cancel")}</SheetClose>
+              <SheetClose render={<Button type="button" variant="outline" />}>
+                {t("tenants.edit.cancel")}
+              </SheetClose>
               <Button type="submit" disabled={updateM.isPending}>
                 {updateM.isPending && <Loader2Icon className="animate-spin" />}
                 {updateM.isPending ? t("tenants.edit.saving") : t("tenants.edit.save")}

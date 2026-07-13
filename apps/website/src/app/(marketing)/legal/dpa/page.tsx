@@ -1,5 +1,5 @@
-import { LegalPage, LegalSection } from "@/components/marketing/legal-page";
 import type { Metadata } from "next";
+import { LegalPage, LegalSection } from "@/components/marketing/legal-page";
 
 export const metadata: Metadata = {
   title: "Data Processing Agreement",
@@ -35,15 +35,15 @@ export default function DpaPage() {
       </LegalSection>
       <LegalSection heading="4. Security measures">
         <p>
-          Qeet ID maintains technical and organizational measures including encryption in transit and
-          at rest, tenant isolation, least-privilege access, and continuous monitoring, consistent
-          with its security documentation.
+          Qeet ID maintains technical and organizational measures including encryption in transit
+          and at rest, tenant isolation, least-privilege access, and continuous monitoring,
+          consistent with its security documentation.
         </p>
       </LegalSection>
       <LegalSection heading="5. Subprocessors">
         <p>
-          You authorize Qeet ID to engage the subprocessors listed on its Subprocessors page. Qeet ID
-          will provide notice of additions and remains responsible for their performance.
+          You authorize Qeet ID to engage the subprocessors listed on its Subprocessors page. Qeet
+          ID will provide notice of additions and remains responsible for their performance.
         </p>
       </LegalSection>
       <LegalSection heading="6. Data subject requests and breach notification">

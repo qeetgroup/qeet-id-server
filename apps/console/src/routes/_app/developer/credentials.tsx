@@ -29,16 +29,18 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
+  type IssueResult,
   useCredentials,
   useIssueCredential,
   useRevokeCredential,
   useVerifyCredential,
-  type IssueResult,
 } from "@/lib/credentials";
 
-export const Route = createFileRoute("/_app/developer/credentials")({ component: CredentialsPage });
+export const Route = createFileRoute("/_app/developer/credentials")({
+  component: CredentialsPage,
+});
 
 function CredentialsPage() {
   const { t } = useTranslation("developer");
@@ -177,7 +179,9 @@ function CredentialsPage() {
                   <div className="min-w-0">
                     <p className="flex items-center gap-2 text-sm font-medium">
                       {c.type}
-                      {c.revoked && <Badge variant="destructive">{t("credentials.list.revoked")}</Badge>}
+                      {c.revoked && (
+                        <Badge variant="destructive">{t("credentials.list.revoked")}</Badge>
+                      )}
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {c.subject} · issued <TimeSince value={c.issued_at} />

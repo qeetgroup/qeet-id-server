@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Input, Spinner } from "@qeetrix/ui";
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuthCard } from "@/components/auth-card";

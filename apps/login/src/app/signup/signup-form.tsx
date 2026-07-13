@@ -2,13 +2,13 @@
 
 import { Button, Input, PasswordStrengthMeter, Spinner } from "@qeetrix/ui";
 import { IconPasskey } from "@qeetrix/ui/brand";
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { AuthCard } from "@/components/auth-card";
 import { FormAlert } from "@/components/form-alert";
-import type { Branding } from "@/lib/branding";
 import { API_BASE_URL, ApiError, apiPost } from "@/lib/api";
+import type { Branding } from "@/lib/branding";
 
 type SignupFormProps = {
   returnTo: string;

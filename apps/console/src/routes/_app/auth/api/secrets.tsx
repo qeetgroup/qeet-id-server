@@ -29,13 +29,23 @@ import {
   TimeSince,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, Loader2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  CopyIcon,
+  EyeIcon,
+  EyeOffIcon,
+  KeyRoundIcon,
+  Loader2Icon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   useCreateSecret,
   useDeleteSecret,
@@ -44,7 +54,9 @@ import {
   useSecrets,
 } from "@/lib/secrets";
 
-export const Route = createFileRoute("/_app/auth/api/secrets")({ component: SecretsPage });
+export const Route = createFileRoute("/_app/auth/api/secrets")({
+  component: SecretsPage,
+});
 
 function SecretsPage() {
   const { t } = useTranslation("auth");
@@ -68,7 +80,9 @@ function SecretsPage() {
       });
       return;
     }
-    revealM.mutate(id, { onSuccess: (d) => setRevealed((r) => ({ ...r, [id]: d.value })) });
+    revealM.mutate(id, {
+      onSuccess: (d) => setRevealed((r) => ({ ...r, [id]: d.value })),
+    });
   };
 
   const copy = (id: string, value: string) => {
@@ -126,7 +140,9 @@ function SecretsPage() {
                   return (
                     <TableRow key={s.id}>
                       <TableCell className="font-mono text-xs">{s.name}</TableCell>
-                      <TableCell>{s.scope ? <Badge variant="outline">{s.scope}</Badge> : "—"}</TableCell>
+                      <TableCell>
+                        {s.scope ? <Badge variant="outline">{s.scope}</Badge> : "—"}
+                      </TableCell>
                       <TableCell className="font-mono text-xs">
                         {shown !== undefined ? (
                           <span className="flex items-center gap-2">
@@ -137,11 +153,17 @@ function SecretsPage() {
                               className="text-muted-foreground hover:text-foreground"
                               aria-label={t("secrets.copyAriaLabel")}
                             >
-                              {copied === s.id ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+                              {copied === s.id ? (
+                                <CheckIcon className="size-3.5" />
+                              ) : (
+                                <CopyIcon className="size-3.5" />
+                              )}
                             </button>
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">{s.last4 ? `••••••••${s.last4}` : "••••••••"}</span>
+                          <span className="text-muted-foreground">
+                            {s.last4 ? `••••••••${s.last4}` : "••••••••"}
+                          </span>
                         )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -157,7 +179,12 @@ function SecretsPage() {
                           {shown !== undefined ? <EyeOffIcon /> : <EyeIcon />}
                           {shown !== undefined ? t("secrets.hide") : t("secrets.reveal")}
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => rotate(s.id, s.name)} disabled={rotateM.isPending}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => rotate(s.id, s.name)}
+                          disabled={rotateM.isPending}
+                        >
                           <RefreshCwIcon /> {t("secrets.rotate")}
                         </Button>
                         <Button
@@ -165,7 +192,9 @@ function SecretsPage() {
                           size="sm"
                           onClick={() =>
                             openConfirm({
-                              title: t("secrets.confirm.title", { name: s.name }),
+                              title: t("secrets.confirm.title", {
+                                name: s.name,
+                              }),
                               description: t("secrets.confirm.description"),
                               variant: "destructive",
                               confirmLabel: t("secrets.confirm.label"),
@@ -191,7 +220,13 @@ function SecretsPage() {
   );
 }
 
-function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+function CreateSecretSheet({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
   const { t } = useTranslation("auth");
   const createM = useCreateSecret();
   return (
@@ -220,7 +255,13 @@ function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="secret-name">{t("secrets.create.nameLabel")}</FieldLabel>
-                <Input id="secret-name" name="name" placeholder="stripe.api_key" className="font-mono" required />
+                <Input
+                  id="secret-name"
+                  name="name"
+                  placeholder="stripe.api_key"
+                  className="font-mono"
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="secret-scope">{t("secrets.create.scopeLabel")}</FieldLabel>
@@ -229,7 +270,14 @@ function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange
               </Field>
               <Field>
                 <FieldLabel htmlFor="secret-value">{t("secrets.create.valueLabel")}</FieldLabel>
-                <Input id="secret-value" name="value" type="password" placeholder="sk_live_…" className="font-mono" required />
+                <Input
+                  id="secret-value"
+                  name="value"
+                  type="password"
+                  placeholder="sk_live_…"
+                  className="font-mono"
+                  required
+                />
               </Field>
               {createM.error && (
                 <Field>
@@ -239,7 +287,9 @@ function CreateSecretSheet({ open, onOpenChange }: { open: boolean; onOpenChange
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("secrets.create.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("secrets.create.cancelBtn")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("secrets.create.savingBtn") : t("secrets.create.createBtn")}

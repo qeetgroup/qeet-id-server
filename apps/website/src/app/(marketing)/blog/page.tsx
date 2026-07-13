@@ -1,9 +1,9 @@
-import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
-import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
-import { listPosts } from "@/lib/blog";
 import { ArrowRightIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
+import { Reveal, Stagger, StaggerItem } from "@/components/marketing/motion";
+import { listPosts } from "@/lib/blog";
 
 export const metadata: Metadata = {
   title: "Engineering blog",

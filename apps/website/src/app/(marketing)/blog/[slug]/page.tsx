@@ -1,16 +1,13 @@
-import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
-import { CodeBlock } from "@/components/marketing/effects/code-block";
-import { Reveal } from "@/components/marketing/motion";
-import {
-  ArticleJsonLd,
-  BreadcrumbJsonLd,
-} from "@/components/marketing/structured-data";
-import { getPost, listPosts, parseBody, relatedPosts } from "@/lib/blog";
-import { SIGN_UP_URL } from "@/lib/links";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { InitialsAvatar } from "@/components/marketing/blocks/initials-avatar";
+import { CodeBlock } from "@/components/marketing/effects/code-block";
+import { Reveal } from "@/components/marketing/motion";
+import { ArticleJsonLd, BreadcrumbJsonLd } from "@/components/marketing/structured-data";
+import { getPost, listPosts, parseBody, relatedPosts } from "@/lib/blog";
+import { SIGN_UP_URL } from "@/lib/links";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -39,7 +36,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       // The colocated `opengraph-image.tsx` is auto-detected by Next; this
       // keeps the article-specific OG metadata explicit alongside it.
     },
-    twitter: { card: "summary_large_image", title: post.title, description: post.description },
+    twitter: {
+      card: "summary_large_image",
+      title: post.title,
+      description: post.description,
+    },
   };
 }
 
@@ -109,9 +110,7 @@ export default async function BlogPostPage({ params }: Props) {
               <h1 className="mt-4 font-display text-4xl font-semibold leading-[1.05] tracking-tight text-balance sm:text-5xl">
                 {post.title}
               </h1>
-              <p className="mt-5 text-lg text-muted-foreground text-balance">
-                {post.description}
-              </p>
+              <p className="mt-5 text-lg text-muted-foreground text-balance">{post.description}</p>
             </Reveal>
 
             <Reveal delay={0.1}>
@@ -193,7 +192,9 @@ export default async function BlogPostPage({ params }: Props) {
                     href={`/blog/${r.slug}`}
                     className="group flex h-full flex-col gap-2 rounded-2xl border border-border/60 bg-background p-5 transition-colors hover:border-brand/40 focus-ring-brand"
                   >
-                    <span className="text-xs text-muted-foreground">{formatDate(r.publishedAt)}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {formatDate(r.publishedAt)}
+                    </span>
                     <span className="font-display text-base font-semibold tracking-tight text-balance group-hover:text-brand-text">
                       {r.title}
                     </span>

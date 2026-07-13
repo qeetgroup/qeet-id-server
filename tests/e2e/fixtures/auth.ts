@@ -20,11 +20,7 @@ export const DEMO_USERS = {
   member: { email: "sneha@qeet.in", password: "Password123!" }, // member role, Qeet Group
 } as const;
 
-export async function loginAs(
-  page: Page,
-  email: string,
-  password: string,
-): Promise<void> {
+export async function loginAs(page: Page, email: string, password: string): Promise<void> {
   await page.goto("http://localhost:3004");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);

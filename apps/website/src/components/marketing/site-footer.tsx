@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { QeetMark } from "./qeet-mark";
 import { Reveal } from "./motion";
+import { QeetMark } from "./qeet-mark";
 
 function GithubGlyph() {
   return (

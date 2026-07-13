@@ -1,4 +1,10 @@
 import {
+  IconOidcConnector,
+  IconSamlConnector,
+  IconScimSync,
+  type QeetIconProps,
+} from "@qeetrix/ui/brand";
+import {
   Apple,
   Auth0,
   Facebook,
@@ -13,15 +19,16 @@ import {
   Workday,
   X,
 } from "@thesvg/react";
-import { IconOidcConnector, IconSamlConnector, IconScimSync, type QeetIconProps } from "@qeetrix/ui/brand";
 import { ArrowRightIcon, NetworkIcon } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
-
-import { ButtonLink } from "../button-link";
 import { Eyebrow } from "@/components/marketing/blocks/eyebrow";
 import { Reveal, Stagger, StaggerItem, WordReveal } from "@/components/marketing/motion";
+import { ButtonLink } from "../button-link";
 
-type ProviderItem = { name: string; icon: ComponentType<{ className?: string } & SVGProps<SVGSVGElement>> };
+type ProviderItem = {
+  name: string;
+  icon: ComponentType<{ className?: string } & SVGProps<SVGSVGElement>>;
+};
 
 type Group = {
   group: string;

@@ -2,13 +2,12 @@
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
     "source.organizeImports": "explicit",
-    "source.fixAll.eslint": "explicit"
+    "source.fixAll.biome": "explicit"
   },
   "files.eol": "\n",
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
   "files.exclude": {
-    "**/.turbo": true,
     "**/.next": true,
     "**/.source": true,
     "**/.output": true,
@@ -21,7 +20,6 @@
   },
   "search.exclude": {
     "**/node_modules": true,
-    "**/.turbo": true,
     "**/.next": true,
     "**/.source": true,
     "**/.output": true,
@@ -43,29 +41,19 @@
   "go.testFlags": ["-race", "-count=1"],
 
   // ── TypeScript / JS ──────────────────────────────────────────────────────
-  "[typescript]":      { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[javascript]":      { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[javascriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[json]":            { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[jsonc]":           { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[yaml]":            { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[markdown]":        { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "[mdx]":             { "editor.defaultFormatter": "esbenp.prettier-vscode" },
-  "typescript.tsdk": "node_modules/typescript/lib",
-  "typescript.enablePromptUseWorkspaceTsdk": true,
-  "eslint.workingDirectories": [
-    { "pattern": "apps/*" },
-    { "pattern": "packages/*" },
-    { "pattern": "sdk/js/*" }
-  ],
-  "eslint.useFlatConfig": true,
+  "[typescript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[typescriptreact]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[javascript]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[javascriptreact]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[json]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[jsonc]": { "editor.defaultFormatter": "biomejs.biome" },
+  "[css]": { "editor.defaultFormatter": "biomejs.biome" },
 
   // ── Tailwind ─────────────────────────────────────────────────────────────
   "tailwindCSS.experimental.classRegex": [
-    ["cva\\(([^)]*)\\)",   "[\"'`]([^\"'`]*).*?[\"'`]"],
-    ["cn\\(([^)]*)\\)",    "[\"'`]([^\"'`]*).*?[\"'`]"],
-    ["clsx\\(([^)]*)\\)",  "[\"'`]([^\"'`]*).*?[\"'`]"]
+    ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"],
+    ["cn\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"],
+    ["clsx\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"]
   ],
 
   // ── SQL (migrations) ─────────────────────────────────────────────────────

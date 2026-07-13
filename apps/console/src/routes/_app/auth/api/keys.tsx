@@ -37,10 +37,12 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api } from "@/lib/api";
+import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/auth/api/keys")({ component: ApiKeysPage });
+export const Route = createFileRoute("/_app/auth/api/keys")({
+  component: ApiKeysPage,
+});
 
 type ApiKey = {
   id: string;
@@ -63,7 +65,10 @@ function ApiKeysPage() {
   const tenantId = useTenantId();
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
-  const [revealed, setRevealed] = useState<{ name: string; raw: string } | null>(null);
+  const [revealed, setRevealed] = useState<{
+    name: string;
+    raw: string;
+  } | null>(null);
 
   const keysQ = useQuery({
     queryKey: ["api-keys", tenantId],
@@ -78,7 +83,9 @@ function ApiKeysPage() {
     // server rejects.
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["api-keys"] });
-      const snapshots = qc.getQueriesData<ApiKeysResponse>({ queryKey: ["api-keys"] });
+      const snapshots = qc.getQueriesData<ApiKeysResponse>({
+        queryKey: ["api-keys"],
+      });
       const stamp = new Date().toISOString();
       qc.setQueriesData<ApiKeysResponse>({ queryKey: ["api-keys"] }, (prev) =>
         prev
@@ -190,7 +197,9 @@ function ApiKeysPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {k.last_used_at ? new Date(k.last_used_at).toLocaleString() : t("keys.lastUsedNever")}
+                      {k.last_used_at
+                        ? new Date(k.last_used_at).toLocaleString()
+                        : t("keys.lastUsedNever")}
                     </TableCell>
                     <TableCell>
                       <StatusPill
@@ -286,22 +295,24 @@ function CreateApiKeySheet({ open, onOpenChange, tenantId, onCreated }: CreateAp
         >
           <SheetHeader>
             <SheetTitle>{t("keys.create.title")}</SheetTitle>
-            <SheetDescription>
-              {t("keys.create.description")}
-            </SheetDescription>
+            <SheetDescription>{t("keys.create.description")}</SheetDescription>
           </SheetHeader>
           <div className="flex-1 overflow-y-auto p-4">
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="apikey-name">{t("keys.create.nameLabel")}</FieldLabel>
-                <Input id="apikey-name" name="name" placeholder="CI deploy key" required maxLength={200} />
+                <Input
+                  id="apikey-name"
+                  name="name"
+                  placeholder="CI deploy key"
+                  required
+                  maxLength={200}
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="apikey-scopes">{t("keys.create.scopesLabel")}</FieldLabel>
                 <Input id="apikey-scopes" name="scopes" placeholder="user.read tenant.read" />
-                <FieldDescription>
-                  {t("keys.create.scopesHelp")}
-                </FieldDescription>
+                <FieldDescription>{t("keys.create.scopesHelp")}</FieldDescription>
               </Field>
               <Field>
                 <FieldLabel htmlFor="apikey-expires_at">{t("keys.create.expiresLabel")}</FieldLabel>
@@ -316,7 +327,9 @@ function CreateApiKeySheet({ open, onOpenChange, tenantId, onCreated }: CreateAp
             </FieldGroup>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t">
-            <SheetClose render={<Button type="button" variant="outline" />}>{t("keys.create.cancelBtn")}</SheetClose>
+            <SheetClose render={<Button type="button" variant="outline" />}>
+              {t("keys.create.cancelBtn")}
+            </SheetClose>
             <Button type="submit" disabled={createM.isPending}>
               {createM.isPending && <Loader2Icon className="animate-spin" />}
               {createM.isPending ? t("keys.create.creatingBtn") : t("keys.create.createBtn")}

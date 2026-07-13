@@ -21,7 +21,7 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
-import { ApiError } from "@/lib/api";
+import type { ApiError } from "@/lib/api";
 import {
   useAuthHooks,
   useCreateAuthHook,
@@ -29,7 +29,9 @@ import {
   useUpdateAuthHook,
 } from "@/lib/auth-hooks";
 
-export const Route = createFileRoute("/_app/developer/auth-hooks")({ component: AuthHooksPage });
+export const Route = createFileRoute("/_app/developer/auth-hooks")({
+  component: AuthHooksPage,
+});
 
 function AuthHooksPage() {
   const { t } = useTranslation("developer");
@@ -62,7 +64,11 @@ function AuthHooksPage() {
               e.preventDefault();
               if (url.trim()) {
                 createM.mutate(
-                  { url: url.trim(), secret: secret.trim(), fail_open: failOpen },
+                  {
+                    url: url.trim(),
+                    secret: secret.trim(),
+                    fail_open: failOpen,
+                  },
                   {
                     onSuccess: () => {
                       setUrl("");
@@ -141,7 +147,9 @@ function AuthHooksPage() {
                     <p className="flex items-center gap-2 text-sm font-medium">
                       <span className="truncate font-mono">{h.url}</span>
                       <Badge variant={h.fail_open ? "outline" : "destructive"}>
-                        {h.fail_open ? t("authHooks.list.failOpen") : t("authHooks.list.failClosed")}
+                        {h.fail_open
+                          ? t("authHooks.list.failOpen")
+                          : t("authHooks.list.failClosed")}
                       </Badge>
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -154,7 +162,11 @@ function AuthHooksPage() {
                       aria-label={t("authHooks.list.enabledAriaLabel")}
                       disabled={updateM.isPending}
                       onCheckedChange={(v) =>
-                        updateM.mutate({ id: h.id, enabled: v, fail_open: h.fail_open })
+                        updateM.mutate({
+                          id: h.id,
+                          enabled: v,
+                          fail_open: h.fail_open,
+                        })
                       }
                     />
                     <Button

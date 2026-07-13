@@ -1,4 +1,4 @@
 {
   "installCommand": "cd ../.. && bun install --frozen-lockfile",
-  "buildCommand": "cd ../.. && bunx turbo run build --filter=@qeet-id/login"
+  "buildCommand": "cd ../.. && bun run --filter '@qeet-id/login' build"
 }

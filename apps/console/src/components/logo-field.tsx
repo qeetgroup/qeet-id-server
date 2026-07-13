@@ -1,4 +1,4 @@
-import { Button, Input, cn } from "@qeetrix/ui";
+import { Button, cn, Input } from "@qeetrix/ui";
 import { ImageIcon, Trash2Icon, UploadCloudIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -106,7 +106,13 @@ export function LogoField({
               >
                 <UploadCloudIcon /> Replace
               </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={clearLogo}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                onClick={clearLogo}
+              >
                 <Trash2Icon /> Remove
               </Button>
             </div>

@@ -1,4 +1,5 @@
 import {
+  cn,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -10,7 +11,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   Skeleton,
-  cn,
   useSidebar,
 } from "@qeetrix/ui";
 import { useQuery } from "@tanstack/react-query";

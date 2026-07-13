@@ -1,3 +1,4 @@
+import { cn } from "@qeetrix/ui";
 import {
   IconAuditLog,
   IconCrossDevice,
@@ -8,7 +9,6 @@ import {
   IconTenant,
   type QeetIconProps,
 } from "@qeetrix/ui/brand";
-import { cn } from "@qeetrix/ui";
 import type { ComponentType } from "react";
 
 import { SpotlightCard } from "@/components/marketing/effects/spotlight-card";
@@ -82,13 +82,41 @@ const cards: FeatureCard[] = [
 ];
 
 const accent: Record<Accent, { icon: string; glow: string; ring: string }> = {
-  brand: { icon: "text-brand", glow: "from-brand/45", ring: "group-hover:ring-brand/40" },
-  violet: { icon: "text-violet-500", glow: "from-violet-500/40", ring: "group-hover:ring-violet-500/40" },
-  cyan: { icon: "text-cyan-500", glow: "from-cyan-500/40", ring: "group-hover:ring-cyan-500/40" },
-  emerald: { icon: "text-emerald-500", glow: "from-emerald-500/40", ring: "group-hover:ring-emerald-500/40" },
-  amber: { icon: "text-amber-500", glow: "from-amber-500/40", ring: "group-hover:ring-amber-500/40" },
-  rose: { icon: "text-rose-500", glow: "from-rose-500/40", ring: "group-hover:ring-rose-500/40" },
-  indigo: { icon: "text-indigo-500", glow: "from-indigo-500/40", ring: "group-hover:ring-indigo-500/40" },
+  brand: {
+    icon: "text-brand",
+    glow: "from-brand/45",
+    ring: "group-hover:ring-brand/40",
+  },
+  violet: {
+    icon: "text-violet-500",
+    glow: "from-violet-500/40",
+    ring: "group-hover:ring-violet-500/40",
+  },
+  cyan: {
+    icon: "text-cyan-500",
+    glow: "from-cyan-500/40",
+    ring: "group-hover:ring-cyan-500/40",
+  },
+  emerald: {
+    icon: "text-emerald-500",
+    glow: "from-emerald-500/40",
+    ring: "group-hover:ring-emerald-500/40",
+  },
+  amber: {
+    icon: "text-amber-500",
+    glow: "from-amber-500/40",
+    ring: "group-hover:ring-amber-500/40",
+  },
+  rose: {
+    icon: "text-rose-500",
+    glow: "from-rose-500/40",
+    ring: "group-hover:ring-rose-500/40",
+  },
+  indigo: {
+    icon: "text-indigo-500",
+    glow: "from-indigo-500/40",
+    ring: "group-hover:ring-indigo-500/40",
+  },
 };
 
 // Small live visual for the SSO hero cell: a stack of provider chips.
@@ -108,7 +136,6 @@ function SsoVisual() {
   );
 }
 
-
 function FeatureCardItem({ icon: Icon, title, body, accent: key, span }: FeatureCard) {
   const wide = span === "wide" || span === "full";
   return (
@@ -125,26 +152,26 @@ function FeatureCardItem({ icon: Icon, title, body, accent: key, span }: Feature
             wide ? "bg-card/60 backdrop-blur lg:p-8" : "bg-background",
           )}
         >
-        <span
-          aria-hidden
-          className={cn(
-            "pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-linear-to-br to-transparent opacity-30 blur-3xl transition-opacity duration-500 group-hover:opacity-90",
-            accent[key].glow,
-          )}
-        />
-        <span
-          className={cn(
-            "relative grid size-11 place-items-center rounded-xl bg-muted/60 ring-1 ring-border/50 transition-transform duration-300 group-hover:scale-105",
-            accent[key].icon,
-          )}
-        >
-          <Icon size={22} />
-        </span>
-        <h3 className="relative font-display text-lg font-semibold tracking-tight">{title}</h3>
-        <p className={cn("relative text-sm text-muted-foreground", wide && "max-w-md")}>{body}</p>
-        {wide && title === "Single sign-on" && <SsoVisual />}
-      </article>
-    </Tilt>
+          <span
+            aria-hidden
+            className={cn(
+              "pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-linear-to-br to-transparent opacity-30 blur-3xl transition-opacity duration-500 group-hover:opacity-90",
+              accent[key].glow,
+            )}
+          />
+          <span
+            className={cn(
+              "relative grid size-11 place-items-center rounded-xl bg-muted/60 ring-1 ring-border/50 transition-transform duration-300 group-hover:scale-105",
+              accent[key].icon,
+            )}
+          >
+            <Icon size={22} />
+          </span>
+          <h3 className="relative font-display text-lg font-semibold tracking-tight">{title}</h3>
+          <p className={cn("relative text-sm text-muted-foreground", wide && "max-w-md")}>{body}</p>
+          {wide && title === "Single sign-on" && <SsoVisual />}
+        </article>
+      </Tilt>
     </SpotlightCard>
   );
 }

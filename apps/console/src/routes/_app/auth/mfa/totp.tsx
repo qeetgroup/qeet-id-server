@@ -14,12 +14,12 @@ import {
   FieldLabel,
   OTPInput,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, FingerprintIcon, Loader2Icon, ShieldCheckIcon } from "lucide-react";
-import { toast } from "sonner";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -27,7 +27,9 @@ import { StepUpDialog } from "@/components/step-up-dialog";
 import { ApiError, api } from "@/lib/api";
 import { isStepUpRequired } from "@/lib/mfa";
 
-export const Route = createFileRoute("/_app/auth/mfa/totp")({ component: MfaTotpPage });
+export const Route = createFileRoute("/_app/auth/mfa/totp")({
+  component: MfaTotpPage,
+});
 
 type EnrollStart = { secret: string; provisioning_url: string };
 type ConfirmResult = { recovery_codes: string[] };
@@ -55,7 +57,11 @@ function MfaTotpPage() {
   }, [stage]);
 
   const startM = useMutation({
-    mutationFn: () => api<EnrollStart>("/v1/mfa/totp/enroll/start", { method: "POST", body: {} }),
+    mutationFn: () =>
+      api<EnrollStart>("/v1/mfa/totp/enroll/start", {
+        method: "POST",
+        body: {},
+      }),
     onSuccess: (res) => {
       setEnrollment(res);
       setStage("enrolling");
@@ -64,7 +70,10 @@ function MfaTotpPage() {
 
   const confirmM = useMutation({
     mutationFn: (otpCode: string) =>
-      api<ConfirmResult>("/v1/mfa/totp/enroll/confirm", { method: "POST", body: { code: otpCode } }),
+      api<ConfirmResult>("/v1/mfa/totp/enroll/confirm", {
+        method: "POST",
+        body: { code: otpCode },
+      }),
     onSuccess: (res) => {
       setRecoveryCodes(res.recovery_codes);
       setStage("confirmed");
@@ -131,9 +140,7 @@ function MfaTotpPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">{t("mfa.totp.enrolling.title")}</CardTitle>
-            <CardDescription>
-              {t("mfa.totp.enrolling.subtitle")}
-            </CardDescription>
+            <CardDescription>{t("mfa.totp.enrolling.subtitle")}</CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup>
@@ -141,13 +148,16 @@ function MfaTotpPage() {
                 <FieldLabel>{t("mfa.totp.enrolling.uriLabel")}</FieldLabel>
                 <CopyableSecret value={enrollment.provisioning_url} size="sm" />
                 <FieldDescription>
-                  Most authenticators support pasting this URL. Or generate a QR from it via your password manager.
+                  Most authenticators support pasting this URL. Or generate a QR from it via your
+                  password manager.
                 </FieldDescription>
               </Field>
               <Field>
                 <FieldLabel>{t("mfa.totp.enrolling.secretLabel")}</FieldLabel>
                 <CopyableSecret value={enrollment.secret} size="sm" />
-                <FieldDescription>Use this if your app asks for a raw shared secret instead.</FieldDescription>
+                <FieldDescription>
+                  Use this if your app asks for a raw shared secret instead.
+                </FieldDescription>
               </Field>
 
               <form
@@ -172,14 +182,27 @@ function MfaTotpPage() {
                     Six digits — paste the full code or type one digit at a time.
                   </FieldDescription>
                 </Field>
-                {confirmM.error && <Field><FieldError>{(confirmM.error as ApiError).message}</FieldError></Field>}
+                {confirmM.error && (
+                  <Field>
+                    <FieldError>{(confirmM.error as ApiError).message}</FieldError>
+                  </Field>
+                )}
                 <Field className="flex flex-row justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => { setStage("idle"); setCode(""); }}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setStage("idle");
+                      setCode("");
+                    }}
+                  >
                     {t("mfa.totp.enrolling.cancelBtn")}
                   </Button>
                   <Button type="submit" disabled={confirmM.isPending || code.length !== 6}>
                     {confirmM.isPending && <Loader2Icon className="animate-spin" />}
-                    {confirmM.isPending ? t("mfa.totp.enrolling.verifyingBtn") : t("mfa.totp.enrolling.confirmBtn")}
+                    {confirmM.isPending
+                      ? t("mfa.totp.enrolling.verifyingBtn")
+                      : t("mfa.totp.enrolling.confirmBtn")}
                   </Button>
                 </Field>
               </form>
@@ -195,7 +218,10 @@ function MfaTotpPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="text-base">
-                    {t("mfa.totp.confirmed.title")} <Badge variant="success" className="ml-2">{t("mfa.totp.confirmed.activeBadge")}</Badge>
+                    {t("mfa.totp.confirmed.title")}{" "}
+                    <Badge variant="success" className="ml-2">
+                      {t("mfa.totp.confirmed.activeBadge")}
+                    </Badge>
                   </CardTitle>
                   <CardDescription>{t("mfa.totp.confirmed.subtitle")}</CardDescription>
                 </div>
@@ -206,14 +232,14 @@ function MfaTotpPage() {
           <Card className="border-amber-500/40 bg-amber-50/30 dark:bg-amber-950/20">
             <CardHeader>
               <CardTitle className="text-base">{t("mfa.totp.confirmed.recoveryTitle")}</CardTitle>
-              <CardDescription>
-                {t("mfa.totp.confirmed.recoveryDescription")}
-              </CardDescription>
+              <CardDescription>{t("mfa.totp.confirmed.recoveryDescription")}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-2 font-mono text-sm">
                 {recoveryCodes.map((rc) => (
-                  <code key={rc} className="rounded-md border bg-background px-3 py-2 text-center">{rc}</code>
+                  <code key={rc} className="rounded-md border bg-background px-3 py-2 text-center">
+                    {rc}
+                  </code>
                 ))}
               </div>
               <div className="mt-4 flex gap-2">

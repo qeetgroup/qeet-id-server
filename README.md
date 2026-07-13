@@ -172,7 +172,7 @@ All planned packages/surfaces are tracked in [ROADMAP.md](./ROADMAP.md).
 
 ## 🚀 Quickstart
 
-**Prerequisites:** Go ≥ 1.25 · Node ≥ 24 (via nvm) · Bun ≥ 1.3.14 · Docker · [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate)
+**Prerequisites:** Go ≥ 1.25 · Bun ≥ 1.3.14 · Docker · [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate)
 
 ```bash
 # 1. Clone
@@ -180,7 +180,7 @@ git clone https://github.com/qeetgroup/qeet-id && cd qeet-id
 
 # 2. Install dependencies
 go mod download
-nvm use 24 && bun install
+bun install
 
 # 3. Copy env files
 cp .env.example .env                                      # backend — DB_URL has a working local default
@@ -257,7 +257,7 @@ Every push runs the full gate in [CI](./.github/workflows/ci.yml); the same chec
 make test                            # backend unit + arch-fitness tests (go test ./...)
 go test -tags integration ./tests/integration/...   # real Postgres via testcontainers (needs Docker)
 make lint                            # go vet — CI additionally runs golangci-lint
-bun run lint && bun run typecheck && bun run build && bun run test   # frontend (Turbo, all 3 apps)
+bun run lint && bun run typecheck && bun run build && bun run test   # frontend (Bun workspaces, all 3 apps)
 ```
 
 CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `golangci-lint`, `govulncheck`, and `gitleaks`. Coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired yet — tracked in [ROADMAP.md](./ROADMAP.md). [`tests/performance/`](./tests/performance/) has k6 load scripts (auth, user CRUD, RBAC/ReBAC `/check`) for manual local runs — not wired into CI, no published numbers yet.
@@ -267,7 +267,7 @@ CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `g
 ## 🛠 Tech stack
 
 - **Backend** — Go 1.25 · chi v5 · pgx v5 (hand-written SQL, no ORM — [ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) · ES256 JWTs + JWKS rotation · Argon2id · AES-256-GCM vault · transactional outbox + DLQ
-- **Frontend** — React 19 · admin on Vite + TanStack · web/login on Next.js 16 · Tailwind 4 + the shared [`@qeetrix/*`](../qeetrix/) design system · Bun + Turborepo
+- **Frontend** — React 19 · admin on Vite + TanStack · web/login on Next.js 16 · Tailwind 4 + the shared [`@qeetrix/*`](../qeetrix/) design system · Bun workspaces
 - **Data** — PostgreSQL (`tenant`/`user`/`auth`/`rbac`/`audit`/`platform` schemas), multi-tenant by `tenant_id` · optional Redis for cross-replica rate limiting
 
 ---

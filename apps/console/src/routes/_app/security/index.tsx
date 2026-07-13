@@ -1,32 +1,37 @@
-import {
-  Card,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@qeetrix/ui";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Card, CardDescription, CardHeader, CardTitle } from "@qeetrix/ui";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
   GaugeIcon,
   LockKeyholeIcon,
+  type LucideIcon,
   MonitorSmartphoneIcon,
   ScrollTextIcon,
   ShieldAlertIcon,
   ShieldIcon,
-  type LucideIcon,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { PageHeader } from "@/components/page-header";
 
-export const Route = createFileRoute("/_app/security/")({ component: SecurityOverviewPage });
+export const Route = createFileRoute("/_app/security/")({
+  component: SecurityOverviewPage,
+});
 
 // Each card deep-links into a real sub-page (the bare parent paths like
 // /security/threats are themselves placeholders, so we jump to a built child).
 const SECTIONS: { key: string; to: string; icon: LucideIcon }[] = [
-  { key: "threatProtection", to: "/security/threats/bots", icon: ShieldAlertIcon },
+  {
+    key: "threatProtection",
+    to: "/security/threats/bots",
+    icon: ShieldAlertIcon,
+  },
   { key: "sessions", to: "/security/sessions", icon: ShieldIcon },
-  { key: "deviceAuthorizations", to: "/security/device-authorizations", icon: MonitorSmartphoneIcon },
+  {
+    key: "deviceAuthorizations",
+    to: "/security/device-authorizations",
+    icon: MonitorSmartphoneIcon,
+  },
   { key: "rateLimits", to: "/security/rate-limits", icon: GaugeIcon },
   { key: "auditLogs", to: "/security/audit-logs", icon: ScrollTextIcon },
   { key: "compliance", to: "/security/compliance/soc2", icon: LockKeyholeIcon },
@@ -52,7 +57,9 @@ function SecurityOverviewPage() {
                     </span>
                     <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                   </div>
-                  <CardTitle className="mt-2 text-base">{t(`overview.sections.${s.key}.title`)}</CardTitle>
+                  <CardTitle className="mt-2 text-base">
+                    {t(`overview.sections.${s.key}.title`)}
+                  </CardTitle>
                   <CardDescription>{t(`overview.sections.${s.key}.description`)}</CardDescription>
                 </CardHeader>
               </Card>

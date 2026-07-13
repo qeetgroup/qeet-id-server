@@ -21,8 +21,8 @@ import {
   TableRow,
   TimeSince,
 } from "@qeetrix/ui";
-import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
 import { DownloadIcon, FileSearchIcon, Loader2Icon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -111,9 +111,7 @@ function csvCell(v: unknown): string {
 function rowsToCSV(items: AuditEvent[]): string {
   const lines = [CSV_HEADERS.join(",")];
   for (const ev of items) {
-    lines.push(
-      CSV_HEADERS.map((h) => csvCell((ev as Record<string, unknown>)[h])).join(","),
-    );
+    lines.push(CSV_HEADERS.map((h) => csvCell((ev as Record<string, unknown>)[h])).join(","));
   }
   return lines.join("\n");
 }
@@ -164,25 +162,22 @@ function AuditLogsPage() {
     setExporting(format);
     try {
       const all: AuditEvent[] = [];
-      let next: string | undefined = undefined;
+      let next: string | undefined;
       let truncated = false;
       // Walk the cursor pages with the current filter set. The first call
       // intentionally skips the cursor so we always start from the newest
       // matching event rather than wherever the UI currently sits.
       do {
-        const page: AuditResponse = await api<AuditResponse>(
-          `/v1/tenants/${tenantId}/audit`,
-          {
-            query: {
-              limit: 200,
-              cursor: next,
-              q: filters.q || undefined,
-              action: filters.action || undefined,
-              resource_type: filters.resource_type || undefined,
-              actor_user_id: filters.actor_user_id || undefined,
-            },
+        const page: AuditResponse = await api<AuditResponse>(`/v1/tenants/${tenantId}/audit`, {
+          query: {
+            limit: 200,
+            cursor: next,
+            q: filters.q || undefined,
+            action: filters.action || undefined,
+            resource_type: filters.resource_type || undefined,
+            actor_user_id: filters.actor_user_id || undefined,
           },
-        );
+        });
         all.push(...page.items);
         next = page.next_cursor;
         if (all.length >= EXPORT_ROW_CAP) {
@@ -240,13 +235,11 @@ function AuditLogsPage() {
               <DropdownMenuTrigger
                 render={
                   <Button variant="outline" size="sm" disabled={!!exporting}>
-                    {exporting ? (
-                      <Loader2Icon className="animate-spin" />
-                    ) : (
-                      <DownloadIcon />
-                    )}
+                    {exporting ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />}
                     {exporting
-                      ? t("auditLogs.exporting", { format: exporting.toUpperCase() })
+                      ? t("auditLogs.exporting", {
+                          format: exporting.toUpperCase(),
+                        })
                       : t("auditLogs.export")}
                   </Button>
                 }
@@ -326,7 +319,12 @@ function AuditLogsPage() {
               variant="outline"
               disabled={!hasFilters}
               onClick={() => {
-                setFilters(() => ({ q: "", action: "", resource_type: "", actor_user_id: "" }));
+                setFilters(() => ({
+                  q: "",
+                  action: "",
+                  resource_type: "",
+                  actor_user_id: "",
+                }));
                 setSearchDraft("");
                 setCursor(undefined);
               }}
@@ -340,9 +338,7 @@ function AuditLogsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">{t("auditLogs.list.title")}</CardTitle>
-          <CardDescription>
-            {t("auditLogs.list.count", { count: itemCount })}
-          </CardDescription>
+          <CardDescription>{t("auditLogs.list.count", { count: itemCount })}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <DataState
@@ -355,57 +351,57 @@ function AuditLogsPage() {
           >
             {auditQ.data && (
               <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("auditLogs.list.columns.time")}</TableHead>
-                    <TableHead>{t("auditLogs.list.columns.actor")}</TableHead>
-                    <TableHead>{t("auditLogs.list.columns.action")}</TableHead>
-                    <TableHead>{t("auditLogs.list.columns.resource")}</TableHead>
-                    <TableHead>{t("auditLogs.list.columns.ip")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {auditQ.data.items.map((ev) => (
-                    <TableRow key={ev.id}>
-                      <TableCell>
-                        <TimeSince value={ev.created_at} className="font-mono text-xs" />
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="muted">{ev.actor_type}</Badge>
-                        {ev.actor_user_id && (
-                          <span className="ml-2 font-mono text-xs text-muted-foreground">
-                            {ev.actor_user_id.slice(0, 8)}…
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-medium">{ev.action}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {ev.resource_type}
-                        {ev.resource_id && (
-                          <span className="ml-1 font-mono text-xs">
-                            ({ev.resource_id.slice(0, 8)}…)
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {ev.ip ?? "—"}
-                      </TableCell>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("auditLogs.list.columns.time")}</TableHead>
+                      <TableHead>{t("auditLogs.list.columns.actor")}</TableHead>
+                      <TableHead>{t("auditLogs.list.columns.action")}</TableHead>
+                      <TableHead>{t("auditLogs.list.columns.resource")}</TableHead>
+                      <TableHead>{t("auditLogs.list.columns.ip")}</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {(cursor || auditQ.data.next_cursor) && (
-                <PaginationBar
-                  hasPrev={!!cursor}
-                  hasNext={!!auditQ.data.next_cursor}
-                  onFirst={() => setCursor(undefined)}
-                  onNext={() => setCursor(auditQ.data?.next_cursor)}
-                  itemsOnPage={auditQ.data.items.length}
-                  pageSize={50}
-                  loading={auditQ.isFetching}
-                />
-              )}
+                  </TableHeader>
+                  <TableBody>
+                    {auditQ.data.items.map((ev) => (
+                      <TableRow key={ev.id}>
+                        <TableCell>
+                          <TimeSince value={ev.created_at} className="font-mono text-xs" />
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="muted">{ev.actor_type}</Badge>
+                          {ev.actor_user_id && (
+                            <span className="ml-2 font-mono text-xs text-muted-foreground">
+                              {ev.actor_user_id.slice(0, 8)}…
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-medium">{ev.action}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {ev.resource_type}
+                          {ev.resource_id && (
+                            <span className="ml-1 font-mono text-xs">
+                              ({ev.resource_id.slice(0, 8)}…)
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {ev.ip ?? "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {(cursor || auditQ.data.next_cursor) && (
+                  <PaginationBar
+                    hasPrev={!!cursor}
+                    hasNext={!!auditQ.data.next_cursor}
+                    onFirst={() => setCursor(undefined)}
+                    onNext={() => setCursor(auditQ.data?.next_cursor)}
+                    itemsOnPage={auditQ.data.items.length}
+                    pageSize={50}
+                    loading={auditQ.isFetching}
+                  />
+                )}
               </>
             )}
           </DataState>

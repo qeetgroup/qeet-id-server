@@ -16,8 +16,7 @@ export function MasterCheckbox({
   onChange,
   label = "Select all rows",
 }: MasterCheckboxProps) {
-  const allChecked =
-    selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
+  const allChecked = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.has(id));
   const someChecked = selectableIds.some((id) => selectedIds.has(id));
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {

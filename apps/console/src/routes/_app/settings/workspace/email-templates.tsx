@@ -68,7 +68,9 @@ function EmailTemplatesPage() {
                     }`}
                   >
                     <span>{item.name}</span>
-                    {item.custom && <Badge variant="muted">{t("workspace.emailTemplates.custom")}</Badge>}
+                    {item.custom && (
+                      <Badge variant="muted">{t("workspace.emailTemplates.custom")}</Badge>
+                    )}
                   </button>
                 );
               })}
@@ -105,7 +107,9 @@ function Editor({ template }: { template: EmailTemplate }) {
             <CardDescription>{template.description}</CardDescription>
           </div>
           <StatusPill kind={template.custom ? "info" : "muted"}>
-            {template.custom ? t("workspace.emailTemplates.editor.customised") : t("workspace.emailTemplates.editor.default")}
+            {template.custom
+              ? t("workspace.emailTemplates.editor.customised")
+              : t("workspace.emailTemplates.editor.default")}
           </StatusPill>
         </div>
       </CardHeader>
@@ -128,7 +132,9 @@ function Editor({ template }: { template: EmailTemplate }) {
               </Badge>
             ))}
             {template.variables.length === 0 && (
-              <span className="text-xs text-muted-foreground">{t("workspace.emailTemplates.editor.noVariables")}</span>
+              <span className="text-xs text-muted-foreground">
+                {t("workspace.emailTemplates.editor.noVariables")}
+              </span>
             )}
           </div>
           <FieldDescription>{t("workspace.emailTemplates.editor.variablesHelp")}</FieldDescription>
@@ -137,7 +143,9 @@ function Editor({ template }: { template: EmailTemplate }) {
         {previewM.data && (
           <div className="rounded-md border bg-muted/40 p-3 text-sm">
             <div className="font-medium">{previewM.data.subject}</div>
-            <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{previewM.data.body}</div>
+            <div className="mt-1 whitespace-pre-wrap text-muted-foreground">
+              {previewM.data.body}
+            </div>
           </div>
         )}
 
@@ -156,7 +164,9 @@ function Editor({ template }: { template: EmailTemplate }) {
             onClick={() => upsertM.mutate({ key: template.key, subject, body })}
             disabled={upsertM.isPending || !dirty}
           >
-            {upsertM.isPending ? t("workspace.emailTemplates.editor.saving") : t("workspace.emailTemplates.editor.save")}
+            {upsertM.isPending
+              ? t("workspace.emailTemplates.editor.saving")
+              : t("workspace.emailTemplates.editor.save")}
           </Button>
         </div>
       </CardContent>

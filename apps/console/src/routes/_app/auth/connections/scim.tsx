@@ -35,7 +35,9 @@ import {
   useScimProvisionedUsers,
 } from "@/lib/scim";
 
-export const Route = createFileRoute("/_app/auth/connections/scim")({ component: ScimPage });
+export const Route = createFileRoute("/_app/auth/connections/scim")({
+  component: ScimPage,
+});
 
 function ScimPage() {
   const { t } = useTranslation("auth");
@@ -114,7 +116,11 @@ function ScimPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-semibold tracking-tight">
-              {config?.last_used_at ? <TimeSince value={config.last_used_at} /> : t("scim.stats.never")}
+              {config?.last_used_at ? (
+                <TimeSince value={config.last_used_at} />
+              ) : (
+                t("scim.stats.never")
+              )}
             </div>
           </CardContent>
         </Card>
@@ -125,15 +131,17 @@ function ScimPage() {
         <Card className="border-primary">
           <CardHeader>
             <CardTitle className="text-base">{t("scim.token.title")}</CardTitle>
-            <CardDescription>
-              {t("scim.token.description")}
-            </CardDescription>
+            <CardDescription>{t("scim.token.description")}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <div className="flex gap-2">
               <Input value={freshToken} readOnly className="font-mono text-xs" />
               <Button variant="outline" size="icon" onClick={() => copy("new", freshToken)}>
-                {copied === "new" ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
+                {copied === "new" ? (
+                  <CheckIcon className="size-4" />
+                ) : (
+                  <CopyIcon className="size-4" />
+                )}
               </Button>
             </div>
             <div>
@@ -148,9 +156,7 @@ function ScimPage() {
       <Card>
         <CardHeader>
           <CardTitle>{t("scim.endpoint.title")}</CardTitle>
-          <CardDescription>
-            {t("scim.endpoint.description")}
-          </CardDescription>
+          <CardDescription>{t("scim.endpoint.description")}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <Field>
@@ -158,7 +164,11 @@ function ScimPage() {
             <div className="flex gap-2">
               <Input value={SCIM_BASE_URL} readOnly className="font-mono text-xs" />
               <Button variant="outline" size="icon" onClick={() => copy("url", SCIM_BASE_URL)}>
-                {copied === "url" ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
+                {copied === "url" ? (
+                  <CheckIcon className="size-4" />
+                ) : (
+                  <CopyIcon className="size-4" />
+                )}
               </Button>
             </div>
             <FieldDescription>
@@ -180,14 +190,14 @@ function ScimPage() {
                 className="font-mono text-xs"
               />
               <Button variant="outline" onClick={() => rotateM.mutate()} disabled={busy}>
-                <RefreshCwIcon className={rotateM.isPending ? "mr-2 size-4 animate-spin" : "mr-2 size-4"} />
+                <RefreshCwIcon
+                  className={rotateM.isPending ? "mr-2 size-4 animate-spin" : "mr-2 size-4"}
+                />
                 {enabled ? t("scim.endpoint.rotate") : t("scim.endpoint.generate")}
               </Button>
             </div>
             <FieldDescription>
-              {enabled
-                ? t("scim.endpoint.rotateHelp")
-                : t("scim.endpoint.generateHelp")}
+              {enabled ? t("scim.endpoint.rotateHelp") : t("scim.endpoint.generateHelp")}
             </FieldDescription>
           </Field>
         </CardContent>
@@ -197,8 +207,8 @@ function ScimPage() {
         <CardHeader>
           <CardTitle>{t("scim.users.title")}</CardTitle>
           <CardDescription>
-            Users created or deprovisioned over SCIM. Deactivations (<code>active=false</code>) move a
-            user to suspended and terminate their sessions.
+            Users created or deprovisioned over SCIM. Deactivations (<code>active=false</code>) move
+            a user to suspended and terminate their sessions.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">

@@ -8,6 +8,7 @@ import {
   AlertDialogTitle,
   Badge,
   Button,
+  buttonVariants,
   Card,
   CardContent,
   CardDescription,
@@ -41,10 +42,9 @@ import {
   TableHeader,
   TableRow,
   TimeSince,
-  buttonVariants,
 } from "@qeetrix/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   KeyRoundIcon,
   Loader2Icon,
@@ -58,15 +58,20 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
-
-import { BulkBar, ListToolbar, MasterCheckbox, RowCheckbox, SortHeader } from "@/components/data-table";
 import { useConfirmDialog } from "@/components/confirm-dialog";
+import {
+  BulkBar,
+  ListToolbar,
+  MasterCheckbox,
+  RowCheckbox,
+  SortHeader,
+} from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
-import { ApiError, api, tokenStore } from "@/lib/api";
+import { type ApiError, api, tokenStore } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
-import { useRoles } from "@/lib/rbac-groups";
-import { exportToCsv, exportToJson, type CsvColumn } from "@/lib/export";
+import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
+import { useRoles } from "@/lib/rbac-groups";
 
 export const Route = createFileRoute("/_app/users/")({ component: UsersPage });
 
@@ -111,7 +116,10 @@ function UsersPage() {
   const [settingPassword, setSettingPassword] = useState<User | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   // Cursor stack lets us pop back to the previous page without re-walking
   // from the start, while the API itself is forward-only (next_cursor).
   const [cursorStack, setCursorStack] = useState<string[]>([]);
@@ -179,7 +187,9 @@ function UsersPage() {
     mutationFn: (id: string) => api<void>(`/v1/users/${id}`, { method: "DELETE" }),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: ["users"] });
-      const snapshots = qc.getQueriesData<UsersResponse>({ queryKey: ["users"] });
+      const snapshots = qc.getQueriesData<UsersResponse>({
+        queryKey: ["users"],
+      });
       qc.setQueriesData<UsersResponse>({ queryKey: ["users"] }, (prev) =>
         prev ? { ...prev, items: prev.items.filter((u) => u.id !== id) } : prev,
       );
@@ -249,7 +259,11 @@ function UsersPage() {
         <CardHeader>
           <CardTitle className="text-base">{t("list.membersTitle")}</CardTitle>
           <CardDescription>
-            {t("list.membersSubtitle", { shown: rows.length, total: items.length, count: items.length })}
+            {t("list.membersSubtitle", {
+              shown: rows.length,
+              total: items.length,
+              count: items.length,
+            })}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -276,7 +290,9 @@ function UsersPage() {
             density={lv.density}
             onDensityChange={lv.setDensity}
             onExport={(fmt) =>
-              fmt === "csv" ? exportToCsv("users", rows, userCsvColumns) : exportToJson("users", rows)
+              fmt === "csv"
+                ? exportToCsv("users", rows, userCsvColumns)
+                : exportToJson("users", rows)
             }
             exportDisabled={rows.length === 0}
             hasActiveFilters={lv.hasActiveFilters}
@@ -517,7 +533,9 @@ function UsersPage() {
                     t={t}
                     i18nKey="delete.descriptionNamed"
                     values={{ email: target.email }}
-                    components={{ strong: <span className="font-medium text-foreground" /> }}
+                    components={{
+                      strong: <span className="font-medium text-foreground" />,
+                    }}
                   />
                 ) : (
                   t("delete.descriptionFallback")
