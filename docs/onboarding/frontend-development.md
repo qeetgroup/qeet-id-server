@@ -1,6 +1,6 @@
 # Frontend Development
 
-Qeet ID has three frontend apps in a pnpm/Turborepo workspace. All are TypeScript + React 19.
+Qeet ID has three frontend apps in a Bun/Turborepo workspace. All are TypeScript + React 19.
 
 ## Apps
 
@@ -14,7 +14,7 @@ Qeet ID has three frontend apps in a pnpm/Turborepo workspace. All are TypeScrip
 
 ```bash
 nvm use            # required: Node ≥24 (from the repo .nvmrc)
-make install       # installs all workspace deps (pnpm install at root)
+make install       # installs all workspace deps (bun install at root)
 ```
 
 ## Starting apps
@@ -51,7 +51,7 @@ src/routes/
 **Important:** TanStack Router uses `routeTree.gen.ts` (auto-generated, do not edit). When adding a new route file, regenerate it:
 
 ```bash
-pnpm --filter @qeetid/admin exec vite dev
+bun --filter @qeetid/admin exec vite dev
 # Wait for: "Generated routeTree.gen.ts", then Ctrl+C
 ```
 
@@ -149,7 +149,7 @@ To use a Qeetrix component:
 import { Button, Input, Badge } from '@qeetrix/ui';
 ```
 
-The design system is in `../../qeetrix/` (a sibling repo). It's referenced via the pnpm workspace protocol. If you need a component that doesn't exist, add it to Qeetrix first (see Qeetrix's own CLAUDE.md for guidance).
+The design system is in `../../qeetrix/` (a sibling repo). It's referenced via the Bun workspace protocol. If you need a component that doesn't exist, add it to Qeetrix first (see Qeetrix's own CLAUDE.md for guidance).
 
 ## Shared config packages
 
@@ -162,8 +162,8 @@ These are workspace packages referenced as `"@qeetid/tsconfig": "workspace:*"` i
 
 ```bash
 make build            # builds Go binary + all frontend apps
-pnpm build            # frontend apps only (Turborepo parallel build)
-pnpm --filter @qeetid/admin build   # one app only
+bun run build         # frontend apps only (Turborepo parallel build)
+bun run --filter @qeetid/admin build   # one app only
 ```
 
 ## TypeScript and linting

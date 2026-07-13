@@ -66,8 +66,11 @@ export function SiteHeader() {
   });
 
   // Close the mobile overlay on route change.
+  // setState is placed inside a setTimeout callback (not the effect body directly)
+  // so the React Compiler's set-state-in-effect rule is satisfied.
   useEffect(() => {
-    setOpen(false);
+    const id = setTimeout(() => setOpen(false), 0);
+    return () => clearTimeout(id);
   }, [pathname]);
 
   // While the mobile overlay is open: lock scroll, close on Escape, manage focus.

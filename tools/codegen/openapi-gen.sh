@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="${REPO_ROOT}/sdk/js/sdk/src/generated/schema.ts"
 
 if ! command -v openapi-typescript &>/dev/null; then
-  echo "openapi-typescript not found — install with: pnpm add -g openapi-typescript"
+  echo "openapi-typescript not found — install with: bun add -g openapi-typescript"
   exit 1
 fi
 

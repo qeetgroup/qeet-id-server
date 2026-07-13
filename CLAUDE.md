@@ -1,6 +1,6 @@
 # qeet-id — CLAUDE.md
 
-**Qeet ID** — identity platform (Auth0/Okta alternative, passkeys-first), pre-1.0. One Go modular-monolith backend + 3 React frontends (pnpm/Turbo), **all hoisted to the repo root** (no `backend/`/`frontend/` wrappers).
+**Qeet ID** — identity platform (Auth0/Okta alternative, passkeys-first), pre-1.0. One Go modular-monolith backend + 3 React frontends (Bun/Turbo), **all hoisted to the repo root** (no `backend/`/`frontend/` wrappers).
 
 ## Layout (all at repo root)
 
@@ -29,18 +29,18 @@ make kill                            # free a stuck :4001
 
 No `make help`/`install`/`dev-*`/`test-*` exist — don't invent targets. Single Go test: `go test ./domains/access/authentication/... -run TestName`.
 
-**Frontend — pnpm + Turborepo:**
+**Frontend — Bun + Turborepo:**
 
 ```bash
-pnpm install
-pnpm dev            # all apps
-pnpm dev:admin      # console  :3002  (@qeet-id/console)
-pnpm dev:web        # website  :3001  (@qeet-id/web)
-pnpm dev:login      # login    :3004  (@qeet-id/login)
-pnpm build | lint | format | check | typecheck | test
+bun install
+bun run dev         # all apps
+bun run dev:admin   # console  :3002  (@qeet-id/console)
+bun run dev:web     # website  :3001  (@qeet-id/web)
+bun run dev:login   # login    :3004  (@qeet-id/login)
+bun run build | lint | format | check | typecheck | test
 ```
 
-Node **≥24** (`.nvmrc`), pnpm **9.15.4** (Corepack handles it from `packageManager`).
+Node **≥24** (`.nvmrc`), Bun **1.3.14**.
 
 ## Architecture
 

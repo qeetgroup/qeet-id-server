@@ -21,23 +21,23 @@ make dev               # starts all 3 apps + backend in parallel
 In a second terminal:
 
 ```bash
-pnpm --filter @qeetid/e2e exec playwright install --with-deps
+bun --filter @qeetid/e2e exec playwright install --with-deps
 ```
 
 ## Run
 
 ```bash
 # All E2E tests
-pnpm --filter @qeetid/e2e exec playwright test
+bun --filter @qeetid/e2e exec playwright test
 
 # Headed (watch mode)
-pnpm --filter @qeetid/e2e exec playwright test --headed
+bun --filter @qeetid/e2e exec playwright test --headed
 
 # Single file
-pnpm --filter @qeetid/e2e exec playwright test login/email-password.spec.ts
+bun --filter @qeetid/e2e exec playwright test login/email-password.spec.ts
 
 # Debug
-pnpm --filter @qeetid/e2e exec playwright test --debug
+bun --filter @qeetid/e2e exec playwright test --debug
 ```
 
 ## Test files

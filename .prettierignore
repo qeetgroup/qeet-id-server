@@ -1,6 +1,5 @@
 node_modules/
 coverage/
-.pnpm-store/
 .turbo/
 .next/
 .source/
@@ -9,7 +8,7 @@ coverage/
 dist/
 build/
 
-pnpm-lock.yaml
+bun.lock
 package-lock.json
 yarn.lock
 

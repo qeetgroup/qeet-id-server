@@ -14,8 +14,7 @@ packages/
 sdk/
 examples/
 package.json
-pnpm-lock.yaml
-pnpm-workspace.yaml
+bun.lock
 turbo.json
 eslint.config.mjs
 .npmrc
@@ -24,7 +23,6 @@ eslint.config.mjs
 .next/
 dist/
 .turbo/
-.pnpm-store/
 *.tsbuildinfo
 
 # Infra / deploy / docs / codegen inputs / tests — not needed to build the binary

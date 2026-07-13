@@ -18,7 +18,7 @@ git push origin feat/my-feature
 
 ```bash
 nvm use            # frontend builds require Node ≥24 (from .nvmrc); system default is v18
-make install       # ensure deps are current: go mod tidy + pnpm install
+make install       # ensure deps are current: go mod tidy + bun install
 ```
 
 ## Making a backend change
@@ -56,7 +56,7 @@ The admin console uses **TanStack Router with file-based routing**. New route fi
 
 ```bash
 # Regenerate routeTree.gen.ts
-pnpm --filter @qeetid/admin exec vite dev
+bun --filter @qeetid/admin exec vite dev
 # Wait for "Generated routeTree.gen.ts" in output, then Ctrl+C
 make dev-admin    # now start normally
 ```

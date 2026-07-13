@@ -30,7 +30,7 @@ export default defineConfig({
   // the real Makefile / package.json targets — the previous `make dev-backend`
   // / `make dev-login` / `make dev-admin` targets never existed (QID-08), so the
   // harness could not start a stack on its own. `reuseExistingServer` means a
-  // stack already up via `make dev` + `pnpm dev:login` + `pnpm dev:admin` is
+  // stack already up via `make dev` + `bun run dev:login` + `bun run dev:admin` is
   // reused locally; CI starts them fresh.
   webServer: [
     {
@@ -41,14 +41,14 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: "pnpm dev:login",
+      command: "bun run dev:login",
       cwd: "../..",
       url: "http://localhost:3004",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },
     {
-      command: "pnpm dev:admin",
+      command: "bun run dev:admin",
       cwd: "../..",
       url: "http://localhost:3002",
       reuseExistingServer: !process.env.CI,
