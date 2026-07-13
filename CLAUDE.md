@@ -10,7 +10,7 @@ domains/    business logic by bounded context: identity/ access/ federation/ dev
 platform/   shared infra: api/rest  database/{postgres,migrations,repositories}  cache/ messaging/ events/ observability/ security/ config/
 apps/       frontends: console (admin), login, website   (docs/, status/ = placeholders)
 api/        contracts: openapi/ (5 split OpenAPI 3.1 specs) · postman/
-packages/   shared JS config (qeetid-tsconfig)   ·   deploy/ tests/ tools/ bin/
+tsconfig.base.json  shared TS base config (each app's tsconfig extends it)   ·   deploy/ tests/ tools/ bin/
 ```
 
 ## Commands (run from repo root)

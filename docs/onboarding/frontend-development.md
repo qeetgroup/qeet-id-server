@@ -150,11 +150,11 @@ import { Button, Input, Badge } from '@qeetrix/ui';
 
 The design system is in `../../qeetrix/` (a sibling repo). It's referenced via the Bun workspace protocol. If you need a component that doesn't exist, add it to Qeetrix first (see Qeetrix's own CLAUDE.md for guidance).
 
-## Shared config packages
+## Shared TypeScript config
 
-- `packages/qeetid-tsconfig/` — shared `tsconfig.json` base
+- `tsconfig.base.json` (repo root) — the shared TypeScript base. Each app's `tsconfig.json` does `"extends": "../../tsconfig.base.json"` and adds its framework-specific options inline (Vite for console, Next.js for login/website).
 
-This is a workspace package referenced as `"@qeet-id/tsconfig": "workspace:*"` in each app's `package.json`. Linting and formatting are handled by Biome from the repo root (`biome.json`).
+Linting and formatting are handled by Biome from the repo root (`biome.json`).
 
 ## Building for production
 

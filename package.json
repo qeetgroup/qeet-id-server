@@ -5,8 +5,7 @@
   "workspaces": [
     "apps/console",
     "apps/login",
-    "apps/website",
-    "packages/*"
+    "apps/website"
   ],
   "trustedDependencies": [
     "esbuild",
@@ -25,9 +24,10 @@
     "check": "biome check --diagnostic-level=error .",
     "typecheck": "bun run --filter './apps/*' typecheck",
     "test": "bun run --filter './apps/*' test",
-    "clean": "rm -rf node_modules apps/*/node_modules apps/*/dist apps/*/.netlify apps/*/.output packages/*/node_modules"
+    "clean": "rm -rf node_modules apps/*/node_modules apps/*/dist apps/*/.netlify apps/*/.output"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.3"
+    "@biomejs/biome": "^2.5.3",
+    "typescript": "^7.0.2"
   }
 }
