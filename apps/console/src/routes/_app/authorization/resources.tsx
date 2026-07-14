@@ -20,7 +20,7 @@ import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/page-header";
 import { api } from "@/lib/api";
 
-export const Route = createFileRoute("/_app/access/resources")({
+export const Route = createFileRoute("/_app/authorization/resources")({
   component: ResourcesPage,
 });
 

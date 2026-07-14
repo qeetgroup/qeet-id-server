@@ -88,29 +88,12 @@ export const navGroups: NavGroup[] = [
         ],
       },
       { title: "Groups", url: "/groups", icon: <UsersRoundIcon /> },
-      {
-        title: "Roles & Permissions",
-        url: "/access",
-        icon: <ShieldCheckIcon />,
-        items: [
-          { title: "Roles (RBAC)", url: "/access/roles" },
-          { title: "Permissions", url: "/access/permissions" },
-          { title: "Policies (ABAC)", url: "/access/policies" },
-          { title: "Relationships (ReBAC)", url: "/access/relationships" },
-          { title: "Resources", url: "/access/resources" },
-        ],
-      },
-      {
-        title: "Access Tester",
-        url: "/access/check",
-        icon: <ScanSearchIcon />,
-      },
     ],
   },
   {
     label: "Authorization",
     items: [
-      { title: "Dashboard", url: "/authorization", icon: <LayoutDashboardIcon /> },
+      { title: "Overview", url: "/authorization", icon: <GaugeIcon /> },
       {
         title: "Access Control",
         url: "/authorization/roles",
@@ -118,6 +101,7 @@ export const navGroups: NavGroup[] = [
         items: [
           { title: "Roles", url: "/authorization/roles" },
           { title: "Permissions", url: "/authorization/permissions" },
+          { title: "Resources", url: "/authorization/resources" },
           { title: "RBAC", url: "/authorization/rbac" },
           { title: "ABAC", url: "/authorization/abac" },
           { title: "ReBAC", url: "/authorization/rebac" },
@@ -126,6 +110,7 @@ export const navGroups: NavGroup[] = [
       { title: "Policy Builder", url: "/authorization/builder", icon: <BlocksIcon /> },
       { title: "Policy Simulator", url: "/authorization/simulator", icon: <FlaskConicalIcon /> },
       { title: "Decision Explorer", url: "/authorization/explorer", icon: <SearchCodeIcon /> },
+      { title: "Access Tester", url: "/authorization/access-tester", icon: <ScanSearchIcon /> },
       { title: "Version History", url: "/authorization/versions", icon: <HistoryIcon /> },
       { title: "Audit", url: "/authorization/audit", icon: <ScrollTextIcon /> },
       { title: "Templates", url: "/authorization/templates", icon: <LayoutTemplateIcon /> },
@@ -275,6 +260,7 @@ export const navGroups: NavGroup[] = [
         icon: <Settings2Icon />,
         items: [
           { title: "General", url: "/settings/workspace/general" },
+          { title: "Security Policy", url: "/settings/workspace/security-policy" },
           { title: "Domains", url: "/settings/workspace/domains" },
           {
             title: "Email Templates",

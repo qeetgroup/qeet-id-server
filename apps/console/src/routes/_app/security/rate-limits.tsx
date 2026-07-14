@@ -97,8 +97,8 @@ function RateLimitsPage() {
           <CardTitle className="text-base">{t("rateLimits.networkPolicy.title")}</CardTitle>
           <CardDescription>
             {t("rateLimits.networkPolicy.description")}{" "}
-            <Link to="/access/policies" className="underline">
-              Roles &amp; Permissions → Policies
+            <Link to="/settings/workspace/security-policy" className="underline">
+              Settings → Security Policy
             </Link>
             .
           </CardDescription>

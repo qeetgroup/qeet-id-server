@@ -36,7 +36,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
 const GO_TO: Record<string, string> = {
   d: "/",
   u: "/users",
-  r: "/access/roles",
+  r: "/authorization/roles",
   i: "/invitations",
   t: "/organizations/tenants",
   w: "/developer/webhooks",

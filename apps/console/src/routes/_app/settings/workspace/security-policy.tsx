@@ -29,7 +29,7 @@ import { PageHeader } from "@/components/page-header";
 import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
-export const Route = createFileRoute("/_app/access/policies")({
+export const Route = createFileRoute("/_app/settings/workspace/security-policy")({
   component: PoliciesPage,
 });
 

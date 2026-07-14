@@ -233,7 +233,10 @@ function UserDetailPage() {
           <Link to="/users/sessions" className={buttonVariants({ variant: "outline", size: "sm" })}>
             {t("detail.allSessionsBtn")}
           </Link>
-          <Link to="/access/roles" className={buttonVariants({ variant: "outline", size: "sm" })}>
+          <Link
+            to="/authorization/roles"
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
             {t("detail.manageRolesBtn")}
           </Link>
           <Button

@@ -45,14 +45,14 @@ function SettingsPage() {
           icon={ShieldIcon}
           title="Security policy"
           detail="IP allow/deny lists, session limits, and MFA enforcement."
-          to="/access/policies"
+          to="/settings/workspace/security-policy"
           badge="tenant policy"
         />
         <LinkCard
           icon={GaugeIcon}
           title="Access Tester"
           detail="Run an ad-hoc RBAC check with the full grant path."
-          to="/access/check"
+          to="/authorization/access-tester"
           badge="diagnostics"
         />
       </div>
