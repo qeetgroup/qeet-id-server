@@ -14,9 +14,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	retentiondbgen "github.com/qeetgroup/qeet-id/domains/operations/retention/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -42,17 +44,17 @@ func clampDays(d int) int {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *retentiondbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: retentiondbgen.New(pool)}
+}
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
-	var p Policy
-	err := s.pool.QueryRow(ctx, `
-		SELECT deleted_users_enabled, deleted_users_days FROM tenant.retention_policy WHERE tenant_id = $1
-	`, tenantID).Scan(&p.DeletedUsersEnabled, &p.DeletedUsersDays)
+	row, err := s.q.GetRetentionPolicy(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		def := DefaultPolicy()
 		return &def, nil
@@ -60,81 +62,64 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return &Policy{
+		DeletedUsersEnabled: row.DeletedUsersEnabled,
+		DeletedUsersDays:    int(row.DeletedUsersDays),
+	}, nil
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
 	p.DeletedUsersDays = clampDays(p.DeletedUsersDays)
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO tenant.retention_policy (tenant_id, deleted_users_enabled, deleted_users_days, updated_at)
-		VALUES ($1, $2, $3, NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			deleted_users_enabled = EXCLUDED.deleted_users_enabled,
-			deleted_users_days = EXCLUDED.deleted_users_days,
-			updated_at = NOW()
-		RETURNING deleted_users_enabled, deleted_users_days
-	`, tenantID, p.DeletedUsersEnabled, p.DeletedUsersDays).Scan(&p.DeletedUsersEnabled, &p.DeletedUsersDays); err != nil {
+	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, retentiondbgen.UpsertRetentionPolicyParams{
+		TenantID:            tenantID,
+		DeletedUsersEnabled: p.DeletedUsersEnabled,
+		DeletedUsersDays:    int32(p.DeletedUsersDays),
+	})
+	if err != nil {
 		return nil, err
 	}
+	p.DeletedUsersEnabled = row.DeletedUsersEnabled
+	p.DeletedUsersDays = int(row.DeletedUsersDays)
 	return &p, nil
 }
 
 // RipeDeletedUsers counts soft-deleted users older than `days` for a tenant —
 // i.e. how many a purge would remove right now.
 func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM "user".users
-		WHERE tenant_id = $1 AND deleted_at IS NOT NULL
-		  AND deleted_at < NOW() - make_interval(days => $2)
-	`, tenantID, clampDays(days)).Scan(&n)
-	return n, err
+	// "user".users.tenant_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
+	// to the quoted "user" schema — pass Valid: true to match a non-null value.
+	n, err := s.q.CountRipeDeletedUsers(ctx, retentiondbgen.CountRipeDeletedUsersParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Days:     int32(clampDays(days)),
+	})
+	return int(n), err
 }
 
 // PurgeTenant permanently deletes soft-deleted users past the window. Returns
 // the number purged.
 func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
-	ct, err := s.pool.Exec(ctx, `
-		DELETE FROM "user".users
-		WHERE tenant_id = $1 AND deleted_at IS NOT NULL
-		  AND deleted_at < NOW() - make_interval(days => $2)
-	`, tenantID, clampDays(days))
-	if err != nil {
-		return 0, err
-	}
-	return int(ct.RowsAffected()), nil
+	// See RipeDeletedUsers for the pgtype.UUID note.
+	n, err := s.q.PurgeRipeDeletedUsers(ctx, retentiondbgen.PurgeRipeDeletedUsersParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Days:     int32(clampDays(days)),
+	})
+	return int(n), err
 }
 
 // sweep purges ripe users for every tenant that has the policy enabled.
 func (s *Service) sweep(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
-		SELECT tenant_id, deleted_users_days FROM tenant.retention_policy WHERE deleted_users_enabled = TRUE
-	`)
+	policies, err := s.q.ListEnabledRetentionPolicies(ctx)
 	if err != nil {
 		return err
 	}
-	type job struct {
-		tenant uuid.UUID
-		days   int
-	}
-	var jobs []job
-	for rows.Next() {
-		var j job
-		if err := rows.Scan(&j.tenant, &j.days); err != nil {
-			rows.Close()
-			return err
-		}
-		jobs = append(jobs, j)
-	}
-	rows.Close()
-	for _, j := range jobs {
-		n, err := s.PurgeTenant(ctx, j.tenant, j.days)
+	for _, p := range policies {
+		n, err := s.PurgeTenant(ctx, p.TenantID, int(p.DeletedUsersDays))
 		if err != nil {
-			slog.Warn("retention sweep", "tenant", j.tenant, "err", err)
+			slog.Warn("retention sweep", "tenant", p.TenantID, "err", err)
 			continue
 		}
 		if n > 0 {
-			slog.Info("retention sweep purged users", "tenant", j.tenant, "count", n)
+			slog.Info("retention sweep purged users", "tenant", p.TenantID, "count", n)
 		}
 	}
 	return nil

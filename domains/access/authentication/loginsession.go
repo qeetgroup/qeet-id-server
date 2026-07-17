@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
@@ -28,10 +29,13 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent)
-		VALUES ($1, $2, $3, NULLIF($4,'')::inet, $5)
-	`, hash, userID, time.Now().Add(loginSessionTTL), ip, ua); err != nil {
+	if err := s.q.InsertLoginSession(ctx, dbgen.InsertLoginSessionParams{
+		TokenHash: hash,
+		UserID:    userID,
+		ExpiresAt: time.Now().Add(loginSessionTTL),
+		Ip:        ip,
+		UserAgent: &ua,
+	}); err != nil {
 		return "", err
 	}
 	return raw, nil
@@ -43,21 +47,17 @@ func (s *Service) ResolveLoginSession(ctx context.Context, raw string) (uuid.UUI
 	if raw == "" {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
-	var userID uuid.UUID
-	var expiresAt time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT user_id, expires_at FROM auth.login_sessions WHERE token_hash = $1
-	`, tokens.HashRefresh(raw)).Scan(&userID, &expiresAt)
+	row, err := s.q.GetLoginSession(ctx, tokens.HashRefresh(raw))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
-	return userID, nil
+	return row.UserID, nil
 }
 
 // RevokeLoginSession deletes a hosted SSO session (hosted logout).
@@ -65,8 +65,7 @@ func (s *Service) RevokeLoginSession(ctx context.Context, raw string) error {
 	if raw == "" {
 		return nil
 	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM auth.login_sessions WHERE token_hash = $1`, tokens.HashRefresh(raw))
-	return err
+	return s.q.DeleteLoginSession(ctx, tokens.HashRefresh(raw))
 }
 
 // SetLoginSessionCookie writes the HttpOnly SSO cookie. secure should be true

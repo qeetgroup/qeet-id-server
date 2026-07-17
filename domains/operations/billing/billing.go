@@ -25,6 +25,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	dbgen "github.com/qeetgroup/qeet-id/domains/operations/billing/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -71,13 +72,16 @@ type Invoice struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 	// payments is the optional card-payment provider set (Stripe/Razorpay). nil
 	// or empty = invoice-only: a paid plan change activates directly. Set via
 	// SetPayments.
 	payments *Payments
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool)}
+}
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
@@ -132,23 +136,23 @@ func (s *Service) SeedBuiltins(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		var planID uuid.UUID
-		if err := s.pool.QueryRow(ctx, `
-			INSERT INTO platform.billing_plans (code, name, description, interval, features, sort)
-			VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (code) DO UPDATE SET
-				name = EXCLUDED.name, description = EXCLUDED.description,
-				interval = EXCLUDED.interval, features = EXCLUDED.features, sort = EXCLUDED.sort
-			RETURNING id
-		`, b.code, b.name, b.description, b.interval, feat, b.sort).Scan(&planID); err != nil {
+		planID, err := s.q.UpsertBillingPlan(ctx, dbgen.UpsertBillingPlanParams{
+			Code:        b.code,
+			Name:        b.name,
+			Description: b.description,
+			Interval:    b.interval,
+			Features:    feat,
+			Sort:        int32(b.sort),
+		})
+		if err != nil {
 			return err
 		}
 		for cur, amt := range b.prices {
-			if _, err := s.pool.Exec(ctx, `
-				INSERT INTO platform.billing_plan_prices (plan_id, currency, amount_minor)
-				VALUES ($1, $2, $3)
-				ON CONFLICT (plan_id, currency) DO UPDATE SET amount_minor = EXCLUDED.amount_minor
-			`, planID, cur, amt); err != nil {
+			if err := s.q.UpsertBillingPlanPrice(ctx, dbgen.UpsertBillingPlanPriceParams{
+				PlanID:      planID,
+				Currency:    cur,
+				AmountMinor: amt,
+			}); err != nil {
 				return err
 			}
 		}
@@ -159,66 +163,57 @@ func (s *Service) SeedBuiltins(ctx context.Context) error {
 // --- plans ---
 
 func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, code, name, description, interval, features
-		FROM platform.billing_plans WHERE active = TRUE ORDER BY sort, name
-	`)
+	planRows, err := s.q.ListBillingPlans(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	plans := []Plan{}
-	byID := map[uuid.UUID]int{}
-	for rows.Next() {
-		var p Plan
-		var feat []byte
-		if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.Description, &p.Interval, &feat); err != nil {
-			return nil, err
+	plans := make([]Plan, 0, len(planRows))
+	byID := make(map[uuid.UUID]int, len(planRows))
+	for _, r := range planRows {
+		p := Plan{
+			ID:          r.ID,
+			Code:        r.Code,
+			Name:        r.Name,
+			Description: r.Description,
+			Interval:    r.Interval,
+			Prices:      map[string]int64{},
 		}
-		_ = json.Unmarshal(feat, &p.Features)
+		_ = json.Unmarshal(r.Features, &p.Features)
 		if p.Features == nil {
 			p.Features = []string{}
 		}
-		p.Prices = map[string]int64{}
 		byID[p.ID] = len(plans)
 		plans = append(plans, p)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 
-	priceRows, err := s.pool.Query(ctx, `SELECT plan_id, currency, amount_minor FROM platform.billing_plan_prices`)
+	priceRows, err := s.q.ListBillingPlanPrices(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer priceRows.Close()
-	for priceRows.Next() {
-		var pid uuid.UUID
-		var cur string
-		var amt int64
-		if err := priceRows.Scan(&pid, &cur, &amt); err != nil {
-			return nil, err
-		}
-		if idx, ok := byID[pid]; ok {
-			plans[idx].Prices[cur] = amt
+	for _, pr := range priceRows {
+		if idx, ok := byID[pr.PlanID]; ok {
+			plans[idx].Prices[pr.Currency] = pr.AmountMinor
 		}
 	}
-	return plans, priceRows.Err()
+	return plans, nil
 }
 
 func (s *Service) planByCode(ctx context.Context, code string) (uuid.UUID, string, string, error) {
-	var id uuid.UUID
-	var interval, name string
-	err := s.pool.QueryRow(ctx, `SELECT id, interval, name FROM platform.billing_plans WHERE code = $1 AND active = TRUE`, code).Scan(&id, &interval, &name)
+	row, err := s.q.GetBillingPlanByCode(ctx, code)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", "", errs.ErrNotFound.WithDetail("unknown plan")
 	}
-	return id, interval, name, err
+	if err != nil {
+		return uuid.Nil, "", "", err
+	}
+	return row.ID, row.Interval, row.Name, nil
 }
 
 func (s *Service) priceFor(ctx context.Context, planID uuid.UUID, currency string) (int64, bool, error) {
-	var amt int64
-	err := s.pool.QueryRow(ctx, `SELECT amount_minor FROM platform.billing_plan_prices WHERE plan_id = $1 AND currency = $2`, planID, currency).Scan(&amt)
+	amt, err := s.q.GetBillingPlanPrice(ctx, dbgen.GetBillingPlanPriceParams{
+		PlanID:   planID,
+		Currency: currency,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
@@ -231,26 +226,24 @@ func (s *Service) priceFor(ctx context.Context, planID uuid.UUID, currency strin
 // --- subscription ---
 
 func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Subscription, error) {
-	var sub Subscription
-	var start, end time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT p.code, p.name, p.interval, s.currency, s.status,
-		       s.current_period_start, s.current_period_end, s.cancel_at_period_end,
-		       COALESCE(pp.amount_minor, 0)
-		FROM tenant.subscriptions s
-		JOIN platform.billing_plans p ON p.id = s.plan_id
-		LEFT JOIN platform.billing_plan_prices pp ON pp.plan_id = s.plan_id AND pp.currency = s.currency
-		WHERE s.tenant_id = $1
-	`, tenantID).Scan(&sub.PlanCode, &sub.PlanName, &sub.Interval, &sub.Currency, &sub.Status,
-		&start, &end, &sub.CancelAtPeriodEnd, &sub.AmountMinor)
+	row, err := s.q.GetSubscription(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Subscription{Status: "none"}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	sub.CurrentPeriodStart = &start
-	sub.CurrentPeriodEnd = &end
+	sub := Subscription{
+		PlanCode:           row.Code,
+		PlanName:           row.Name,
+		Interval:           row.Interval,
+		Currency:           row.Currency,
+		Status:             row.Status,
+		AmountMinor:        row.AmountMinor,
+		CancelAtPeriodEnd:  row.CancelAtPeriodEnd,
+		CurrentPeriodStart: &row.CurrentPeriodStart,
+		CurrentPeriodEnd:   &row.CurrentPeriodEnd,
+	}
 	return &sub, nil
 }
 
@@ -282,23 +275,25 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 
 	start := time.Now().UTC()
 	end := periodEnd(start, interval)
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO tenant.subscriptions
-			(tenant_id, plan_id, currency, status, current_period_start, current_period_end, cancel_at_period_end, updated_at)
-		VALUES ($1, $2, $3, 'active', $4, $5, FALSE, NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			plan_id = EXCLUDED.plan_id, currency = EXCLUDED.currency, status = 'active',
-			current_period_start = EXCLUDED.current_period_start,
-			current_period_end = EXCLUDED.current_period_end,
-			cancel_at_period_end = FALSE, updated_at = NOW()
-	`, tenantID, planID, cur, start, end); err != nil {
+	qTx := s.q.WithTx(tx)
+	if err := qTx.UpsertSubscription(ctx, dbgen.UpsertSubscriptionParams{
+		TenantID:    tenantID,
+		PlanID:      planID,
+		Currency:    cur,
+		PeriodStart: start,
+		PeriodEnd:   end,
+	}); err != nil {
 		return nil, err
 	}
 	// Issue an invoice for the period (zero-amount plans still get a record).
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO tenant.invoices (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end)
-		VALUES ($1, $2, $3, $4, 'paid', $5, $6)
-	`, tenantID, planCode, cur, amt, start, end); err != nil {
+	if err := qTx.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
+		TenantID:    tenantID,
+		PlanCode:    planCode,
+		Currency:    cur,
+		AmountMinor: amt,
+		PeriodStart: start,
+		PeriodEnd:   end,
+	}); err != nil {
 		return nil, err
 	}
 	return &Subscription{
@@ -309,13 +304,11 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 }
 
 func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `
-		UPDATE tenant.subscriptions SET cancel_at_period_end = TRUE, updated_at = NOW() WHERE tenant_id = $1
-	`, tenantID)
+	ct, err := s.q.WithTx(tx).CancelSubscription(ctx, tenantID)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		return errs.ErrNotFound.WithDetail("no active subscription")
 	}
 	return nil
@@ -364,11 +357,14 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	}
 
 	// Paid plan with a provider → pending checkout + hosted payment.
-	var checkoutID uuid.UUID
-	if err := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.billing_checkouts (tenant_id, provider, plan_code, currency, amount_minor)
-		VALUES ($1, $2, $3, $4, $5) RETURNING id
-	`, tenantID, provider.Name(), planCode, cur, amt).Scan(&checkoutID); err != nil {
+	checkoutID, err := s.q.InsertBillingCheckout(ctx, dbgen.InsertBillingCheckoutParams{
+		TenantID:    tenantID,
+		Provider:    provider.Name(),
+		PlanCode:    planCode,
+		Currency:    cur,
+		AmountMinor: amt,
+	})
+	if err != nil {
 		return nil, err
 	}
 	redirectURL, providerRef, err := provider.CreateCheckout(ctx, CheckoutInput{
@@ -380,10 +376,13 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		CancelURL:   cancelURL,
 	})
 	if err != nil {
-		_, _ = s.pool.Exec(ctx, `UPDATE tenant.billing_checkouts SET status = 'failed' WHERE id = $1`, checkoutID)
+		_ = s.q.UpdateCheckoutFailed(ctx, checkoutID)
 		return nil, errs.ErrInternal.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
 	}
-	_, _ = s.pool.Exec(ctx, `UPDATE tenant.billing_checkouts SET provider_ref = $2 WHERE id = $1`, checkoutID, providerRef)
+	_ = s.q.UpdateCheckoutProviderRef(ctx, dbgen.UpdateCheckoutProviderRefParams{
+		ProviderRef: providerRef,
+		ID:          checkoutID,
+	})
 	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
 }
 
@@ -400,20 +399,14 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var tenantID uuid.UUID
-	var planCode, currency string
-	err = tx.QueryRow(ctx, `
-		UPDATE tenant.billing_checkouts SET status = 'completed', completed_at = NOW()
-		WHERE id = $1 AND status = 'pending'
-		RETURNING tenant_id, plan_code, currency
-	`, id).Scan(&tenantID, &planCode, &currency)
+	row, err := s.q.WithTx(tx).CompleteCheckout(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // already completed, failed, or unknown — idempotent no-op
 	}
 	if err != nil {
 		return err
 	}
-	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currency); err != nil {
+	if _, err := s.ChangePlan(ctx, tx, row.TenantID, row.PlanCode, row.Currency); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -453,23 +446,24 @@ func (s *Service) WebhookSignatureHeader(providerName string) string {
 }
 
 func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoice, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at
-		FROM tenant.invoices WHERE tenant_id = $1 ORDER BY issued_at DESC LIMIT 100
-	`, tenantID)
+	rows, err := s.q.ListInvoices(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Invoice{}
-	for rows.Next() {
-		var inv Invoice
-		if err := rows.Scan(&inv.ID, &inv.PlanCode, &inv.Currency, &inv.AmountMinor, &inv.Status, &inv.PeriodStart, &inv.PeriodEnd, &inv.IssuedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, inv)
+	out := make([]Invoice, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Invoice{
+			ID:          r.ID,
+			PlanCode:    r.PlanCode,
+			Currency:    r.Currency,
+			AmountMinor: r.AmountMinor,
+			Status:      r.Status,
+			PeriodStart: r.PeriodStart,
+			PeriodEnd:   r.PeriodEnd,
+			IssuedAt:    r.IssuedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // --- handlers ---

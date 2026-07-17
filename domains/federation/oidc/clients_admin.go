@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/qeetgroup/qeet-id/domains/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -24,55 +25,36 @@ import (
 // registration audit row in registerClient.
 // =====================================================================
 
-// clientColumns is the SELECT/RETURNING projection shared by every read so the
-// scan order matches the Client struct exactly. The client_secret_hash is
-// deliberately never selected.
-const clientColumns = `id, tenant_id, client_id, type, name, redirect_uris,
-	post_logout_uris, grant_types, scopes, created_at`
-
-func scanClient(row pgx.Row, c *Client) error {
-	return row.Scan(&c.ID, &c.TenantID, &c.ClientID, &c.Type, &c.Name,
-		&c.RedirectURIs, &c.PostLogoutURIs, &c.GrantTypes, &c.Scopes, &c.CreatedAt)
-}
-
 // ListClients returns every OIDC client owned by the tenant, newest first.
 func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+clientColumns+`
-		FROM auth.oidc_clients
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListOIDCClients(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Client{}
-	for rows.Next() {
-		var c Client
-		if err := scanClient(rows, &c); err != nil {
-			return nil, err
+	out := make([]Client, len(rows))
+	for i, r := range rows {
+		out[i] = Client{
+			ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+			RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
+			GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 		}
-		out = append(out, c)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// GetClient resolves a single client by row id within the tenant. The id may be
-// either the row UUID or the public client_id (the admin detail page links by
-// the public client_id), so we match on both.
+// GetClient resolves a single client by row id within the tenant.
 func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Client, error) {
-	var c Client
-	err := scanClient(s.pool.QueryRow(ctx, `
-		SELECT `+clientColumns+`
-		FROM auth.oidc_clients
-		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID), &c)
+	r, err := s.q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	c := Client{
+		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
+		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 	}
 	return &c, nil
 }
@@ -91,22 +73,40 @@ type UpdateClientInput struct {
 // updated row. Unset (nil) fields are preserved via COALESCE. type and
 // client_id are immutable here (rotate-secret handles credentials).
 func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in UpdateClientInput) (*Client, error) {
-	var c Client
-	err := scanClient(tx.QueryRow(ctx, `
-		UPDATE auth.oidc_clients SET
-			name             = COALESCE($3, name),
-			redirect_uris    = COALESCE($4, redirect_uris),
-			post_logout_uris = COALESCE($5, post_logout_uris),
-			grant_types      = COALESCE($6, grant_types),
-			scopes           = COALESCE($7, scopes)
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING `+clientColumns+`
-	`, id, tenantID, in.Name, in.RedirectURIs, in.PostLogoutURIs, in.GrantTypes, in.Scopes), &c)
+	// *[]string → []string: nil pointer → nil slice (SQL NULL → COALESCE keeps existing).
+	var redirectUris, postLogoutUris, grantTypes, scopes []string
+	if in.RedirectURIs != nil {
+		redirectUris = *in.RedirectURIs
+	}
+	if in.PostLogoutURIs != nil {
+		postLogoutUris = *in.PostLogoutURIs
+	}
+	if in.GrantTypes != nil {
+		grantTypes = *in.GrantTypes
+	}
+	if in.Scopes != nil {
+		scopes = *in.Scopes
+	}
+	q := s.q.WithTx(tx)
+	r, err := q.UpdateOIDCClient(ctx, dbgen.UpdateOIDCClientParams{
+		Name:           in.Name,
+		RedirectUris:   redirectUris,
+		PostLogoutUris: postLogoutUris,
+		GrantTypes:     grantTypes,
+		Scopes:         scopes,
+		ID:             id,
+		TenantID:       tenantID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	c := Client{
+		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
+		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 	}
 	return &c, nil
 }
@@ -114,10 +114,8 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 // DeleteClient removes a tenant's client. Returns the public client_id (for the
 // audit row) or ErrNotFound if the row doesn't exist in this tenant.
 func (s *Service) DeleteClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, error) {
-	var clientID string
-	err := tx.QueryRow(ctx, `
-		DELETE FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2 RETURNING client_id
-	`, id, tenantID).Scan(&clientID)
+	q := s.q.WithTx(tx)
+	clientID, err := q.DeleteOIDCClient(ctx, dbgen.DeleteOIDCClientParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrNotFound
 	}
@@ -132,19 +130,15 @@ func (s *Service) DeleteClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 // hash, and returns the plaintext once. Public clients have no secret, so the
 // rotation is rejected with a 422. Tenant-scoped.
 func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, *Client, error) {
-	var c Client
-	if err := scanClient(tx.QueryRow(ctx, `
-		SELECT `+clientColumns+`
-		FROM auth.oidc_clients
-		WHERE id = $1 AND tenant_id = $2
-		FOR UPDATE
-	`, id, tenantID), &c); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil, errs.ErrNotFound
-		}
+	q := s.q.WithTx(tx)
+	r, err := q.LockOIDCClientForUpdate(ctx, dbgen.LockOIDCClientForUpdateParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, errs.ErrNotFound
+	}
+	if err != nil {
 		return "", nil, err
 	}
-	if c.Type != "confidential" {
+	if r.Type != "confidential" {
 		return "", nil, errs.ErrUnprocessable.WithDetail("public clients have no secret to rotate")
 	}
 	secret, _, err := codes.URLToken()
@@ -155,10 +149,15 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 	if err != nil {
 		return "", nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.oidc_clients SET client_secret_hash = $3 WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID, hash); err != nil {
+	if err := q.UpdateOIDCClientSecret(ctx, dbgen.UpdateOIDCClientSecretParams{
+		ClientSecretHash: &hash, ID: id, TenantID: tenantID,
+	}); err != nil {
 		return "", nil, err
+	}
+	c := Client{
+		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
+		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
+		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
 	}
 	return secret, &c, nil
 }

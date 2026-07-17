@@ -9,7 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/qeetgroup/qeet-id/domains/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -72,13 +74,12 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		return nil, oauthErr("invalid_request", "login_hint is required")
 	}
 
-	var tenantID uuid.UUID
-	var dbScopes []string
-	if err := s.pool.QueryRow(ctx, `
-		SELECT tenant_id, scopes FROM auth.oidc_clients WHERE client_id = $1
-	`, clientID).Scan(&tenantID, &dbScopes); err != nil {
+	cinfo, err := s.q.GetClientTenantAndScopes(ctx, clientID)
+	if err != nil {
 		return nil, err
 	}
+	tenantID := cinfo.TenantID
+	dbScopes := cinfo.Scopes
 	scopes := strings.Fields(scope)
 	if len(scopes) == 0 {
 		scopes = dbScopes
@@ -89,10 +90,10 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 		}
 	}
 
-	var userID uuid.UUID
-	err = s.pool.QueryRow(ctx, `
-		SELECT id FROM "user".users WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
-	`, tenantID, loginHint).Scan(&userID)
+	userID, err := s.q.GetUserByEmailInTenant(ctx, dbgen.GetUserByEmailInTenantParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Email:    loginHint,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, oauthErr("unknown_user_id", "login_hint does not resolve to a known user")
 	}
@@ -104,15 +105,19 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	if err != nil {
 		return nil, err
 	}
-	var msgArg any
+	var msgArg *string
 	if bindingMessage != "" {
-		msgArg = bindingMessage
+		msgArg = &bindingMessage
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.oidc_ciba_requests
-			(auth_req_id_hash, client_id, tenant_id, user_id, scopes, binding_message, interval_seconds, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '10 minutes')
-	`, hash, clientID, tenantID, userID, scopes, msgArg, cibaPollInterval); err != nil {
+	if err := s.q.InsertCIBARequest(ctx, dbgen.InsertCIBARequestParams{
+		AuthReqIDHash:   hash,
+		ClientID:        clientID,
+		TenantID:        tenantID,
+		UserID:          userID,
+		Scopes:          scopes,
+		BindingMessage:  msgArg,
+		IntervalSeconds: int32(cibaPollInterval),
+	}); err != nil {
 		return nil, err
 	}
 
@@ -143,27 +148,20 @@ type CIBAPendingRequest struct {
 
 // ListPendingCIBA returns userID's still-pending, unexpired CIBA requests.
 func (s *Service) ListPendingCIBA(ctx context.Context, userID uuid.UUID) ([]CIBAPendingRequest, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.client_id, c.scopes, c.binding_message, c.created_at, c.expires_at
-		FROM auth.oidc_ciba_requests c
-		WHERE c.user_id = $1 AND c.status = 'pending' AND c.expires_at > NOW()
-		ORDER BY c.created_at DESC
-	`, userID)
+	rows, err := s.q.ListPendingCIBA(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]CIBAPendingRequest, 0)
-	for rows.Next() {
-		var p CIBAPendingRequest
-		var clientID string
-		if err := rows.Scan(&p.ID, &clientID, &p.Scopes, &p.BindingMessage, &p.CreatedAt, &p.ExpiresAt); err != nil {
-			return nil, err
+	out := make([]CIBAPendingRequest, len(rows))
+	for i, r := range rows {
+		name, _, _ := s.ClientName(ctx, r.ClientID)
+		out[i] = CIBAPendingRequest{
+			ID: r.ID, ClientName: name, Scopes: r.Scopes,
+			BindingMessage: r.BindingMessage,
+			CreatedAt: r.CreatedAt, ExpiresAt: r.ExpiresAt,
 		}
-		p.ClientName, _, _ = s.ClientName(ctx, clientID)
-		out = append(out, p)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DecideBackchannel records userID's approve/deny of one of their own
@@ -179,37 +177,31 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, a
 	}
 	defer tx.Rollback(ctx)
 
-	var rowUserID uuid.UUID
-	var status string
-	var expiresAt time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT user_id, status, expires_at FROM auth.oidc_ciba_requests WHERE id = $1 FOR UPDATE
-	`, id).Scan(&rowUserID, &status, &expiresAt)
+	q := s.q.WithTx(tx)
+	row, err := q.LockCIBARequest(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if rowUserID != userID {
+	if row.UserID != userID {
 		return errs.ErrForbidden.WithDetail("not your sign-in request")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return errs.ErrBadRequest.WithDetail("request expired")
 	}
-	if status != "pending" {
+	if row.Status != "pending" {
 		return errs.ErrConflict.WithDetail("request already decided")
 	}
 
 	if !approve {
-		if _, err := tx.Exec(ctx, `UPDATE auth.oidc_ciba_requests SET status = 'denied' WHERE id = $1`, id); err != nil {
+		if err := q.DenyCIBARequest(ctx, id); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.oidc_ciba_requests SET status = 'authorized', approved_at = NOW() WHERE id = $1
-	`, id); err != nil {
+	if err := q.ApproveCIBARequest(ctx, id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -230,39 +222,24 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	defer tx.Rollback(ctx)
 
-	var (
-		id           uuid.UUID
-		rowClientID  string
-		tenantID     uuid.UUID
-		userID       uuid.UUID
-		scopes       []string
-		status       string
-		intervalSecs int
-		lastPolledAt *time.Time
-		expiresAt    time.Time
-		consumedAt   *time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT id, client_id, tenant_id, user_id, scopes, status, interval_seconds, last_polled_at, expires_at, consumed_at
-		FROM auth.oidc_ciba_requests WHERE auth_req_id_hash = $1
-		FOR UPDATE
-	`, hash).Scan(&id, &rowClientID, &tenantID, &userID, &scopes, &status, &intervalSecs, &lastPolledAt, &expiresAt, &consumedAt)
+	q := s.q.WithTx(tx)
+	cr, err := q.LockCIBARequestByHash(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, oauthErr("invalid_grant", "unknown auth_req_id")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if rowClientID != clientID {
+	if cr.ClientID != clientID {
 		return nil, oauthErr("invalid_grant", "client mismatch")
 	}
-	if consumedAt != nil {
+	if cr.ConsumedAt.Valid {
 		return nil, oauthErr("invalid_grant", "auth_req_id already used")
 	}
 
 	now := time.Now()
-	if lastPolledAt != nil && now.Sub(*lastPolledAt) < time.Duration(intervalSecs)*time.Second {
-		if _, err := tx.Exec(ctx, `UPDATE auth.oidc_ciba_requests SET last_polled_at = NOW() WHERE id = $1`, id); err != nil {
+	if cr.LastPolledAt.Valid && now.Sub(cr.LastPolledAt.Time) < time.Duration(cr.IntervalSeconds)*time.Second {
+		if err := q.TouchCIBAPollTime(ctx, cr.ID); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -270,18 +247,18 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 		}
 		return nil, oauthErr("slow_down", "polling too frequently")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.oidc_ciba_requests SET last_polled_at = NOW() WHERE id = $1`, id); err != nil {
+	if err := q.TouchCIBAPollTime(ctx, cr.ID); err != nil {
 		return nil, err
 	}
 
-	if now.After(expiresAt) {
+	if now.After(cr.ExpiresAt) {
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
 		return nil, oauthErr("expired_token", "auth_req_id expired")
 	}
 
-	switch status {
+	switch cr.Status {
 	case "pending":
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
@@ -298,17 +275,19 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 		return nil, oauthErr("invalid_grant", "invalid backchannel authorization state")
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE auth.oidc_ciba_requests SET consumed_at = NOW() WHERE id = $1`, id); err != nil {
+	if err := q.ConsumeCIBARequest(ctx, cr.ID); err != nil {
 		return nil, err
 	}
-	var grantTypes []string
-	if err := tx.QueryRow(ctx, `SELECT grant_types FROM auth.oidc_clients WHERE client_id = $1`, clientID).Scan(&grantTypes); err != nil {
+	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
+	if err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-
+	userID := cr.UserID
+	tenantID := cr.TenantID
+	scopes := cr.Scopes
 	access, _, err := s.issuer.IssueAccess(userID, tenantID, uuid.New(), strings.Join(scopes, " "))
 	if err != nil {
 		return nil, err

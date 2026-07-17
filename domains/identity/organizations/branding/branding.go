@@ -12,10 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/identity/organizations/branding/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
 )
 
 type Branding struct {
@@ -31,31 +32,38 @@ type Branding struct {
 
 type Repository struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
+// toDomain maps a GetBrandingRow to the domain Branding model.
+func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
+	return &Branding{
+		TenantID:         row.TenantID,
+		LogoURL:          row.LogoUrl,
+		PrimaryColor:     row.PrimaryColor,
+		SecondaryColor:   row.SecondaryColor,
+		CustomDomain:     row.CustomDomain,
+		EmailFromName:    row.EmailFromName,
+		EmailFromAddress: row.EmailFromAddress,
+		Settings:         dbutil.Metadata(row.Settings),
+	}
+}
+
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, error) {
-	var b Branding
-	var settings []byte
-	err := r.pool.QueryRow(ctx, `
-		SELECT tenant_id, logo_url, primary_color, secondary_color,
-		       custom_domain, email_from_name, email_from_address, settings
-		FROM tenant.branding WHERE tenant_id = $1
-	`, tenantID).Scan(&b.TenantID, &b.LogoURL, &b.PrimaryColor, &b.SecondaryColor,
-		&b.CustomDomain, &b.EmailFromName, &b.EmailFromAddress, &settings)
+	row, err := r.q.GetBranding(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Branding{TenantID: tenantID, Settings: map[string]any{}}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	b.Settings = dbutil.Metadata(settings)
-	return &b, nil
+	return toDomain(tenantID, row), nil
 }
 
 // LoginBranding returns the tenant's hosted-login branding (logo + brand colors)
@@ -80,6 +88,9 @@ func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (log
 	return logoURL, primaryColor, secondaryColor
 }
 
+// Upsert persists branding. The INSERT ON CONFLICT uses a COALESCE/NULLIF
+// expression for the JSONB settings column that sqlc cannot parse reliably, so
+// this method stays hand-written on the caller-supplied pgx.Tx.
 func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
 	settings, _ := json.Marshal(b.Settings)
 	_, err := tx.Exec(ctx, `

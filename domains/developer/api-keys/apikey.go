@@ -18,8 +18,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/api-keys/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/security/encryption"
@@ -40,10 +42,11 @@ type Key struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
 func generateRaw() (prefix, secret, full string, err error) {
@@ -59,6 +62,57 @@ func generateRaw() (prefix, secret, full string, err error) {
 	secret = base64.RawURLEncoding.EncodeToString(sb)
 	full = prefix + "." + secret
 	return
+}
+
+// pgtTS converts a *time.Time to pgtype.Timestamptz for sqlc params.
+func pgtTS(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
+func tsPtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
+}
+
+// uuidPtr converts a pgtype.UUID to *uuid.UUID (nil when not valid).
+func uuidPtr(p pgtype.UUID) *uuid.UUID {
+	if !p.Valid {
+		return nil
+	}
+	id := uuid.UUID(p.Bytes)
+	return &id
+}
+
+// pgUUID converts a *uuid.UUID to pgtype.UUID for sqlc params.
+func pgUUID(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: [16]byte(*id), Valid: true}
+}
+
+// rowToKey maps a generated row (with pgtype nullable fields) to the domain Key.
+func rowToKey(id uuid.UUID, tenantID uuid.UUID, userID pgtype.UUID, name, prefix string,
+	scopes []string, expiresAt, lastUsedAt, revokedAt pgtype.Timestamptz, createdAt time.Time) Key {
+	return Key{
+		ID:         id,
+		TenantID:   tenantID,
+		UserID:     uuidPtr(userID),
+		Name:       name,
+		Prefix:     prefix,
+		Scopes:     scopes,
+		ExpiresAt:  tsPtr(expiresAt),
+		LastUsedAt: tsPtr(lastUsedAt),
+		RevokedAt:  tsPtr(revokedAt),
+		CreatedAt:  createdAt,
+	}
 }
 
 type CreateInput struct {
@@ -83,47 +137,42 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, err
 	if in.Scopes == nil {
 		in.Scopes = []string{}
 	}
-	var k Key
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash, scopes, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
-	`, in.TenantID, in.UserID, in.Name, prefix, secretHash, in.Scopes, in.ExpiresAt).
-		Scan(&k.ID, &k.TenantID, &k.UserID, &k.Name, &k.Prefix, &k.Scopes, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt)
+	row, err := s.q.CreateAPIKey(ctx, dbgen.CreateAPIKeyParams{
+		TenantID:  in.TenantID,
+		UserID:    pgUUID(in.UserID),
+		Name:      in.Name,
+		Prefix:    prefix,
+		KeyHash:   secretHash,
+		Scopes:    in.Scopes,
+		ExpiresAt: pgtTS(in.ExpiresAt),
+	})
 	if err != nil {
 		return nil, "", err
 	}
+	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
 	return &k, full, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
-		FROM auth.api_keys
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListAPIKeys(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Key
-	for rows.Next() {
-		var k Key
-		if err := rows.Scan(&k.ID, &k.TenantID, &k.UserID, &k.Name, &k.Prefix, &k.Scopes, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, k)
+	out := make([]Key, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+			row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt))
 	}
 	return out, nil
 }
 
 func (s *Service) Revoke(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL`, id)
+	n, err := s.q.RevokeAPIKey(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -138,22 +187,18 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	}
 	prefix, secret := parts[0], parts[1]
 
-	var k Key
-	var hash string
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at, key_hash
-		FROM auth.api_keys
-		WHERE prefix = $1 AND revoked_at IS NULL
-	`, prefix).Scan(&k.ID, &k.TenantID, &k.UserID, &k.Name, &k.Prefix, &k.Scopes, &k.ExpiresAt, &k.LastUsedAt, &k.RevokedAt, &k.CreatedAt, &hash)
+	row, err := s.q.VerifyAPIKey(ctx, prefix)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown api key")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !password.Verify(hash, secret) {
+	if !password.Verify(row.KeyHash, secret) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid api key")
 	}
+	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
+		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
 	if k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt) {
 		return nil, errs.ErrUnauthorized.WithDetail("api key expired")
 	}
@@ -161,7 +206,7 @@ func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	go func(id uuid.UUID) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if _, err := s.pool.Exec(ctx, `UPDATE auth.api_keys SET last_used_at = NOW() WHERE id = $1`, id); err != nil {
+		if err := s.q.TouchAPIKeyLastUsed(ctx, id); err != nil {
 			slog.Warn("apikey last_used_at update failed", "err", err, "api_key_id", id)
 		}
 	}(k.ID)

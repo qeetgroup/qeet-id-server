@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/identity/verification/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
@@ -21,6 +22,7 @@ import (
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	sender notifier.Sender
 	ttl    time.Duration
 }
@@ -29,19 +31,21 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *
 	if ttl <= 0 {
 		ttl = 10 * time.Minute
 	}
-	return &Service{pool: pool, sender: sender, ttl: ttl}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl}
 }
 
 func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string) error {
 	// Default to the address on file so the caller doesn't have to pass their
 	// own email just to verify it (POST .../verify/email/start with no body).
 	if strings.TrimSpace(email) == "" {
-		if err := s.pool.QueryRow(ctx, `SELECT email FROM "user".users WHERE id = $1`, userID).Scan(&email); err != nil {
+		addr, err := s.q.GetUserEmail(ctx, userID)
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errs.ErrNotFound.WithDetail("user not found")
 			}
 			return err
 		}
+		email = addr
 	}
 	if strings.TrimSpace(email) == "" {
 		return errs.ErrUnprocessable.WithMessage("This account has no email address to verify.")
@@ -50,10 +54,12 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, userID, email, codes.Hash(code), time.Now().UTC().Add(s.ttl)); err != nil {
+	if err := s.q.InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
+		UserID:    userID,
+		Email:     email,
+		CodeHash:  codes.Hash(code),
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+	}); err != nil {
 		return err
 	}
 	return s.sender.Send(ctx, notifier.Message{
@@ -71,36 +77,26 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 	}
 	defer tx.Rollback(ctx)
 
-	var id uuid.UUID
-	var expiresAt time.Time
-	var usedAt *time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT id, expires_at, used_at
-		FROM "user".email_verifications
-		WHERE user_id = $1 AND code_hash = $2
-		ORDER BY created_at DESC
-		LIMIT 1
-		FOR UPDATE
-	`, userID, codes.Hash(code)).Scan(&id, &expiresAt, &usedAt)
+	row, err := s.q.WithTx(tx).GetLatestEmailVerification(ctx, dbgen.GetLatestEmailVerificationParams{
+		UserID:   userID,
+		CodeHash: codes.Hash(code),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrBadRequest.WithDetail("invalid code")
 		}
 		return err
 	}
-	if usedAt != nil {
+	if row.UsedAt.Valid {
 		return errs.ErrBadRequest.WithDetail("code already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return errs.ErrBadRequest.WithDetail("code expired")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE "user".email_verifications SET used_at = NOW() WHERE id = $1`, id); err != nil {
+	if err := s.q.WithTx(tx).MarkEmailVerificationUsed(ctx, row.ID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE "user".users SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
-		WHERE id = $1
-	`, userID); err != nil {
+	if err := s.q.WithTx(tx).MarkUserEmailVerified(ctx, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -109,8 +105,8 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {
 	// Default to the number on file when the body omits it.
 	if strings.TrimSpace(phone) == "" {
-		var stored *string
-		if err := s.pool.QueryRow(ctx, `SELECT phone FROM "user".users WHERE id = $1`, userID).Scan(&stored); err != nil {
+		stored, err := s.q.GetUserPhone(ctx, userID)
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errs.ErrNotFound.WithDetail("user not found")
 			}
@@ -125,10 +121,12 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, userID, phone, codes.Hash(code), time.Now().UTC().Add(s.ttl)); err != nil {
+	if err := s.q.InsertPhoneVerification(ctx, dbgen.InsertPhoneVerificationParams{
+		UserID:    userID,
+		Phone:     phone,
+		CodeHash:  codes.Hash(code),
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+	}); err != nil {
 		return err
 	}
 	return s.sender.Send(ctx, notifier.Message{
@@ -145,36 +143,26 @@ func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code strin
 	}
 	defer tx.Rollback(ctx)
 
-	var id uuid.UUID
-	var expiresAt time.Time
-	var usedAt *time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT id, expires_at, used_at
-		FROM "user".phone_verifications
-		WHERE user_id = $1 AND code_hash = $2
-		ORDER BY created_at DESC
-		LIMIT 1
-		FOR UPDATE
-	`, userID, codes.Hash(code)).Scan(&id, &expiresAt, &usedAt)
+	row, err := s.q.WithTx(tx).GetLatestPhoneVerification(ctx, dbgen.GetLatestPhoneVerificationParams{
+		UserID:   userID,
+		CodeHash: codes.Hash(code),
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrBadRequest.WithDetail("invalid code")
 		}
 		return err
 	}
-	if usedAt != nil {
+	if row.UsedAt.Valid {
 		return errs.ErrBadRequest.WithDetail("code already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return errs.ErrBadRequest.WithDetail("code expired")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE "user".phone_verifications SET used_at = NOW() WHERE id = $1`, id); err != nil {
+	if err := s.q.WithTx(tx).MarkPhoneVerificationUsed(ctx, row.ID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE "user".users SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
-		WHERE id = $1
-	`, userID); err != nil {
+	if err := s.q.WithTx(tx).MarkUserPhoneVerified(ctx, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

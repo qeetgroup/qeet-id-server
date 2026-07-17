@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/threat/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -31,10 +32,13 @@ type Notifier interface {
 
 type Service struct {
 	pool     *pgxpool.Pool
+	q        *dbgen.Queries
 	notifier Notifier
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool)}
+}
 
 // SetNotifier wires the in-app notifier so security events can also alert the
 // affected user. Called from cmd/server/main.go.
@@ -77,6 +81,8 @@ type Summary struct {
 
 // Record appends a security event. Best-effort callers (detection hooks) should
 // log and swallow the error so a detection write never breaks the auth path.
+// InsertSecurityEvent left raw: NULLIF($7,'')::inet causes sqlc parameter-type
+// ambiguity for the inet cast.
 func (s *Service) Record(ctx context.Context, e Event) error {
 	if e.Severity == "" {
 		e.Severity = "low"
@@ -97,17 +103,17 @@ func (s *Service) Record(ctx context.Context, e Event) error {
 // Best-effort throughout — an unknown email (probing) has no tenant to scope to
 // and is simply skipped; storage errors are logged, not surfaced.
 func (s *Service) OnAccountLocked(ctx context.Context, email string) {
-	var userID, tenantID uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id FROM "user".users
-		WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
-		LIMIT 1
-	`, email).Scan(&userID, &tenantID)
+	row, err := s.q.GetUserForAnomaly(ctx, email)
 	if err != nil {
 		// No matching tenant user (unknown email or tenant-less) — nothing to
 		// scope a tenant incident to.
 		return
 	}
+	if !row.TenantID.Valid {
+		return
+	}
+	userID := row.ID
+	tenantID := uuid.UUID(row.TenantID.Bytes)
 	if rerr := s.Record(ctx, Event{
 		TenantID: tenantID,
 		UserID:   &userID,
@@ -130,6 +136,8 @@ func (s *Service) OnAccountLocked(ctx context.Context, email string) {
 }
 
 // List returns the most recent anomalies for a tenant, newest first.
+// Left hand-written: COALESCE(host(e.ip),'') causes sqlc to generate
+// interface{} for the column, preventing type-safe scanning.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int) ([]Anomaly, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -161,34 +169,29 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int) ([]An
 
 // Summary computes the KPI counts for a tenant in a single pass.
 func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, error) {
-	var sm Summary
-	err := s.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE status = 'open'),
-			COUNT(*) FILTER (WHERE resolved_at >= NOW() - INTERVAL '24 hours'),
-			COUNT(DISTINCT user_id) FILTER (WHERE status = 'open' AND user_id IS NOT NULL),
-			COUNT(*) FILTER (WHERE severity = 'high' AND created_at >= NOW() - INTERVAL '24 hours')
-		FROM auth.security_events
-		WHERE tenant_id = $1
-	`, tenantID).Scan(&sm.Open, &sm.Resolved24h, &sm.AffectedAccounts, &sm.HighSeverity24h)
+	row, err := s.q.GetSecurityEventSummary(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	return &sm, nil
+	return &Summary{
+		Open:             int(row.Open),
+		Resolved24h:      int(row.Resolved24h),
+		AffectedAccounts: int(row.AffectedAccounts),
+		HighSeverity24h:  int(row.HighSeverity24h),
+	}, nil
 }
 
 // Resolve marks an open anomaly resolved. Tenant-scoped so an admin can never
 // resolve another tenant's incident.
 func (s *Service) Resolve(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE auth.security_events
-		SET status = 'resolved', resolved_at = NOW()
-		WHERE id = $1 AND tenant_id = $2 AND resolved_at IS NULL
-	`, id, tenantID)
+	n, err := s.q.ResolveSecurityEvent(ctx, dbgen.ResolveSecurityEventParams{
+		ID:       id,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

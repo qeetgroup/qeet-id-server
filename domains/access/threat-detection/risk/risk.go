@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/bot"
+	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/risk/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -101,9 +102,10 @@ func computeLevel(settings Settings, botScore float64, impossibleTravel, newDevi
 // Service assesses risk and manages per-tenant risk settings.
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // Assess returns the risk Level for an authentication request, and records
 // this login's device/country into the user's history for future
@@ -167,20 +169,21 @@ func (s *Service) ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID
 }
 
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
-	var st Settings
-	err := s.pool.QueryRow(ctx, `
-		SELECT medium_threshold, high_threshold, force_mfa_at_level,
-		       impossible_travel_enabled, min_travel_hours, device_reputation_enabled
-		FROM auth.risk_settings WHERE tenant_id = $1
-	`, tenantID).Scan(&st.MediumThreshold, &st.HighThreshold, &st.ForceMFAAtLevel,
-		&st.ImpossibleTravelEnabled, &st.MinTravelHours, &st.DeviceReputationEnabled)
+	row, err := s.q.GetRiskSettings(ctx, tenantID)
 	if err == pgx.ErrNoRows {
 		return defaultSettings(), nil
 	}
 	if err != nil {
 		return Settings{}, err
 	}
-	return st, nil
+	return Settings{
+		MediumThreshold:         row.MediumThreshold,
+		HighThreshold:           row.HighThreshold,
+		ForceMFAAtLevel:         row.ForceMfaAtLevel,
+		ImpossibleTravelEnabled: row.ImpossibleTravelEnabled,
+		MinTravelHours:          row.MinTravelHours,
+		DeviceReputationEnabled: row.DeviceReputationEnabled,
+	}, nil
 }
 
 // Handler exposes risk settings over HTTP.
@@ -252,23 +255,15 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	if in.MinTravelHours <= 0 {
 		in.MinTravelHours = defaultSettings().MinTravelHours
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.risk_settings (
-			tenant_id, medium_threshold, high_threshold, force_mfa_at_level,
-			impossible_travel_enabled, min_travel_hours, device_reputation_enabled, updated_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			medium_threshold           = EXCLUDED.medium_threshold,
-			high_threshold             = EXCLUDED.high_threshold,
-			force_mfa_at_level         = EXCLUDED.force_mfa_at_level,
-			impossible_travel_enabled  = EXCLUDED.impossible_travel_enabled,
-			min_travel_hours           = EXCLUDED.min_travel_hours,
-			device_reputation_enabled  = EXCLUDED.device_reputation_enabled,
-			updated_at                 = NOW()
-	`, tenantID, in.MediumThreshold, in.HighThreshold, in.ForceMFAAtLevel,
-		in.ImpossibleTravelEnabled, in.MinTravelHours, in.DeviceReputationEnabled)
-	if err != nil {
+	if err := s.q.UpsertRiskSettings(ctx, dbgen.UpsertRiskSettingsParams{
+		TenantID:                tenantID,
+		MediumThreshold:         in.MediumThreshold,
+		HighThreshold:           in.HighThreshold,
+		ForceMfaAtLevel:         in.ForceMFAAtLevel,
+		ImpossibleTravelEnabled: in.ImpossibleTravelEnabled,
+		MinTravelHours:          in.MinTravelHours,
+		DeviceReputationEnabled: in.DeviceReputationEnabled,
+	}); err != nil {
 		return Settings{}, err
 	}
 	return in, nil

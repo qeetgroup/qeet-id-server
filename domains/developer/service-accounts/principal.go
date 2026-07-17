@@ -14,8 +14,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/service-accounts/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -26,14 +28,24 @@ import (
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	issuer *tokens.Issuer
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, issuer: issuer}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+// tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
+func tsPtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
+}
 
 type Principal struct {
 	ID         uuid.UUID  `json:"id"`
@@ -60,35 +72,34 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Princ
 	if err != nil {
 		return nil, "", err
 	}
-	var p Principal
-	err = tx.QueryRow(ctx, `
-		INSERT INTO auth.service_principals (tenant_id, name, description, secret_hash, scopes)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, tenant_id, name, scopes, disabled_at, created_at
-	`, in.TenantID, in.Name, in.Description, hash, in.Scopes).
-		Scan(&p.ID, &p.TenantID, &p.Name, &p.Scopes, &p.DisabledAt, &p.CreatedAt)
+	row, err := s.q.WithTx(tx).CreateServicePrincipal(ctx, dbgen.CreateServicePrincipalParams{
+		TenantID:    in.TenantID,
+		Name:        in.Name,
+		Description: in.Description,
+		SecretHash:  hash,
+		Scopes:      in.Scopes,
+	})
 	if err != nil {
 		return nil, "", err
 	}
-	return &p, raw, nil
+	p := &Principal{
+		ID: row.ID, TenantID: row.TenantID, Name: row.Name,
+		Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
+	}
+	return p, raw, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, name, scopes, disabled_at, created_at
-		FROM auth.service_principals WHERE tenant_id = $1 ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListServicePrincipals(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Principal
-	for rows.Next() {
-		var p Principal
-		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.Scopes, &p.DisabledAt, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+	out := make([]Principal, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Principal{
+			ID: row.ID, TenantID: row.TenantID, Name: row.Name,
+			Scopes: row.Scopes, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
+		})
 	}
 	return out, nil
 }
@@ -96,20 +107,14 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, er
 // Disable marks a service principal disabled. Returns the (tenantID,
 // name) for the audit row so the caller doesn't have to re-query.
 func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, string, error) {
-	var tenantID uuid.UUID
-	var name string
-	err := tx.QueryRow(ctx, `
-		UPDATE auth.service_principals SET disabled_at = NOW()
-		WHERE id = $1 AND disabled_at IS NULL
-		RETURNING tenant_id, name
-	`, id).Scan(&tenantID, &name)
+	row, err := s.q.WithTx(tx).DisableServicePrincipal(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	return tenantID, name, nil
+	return row.TenantID, row.Name, nil
 }
 
 type TokenResponse struct {
@@ -126,28 +131,20 @@ func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSe
 	if err != nil {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid client_id")
 	}
-	var (
-		id, tenantID uuid.UUID
-		secretHash   string
-		scopes       []string
-		disabledAt   *time.Time
-	)
-	err = s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, secret_hash, scopes, disabled_at
-		FROM auth.service_principals WHERE id = $1
-	`, pid).Scan(&id, &tenantID, &secretHash, &scopes, &disabledAt)
+	row, err := s.q.GetServicePrincipalForAuth(ctx, pid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown client")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if disabledAt != nil {
+	if row.DisabledAt.Valid {
 		return nil, errs.ErrUnauthorized.WithDetail("client disabled")
 	}
-	if !password.Verify(secretHash, clientSecret) {
+	if !password.Verify(row.SecretHash, clientSecret) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid client secret")
 	}
+	id, tenantID, scopes := row.ID, row.TenantID, row.Scopes
 	now := time.Now().UTC()
 	exp := now.Add(s.issuer.AccessTTL())
 	scope := joinScopes(scopes)

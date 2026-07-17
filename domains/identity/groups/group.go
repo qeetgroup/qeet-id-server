@@ -16,8 +16,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/identity/groups/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -35,10 +37,11 @@ type Group struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool}
+	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
 type CreateInput struct {
@@ -54,6 +57,59 @@ type UpdateInput struct {
 	ParentID    *uuid.UUID `json:"parent_id"`
 }
 
+// uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
+func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
+	if p == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: [16]byte(*p), Valid: true}
+}
+
+// pgtypeToUUIDPtr converts a pgtype.UUID returned by generated code to *uuid.UUID.
+func pgtypeToUUIDPtr(p pgtype.UUID) *uuid.UUID {
+	if !p.Valid {
+		return nil
+	}
+	uid := uuid.UUID(p.Bytes)
+	return &uid
+}
+
+// groupFromInsertRow maps an InsertGroupRow to the domain Group model.
+func groupFromInsertRow(row dbgen.InsertGroupRow) Group {
+	return Group{
+		ID:          row.ID,
+		TenantID:    row.TenantID,
+		ParentID:    pgtypeToUUIDPtr(row.ParentID),
+		Name:        row.Name,
+		Description: row.Description,
+		CreatedAt:   row.CreatedAt,
+	}
+}
+
+// groupFromUpdateRow maps an UpdateGroupRow to the domain Group model.
+func groupFromUpdateRow(row dbgen.UpdateGroupRow) Group {
+	return Group{
+		ID:          row.ID,
+		TenantID:    row.TenantID,
+		ParentID:    pgtypeToUUIDPtr(row.ParentID),
+		Name:        row.Name,
+		Description: row.Description,
+		CreatedAt:   row.CreatedAt,
+	}
+}
+
+// groupFromListRow maps a ListGroupsRow to the domain Group model.
+func groupFromListRow(row dbgen.ListGroupsRow) Group {
+	return Group{
+		ID:          row.ID,
+		TenantID:    row.TenantID,
+		ParentID:    pgtypeToUUIDPtr(row.ParentID),
+		Name:        row.Name,
+		Description: row.Description,
+		CreatedAt:   row.CreatedAt,
+	}
+}
+
 func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor) (*Group, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -61,15 +117,16 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	}
 	defer tx.Rollback(ctx)
 
-	var g Group
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO tenant.groups (tenant_id, parent_id, name, description)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, tenant_id, parent_id, name, description, created_at
-	`, in.TenantID, in.ParentID, in.Name, in.Description).
-		Scan(&g.ID, &g.TenantID, &g.ParentID, &g.Name, &g.Description, &g.CreatedAt); err != nil {
+	row, err := s.q.WithTx(tx).InsertGroup(ctx, dbgen.InsertGroupParams{
+		TenantID:    in.TenantID,
+		ParentID:    uuidPtrToPgtype(in.ParentID),
+		Name:        in.Name,
+		Description: in.Description,
+	})
+	if err != nil {
 		return nil, err
 	}
+	g := groupFromInsertRow(row)
 	if err := audit.Record(ctx, tx, actor.Event(g.TenantID, "group.created", "group", g.ID,
 		map[string]any{"name": g.Name, "parent_id": g.ParentID})); err != nil {
 		return nil, err
@@ -84,21 +141,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, parent_id, name, description, created_at
-		FROM tenant.groups WHERE tenant_id = $1 ORDER BY name
-	`, tenantID)
+	rows, err := s.q.ListGroups(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Group
-	for rows.Next() {
-		var g Group
-		if err := rows.Scan(&g.ID, &g.TenantID, &g.ParentID, &g.Name, &g.Description, &g.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, g)
+	out := make([]Group, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, groupFromListRow(row))
 	}
 	return out, nil
 }
@@ -110,10 +159,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 	}
 	defer tx.Rollback(ctx)
 
-	var name string
-	err = tx.QueryRow(ctx, `
-		DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 RETURNING name
-	`, id, tenantID).Scan(&name)
+	name, err := s.q.WithTx(tx).DeleteGroup(ctx, dbgen.DeleteGroupParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
@@ -137,20 +183,20 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	}
 	defer tx.Rollback(ctx)
 
-	var g Group
-	err = tx.QueryRow(ctx, `
-		UPDATE tenant.groups
-		SET name = $1, description = $2, parent_id = $3
-		WHERE id = $4 AND tenant_id = $5
-		RETURNING id, tenant_id, parent_id, name, description, created_at
-	`, in.Name, in.Description, in.ParentID, id, tenantID).
-		Scan(&g.ID, &g.TenantID, &g.ParentID, &g.Name, &g.Description, &g.CreatedAt)
+	row, err := s.q.WithTx(tx).UpdateGroup(ctx, dbgen.UpdateGroupParams{
+		Name:        in.Name,
+		Description: in.Description,
+		ParentID:    uuidPtrToPgtype(in.ParentID),
+		ID:          id,
+		TenantID:    tenantID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	g := groupFromUpdateRow(row)
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.updated", "group", id,
 		map[string]any{"name": in.Name, "parent_id": in.ParentID})); err != nil {
 		return nil, err
@@ -169,17 +215,16 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 	defer tx.Rollback(ctx)
 
 	// Only add to a group that belongs to this tenant.
-	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM tenant.groups WHERE id = $1 AND tenant_id = $2)`, groupID, tenantID).Scan(&exists); err != nil {
+	exists, err := s.q.WithTx(tx).GroupExists(ctx, dbgen.GroupExistsParams{ID: groupID, TenantID: tenantID})
+	if err != nil {
 		return err
 	}
 	if !exists {
 		return errs.ErrNotFound
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO tenant.group_members (group_id, user_id, tenant_id)
-		VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
-	`, groupID, userID, tenantID); err != nil {
+	if err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
+		GroupID: groupID, UserID: userID, TenantID: tenantID,
+	}); err != nil {
 		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_added", "group", groupID,
@@ -199,9 +244,9 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uu
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM tenant.group_members WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3
-	`, groupID, userID, tenantID); err != nil {
+	if err := s.q.WithTx(tx).DeleteGroupMember(ctx, dbgen.DeleteGroupMemberParams{
+		GroupID: groupID, UserID: userID, TenantID: tenantID,
+	}); err != nil {
 		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_removed", "group", groupID,
@@ -224,24 +269,17 @@ type Member struct {
 }
 
 func (s *Service) ListMembers(ctx context.Context, groupID, tenantID uuid.UUID) ([]Member, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT gm.user_id, u.email, u.display_name
-		FROM tenant.group_members gm
-		JOIN "user".users u ON u.id = gm.user_id
-		WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
-		ORDER BY u.email
-	`, groupID, tenantID)
+	rows, err := s.q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{GroupID: groupID, TenantID: tenantID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Member
-	for rows.Next() {
-		var m Member
-		if err := rows.Scan(&m.UserID, &m.Email, &m.DisplayName); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
+	out := make([]Member, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Member{
+			UserID:      row.UserID,
+			Email:       row.Email,
+			DisplayName: row.DisplayName,
+		})
 	}
 	return out, nil
 }

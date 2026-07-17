@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
@@ -49,14 +50,14 @@ func (s *Service) IsTrustedDevice(ctx context.Context, userID uuid.UUID, raw str
 	if raw == "" {
 		return false
 	}
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE auth.trusted_devices SET last_used_at = NOW()
-		WHERE token_hash = $1 AND user_id = $2 AND expires_at > NOW()
-	`, tokens.HashRefresh(raw), userID)
+	n, err := s.q.TouchTrustedDevice(ctx, dbgen.TouchTrustedDeviceParams{
+		TokenHash: tokens.HashRefresh(raw),
+		UserID:    userID,
+	})
 	if err != nil {
 		return false
 	}
-	return ct.RowsAffected() > 0
+	return n > 0
 }
 
 // MaybeRememberDevice mints a trusted device only when the tenant has opted into

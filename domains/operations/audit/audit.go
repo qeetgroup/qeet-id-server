@@ -19,6 +19,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	dbgen "github.com/qeetgroup/qeet-id/domains/operations/audit/dbgen"
 )
 
 const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -120,6 +123,19 @@ func uuidStr(u *uuid.UUID) string {
 	return u.String()
 }
 
+// pgUUIDNullable converts a *uuid.UUID to a pgtype.UUID suitable for
+// nullable UUID columns. A nil pointer maps to the invalid (NULL) form.
+func pgUUIDNullable(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{Valid: false}
+	}
+	return pgtype.UUID{Bytes: *id, Valid: true}
+}
+
+// strRef returns a pointer to s, always non-nil. Used to pass strings to
+// generated *string params without converting empty strings to NULL.
+func strRef(s string) *string { return &s }
+
 // Record writes one audit row inside the given transaction. It computes
 // the next link in the per-tenant hash chain under a per-tenant advisory
 // lock; concurrent audit writes for the same tenant serialise on commit.
@@ -141,22 +157,20 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	} else {
 		lockKey += "platform"
 	}
+	// Advisory lock stays raw — pg_advisory_xact_lock is a void-returning
+	// side-effect; it does not return rows and cannot be modelled as a
+	// named sqlc query.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 		return err
 	}
 
+	q := dbgen.New(tx)
+
 	prevHash := chainSeed
-	var tip string
-	err = tx.QueryRow(ctx, `
-		SELECT row_hash FROM audit.events
-		WHERE tenant_id IS NOT DISTINCT FROM $1
-		  AND row_hash IS NOT NULL
-		ORDER BY created_at DESC, id DESC
-		LIMIT 1
-	`, e.TenantID).Scan(&tip)
+	tip, err := q.GetAuditChainTip(ctx, pgUUIDNullable(e.TenantID))
 	switch {
 	case err == nil:
-		prevHash = strings.TrimSpace(tip)
+		prevHash = strings.TrimSpace(*tip)
 	case errors.Is(err, pgx.ErrNoRows):
 		// First row in chain; keep the seed.
 	default:
@@ -171,16 +185,20 @@ func Record(ctx context.Context, tx pgx.Tx, e Event) error {
 	}
 	rowHash := hashHex(canonical)
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO audit.events (
-			id, tenant_id, actor_user_id, actor_type, action,
-			resource_type, resource_id, ip, user_agent, request_id,
-			metadata, created_at, prev_hash, row_hash
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8,'')::inet, $9, $10, $11, $12, $13, $14)
-	`,
-		id, e.TenantID, e.ActorUserID, e.ActorType, e.Action,
-		e.ResourceType, e.ResourceID, e.IP, e.UserAgent, e.RequestID,
-		meta, createdAt, prevHash, rowHash,
-	)
-	return err
+	return q.InsertAuditEvent(ctx, dbgen.InsertAuditEventParams{
+		ID:           id,
+		TenantID:     pgUUIDNullable(e.TenantID),
+		ActorUserID:  pgUUIDNullable(e.ActorUserID),
+		ActorType:    e.ActorType,
+		Action:       e.Action,
+		ResourceType: e.ResourceType,
+		ResourceID:   pgUUIDNullable(e.ResourceID),
+		Ip:           e.IP, // NULLIF($8,'')::inet in the SQL handles empty→NULL
+		UserAgent:    strRef(e.UserAgent),
+		RequestID:    strRef(e.RequestID),
+		Metadata:     meta,
+		CreatedAt:    createdAt,
+		PrevHash:     strRef(prevHash),
+		RowHash:      strRef(rowHash),
+	})
 }

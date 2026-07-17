@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -38,6 +39,7 @@ type Secret struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 	gcm  cipher.AEAD
 }
 
@@ -56,7 +58,7 @@ func NewService(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider) (*Servi
 	if err != nil {
 		return nil, err
 	}
-	return &Service{pool: pool, gcm: gcm}, nil
+	return &Service{pool: pool, q: dbgen.New(pool), gcm: gcm}, nil
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -88,34 +90,26 @@ func hint(value string) string {
 	return string(r[len(r)-4:])
 }
 
-func scan(row pgx.Row) (*Secret, error) {
-	var sec Secret
-	if err := row.Scan(&sec.ID, &sec.Name, &sec.Scope, &sec.Last4, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
-	}
-	return &sec, nil
+// rowToSecret maps a sqlc result row (id, name, scope, last4, created_at, updated_at) to Secret.
+func rowToSecret(id uuid.UUID, name, scope, last4 string, createdAt, updatedAt time.Time) *Secret {
+	return &Secret{ID: id, Name: name, Scope: scope, Last4: last4, CreatedAt: createdAt, UpdatedAt: updatedAt}
 }
 
+// metaCols is the column list for the hand-written Update RETURNING clause;
+// it matches the field order used by the raw SQL below (same as the sqlc-
+// generated queries to keep scanning consistent).
 const metaCols = `id, name, scope, last4, created_at, updated_at`
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+metaCols+` FROM tenant.secrets WHERE tenant_id = $1 ORDER BY name`, tenantID)
+	rows, err := s.q.ListSecrets(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []Secret{}
-	for rows.Next() {
-		var sec Secret
-		if err := rows.Scan(&sec.ID, &sec.Name, &sec.Scope, &sec.Last4, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, sec)
+	for _, row := range rows {
+		out = append(out, *rowToSecret(row.ID, row.Name, row.Scope, row.Last4, row.CreatedAt, row.UpdatedAt))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, value string) (*Secret, error) {
@@ -127,19 +121,21 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 	if err != nil {
 		return nil, err
 	}
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.secrets (tenant_id, name, scope, ciphertext, nonce, last4)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING `+metaCols,
-		tenantID, name, scope, ct, nonce, hint(value))
-	sec, err := scan(row)
+	row, err := s.q.CreateSecret(ctx, dbgen.CreateSecretParams{
+		TenantID:   tenantID,
+		Name:       name,
+		Scope:      scope,
+		Ciphertext: ct,
+		Nonce:      nonce,
+		Last4:      hint(value),
+	})
 	if err != nil {
 		if strings.Contains(err.Error(), "secrets_tenant_id_name_key") || strings.Contains(err.Error(), "duplicate") {
 			return nil, errs.ErrConflict.WithDetail("a secret with that name already exists")
 		}
 		return nil, err
 	}
-	return sec, nil
+	return rowToSecret(row.ID, row.Name, row.Scope, row.Last4, row.CreatedAt, row.UpdatedAt), nil
 }
 
 type UpdateInput struct {
@@ -147,6 +143,11 @@ type UpdateInput struct {
 	Value *string `json:"value"`
 }
 
+// Update applies a partial update. The scope parameter is nullable (*string)
+// so COALESCE(scope_param, existing_scope) can preserve the existing value
+// when scope is omitted — this requires passing a raw *string to pgx and is
+// kept hand-written because sqlc infers a non-nullable string for the NOT NULL
+// scope column, losing the nil-means-no-change semantic.
 func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateInput) (*Secret, error) {
 	// Rotate the encrypted value only when a new one is supplied.
 	if in.Value != nil {
@@ -163,58 +164,66 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateI
 			WHERE id = $1 AND tenant_id = $2
 			RETURNING `+metaCols,
 			id, tenantID, ct, nonce, hint(*in.Value), in.Scope)
-		return scan(row)
+		return scanSecret(row)
 	}
 	row := s.pool.QueryRow(ctx, `
 		UPDATE tenant.secrets SET scope = COALESCE($3, scope), updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING `+metaCols,
 		id, tenantID, in.Scope)
-	return scan(row)
+	return scanSecret(row)
+}
+
+// scanSecret scans a raw pgx.Row into a Secret (used by the hand-written UPDATE queries).
+func scanSecret(row pgx.Row) (*Secret, error) {
+	var sec Secret
+	if err := row.Scan(&sec.ID, &sec.Name, &sec.Scope, &sec.Last4, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	return &sec, nil
 }
 
 func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, string, error) {
-	var name string
-	var ct, nonce []byte
-	err := s.pool.QueryRow(ctx, `SELECT name, ciphertext, nonce FROM tenant.secrets WHERE id = $1 AND tenant_id = $2`, id, tenantID).Scan(&name, &ct, &nonce)
+	row, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", errs.ErrNotFound
 	}
 	if err != nil {
 		return "", "", err
 	}
-	val, err := s.decrypt(ct, nonce)
+	val, err := s.decrypt(row.Ciphertext, row.Nonce)
 	if err != nil {
 		return "", "", errs.ErrInternal.WithDetail("decryption failed")
 	}
-	return name, val, nil
+	return row.Name, val, nil
 }
 
 // GetByName decrypts a secret by its name (for agent/credential retrieval via
 // the scoped vault endpoint). Returns the secret id (for auditing) + value.
 func (s *Service) GetByName(ctx context.Context, tenantID uuid.UUID, name string) (uuid.UUID, string, error) {
-	var id uuid.UUID
-	var ct, nonce []byte
-	err := s.pool.QueryRow(ctx, `SELECT id, ciphertext, nonce FROM tenant.secrets WHERE tenant_id = $1 AND name = $2`, tenantID, name).Scan(&id, &ct, &nonce)
+	row, err := s.q.GetSecretByName(ctx, dbgen.GetSecretByNameParams{TenantID: tenantID, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	val, err := s.decrypt(ct, nonce)
+	val, err := s.decrypt(row.Ciphertext, row.Nonce)
 	if err != nil {
 		return uuid.Nil, "", errs.ErrInternal.WithDetail("decryption failed")
 	}
-	return id, val, nil
+	return row.ID, val, nil
 }
 
 func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.secrets WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteSecret(ctx, dbgen.DeleteSecretParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

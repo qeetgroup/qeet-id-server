@@ -2,13 +2,14 @@ package risk
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/risk/dbgen"
 )
 
 // deviceKey normalizes a User-Agent string to a coarse browser+OS pair (e.g.
@@ -56,18 +57,20 @@ func deviceKey(ua string) string {
 // any device), and whether one was found at all. Rows with no country ("")
 // are skipped — they carry no geo signal to compare against.
 func (s *Service) lastCountry(ctx context.Context, tenantID, userID uuid.UUID) (country string, seenAt time.Time, ok bool) {
-	err := s.pool.QueryRow(ctx, `
-		SELECT country, seen_at FROM auth.login_context_history
-		WHERE tenant_id = $1 AND user_id = $2 AND country IS NOT NULL AND country <> ''
-		ORDER BY seen_at DESC LIMIT 1
-	`, tenantID, userID).Scan(&country, &seenAt)
+	row, err := s.q.GetLastCountry(ctx, dbgen.GetLastCountryParams{
+		TenantID: tenantID,
+		UserID:   userID,
+	})
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if err != pgx.ErrNoRows {
 			slog.Warn("risk: lookup last country", "err", err)
 		}
 		return "", time.Time{}, false
 	}
-	return country, seenAt, true
+	if row.Country == nil {
+		return "", time.Time{}, false
+	}
+	return *row.Country, row.SeenAt, true
 }
 
 // deviceSeenBefore reports whether this exact device key has ever been
@@ -75,28 +78,27 @@ func (s *Service) lastCountry(ctx context.Context, tenantID, userID uuid.UUID) (
 // reputation, once earned, doesn't expire the way a trusted-device cookie
 // does.
 func (s *Service) deviceSeenBefore(ctx context.Context, tenantID, userID uuid.UUID, dk string) (bool, error) {
-	var exists bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM auth.login_context_history
-			WHERE tenant_id = $1 AND user_id = $2 AND device_key = $3
-		)
-	`, tenantID, userID, dk).Scan(&exists)
-	return exists, err
+	return s.q.DeviceSeenBefore(ctx, dbgen.DeviceSeenBeforeParams{
+		TenantID:  tenantID,
+		UserID:    userID,
+		DeviceKey: dk,
+	})
 }
 
 // recordLogin appends this login's device/country to the user's history.
 // Best-effort: a failure here shouldn't fail the login it's describing, so
 // errors are logged, not returned.
 func (s *Service) recordLogin(ctx context.Context, tenantID, userID uuid.UUID, dk, country string) {
-	var c any
+	var c *string
 	if country != "" {
-		c = country
+		c = &country
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.login_context_history (tenant_id, user_id, device_key, country)
-		VALUES ($1, $2, $3, $4)
-	`, tenantID, userID, dk, c); err != nil {
+	if err := s.q.InsertLoginContext(ctx, dbgen.InsertLoginContextParams{
+		TenantID:  tenantID,
+		UserID:    userID,
+		DeviceKey: dk,
+		Country:   c,
+	}); err != nil {
 		slog.Warn("risk: record login context", "err", err)
 	}
 }

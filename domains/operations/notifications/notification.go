@@ -12,17 +12,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	notificationdbgen "github.com/qeetgroup/qeet-id/domains/operations/notifications/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *notificationdbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: notificationdbgen.New(pool)}
+}
 
 type Notification struct {
 	ID          uuid.UUID  `json:"id"`
@@ -41,15 +46,16 @@ func (s *Service) Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, 
 	if kind == "" {
 		kind = "info"
 	}
-	var tid any
-	if tenantID != uuid.Nil {
-		tid = tenantID
-	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.notifications (user_id, tenant_id, kind, title, description, href)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, userID, tid, kind, title, description, href)
-	return err
+	// tenant_id is nullable in auth.notifications; pass Valid=false for uuid.Nil.
+	tid := pgtype.UUID{Bytes: tenantID, Valid: tenantID != uuid.Nil}
+	return s.q.InsertNotification(ctx, notificationdbgen.InsertNotificationParams{
+		UserID:      userID,
+		TenantID:    tid,
+		Kind:        kind,
+		Title:       title,
+		Description: description,
+		Href:        href,
+	})
 }
 
 // List returns a user's most recent notifications plus the unread count.
@@ -57,42 +63,36 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Noti
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, kind, title, description, href, created_at, read_at
-		FROM auth.notifications WHERE user_id = $1
-		ORDER BY created_at DESC LIMIT $2
-	`, userID, limit)
+	genRows, err := s.q.ListNotifications(ctx, notificationdbgen.ListNotificationsParams{
+		UserID:   userID,
+		RowLimit: int32(limit),
+	})
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
-	out := make([]Notification, 0)
-	for rows.Next() {
-		var n Notification
-		if err := rows.Scan(&n.ID, &n.Kind, &n.Title, &n.Description, &n.Href, &n.CreatedAt, &n.ReadAt); err != nil {
-			return nil, 0, err
+	out := make([]Notification, 0, len(genRows))
+	for _, r := range genRows {
+		n := Notification{
+			ID: r.ID, Kind: r.Kind, Title: r.Title,
+			Description: r.Description, Href: r.Href, CreatedAt: r.CreatedAt,
+		}
+		// read_at is nullable timestamptz; pgtype.Timestamptz.Valid signals NULL.
+		if r.ReadAt.Valid {
+			t := r.ReadAt.Time
+			n.ReadAt = &t
 		}
 		out = append(out, n)
 	}
-	if err := rows.Err(); err != nil {
+	count, err := s.q.CountUnreadNotifications(ctx, userID)
+	if err != nil {
 		return nil, 0, err
 	}
-	var unread int
-	if err := s.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM auth.notifications WHERE user_id = $1 AND read_at IS NULL
-	`, userID).Scan(&unread); err != nil {
-		return nil, 0, err
-	}
-	return out, unread, nil
+	return out, int(count), nil
 }
 
 // MarkAllRead clears the unread state for all of a user's notifications.
 func (s *Service) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.pool.Exec(ctx, `
-		UPDATE auth.notifications SET read_at = NOW()
-		WHERE user_id = $1 AND read_at IS NULL
-	`, userID)
-	return err
+	return s.q.MarkAllNotificationsRead(ctx, userID)
 }
 
 type Handler struct {

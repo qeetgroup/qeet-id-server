@@ -27,8 +27,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
@@ -49,11 +51,12 @@ const (
 
 type Service struct {
 	pool  *pgxpool.Pool
+	q     *dbgen.Queries
 	users *user.Repository
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
-	return &Service{pool: pool, users: users}
+	return &Service{pool: pool, q: dbgen.New(pool), users: users}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -70,27 +73,25 @@ type ConfigView struct {
 
 func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, error) {
 	v := &ConfigView{}
-	var prefix *string
-	var created, used *time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT token_prefix, created_at, last_used_at
-		FROM tenant.scim_tokens WHERE tenant_id = $1
-	`, tenantID).Scan(&prefix, &created, &used)
+	tok, err := s.q.GetScimTokenConfig(ctx, tenantID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	if prefix != nil {
+	if err == nil {
 		v.TokenSet = true
-		v.TokenPrefix = *prefix
-		v.CreatedAt = created
-		v.LastUsedAt = used
+		v.TokenPrefix = tok.TokenPrefix
+		v.CreatedAt = &tok.CreatedAt
+		if tok.LastUsedAt.Valid {
+			t := tok.LastUsedAt.Time
+			v.LastUsedAt = &t
+		}
 	}
-	if err := s.pool.QueryRow(ctx, `
-		SELECT count(*) FROM "user".users
-		WHERE tenant_id = $1 AND provisioned_via = $2 AND deleted_at IS NULL
-	`, tenantID, provisionedScim).Scan(&v.ProvisionedCount); err != nil {
+	pgTID := pgtype.UUID{Bytes: tenantID, Valid: true}
+	count, err := s.q.CountProvisionedUsers(ctx, pgTID)
+	if err != nil {
 		return nil, err
 	}
+	v.ProvisionedCount = int(count)
 	return v, nil
 }
 
@@ -105,27 +106,22 @@ func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (fu
 	full = tokenPrefix + raw
 	hash = codes.Hash(full)
 	display := tokenPrefix + raw[:6]
-	_, err = tx.Exec(ctx, `
-		INSERT INTO tenant.scim_tokens (tenant_id, token_hash, token_prefix, created_at, last_used_at)
-		VALUES ($1, $2, $3, NOW(), NULL)
-		ON CONFLICT (tenant_id) DO UPDATE
-		   SET token_hash = EXCLUDED.token_hash,
-		       token_prefix = EXCLUDED.token_prefix,
-		       created_at = NOW(),
-		       last_used_at = NULL
-	`, tenantID, hash, display)
-	if err != nil {
+	if err := s.q.WithTx(tx).UpsertScimToken(ctx, dbgen.UpsertScimTokenParams{
+		TenantID:    tenantID,
+		TokenHash:   hash,
+		TokenPrefix: display,
+	}); err != nil {
 		return "", err
 	}
 	return full, nil
 }
 
 func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `DELETE FROM tenant.scim_tokens WHERE tenant_id = $1`, tenantID)
+	n, err := s.q.WithTx(tx).DeleteScimToken(ctx, tenantID)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -134,10 +130,7 @@ func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 // resolveToken maps a presented bearer token to its tenant and records use.
 func (s *Service) resolveToken(ctx context.Context, raw string) (uuid.UUID, error) {
 	hash := codes.Hash(raw)
-	var tid uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		SELECT tenant_id FROM tenant.scim_tokens WHERE token_hash = $1
-	`, hash).Scan(&tid)
+	tid, err := s.q.GetScimTokenTenant(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrUnauthorized
 	}
@@ -145,7 +138,7 @@ func (s *Service) resolveToken(ctx context.Context, raw string) (uuid.UUID, erro
 		return uuid.Nil, err
 	}
 	// Best-effort last-used stamp; never block the request on it.
-	_, _ = s.pool.Exec(ctx, `UPDATE tenant.scim_tokens SET last_used_at = NOW() WHERE tenant_id = $1`, tid)
+	_ = s.q.TouchScimTokenUsed(ctx, tid)
 	return tid, nil
 }
 
@@ -163,23 +156,26 @@ type userRow struct {
 
 const userRowCols = `id, email, display_name, status, external_id, created_at, updated_at`
 
-func scanUserRow(row pgx.Row) (*userRow, error) {
-	var u userRow
-	if err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.ExternalID, &u.CreatedAt, &u.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
+func (s *Service) getProvisioned(ctx context.Context, tenantID, id uuid.UUID) (*userRow, error) {
+	r, err := s.q.GetProvisionedUser(ctx, dbgen.GetProvisionedUserParams{
+		ID:       id,
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
 		return nil, err
 	}
-	return &u, nil
-}
-
-func (s *Service) getProvisioned(ctx context.Context, tenantID, id uuid.UUID) (*userRow, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT `+userRowCols+` FROM "user".users
-		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-	`, id, tenantID)
-	return scanUserRow(row)
+	return &userRow{
+		ID:          r.ID,
+		Email:       r.Email,
+		DisplayName: r.DisplayName,
+		Status:      r.Status,
+		ExternalID:  r.ExternalID,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}, nil
 }
 
 func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, emailFilter string, start, count int) ([]userRow, int, error) {
@@ -216,15 +212,14 @@ func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, email
 }
 
 func (s *Service) tagProvisioned(ctx context.Context, id uuid.UUID, externalID string) error {
-	var ext any
+	var ext *string
 	if externalID != "" {
-		ext = externalID
+		ext = &externalID
 	}
-	_, err := s.pool.Exec(ctx, `
-		UPDATE "user".users SET external_id = $1, provisioned_via = $2, updated_at = NOW()
-		WHERE id = $3
-	`, ext, provisionedScim, id)
-	return err
+	return s.q.TagProvisionedUser(ctx, dbgen.TagProvisionedUserParams{
+		ExternalID: ext,
+		ID:         id,
+	})
 }
 
 // =====================================================================

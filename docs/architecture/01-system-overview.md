@@ -32,9 +32,9 @@ flowchart LR
 flowchart TB
     subgraph qeetid["Qeet ID"]
         subgraph fe["Frontends (Bun workspaces)"]
-            admin["@qeetid/admin<br/>Vite :3002"]
-            login["@qeetid/login<br/>Next.js :3004"]
-            web["@qeetid/web<br/>Next.js :3001"]
+            admin["@qeet-id/console<br/>Vite :3002"]
+            login["@qeet-id/login<br/>Next.js :3004"]
+            web["@qeet-id/website<br/>Next.js :3001"]
         end
         subgraph api["Go API (cmd/server, chi v5, :4001) — platform/api/rest/router.go mounts all domain handlers"]
             identity["identity"]

@@ -7,14 +7,17 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
+	"github.com/qeetgroup/qeet-id/domains/identity/users/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/paging"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
 )
 
@@ -43,21 +46,130 @@ func parseUserMetadata(raw []byte, userID uuid.UUID) map[string]any {
 
 type Repository struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
+// pgtypeToUUIDPtr converts a pgtype.UUID returned by generated code to *uuid.UUID.
+func pgtypeToUUIDPtr(p pgtype.UUID) *uuid.UUID {
+	if !p.Valid {
+		return nil
+	}
+	uid := uuid.UUID(p.Bytes)
+	return &uid
+}
+
+// pgtypeToTimePtr converts a pgtype.Timestamptz returned by generated code to *time.Time.
+func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
+}
+
+// uuidToPgtype converts a uuid.UUID to the pgtype.UUID used by generated code.
+func uuidToPgtype(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: [16]byte(id), Valid: true}
+}
+
+// uuidPtrToPgtype converts a *uuid.UUID to pgtype.UUID.
+func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
+	if p == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: [16]byte(*p), Valid: true}
+}
+
+// userFromInsertRow maps an InsertUserRow to the domain User model.
+func userFromInsertRow(row dbgen.InsertUserRow) *User {
+	u := &User{
+		ID:              row.ID,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		EmailVerifiedAt: pgtypeToTimePtr(row.EmailVerifiedAt),
+		PhoneVerifiedAt: pgtypeToTimePtr(row.PhoneVerifiedAt),
+		DisplayName:     row.DisplayName,
+		Status:          row.Status,
+		Metadata:        parseUserMetadata(row.Metadata, row.ID),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+	if tid := pgtypeToUUIDPtr(row.TenantID); tid != nil {
+		u.TenantID = *tid
+	}
+	return u
+}
+
+// userFromGetRow maps a GetUserByIDRow (includes avatar_url) to the domain User model.
+func userFromGetRow(row dbgen.GetUserByIDRow) *User {
+	u := &User{
+		ID:              row.ID,
+		Email:           row.Email,
+		Phone:           row.Phone,
+		EmailVerifiedAt: pgtypeToTimePtr(row.EmailVerifiedAt),
+		PhoneVerifiedAt: pgtypeToTimePtr(row.PhoneVerifiedAt),
+		DisplayName:     row.DisplayName,
+		AvatarURL:       row.AvatarUrl,
+		Status:          row.Status,
+		Metadata:        parseUserMetadata(row.Metadata, row.ID),
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+	}
+	if tid := pgtypeToUUIDPtr(row.TenantID); tid != nil {
+		u.TenantID = *tid
+	}
+	return u
+}
+
+// userFromEmailRow maps a GetUserByEmailRow (or GetUserByEmailGlobalRow — identical
+// shape) to the domain User model. The avatar_url column is intentionally
+// excluded from these queries (the comment in the original code explains why).
+func userFromEmailRow(
+	id uuid.UUID,
+	tenantID pgtype.UUID,
+	email string,
+	emailVerifiedAt pgtype.Timestamptz,
+	phone *string,
+	phoneVerifiedAt pgtype.Timestamptz,
+	displayName *string,
+	status string,
+	metadata []byte,
+	createdAt, updatedAt time.Time,
+) *User {
+	u := &User{
+		ID:              id,
+		Email:           email,
+		Phone:           phone,
+		EmailVerifiedAt: pgtypeToTimePtr(emailVerifiedAt),
+		PhoneVerifiedAt: pgtypeToTimePtr(phoneVerifiedAt),
+		DisplayName:     displayName,
+		Status:          status,
+		Metadata:        parseUserMetadata(metadata, id),
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+	}
+	if tid := pgtypeToUUIDPtr(tenantID); tid != nil {
+		u.TenantID = *tid
+	}
+	return u
+}
+
+// userCols is the column list used by the hand-written Update RETURNING clause.
+// The ordering matches exactly what Update scans via scanUser.
 const userCols = `id, tenant_id, email, email_verified_at, phone, phone_verified_at,
                   display_name, status, metadata, created_at, updated_at`
 
+// scanUser scans an 11-column user row (userCols, no avatar_url) into a User.
+// Used only by the hand-written Update path.
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
 	var meta []byte
-	// tenant_id is nullable (tenant-less user); scan via pointer.
 	var tid *uuid.UUID
 	if err := row.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
 		&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
@@ -86,13 +198,15 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 	if err != nil {
 		return nil, err
 	}
-	var displayName any
-	if in.DisplayName != "" {
-		displayName = in.DisplayName
-	}
-	var phone any
+	var phone *string
 	if in.Phone != "" {
-		phone = in.Phone
+		p := in.Phone
+		phone = &p
+	}
+	var displayName *string
+	if in.DisplayName != "" {
+		d := in.DisplayName
+		displayName = &d
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -101,13 +215,16 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 	}
 	defer tx.Rollback(ctx)
 
-	row := tx.QueryRow(ctx, `
-		INSERT INTO "user".users (tenant_id, email, phone, display_name, metadata)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+userCols,
-		in.TenantID, strings.TrimSpace(in.Email), phone, displayName, metaJSON,
-	)
-	u, err := scanUser(row)
+	// The sqlc-generated InsertUser and the raw cross-context password INSERT
+	// below all run on the same pgx.Tx — sqlc queries and hand-written SQL
+	// compose in one transaction.
+	row, err := r.q.WithTx(tx).InsertUser(ctx, dbgen.InsertUserParams{
+		TenantID:    uuidToPgtype(in.TenantID),
+		Email:       strings.TrimSpace(in.Email),
+		Phone:       phone,
+		DisplayName: displayName,
+		Metadata:    metaJSON,
+	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return nil, errs.ErrConflict.
@@ -119,6 +236,7 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 		}
 		return nil, err
 	}
+	u := userFromInsertRow(row)
 	if passwordHash != "" {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO auth.password_credentials (user_id, password_hash)
@@ -137,24 +255,14 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 // avatar_url (the profile + header read it via this path); keeping it out of
 // the shared userCols means the paginated users list never carries avatars.
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
-	var u User
-	var meta []byte
-	var tid *uuid.UUID
-	err := r.pool.QueryRow(ctx,
-		`SELECT `+userCols+`, avatar_url FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, id).
-		Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt, &u.Phone, &u.PhoneVerifiedAt,
-			&u.DisplayName, &u.Status, &meta, &u.CreatedAt, &u.UpdatedAt, &u.AvatarURL)
+	row, err := r.q.GetUserByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
 		return nil, err
 	}
-	if tid != nil {
-		u.TenantID = *tid
-	}
-	u.Metadata = parseUserMetadata(meta, u.ID)
-	return &u, nil
+	return userFromGetRow(row), nil
 }
 
 // TenantOf returns the tenant a user belongs to, regardless of soft-delete
@@ -162,42 +270,52 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
 // user or a tenant-less one. Used to enforce that admin by-id operations never
 // cross tenants (QID-18) — callers compare it to the requester's own tenant.
 func (r *Repository) TenantOf(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	var tid *uuid.UUID
-	err := r.pool.QueryRow(ctx, `SELECT tenant_id FROM "user".users WHERE id = $1`, id).Scan(&tid)
+	raw, err := r.q.GetUserTenantOf(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if tid == nil {
+	if !raw.Valid {
 		return uuid.Nil, errs.ErrNotFound
 	}
-	return *tid, nil
+	return uuid.UUID(raw.Bytes), nil
 }
 
 func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT `+userCols+`
-		FROM "user".users
-		WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
-	`, tenantID, email)
-	return scanUser(row)
+	row, err := r.q.GetUserByEmail(ctx, dbgen.GetUserByEmailParams{
+		TenantID: uuidToPgtype(tenantID),
+		Lower:    email,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return userFromEmailRow(row.ID, row.TenantID, row.Email, row.EmailVerifiedAt, row.Phone,
+		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
 // GetByEmailGlobal looks up a user by email across all tenants.
 // Email is enforced globally unique by migration 0022, so this returns
 // at most one row. Used by the tenant-less sign-in flow.
 func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT `+userCols+`
-		FROM "user".users
-		WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
-	`, email)
-	return scanUser(row)
+	row, err := r.q.GetUserByEmailGlobal(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return userFromEmailRow(row.ID, row.TenantID, row.Email, row.EmailVerifiedAt, row.Phone,
+		row.PhoneVerifiedAt, row.DisplayName, row.Status, row.Metadata, row.CreatedAt, row.UpdatedAt), nil
 }
 
 // ListByTenant returns a tenant's members, defined by rbac.user_roles membership (not users.tenant_id).
+// The roles subquery returns text[] which sqlc infers as interface{}; these two variants
+// remain hand-written so we can scan into the correct []string target type.
 func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string) ([]User, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -281,6 +399,9 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 	return out, next, nil
 }
 
+// Update applies a partial update. The SET clause is built dynamically from the
+// non-nil fields, so it intentionally stays hand-written (sqlc has no good story
+// for optional-column updates); it shares the domain's error/RETURNING conventions.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*User, error) {
 	ub := dbutil.NewUpdate()
 	if in.DisplayName != nil {
@@ -315,15 +436,11 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 }
 
 func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	ct, err := r.pool.Exec(ctx, `
-		UPDATE "user".users
-		SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL
-	`, id)
+	n, err := r.q.SoftDeleteUser(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -334,40 +451,38 @@ func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit 
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, email, display_name, deleted_at, created_at
-		FROM "user".users
-		WHERE tenant_id = $1 AND deleted_at IS NOT NULL
-		ORDER BY deleted_at DESC
-		LIMIT $2
-	`, tenantID, limit)
+	rows, err := r.q.ListDeletedUsers(ctx, dbgen.ListDeletedUsersParams{
+		TenantID: uuidToPgtype(tenantID),
+		Limit:    int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []DeletedUser{}
-	for rows.Next() {
-		var d DeletedUser
-		if err := rows.Scan(&d.ID, &d.Email, &d.DisplayName, &d.DeletedAt, &d.CreatedAt); err != nil {
-			return nil, err
+	for _, row := range rows {
+		d := DeletedUser{
+			ID:          row.ID,
+			Email:       row.Email,
+			DisplayName: row.DisplayName,
+			CreatedAt:   row.CreatedAt,
+		}
+		// The query filters WHERE deleted_at IS NOT NULL, so the value is always valid.
+		if row.DeletedAt.Valid {
+			d.DeletedAt = row.DeletedAt.Time
 		}
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Restore reverses a soft delete. Returns ErrNotFound if the user isn't
 // currently soft-deleted.
 func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
-	ct, err := r.pool.Exec(ctx, `
-		UPDATE "user".users
-		SET deleted_at = NULL, status = 'active', updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NOT NULL
-	`, id)
+	n, err := r.q.RestoreUser(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -376,32 +491,24 @@ func (r *Repository) Restore(ctx context.Context, id uuid.UUID) error {
 // Purge permanently removes a soft-deleted user (and, via ON DELETE CASCADE,
 // its sessions/credentials/identities). Only acts on already-soft-deleted rows.
 func (r *Repository) Purge(ctx context.Context, id uuid.UUID) error {
-	ct, err := r.pool.Exec(ctx, `DELETE FROM "user".users WHERE id = $1 AND deleted_at IS NOT NULL`, id)
+	n, err := r.q.PurgeUser(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
 }
 
 func (r *Repository) MarkEmailVerified(ctx context.Context, id uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE "user".users
-		SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL
-	`, id)
-	return err
+	return r.q.MarkEmailVerified(ctx, id)
 }
 
 // PasswordHash returns the bcrypt hash for the user, or "" if no password
 // credential exists.
 func (r *Repository) PasswordHash(ctx context.Context, id uuid.UUID) (string, error) {
-	var h string
-	err := r.pool.QueryRow(ctx, `
-		SELECT password_hash FROM auth.password_credentials WHERE user_id = $1
-	`, id).Scan(&h)
+	h, err := r.q.GetPasswordHash(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -409,10 +516,5 @@ func (r *Repository) PasswordHash(ctx context.Context, id uuid.UUID) (string, er
 }
 
 func (r *Repository) SetPassword(ctx context.Context, id uuid.UUID, hash string) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW()
-	`, id, hash)
-	return err
+	return r.q.SetPassword(ctx, dbgen.SetPasswordParams{UserID: id, PasswordHash: hash})
 }

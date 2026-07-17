@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/bot/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -97,9 +98,12 @@ type Stats struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool)}
+}
 
 // Evaluate scores an auth attempt's User-Agent and, when suspicious, records a
 // verdict scoped to the tenant the email belongs to. Best-effort: it never
@@ -110,14 +114,14 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	if score < recordFloor {
 		return // clearly human — don't log
 	}
-	var tenantID uuid.UUID
-	if err := s.pool.QueryRow(ctx, `
-		SELECT tenant_id FROM "user".users
-		WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
-		LIMIT 1
-	`, email).Scan(&tenantID); err != nil {
+	row, err := s.q.GetUserTenantByEmail(ctx, email)
+	if err != nil {
 		return // no tenant to scope the verdict to
 	}
+	if !row.Valid {
+		return
+	}
+	tenantID := uuid.UUID(row.Bytes)
 	settings, err := s.GetSettings(ctx, tenantID)
 	if err != nil || !settings.UACheck {
 		return // UA scoring disabled for this tenant
@@ -129,6 +133,8 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	case score >= challengeFloor:
 		verdict = "challenged"
 	}
+	// InsertBotEvent left raw: NULLIF($2,'')::inet causes sqlc parameter-type
+	// ambiguity for the inet cast.
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO auth.bot_events (tenant_id, ip, user_agent, score, verdict)
 		VALUES ($1, NULLIF($2,'')::inet, $3, $4, $5)
@@ -137,6 +143,9 @@ func (s *Service) Evaluate(ctx context.Context, email, ip, ua string) {
 	}
 }
 
+// Recent returns the most recent bot events for a tenant.
+// Left hand-written: COALESCE(host(ip),'') causes sqlc to generate interface{}
+// for the column type, preventing type-safe scanning.
 func (s *Service) Recent(ctx context.Context, tenantID uuid.UUID, limit int) ([]Event, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -162,36 +171,36 @@ func (s *Service) Recent(ctx context.Context, tenantID uuid.UUID, limit int) ([]
 }
 
 func (s *Service) Stats(ctx context.Context, tenantID uuid.UUID) (*Stats, error) {
-	st := Stats{}
-	if err := s.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE verdict = 'blocked' AND created_at >= NOW() - INTERVAL '24 hours'),
-			COUNT(*) FILTER (WHERE verdict = 'challenged' AND created_at >= NOW() - INTERVAL '24 hours')
-		FROM auth.bot_events WHERE tenant_id = $1
-	`, tenantID).Scan(&st.Blocked24h, &st.Challenged24h); err != nil {
+	row, err := s.q.GetBotEventStats(ctx, tenantID)
+	if err != nil {
 		return nil, err
 	}
 	settings, err := s.GetSettings(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	st.Threshold = settings.ScoreThreshold
-	return &st, nil
+	return &Stats{
+		Blocked24h:    int(row.Blocked24h),
+		Challenged24h: int(row.Challenged24h),
+		Threshold:     settings.ScoreThreshold,
+	}, nil
 }
 
 func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
-	var st Settings
-	err := s.pool.QueryRow(ctx, `
-		SELECT ua_check, honeypot, captcha, signature, score_threshold
-		FROM auth.bot_settings WHERE tenant_id = $1
-	`, tenantID).Scan(&st.UACheck, &st.Honeypot, &st.Captcha, &st.Signature, &st.ScoreThreshold)
+	row, err := s.q.GetBotSettings(ctx, tenantID)
 	if err == pgx.ErrNoRows {
 		return DefaultSettings(), nil
 	}
 	if err != nil {
 		return Settings{}, err
 	}
-	return st, nil
+	return Settings{
+		UACheck:        row.UaCheck,
+		Honeypot:       row.Honeypot,
+		Captcha:        row.Captcha,
+		Signature:      row.Signature,
+		ScoreThreshold: float64(row.ScoreThreshold),
+	}, nil
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (Settings, error) {
@@ -201,18 +210,14 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	if in.ScoreThreshold > 1 {
 		in.ScoreThreshold = 1
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.bot_settings (tenant_id, ua_check, honeypot, captcha, signature, score_threshold, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			ua_check = EXCLUDED.ua_check,
-			honeypot = EXCLUDED.honeypot,
-			captcha = EXCLUDED.captcha,
-			signature = EXCLUDED.signature,
-			score_threshold = EXCLUDED.score_threshold,
-			updated_at = NOW()
-	`, tenantID, in.UACheck, in.Honeypot, in.Captcha, in.Signature, in.ScoreThreshold)
-	if err != nil {
+	if err := s.q.UpsertBotSettings(ctx, dbgen.UpsertBotSettingsParams{
+		TenantID:       tenantID,
+		UaCheck:        in.UACheck,
+		Honeypot:       in.Honeypot,
+		Captcha:        in.Captcha,
+		Signature:      in.Signature,
+		ScoreThreshold: float32(in.ScoreThreshold),
+	}); err != nil {
 		return Settings{}, err
 	}
 	return in, nil
