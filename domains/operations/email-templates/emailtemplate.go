@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	emailtemplatedbgen "github.com/qeetgroup/qeet-id/domains/operations/email-templates/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -122,28 +123,26 @@ func Render(s string, vars map[string]string) string {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *emailtemplatedbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: emailtemplatedbgen.New(pool)}
+}
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // overrides returns the tenant's customised templates keyed by template_key.
 func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string][2]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT template_key, subject, body FROM tenant.email_templates WHERE tenant_id = $1`, tenantID)
+	rows, err := s.q.ListEmailTemplateOverrides(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := map[string][2]string{}
-	for rows.Next() {
-		var k, subj, body string
-		if err := rows.Scan(&k, &subj, &body); err != nil {
-			return nil, err
-		}
-		out[k] = [2]string{subj, body}
+	for _, r := range rows {
+		out[r.TemplateKey] = [2]string{r.Subject, r.Body}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, error) {
@@ -168,8 +167,9 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 	if !ok {
 		return nil, errs.ErrNotFound.WithDetail("unknown template key")
 	}
-	var subj, body string
-	err := s.pool.QueryRow(ctx, `SELECT subject, body FROM tenant.email_templates WHERE tenant_id = $1 AND template_key = $2`, tenantID, key).Scan(&subj, &body)
+	row, err := s.q.GetEmailTemplateOverride(ctx, emailtemplatedbgen.GetEmailTemplateOverrideParams{
+		TenantID: tenantID, TemplateKey: key,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		r := resolve(d, nil, nil)
 		return &r, nil
@@ -177,7 +177,7 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 	if err != nil {
 		return nil, err
 	}
-	r := resolve(d, &subj, &body)
+	r := resolve(d, &row.Subject, &row.Body)
 	return &r, nil
 }
 
@@ -189,11 +189,9 @@ func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key
 	if strings.TrimSpace(subject) == "" || strings.TrimSpace(body) == "" {
 		return nil, errs.ErrUnprocessable.WithDetail("subject and body are required")
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO tenant.email_templates (tenant_id, template_key, subject, body, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
-		ON CONFLICT (tenant_id, template_key) DO UPDATE SET subject = EXCLUDED.subject, body = EXCLUDED.body, updated_at = NOW()
-	`, tenantID, key, subject, body); err != nil {
+	if err := s.q.WithTx(tx).UpsertEmailTemplate(ctx, emailtemplatedbgen.UpsertEmailTemplateParams{
+		TenantID: tenantID, TemplateKey: key, Subject: subject, Body: body,
+	}); err != nil {
 		return nil, err
 	}
 	r := resolve(d, &subject, &body)
@@ -206,7 +204,9 @@ func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key 
 	if !ok {
 		return nil, errs.ErrNotFound.WithDetail("unknown template key")
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM tenant.email_templates WHERE tenant_id = $1 AND template_key = $2`, tenantID, key); err != nil {
+	if err := s.q.WithTx(tx).DeleteEmailTemplate(ctx, emailtemplatedbgen.DeleteEmailTemplateParams{
+		TenantID: tenantID, TemplateKey: key,
+	}); err != nil {
 		return nil, err
 	}
 	r := resolve(d, nil, nil)

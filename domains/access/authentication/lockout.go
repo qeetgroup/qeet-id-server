@@ -2,8 +2,13 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
 )
 
 // Brute-force lockout policy. After maxFailedLogins consecutive failed logins
@@ -21,14 +26,13 @@ const (
 // locked. A storage error returns "not locked" — the lockout is a throttle, not
 // the authentication decision, so a DB blip must never block a valid login.
 func (s *Service) loginLockedUntil(ctx context.Context, email string) (time.Time, bool) {
-	var until *time.Time
-	if err := s.pool.QueryRow(ctx,
-		`SELECT locked_until FROM auth.login_attempts WHERE email = $1`, email,
-	).Scan(&until); err != nil || until == nil {
+	row, err := s.q.GetLoginAttempt(ctx, email)
+	// pgx.ErrNoRows = no prior attempts; any other error = DB blip → both safe.
+	if errors.Is(err, pgx.ErrNoRows) || err != nil || !row.Valid {
 		return time.Time{}, false
 	}
-	if time.Now().Before(*until) {
-		return *until, true
+	if time.Now().Before(row.Time) {
+		return row.Time, true
 	}
 	return time.Time{}, false
 }
@@ -41,40 +45,25 @@ func (s *Service) recordFailedLogin(ctx context.Context, email string) {
 	now := time.Now()
 	windowStart := now.Add(-failureWindow)
 	lockUntil := now.Add(lockoutDuration)
-	// In ON CONFLICT DO UPDATE the existing row is referenced by the bare
-	// relation name (login_attempts), not the schema-qualified form. RETURNING
-	// the new counter lets us fire an anomaly exactly once, on the attempt that
-	// crosses the lockout threshold (not on every subsequent locked attempt).
-	var failedCount int
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO auth.login_attempts (email, failed_count, first_failed_at, last_failed_at)
-		VALUES ($1, 1, NOW(), NOW())
-		ON CONFLICT (email) DO UPDATE SET
-			failed_count = CASE
-				WHEN login_attempts.last_failed_at < $2 THEN 1
-				ELSE login_attempts.failed_count + 1 END,
-			first_failed_at = CASE
-				WHEN login_attempts.last_failed_at < $2 THEN NOW()
-				ELSE login_attempts.first_failed_at END,
-			last_failed_at = NOW(),
-			locked_until = CASE
-				WHEN (CASE
-					WHEN login_attempts.last_failed_at < $2 THEN 1
-					ELSE login_attempts.failed_count + 1 END) >= $3
-				THEN $4::timestamptz ELSE NULL END
-		RETURNING failed_count
-	`, email, windowStart, maxFailedLogins, lockUntil).Scan(&failedCount)
+	// RETURNING the new counter lets us fire an anomaly exactly once, on the
+	// attempt that crosses the lockout threshold (not on every subsequent one).
+	failedCount, err := s.q.UpsertLoginAttempt(ctx, dbgen.UpsertLoginAttemptParams{
+		Email:           email,
+		WindowStart:     windowStart,
+		MaxFailedLogins: int32(maxFailedLogins),
+		LockUntil:       lockUntil,
+	})
 	if err != nil {
 		slog.Warn("record failed login", "err", err)
 		return
 	}
 	// Exactly at the threshold = the attempt that just locked the account.
-	if failedCount == maxFailedLogins && s.anomaly != nil {
+	if int(failedCount) == maxFailedLogins && s.anomaly != nil {
 		s.anomaly.OnAccountLocked(ctx, email)
 	}
 }
 
 // clearLoginAttempts resets the counter after a successful login.
 func (s *Service) clearLoginAttempts(ctx context.Context, email string) {
-	_, _ = s.pool.Exec(ctx, `DELETE FROM auth.login_attempts WHERE email = $1`, email)
+	_ = s.q.DeleteLoginAttempt(ctx, email)
 }

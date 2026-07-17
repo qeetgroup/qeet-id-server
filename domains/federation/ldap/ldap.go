@@ -23,9 +23,11 @@ import (
 	goldap "github.com/go-ldap/ldap/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/federation/ldap/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -63,30 +65,45 @@ type connFull struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 	auth *auth.Service
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service) *Service {
-	return &Service{pool: pool, auth: authSvc}
+	return &Service{pool: pool, q: dbgen.New(pool), auth: authSvc}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-const pubCols = `id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
-                 base_dn, user_filter, email_attribute, name_attribute, status,
-                 created_at, updated_at, last_login_at`
-
-func scanConn(row pgx.Row) (*Connection, error) {
-	var c Connection
-	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.ServerURL, &c.StartTLS, &c.SkipTLSVerify,
-		&c.BindDN, &c.BaseDN, &c.UserFilter, &c.EmailAttribute, &c.NameAttribute, &c.Status,
-		&c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
+// pgLastLogin converts a nullable timestamptz to *time.Time for LastLoginAt.
+func pgLastLogin(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
 	}
-	return &c, nil
+	v := t.Time
+	return &v
+}
+
+// connFields fills in a Connection from the shared columns returned by all
+// ldap_connections queries (pubCols — no bind_password).
+func connFields(c *Connection, id, tenantID uuid.UUID, name, serverURL string, startTLS, skipTLSVerify bool,
+	bindDN, baseDN, userFilter, emailAttribute, nameAttribute, status string,
+	createdAt, updatedAt time.Time, lastLoginAt pgtype.Timestamptz) {
+	c.ID = id
+	c.TenantID = tenantID
+	c.Name = name
+	c.ServerURL = serverURL
+	c.StartTLS = startTLS
+	c.SkipTLSVerify = skipTLSVerify
+	c.BindDN = bindDN
+	c.BaseDN = baseDN
+	c.UserFilter = userFilter
+	c.EmailAttribute = emailAttribute
+	c.NameAttribute = nameAttribute
+	c.Status = status
+	c.CreatedAt = createdAt
+	c.UpdatedAt = updatedAt
+	c.LastLoginAt = pgLastLogin(lastLoginAt)
 }
 
 type CreateInput struct {
@@ -111,46 +128,68 @@ func defaulted(v, def string) string {
 }
 
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
-	row := tx.QueryRow(ctx, `
-		INSERT INTO tenant.ldap_connections
-			(tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn, bind_password,
-			 base_dn, user_filter, email_attribute, name_attribute, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-		RETURNING `+pubCols,
-		tenantID, in.Name, in.ServerURL, in.StartTLS, in.SkipTLSVerify, in.BindDN, in.BindPassword,
-		in.BaseDN, defaulted(in.UserFilter, "(uid=%s)"), defaulted(in.EmailAttribute, "mail"),
-		defaulted(in.NameAttribute, "cn"), defaulted(in.Status, "draft"))
-	return scanConn(row)
-}
-
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+pubCols+` FROM tenant.ldap_connections WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	r, err := s.q.WithTx(tx).InsertLdapConnection(ctx, dbgen.InsertLdapConnectionParams{
+		TenantID:       tenantID,
+		Name:           in.Name,
+		ServerUrl:      in.ServerURL,
+		StartTls:       in.StartTLS,
+		SkipTlsVerify:  in.SkipTLSVerify,
+		BindDn:         in.BindDN,
+		BindPassword:   in.BindPassword,
+		BaseDn:         in.BaseDN,
+		UserFilter:     defaulted(in.UserFilter, "(uid=%s)"),
+		EmailAttribute: defaulted(in.EmailAttribute, "mail"),
+		NameAttribute:  defaulted(in.NameAttribute, "cn"),
+		Status:         defaulted(in.Status, "draft"),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Connection
-	for rows.Next() {
-		var c Connection
-		if err := rows.Scan(&c.ID, &c.TenantID, &c.Name, &c.ServerURL, &c.StartTLS, &c.SkipTLSVerify,
-			&c.BindDN, &c.BaseDN, &c.UserFilter, &c.EmailAttribute, &c.NameAttribute, &c.Status,
-			&c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
+	var c Connection
+	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+	return &c, nil
+}
+
+func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
+	rows, err := s.q.ListLdapConnections(ctx, tenantID)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	out := make([]Connection, len(rows))
+	for i, r := range rows {
+		connFields(&out[i], r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+			r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
+			r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+	}
+	return out, nil
 }
 
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
-	return scanConn(s.pool.QueryRow(ctx, `SELECT `+pubCols+` FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2`, id, tenantID))
+	r, err := s.q.GetLdapConnection(ctx, dbgen.GetLdapConnectionParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var c Connection
+	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+	return &c, nil
 }
 
 // getFull loads a connection including its bind secret. tenantID may be uuid.Nil
 // to skip tenant scoping (the public authenticate path keys off the connection
-// UUID in the URL).
+// UUID in the URL). Dynamic WHERE — stays hand-written.
 func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFull, error) {
-	q := `SELECT ` + pubCols + `, bind_password FROM tenant.ldap_connections WHERE id = $1`
+	const base = `SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+	              base_dn, user_filter, email_attribute, name_attribute, status,
+	              created_at, updated_at, last_login_at, bind_password
+	              FROM tenant.ldap_connections WHERE id = $1`
+	q := base
 	args := []any{id}
 	if tenantID != uuid.Nil {
 		q += ` AND tenant_id = $2`
@@ -184,33 +223,40 @@ type UpdateInput struct {
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
-	row := tx.QueryRow(ctx, `
-		UPDATE tenant.ldap_connections SET
-			name            = COALESCE($3, name),
-			server_url      = COALESCE($4, server_url),
-			start_tls       = COALESCE($5, start_tls),
-			skip_tls_verify = COALESCE($6, skip_tls_verify),
-			bind_dn         = COALESCE($7, bind_dn),
-			bind_password   = COALESCE($8, bind_password),
-			base_dn         = COALESCE($9, base_dn),
-			user_filter     = COALESCE($10, user_filter),
-			email_attribute = COALESCE($11, email_attribute),
-			name_attribute  = COALESCE($12, name_attribute),
-			status          = COALESCE($13, status),
-			updated_at      = NOW()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING `+pubCols,
-		id, tenantID, in.Name, in.ServerURL, in.StartTLS, in.SkipTLSVerify, in.BindDN, in.BindPassword,
-		in.BaseDN, in.UserFilter, in.EmailAttribute, in.NameAttribute, in.Status)
-	return scanConn(row)
+	r, err := s.q.WithTx(tx).UpdateLdapConnection(ctx, dbgen.UpdateLdapConnectionParams{
+		ID:             id,
+		TenantID:       tenantID,
+		Name:           in.Name,
+		ServerUrl:      in.ServerURL,
+		StartTls:       in.StartTLS,
+		SkipTlsVerify:  in.SkipTLSVerify,
+		BindDn:         in.BindDN,
+		BindPassword:   in.BindPassword,
+		BaseDn:         in.BaseDN,
+		UserFilter:     in.UserFilter,
+		EmailAttribute: in.EmailAttribute,
+		NameAttribute:  in.NameAttribute,
+		Status:         in.Status,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var c Connection
+	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
+		r.BindDn, r.BaseDn, r.UserFilter, r.EmailAttribute, r.NameAttribute, r.Status,
+		r.CreatedAt, r.UpdatedAt, r.LastLoginAt)
+	return &c, nil
 }
 
 func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `DELETE FROM tenant.ldap_connections WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.WithTx(tx).DeleteLdapConnection(ctx, dbgen.DeleteLdapConnectionParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -326,12 +372,13 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		return uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
 
-	var userID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		SELECT user_id FROM "user".external_identities
-		WHERE tenant_id = $1 AND provider = $2 AND subject = $3
-	`, tenantID, provider, u.DN).Scan(&userID)
+	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
+		TenantID: tenantID,
+		Provider: provider,
+		Subject:  u.DN,
+	})
 	if err == nil {
 		return userID, tx.Commit(ctx)
 	}
@@ -339,30 +386,32 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		return uuid.Nil, err
 	}
 
-	err = tx.QueryRow(ctx, `
-		SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
-	`, u.Email).Scan(&userID)
+	userID, err = q.GetUserByEmail(ctx, u.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		var displayName any
+		var displayName *string
 		if u.Name != "" {
-			displayName = u.Name
+			displayName = &u.Name
 		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
-			VALUES ($1, $2, NOW(), $3, 'active')
-			RETURNING id
-		`, tenantID, u.Email, displayName).Scan(&userID); err != nil {
+		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
+			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
+			Email:       u.Email,
+			DisplayName: displayName,
+		})
+		if err != nil {
 			return uuid.Nil, err
 		}
 	} else if err != nil {
 		return uuid.Nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tenant_id, provider, subject) DO NOTHING
-	`, userID, tenantID, provider, u.DN, u.Email); err != nil {
+	email := u.Email
+	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
+		UserID:   userID,
+		TenantID: tenantID,
+		Provider: provider,
+		Subject:  u.DN,
+		Email:    &email,
+	}); err != nil {
 		return uuid.Nil, err
 	}
 	return userID, tx.Commit(ctx)
@@ -385,7 +434,7 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.pool.Exec(ctx, `UPDATE tenant.ldap_connections SET last_login_at = NOW() WHERE id = $1`, connID)
+	_ = s.q.TouchLdapLastLogin(ctx, connID)
 	return s.auth.IssuePair(ctx, userID, c.TenantID, ip, ua, provider)
 }
 

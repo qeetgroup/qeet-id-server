@@ -11,8 +11,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -33,6 +35,7 @@ type AuditCtx struct {
 
 type Service struct {
 	pool       *pgxpool.Pool
+	q          *dbgen.Queries
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string // e.g. "https://app.qeet.com" — used for magic-link login links
@@ -49,7 +52,7 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	return &Service{pool: pool, sender: sender, ttl: ttl, baseAppURL: baseAppURL, loginBaseURL: loginBaseURL}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL, loginBaseURL: loginBaseURL}
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
@@ -59,11 +62,10 @@ func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 // StartPasswordReset always succeeds from the caller's perspective so we
 // don't leak whether an email is registered.
 func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, email string) error {
-	var userID uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		SELECT id FROM "user".users
-		WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
-	`, tenantID, email).Scan(&userID)
+	userID, err := s.q.GetUserIDByEmailForTenant(ctx, dbgen.GetUserIDByEmailForTenantParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Lower:    email,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -74,10 +76,11 @@ func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, em
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.password_resets (user_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, userID, hash, time.Now().UTC().Add(s.ttl)); err != nil {
+	if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
+		UserID:    userID,
+		TokenHash: hash,
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+	}); err != nil {
 		return err
 	}
 	return s.sender.Send(ctx, notifier.Message{
@@ -108,45 +111,38 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	defer tx.Rollback(ctx)
 
-	var id, userID uuid.UUID
-	var expiresAt time.Time
-	var usedAt *time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT id, user_id, expires_at, used_at
-		FROM auth.password_resets
-		WHERE token_hash = $1
-		FOR UPDATE
-	`, hash).Scan(&id, &userID, &expiresAt, &usedAt)
+	qtx := s.q.WithTx(tx)
+	row, err := qtx.GetPasswordResetByToken(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrBadRequest.WithDetail("invalid token")
 		}
 		return err
 	}
-	if usedAt != nil {
+	if row.UsedAt.Valid {
 		return errs.ErrBadRequest.WithDetail("token already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return errs.ErrBadRequest.WithDetail("token expired")
 	}
 	pwHash, err := password.Hash(newPassword)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW()
-	`, userID, pwHash); err != nil {
+	if err := qtx.UpsertPasswordCredential(ctx, dbgen.UpsertPasswordCredentialParams{
+		UserID:       row.UserID,
+		PasswordHash: pwHash,
+	}); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.password_resets SET used_at = NOW() WHERE id = $1`, id); err != nil {
+	if err := qtx.MarkPasswordResetUsed(ctx, row.ID); err != nil {
 		return err
 	}
 	// Invalidate all existing sessions on password reset.
-	if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL`, userID); err != nil {
+	if err := qtx.RevokeUserSessions(ctx, row.UserID); err != nil {
 		return err
 	}
+	userID := row.UserID
 	target := userID
 	if err := audit.Record(ctx, tx, audit.Event{
 		ActorUserID:  &target,
@@ -170,10 +166,12 @@ func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email 
 	if err != nil {
 		return err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, tenantID, email, hash, time.Now().UTC().Add(s.ttl)); err != nil {
+	if err := s.q.InsertMagicLink(ctx, dbgen.InsertMagicLinkParams{
+		TenantID:  tenantID,
+		Email:     email,
+		TokenHash: hash,
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+	}); err != nil {
 		return err
 	}
 	return s.sender.Send(ctx, notifier.Message{
@@ -199,39 +197,31 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac Audi
 	}
 	defer tx.Rollback(ctx)
 
+	qtx := s.q.WithTx(tx)
 	hash := codes.Hash(rawToken)
-	var id uuid.UUID
-	var tenantID uuid.UUID
-	var email string
-	var expiresAt time.Time
-	var usedAt *time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT id, tenant_id, email, expires_at, used_at
-		FROM auth.magic_links
-		WHERE token_hash = $1
-		FOR UPDATE
-	`, hash).Scan(&id, &tenantID, &email, &expiresAt, &usedAt)
+	mlRow, err := qtx.GetMagicLinkByToken(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrBadRequest.WithDetail("invalid token")
 		}
 		return nil, err
 	}
-	if usedAt != nil {
+	if mlRow.UsedAt.Valid {
 		return nil, errs.ErrBadRequest.WithDetail("token already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(mlRow.ExpiresAt) {
 		return nil, errs.ErrBadRequest.WithDetail("token expired")
 	}
-	var userID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		SELECT id FROM "user".users
-		WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND deleted_at IS NULL
-	`, tenantID, email).Scan(&userID)
+	tenantID := mlRow.TenantID
+	email := mlRow.Email
+	userID, err := qtx.GetUserIDByEmailForTenant(ctx, dbgen.GetUserIDByEmailForTenantParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Lower:    email,
+	})
 	if err != nil {
 		return nil, errs.ErrNotFound.WithDetail("no user for email")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.magic_links SET used_at = NOW() WHERE id = $1`, id); err != nil {
+	if err := qtx.MarkMagicLinkUsed(ctx, mlRow.ID); err != nil {
 		return nil, err
 	}
 	tid := tenantID

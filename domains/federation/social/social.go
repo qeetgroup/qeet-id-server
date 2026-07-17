@@ -15,9 +15,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	auth "github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/federation/social/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -45,6 +47,7 @@ type ExternalIdentity struct {
 
 type Service struct {
 	pool       *pgxpool.Pool
+	q          *dbgen.Queries
 	auth       *auth.Service
 	appBaseURL string
 	oauth      *oauthClient
@@ -53,6 +56,7 @@ type Service struct {
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
 	return &Service{
 		pool:       pool,
+		q:          dbgen.New(pool),
 		auth:       authSvc,
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 		oauth:      newOAuthClient(),
@@ -68,40 +72,44 @@ type CreateProviderInput struct {
 }
 
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
-	var p Provider
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, discovery_url)
-		VALUES ($1, $2, $3, $4, NULLIF($5,''))
-		ON CONFLICT (tenant_id, provider) DO UPDATE SET
-			client_id = EXCLUDED.client_id,
-			client_secret = EXCLUDED.client_secret,
-			discovery_url = EXCLUDED.discovery_url,
-			enabled = TRUE
-		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
-	`, in.TenantID, in.Provider, in.ClientID, in.ClientSecret, in.DiscoveryURL).
-		Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt)
+	r, err := s.q.UpsertSocialProvider(ctx, dbgen.UpsertSocialProviderParams{
+		TenantID:     in.TenantID,
+		Provider:     in.Provider,
+		ClientID:     in.ClientID,
+		ClientSecret: in.ClientSecret,
+		DiscoveryUrl: in.DiscoveryURL,
+	})
 	if err != nil {
 		return nil, err
+	}
+	p := Provider{
+		ID:           r.ID,
+		TenantID:     r.TenantID,
+		Provider:     r.Provider,
+		ClientID:     r.ClientID,
+		DiscoveryURL: r.DiscoveryUrl,
+		Enabled:      r.Enabled,
+		CreatedAt:    r.CreatedAt,
 	}
 	return &p, nil
 }
 
 func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
-		FROM tenant.social_providers WHERE tenant_id = $1 ORDER BY provider
-	`, tenantID)
+	rows, err := s.q.ListSocialProviders(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Provider
-	for rows.Next() {
-		var p Provider
-		if err := rows.Scan(&p.ID, &p.TenantID, &p.Provider, &p.ClientID, &p.DiscoveryURL, &p.Enabled, &p.CreatedAt); err != nil {
-			return nil, err
+	out := make([]Provider, len(rows))
+	for i, r := range rows {
+		out[i] = Provider{
+			ID:           r.ID,
+			TenantID:     r.TenantID,
+			Provider:     r.Provider,
+			ClientID:     r.ClientID,
+			DiscoveryURL: r.DiscoveryUrl,
+			Enabled:      r.Enabled,
+			CreatedAt:    r.CreatedAt,
 		}
-		out = append(out, p)
 	}
 	return out, nil
 }
@@ -109,35 +117,38 @@ func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Prov
 func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID) ([]ExternalIdentity, error) {
 	// Tenant-scoped so one tenant can't read another's linked identities;
 	// the deleted_at join keeps soft-deleted users out of admin lookups.
-	rows, err := s.pool.Query(ctx, `
-		SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
-		FROM "user".external_identities ei
-		JOIN "user".users u ON u.id = ei.user_id
-		WHERE ei.user_id = $1 AND ei.tenant_id = $2 AND u.deleted_at IS NULL
-		ORDER BY ei.linked_at DESC
-	`, userID, tenantID)
+	rows, err := s.q.ListExternalIdentities(ctx, dbgen.ListExternalIdentitiesParams{
+		UserID:   userID,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []ExternalIdentity
-	for rows.Next() {
-		var e ExternalIdentity
-		if err := rows.Scan(&e.ID, &e.UserID, &e.TenantID, &e.Provider, &e.Subject, &e.Email, &e.LinkedAt); err != nil {
-			return nil, err
+	out := make([]ExternalIdentity, len(rows))
+	for i, r := range rows {
+		out[i] = ExternalIdentity{
+			ID:       r.ID,
+			UserID:   r.UserID,
+			TenantID: r.TenantID,
+			Provider: r.Provider,
+			Subject:  r.Subject,
+			Email:    r.Email,
+			LinkedAt: r.LinkedAt,
 		}
-		out = append(out, e)
 	}
 	return out, nil
 }
 
 // Unlink is tenant-scoped so an identity can only be removed within its tenant.
 func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM "user".external_identities WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteExternalIdentity(ctx, dbgen.DeleteExternalIdentityParams{
+		ID:       id,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -164,8 +175,7 @@ func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, err
 	if id, err := uuid.Parse(ref); err == nil {
 		return id, nil
 	}
-	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, `SELECT id FROM tenant.tenants WHERE slug = $1`, ref).Scan(&id)
+	id, err := s.q.GetTenantIDBySlug(ctx, ref)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrNotFound.WithDetail("unknown tenant")
 	}
@@ -178,25 +188,25 @@ func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, err
 // loadProvider returns an enabled, discovery-based provider config for a tenant.
 func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider string) (providerConfig, error) {
 	var pc providerConfig
-	var discovery *string
-	var enabled bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT client_id, client_secret, discovery_url, enabled
-		FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&pc.clientID, &pc.clientSecret, &discovery, &enabled)
+	r, err := s.q.LoadSocialProvider(ctx, dbgen.LoadSocialProviderParams{
+		TenantID: tenantID,
+		Provider: provider,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pc, errs.ErrNotFound.WithDetail("provider not configured")
 	}
 	if err != nil {
 		return pc, err
 	}
-	if !enabled {
+	if !r.Enabled {
 		return pc, errs.ErrBadRequest.WithDetail("provider disabled")
 	}
-	if discovery == nil || *discovery == "" {
+	if r.DiscoveryUrl == nil || *r.DiscoveryUrl == "" {
 		return pc, errs.ErrBadRequest.WithDetail("provider has no discovery_url (OIDC discovery required)")
 	}
-	pc.discoveryURL = *discovery
+	pc.clientID = r.ClientID
+	pc.clientSecret = r.ClientSecret
+	pc.discoveryURL = *r.DiscoveryUrl
 	return pc, nil
 }
 
@@ -224,10 +234,15 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.social_oauth_states (state_hash, tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, stateHash, tenantID, provider, verifier, redirectURI, returnTo, time.Now().UTC().Add(socialStateTTL)); err != nil {
+	if err := s.q.InsertSocialOAuthState(ctx, dbgen.InsertSocialOAuthStateParams{
+		StateHash:    stateHash,
+		TenantID:     tenantID,
+		Provider:     provider,
+		CodeVerifier: verifier,
+		RedirectUri:  redirectURI,
+		ReturnTo:     returnTo,
+		ExpiresAt:    time.Now().UTC().Add(socialStateTTL),
+	}); err != nil {
 		return "", err
 	}
 	q := url.Values{
@@ -265,33 +280,22 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	}
 	stateHash := codes.Hash(state)
 
-	var (
-		tenantID       uuid.UUID
-		dbProvider     string
-		verifier       string
-		storedRedirect string
-		returnTo       string
-		expiresAt      time.Time
-	)
 	// Single-use: delete the state row as we read it.
-	err := s.pool.QueryRow(ctx, `
-		DELETE FROM auth.social_oauth_states WHERE state_hash = $1
-		RETURNING tenant_id, provider, code_verifier, redirect_uri, return_to, expires_at
-	`, stateHash).Scan(&tenantID, &dbProvider, &verifier, &storedRedirect, &returnTo, &expiresAt)
+	st, err := s.q.ConsumeSocialOAuthState(ctx, stateHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrBadRequest.WithDetail("invalid or used state")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if dbProvider != provider {
+	if st.Provider != provider {
 		return nil, errs.ErrBadRequest.WithDetail("provider mismatch")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(st.ExpiresAt) {
 		return nil, errs.ErrBadRequest.WithDetail("state expired")
 	}
 
-	pc, err := s.loadProvider(ctx, tenantID, provider)
+	pc, err := s.loadProvider(ctx, st.TenantID, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +303,7 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	if err != nil {
 		return nil, errs.ErrUnprocessable.WithDetail("provider discovery failed")
 	}
-	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, storedRedirect, verifier)
+	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, st.RedirectUri, st.CodeVerifier)
 	if err != nil {
 		return nil, errs.ErrUnprocessable.WithDetail("token exchange failed")
 	}
@@ -311,7 +315,7 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, errs.ErrBadRequest.WithDetail("provider did not return an email")
 	}
 
-	userID, err := s.findOrCreateUser(ctx, tenantID, provider, ui)
+	userID, err := s.findOrCreateUser(ctx, st.TenantID, provider, ui)
 	if err != nil {
 		return nil, err
 	}
@@ -320,33 +324,21 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.social_login_codes (code_hash, user_id, tenant_id, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, codeHash, userID, tenantID, time.Now().UTC().Add(socialCodeTTL)); err != nil {
+	if err := s.q.InsertSocialLoginCode(ctx, dbgen.InsertSocialLoginCodeParams{
+		CodeHash:  codeHash,
+		UserID:    userID,
+		TenantID:  st.TenantID,
+		ExpiresAt: time.Now().UTC().Add(socialCodeTTL),
+	}); err != nil {
 		return nil, err
 	}
-	return &CallbackResult{Code: rawCode, ReturnTo: returnTo, UserID: userID, TenantID: tenantID}, nil
+	return &CallbackResult{Code: rawCode, ReturnTo: st.ReturnTo, UserID: userID, TenantID: st.TenantID}, nil
 }
 
 // EnabledProviderNames returns the names of a tenant's enabled social providers
 // (for the hosted login app to render buttons). Satisfies oidc.ProviderLister.
 func (s *Service) EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT provider FROM tenant.social_providers WHERE tenant_id = $1 AND enabled ORDER BY provider`, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return s.q.EnabledSocialProviderNames(ctx, tenantID)
 }
 
 // StartLoginSession mints a hosted-login SSO session for a social-authenticated
@@ -365,11 +357,13 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	}
 	defer tx.Rollback(ctx)
 
-	var userID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		SELECT user_id FROM "user".external_identities
-		WHERE tenant_id = $1 AND provider = $2 AND subject = $3
-	`, tenantID, provider, ui.Subject).Scan(&userID)
+	q := s.q.WithTx(tx)
+
+	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
+		TenantID: tenantID,
+		Provider: provider,
+		Subject:  ui.Subject,
+	})
 	if err == nil {
 		return userID, tx.Commit(ctx)
 	}
@@ -379,30 +373,35 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 
 	// No linked identity yet: reuse a user with the same (globally-unique)
 	// email, else create one.
-	err = tx.QueryRow(ctx, `
-		SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
-	`, ui.Email).Scan(&userID)
+	userID, err = q.GetUserByEmail(ctx, ui.Email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		var displayName any
+		var displayName *string
 		if ui.Name != "" {
-			displayName = ui.Name
+			displayName = &ui.Name
 		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
-			VALUES ($1, $2, NOW(), $3, 'active')
-			RETURNING id
-		`, tenantID, ui.Email, displayName).Scan(&userID); err != nil {
+		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
+			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
+			Email:       ui.Email,
+			DisplayName: displayName,
+		})
+		if err != nil {
 			return uuid.Nil, err
 		}
 	} else if err != nil {
 		return uuid.Nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tenant_id, provider, subject) DO NOTHING
-	`, userID, tenantID, provider, ui.Subject, ui.Email); err != nil {
+	var emailPtr *string
+	if ui.Email != "" {
+		emailPtr = &ui.Email
+	}
+	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
+		UserID:   userID,
+		TenantID: tenantID,
+		Provider: provider,
+		Subject:  ui.Subject,
+		Email:    emailPtr,
+	}); err != nil {
 		return uuid.Nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -424,35 +423,28 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	}
 	defer tx.Rollback(ctx)
 
-	var (
-		userID    uuid.UUID
-		tenantID  uuid.UUID
-		expiresAt time.Time
-		usedAt    *time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at, used_at
-		FROM auth.social_login_codes WHERE code_hash = $1 FOR UPDATE
-	`, codeHash).Scan(&userID, &tenantID, &expiresAt, &usedAt)
+	q := s.q.WithTx(tx)
+
+	row, err := q.ConsumeSocialLoginCode(ctx, codeHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid code")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if usedAt != nil {
+	if row.UsedAt.Valid {
 		return nil, errs.ErrUnauthorized.WithDetail("code already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return nil, errs.ErrUnauthorized.WithDetail("code expired")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = $1`, codeHash); err != nil {
+	if err := q.MarkSocialLoginCodeUsed(ctx, codeHash); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, "social")
+	return s.auth.IssuePair(ctx, row.UserID, row.TenantID, ip, ua, "social")
 }
 
 type Handler struct {

@@ -16,9 +16,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -42,6 +44,7 @@ type Client struct {
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	issuer *tokens.Issuer
 	// notifier delivers the CIBA async consent prompt (nil = no notification;
 	// the user must know to check pending requests themselves). See ciba.go.
@@ -49,7 +52,7 @@ type Service struct {
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, issuer: issuer}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
 type CreateClientInput struct {
@@ -99,20 +102,26 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		}
 		secretHash = &hash
 	}
-	var c Client
-	err := tx.QueryRow(ctx, `
-		INSERT INTO auth.oidc_clients (
-			tenant_id, client_id, client_secret_hash, type, name,
-			redirect_uris, post_logout_uris, grant_types, scopes
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-		          post_logout_uris, grant_types, scopes, created_at
-	`, in.TenantID, clientID, secretHash, in.Type, in.Name,
-		in.RedirectURIs, in.PostLogoutURIs, in.GrantTypes, in.Scopes).
-		Scan(&c.ID, &c.TenantID, &c.ClientID, &c.Type, &c.Name,
-			&c.RedirectURIs, &c.PostLogoutURIs, &c.GrantTypes, &c.Scopes, &c.CreatedAt)
+	q := s.q.WithTx(tx)
+	row, err := q.InsertOIDCClient(ctx, dbgen.InsertOIDCClientParams{
+		TenantID:         in.TenantID,
+		ClientID:         clientID,
+		ClientSecretHash: secretHash,
+		Type:             in.Type,
+		Name:             in.Name,
+		RedirectUris:     in.RedirectURIs,
+		PostLogoutUris:   in.PostLogoutURIs,
+		GrantTypes:       in.GrantTypes,
+		Scopes:           in.Scopes,
+	})
 	if err != nil {
 		return nil, "", err
+	}
+	c := Client{
+		ID: row.ID, TenantID: row.TenantID, ClientID: row.ClientID,
+		Type: row.Type, Name: row.Name,
+		RedirectURIs: row.RedirectUris, PostLogoutURIs: row.PostLogoutUris,
+		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
 	}
 	return &c, raw, nil
 }
@@ -141,47 +150,36 @@ var machineGrantTypes = []string{"client_credentials", grantTypeTokenExchange}
 // grant_types include a machine grant type, ordered by live-grant count so
 // the ones actually in active use surface first.
 func (s *Service) ShadowAICandidates(ctx context.Context, tenantID uuid.UUID) ([]ShadowAICandidate, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.client_id, c.name, c.grant_types, c.created_at,
-		       COALESCE(g.live, 0) AS live_grants
-		FROM auth.oidc_clients c
-		LEFT JOIN (
-			SELECT client_id, COUNT(*) AS live
-			FROM auth.oidc_refresh_tokens
-			WHERE revoked_at IS NULL AND expires_at > NOW()
-			GROUP BY client_id
-		) g ON g.client_id = c.client_id
-		WHERE c.tenant_id = $1
-		  AND c.reviewed_at IS NULL
-		  AND c.grant_types && $2::text[]
-		ORDER BY live_grants DESC, c.created_at DESC
-	`, tenantID, machineGrantTypes)
+	rows, err := s.q.ListShadowAICandidates(ctx, dbgen.ListShadowAICandidatesParams{
+		TenantID:          tenantID,
+		MachineGrantTypes: machineGrantTypes,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]ShadowAICandidate, 0)
-	for rows.Next() {
-		var c ShadowAICandidate
-		if err := rows.Scan(&c.ID, &c.ClientID, &c.Name, &c.GrantTypes, &c.CreatedAt, &c.LiveGrants); err != nil {
-			return nil, err
+	out := make([]ShadowAICandidate, len(rows))
+	for i, r := range rows {
+		out[i] = ShadowAICandidate{
+			ID: r.ID, ClientID: r.ClientID, Name: r.Name,
+			GrantTypes: r.GrantTypes, LiveGrants: int(r.LiveGrants),
+			CreatedAt: r.CreatedAt,
 		}
-		out = append(out, c)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ReviewShadowAIClient acknowledges a shadow-AI candidate, dropping it off
 // ShadowAICandidates until/unless its grant_types change again.
 func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, reviewerUserID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE auth.oidc_clients SET reviewed_at = NOW(), reviewed_by = $1
-		WHERE id = $2 AND tenant_id = $3
-	`, reviewerUserID, id, tenantID)
+	n, err := s.q.ReviewOIDCClient(ctx, dbgen.ReviewOIDCClientParams{
+		ReviewedBy: pgtype.UUID{Bytes: reviewerUserID, Valid: true},
+		ID:         id,
+		TenantID:   tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -192,24 +190,18 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 // from the client itself (the browser-facing flow has no user JWT to carry it).
 // Returns the raw code and the resolved tenant id.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
-	var tenantID uuid.UUID
-	var dbScopes []string
-	var dbRedirectURIs []string
-	err := s.pool.QueryRow(ctx, `
-		SELECT tenant_id, scopes, redirect_uris FROM auth.oidc_clients
-		WHERE client_id = $1
-	`, clientID).Scan(&tenantID, &dbScopes, &dbRedirectURIs)
+	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("unknown client")
 	}
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	if !contains(dbRedirectURIs, redirectURI) {
+	if !contains(info.RedirectUris, redirectURI) {
 		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("redirect_uri not registered")
 	}
 	for _, sc := range scopes {
-		if !contains(dbScopes, sc) {
+		if !contains(info.Scopes, sc) {
 			return "", uuid.Nil, errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
 		}
 	}
@@ -217,37 +209,41 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO auth.oidc_authorization_codes (
-			code_hash, client_id, user_id, tenant_id, redirect_uri,
-			scopes, nonce, code_challenge, code_challenge_method, expires_at
-		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), NOW() + INTERVAL '10 minutes')
-	`, hash, clientID, userID, tenantID, redirectURI, scopes, nonce, challenge, challengeMethod)
+	err = s.q.InsertAuthorizationCode(ctx, dbgen.InsertAuthorizationCodeParams{
+		CodeHash:            hash,
+		ClientID:            clientID,
+		UserID:              userID,
+		TenantID:            info.TenantID,
+		RedirectUri:         redirectURI,
+		Scopes:              scopes,
+		Nonce:               nonce,
+		CodeChallenge:       challenge,
+		CodeChallengeMethod: challengeMethod,
+	})
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	return raw, tenantID, nil
+	return raw, info.TenantID, nil
 }
 
 // ClientName resolves a client's display name and tenant from its client_id —
 // used to render the hosted login/consent screens. Returns ErrNotFound for an
 // unknown client.
 func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
-	err = s.pool.QueryRow(ctx,
-		`SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = $1`, clientID).
-		Scan(&name, &tenantID)
+	row, err := s.q.GetClientName(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrNotFound
 	}
-	return name, tenantID, err
+	if err != nil {
+		return "", uuid.Nil, err
+	}
+	return row.Name, row.TenantID, nil
 }
 
 // ValidatePostLogoutRedirect reports whether uri is one of the client's
 // registered post-logout redirect URIs (RP-Initiated Logout).
 func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri string) (bool, error) {
-	var uris []string
-	err := s.pool.QueryRow(ctx,
-		`SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = $1`, clientID).Scan(&uris)
+	uris, err := s.q.GetClientPostLogoutURIs(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -260,10 +256,7 @@ func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri 
 // HasConsent reports whether the user has already granted the client every
 // requested scope (so the consent screen can be skipped).
 func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (bool, error) {
-	var granted []string
-	err := s.pool.QueryRow(ctx,
-		`SELECT scopes FROM auth.oidc_consents WHERE user_id = $1 AND client_id = $2`,
-		userID, clientID).Scan(&granted)
+	granted, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -281,12 +274,7 @@ func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID str
 // GrantConsent records the user's approval of a client for the given scopes,
 // replacing any prior grant for that (user, client) pair.
 func (s *Service) GrantConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.oidc_consents (user_id, client_id, scopes, granted_at)
-		VALUES ($1, $2, $3, NOW())
-		ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = $3, granted_at = NOW()
-	`, userID, clientID, scopes)
-	return err
+	return s.q.UpsertConsent(ctx, dbgen.UpsertConsentParams{UserID: userID, ClientID: clientID, Scopes: scopes})
 }
 
 type TokenResponse struct {
@@ -308,24 +296,19 @@ const (
 
 // authenticateClient verifies a confidential client's secret and returns its grant types.
 func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) ([]string, error) {
-	var secretHash *string
-	var dbType string
-	var grantTypes []string
-	err := s.pool.QueryRow(ctx, `
-		SELECT client_secret_hash, type, grant_types FROM auth.oidc_clients WHERE client_id = $1
-	`, clientID).Scan(&secretHash, &dbType, &grantTypes)
+	row, err := s.q.GetClientForAuth(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown client")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if dbType == "confidential" {
-		if secretHash == nil || !password.Verify(*secretHash, clientSecret) {
+	if row.Type == "confidential" {
+		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
 			return nil, errs.ErrUnauthorized.WithDetail("invalid client secret")
 		}
 	}
-	return grantTypes, nil
+	return row.GrantTypes, nil
 }
 
 // TokenExchange implements RFC 8693 in its downscoping form: a confidential
@@ -450,35 +433,27 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 	defer tx.Rollback(ctx)
 
-	var (
-		userID, tenantID uuid.UUID
-		dbRedirect       string
-		scopes           []string
-		nonce            *string
-		challenge        *string
-		method           *string
-		expiresAt        time.Time
-		usedAt           *time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, redirect_uri, scopes, nonce, code_challenge, code_challenge_method, expires_at, used_at
-		FROM auth.oidc_authorization_codes
-		WHERE code_hash = $1 AND client_id = $2
-		FOR UPDATE
-	`, hash, clientID).Scan(&userID, &tenantID, &dbRedirect, &scopes, &nonce, &challenge, &method, &expiresAt, &usedAt)
+	q := s.q.WithTx(tx)
+	ac, err := q.ConsumeAuthorizationCode(ctx, dbgen.ConsumeAuthorizationCodeParams{CodeHash: hash, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrBadRequest.WithDetail("invalid code")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if usedAt != nil {
+	userID := ac.UserID
+	tenantID := ac.TenantID
+	scopes := ac.Scopes
+	nonce := ac.Nonce
+	challenge := ac.CodeChallenge
+	method := ac.CodeChallengeMethod
+	if ac.UsedAt.Valid {
 		return nil, errs.ErrBadRequest.WithDetail("code already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(ac.ExpiresAt) {
 		return nil, errs.ErrBadRequest.WithDetail("code expired")
 	}
-	if dbRedirect != redirectURI {
+	if ac.RedirectUri != redirectURI {
 		return nil, errs.ErrBadRequest.WithDetail("redirect_uri mismatch")
 	}
 	if challenge != nil && *challenge != "" {
@@ -493,7 +468,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 			return nil, errs.ErrBadRequest.WithDetail("invalid code_verifier")
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.oidc_authorization_codes SET used_at = NOW() WHERE code_hash = $1`, hash); err != nil {
+	if err := q.MarkAuthorizationCodeUsed(ctx, hash); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -540,16 +515,15 @@ func (s *Service) issueRefreshToken(ctx context.Context, clientID string, userID
 	if err != nil {
 		return "", err
 	}
-	var resourceArg any
+	var res *string
 	if resource != "" {
-		resourceArg = resource
+		res = &resource
 	}
 	exp := time.Now().UTC().Add(s.issuer.RefreshTTL())
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, hash, clientID, userID, tenantID, scopes, exp, resourceArg)
-	if err != nil {
+	if err := s.q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
+		Scopes: scopes, ExpiresAt: exp, Resource: res,
+	}); err != nil {
 		return "", err
 	}
 	return raw, nil
@@ -576,23 +550,8 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	defer tx.Rollback(ctx)
 
-	var (
-		id            uuid.UUID
-		rowClientID   string
-		userID        uuid.UUID
-		tenantID      uuid.UUID
-		scopes        []string
-		expiresAt     time.Time
-		usedAt        *time.Time
-		revokedAt     *time.Time
-		boundResource *string
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT id, client_id, user_id, tenant_id, scopes, expires_at, used_at, revoked_at, resource
-		FROM auth.oidc_refresh_tokens
-		WHERE token_hash = $1
-		FOR UPDATE
-	`, hash).Scan(&id, &rowClientID, &userID, &tenantID, &scopes, &expiresAt, &usedAt, &revokedAt, &boundResource)
+	q := s.q.WithTx(tx)
+	rt, err := q.LockRefreshToken(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown refresh token")
 	}
@@ -600,15 +559,15 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		return nil, err
 	}
 	// A refresh token may only be redeemed by the client it was issued to.
-	if rowClientID != clientID {
+	if rt.ClientID != clientID {
 		return nil, errs.ErrUnauthorized.WithDetail("client mismatch")
 	}
-	if revokedAt != nil {
+	if rt.RevokedAt.Valid {
 		return nil, errs.ErrUnauthorized.WithDetail("refresh token revoked")
 	}
-	if usedAt != nil {
+	if rt.UsedAt.Valid {
 		// Reuse — assume theft: revoke every live token for this (client, user) and audit it.
-		if err := s.handleRefreshReuse(ctx, tx, clientID, userID, tenantID, id); err != nil {
+		if err := s.handleRefreshReuse(ctx, tx, clientID, rt.UserID, rt.TenantID, rt.ID); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -616,38 +575,41 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		}
 		return nil, errs.ErrUnauthorized.WithDetail("refresh token reuse — tokens revoked")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(rt.ExpiresAt) {
 		return nil, errs.ErrUnauthorized.WithDetail("refresh token expired")
 	}
-	if resource == "" && boundResource != nil {
-		resource = *boundResource
+	if resource == "" && rt.Resource != nil {
+		resource = *rt.Resource
 	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return nil, err
 	}
-	var newResourceArg any
+	var newRes *string
 	if resource != "" {
-		newResourceArg = resource
+		newRes = &resource
 	}
 	newExp := time.Now().UTC().Add(s.issuer.RefreshTTL())
-	var newID uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.oidc_refresh_tokens (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id
-	`, newHash, clientID, userID, tenantID, scopes, newExp, newResourceArg).Scan(&newID); err != nil {
+	newID, err := q.InsertRotatedRefreshToken(ctx, dbgen.InsertRotatedRefreshTokenParams{
+		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
+		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes,
+	})
+	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.oidc_refresh_tokens SET used_at = NOW(), replaced_by = $1 WHERE id = $2
-	`, newID, id); err != nil {
+	if err := q.MarkRefreshTokenUsed(ctx, dbgen.MarkRefreshTokenUsedParams{
+		NewID: pgtype.UUID{Bytes: newID, Valid: true},
+		ID:    rt.ID,
+	}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	userID := rt.UserID
+	tenantID := rt.TenantID
+	scopes := rt.Scopes
 
 	access, _, err := s.issuer.IssueAccessResource(userID, tenantID, uuid.New(), strings.Join(scopes, " "), resource)
 	if err != nil {
@@ -673,10 +635,10 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 
 // handleRefreshReuse revokes every live refresh token for a (client, user) on replay and audits it.
 func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID string, userID, tenantID, tokenID uuid.UUID) error {
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-		WHERE client_id = $1 AND user_id = $2 AND revoked_at IS NULL
-	`, clientID, userID); err != nil {
+	q := s.q.WithTx(tx)
+	if err := q.RevokeRefreshTokenChain(ctx, dbgen.RevokeRefreshTokenChainParams{
+		ClientID: clientID, UserID: userID,
+	}); err != nil {
 		return err
 	}
 	tid, uid, rid := tenantID, userID, tokenID
@@ -1345,12 +1307,10 @@ func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token
 	if token == "" || hint == "access_token" {
 		return nil
 	}
-	_, err := s.pool.Exec(ctx, `
-		UPDATE auth.oidc_refresh_tokens
-		SET revoked_at = NOW()
-		WHERE token_hash = $1 AND client_id = $2 AND revoked_at IS NULL
-	`, tokens.HashRefresh(token), clientID)
-	return err
+	return s.q.RevokeRefreshTokenByHash(ctx, dbgen.RevokeRefreshTokenByHashParams{
+		TokenHash: tokens.HashRefresh(token),
+		ClientID:  clientID,
+	})
 }
 
 // Introspect implements RFC 7662. After client authentication it reports
@@ -1406,17 +1366,7 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 
 	// Refresh token (opaque, stored hashed) — unless the hint says access_token.
 	if hint != "access_token" {
-		var (
-			rowClientID         string
-			userID, tenantID    uuid.UUID
-			scopes              []string
-			issuedAt, expiresAt time.Time
-			usedAt, revokedAt   *time.Time
-		)
-		err := s.pool.QueryRow(ctx, `
-			SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at
-			FROM auth.oidc_refresh_tokens WHERE token_hash = $1
-		`, tokens.HashRefresh(token)).Scan(&rowClientID, &userID, &tenantID, &scopes, &issuedAt, &expiresAt, &usedAt, &revokedAt)
+		row, err := s.q.GetRefreshTokenForIntrospect(ctx, tokens.HashRefresh(token))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return inactive, nil
 		}
@@ -1424,18 +1374,18 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 			return nil, err
 		}
 		// Active = not revoked, not yet rotated (used), and unexpired.
-		if revokedAt != nil || usedAt != nil || !time.Now().Before(expiresAt) {
+		if row.RevokedAt.Valid || row.UsedAt.Valid || !time.Now().Before(row.ExpiresAt) {
 			return inactive, nil
 		}
 		return map[string]any{
 			"active":     true,
 			"token_type": "refresh_token",
-			"client_id":  rowClientID,
-			"sub":        userID,
-			"tenant_id":  tenantID,
-			"scope":      strings.Join(scopes, " "),
-			"iat":        issuedAt.Unix(),
-			"exp":        expiresAt.Unix(),
+			"client_id":  row.ClientID,
+			"sub":        row.UserID,
+			"tenant_id":  row.TenantID,
+			"scope":      strings.Join(row.Scopes, " "),
+			"iat":        row.IssuedAt.Unix(),
+			"exp":        row.ExpiresAt.Unix(),
 		}, nil
 	}
 
@@ -1460,48 +1410,38 @@ type Grant struct {
 }
 
 func (s *Service) ListGrants(ctx context.Context, tenantID uuid.UUID) ([]Grant, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.client_id, t.user_id, COALESCE(u.email, ''), t.scopes, t.issued_at, t.expires_at
-		FROM auth.oidc_refresh_tokens t
-		LEFT JOIN "user".users u ON u.id = t.user_id
-		WHERE t.tenant_id = $1 AND t.revoked_at IS NULL AND t.replaced_by IS NULL AND t.expires_at > NOW()
-		ORDER BY t.issued_at DESC
-	`, tenantID)
+	rows, err := s.q.ListGrants(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Grant{}
-	for rows.Next() {
-		var g Grant
-		if err := rows.Scan(&g.ID, &g.ClientID, &g.UserID, &g.UserEmail, &g.Scopes, &g.IssuedAt, &g.ExpiresAt); err != nil {
-			return nil, err
+	out := make([]Grant, len(rows))
+	for i, r := range rows {
+		out[i] = Grant{
+			ID: r.ID, ClientID: r.ClientID, UserID: r.UserID, UserEmail: r.UserEmail,
+			Scopes: r.Scopes, IssuedAt: r.IssuedAt, ExpiresAt: r.ExpiresAt,
 		}
-		out = append(out, g)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RevokeGrant revokes the entire (client, user) refresh-token chain the given
 // token belongs to, so a rotated sibling can't keep the grant alive. Returns
 // the client_id for the audit row.
 func (s *Service) RevokeGrant(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, uuid.UUID, error) {
-	var clientID string
-	var userID uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT client_id, user_id FROM auth.oidc_refresh_tokens WHERE id = $1 AND tenant_id = $2`, id, tenantID).Scan(&clientID, &userID)
+	q := s.q.WithTx(tx)
+	row, err := q.GetGrantForRevoke(ctx, dbgen.GetGrantForRevokeParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return "", uuid.Nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-		WHERE client_id = $1 AND user_id = $2 AND tenant_id = $3 AND revoked_at IS NULL
-	`, clientID, userID, tenantID); err != nil {
+	if err := q.RevokeGrantChain(ctx, dbgen.RevokeGrantChainParams{
+		ClientID: row.ClientID, UserID: row.UserID, TenantID: tenantID,
+	}); err != nil {
 		return "", uuid.Nil, err
 	}
-	return clientID, userID, nil
+	return row.ClientID, row.UserID, nil
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {

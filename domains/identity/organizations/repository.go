@@ -11,36 +11,40 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
+	"github.com/qeetgroup/qeet-id/domains/identity/organizations/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/paging"
+	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
 )
 
 type Repository struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-func scanTenant(row pgx.Row) (*Tenant, error) {
-	var t Tenant
-	var meta []byte
-	if err := row.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Plan, &t.Region, &meta, &t.CreatedAt, &t.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
+// toDomain maps a generated persistence row to the domain Tenant model.
+// JSONB metadata ([]byte) is decoded here via the existing dbutil helper, so the
+// domain Tenant type (and its callers) are unchanged.
+func toDomain(row dbgen.TenantTenant) *Tenant {
+	return &Tenant{
+		ID:        row.ID,
+		Slug:      row.Slug,
+		Name:      row.Name,
+		Status:    row.Status,
+		Plan:      row.Plan,
+		Region:    row.Region,
+		Metadata:  dbutil.Metadata(row.Metadata),
+		CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
 	}
-	t.Metadata = dbutil.Metadata(meta)
-	return &t, nil
 }
-
-const tenantCols = `id, slug, name, status, plan, region, metadata, created_at, updated_at`
 
 // CreateWithOwner creates a tenant and, in one tx, makes ownerID its owner (owner role + permissions + membership + home tenant).
 func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerID uuid.UUID) (*Tenant, error) {
@@ -66,21 +70,25 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 	}
 	defer tx.Rollback(ctx)
 
-	row := tx.QueryRow(ctx, `
-		INSERT INTO tenant.tenants (slug, name, plan, region, metadata)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+tenantCols,
-		strings.TrimSpace(in.Slug), in.Name, plan, region, metaJSON,
-	)
-	t, err := scanTenant(row)
+	// The sqlc-generated query and the raw cross-context statements below all run
+	// on the same pgx.Tx — sqlc queries and hand-written SQL compose in one transaction.
+	row, err := r.q.WithTx(tx).InsertTenant(ctx, dbgen.InsertTenantParams{
+		Slug:     strings.TrimSpace(in.Slug),
+		Name:     in.Name,
+		Plan:     plan,
+		Region:   region,
+		Metadata: metaJSON,
+	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return nil, errs.ErrConflict.WithDetail("slug already exists")
 		}
 		return nil, err
 	}
+	t := toDomain(row)
 
-	// Owner role for the tenant, granted every platform permission.
+	// Owner role for the tenant, granted every platform permission. These write into
+	// other bounded contexts (rbac, user), so they stay hand-written on the shared tx.
 	var roleID uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
@@ -116,21 +124,25 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 }
 
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Tenant, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT `+tenantCols+`
-		FROM tenant.tenants
-		WHERE id = $1 AND deleted_at IS NULL
-	`, id)
-	return scanTenant(row)
+	row, err := r.q.GetTenant(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	return toDomain(row), nil
 }
 
 func (r *Repository) GetBySlug(ctx context.Context, slug string) (*Tenant, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT `+tenantCols+`
-		FROM tenant.tenants
-		WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL
-	`, slug)
-	return scanTenant(row)
+	row, err := r.q.GetTenantBySlug(ctx, slug)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+	return toDomain(row), nil
 }
 
 // List returns the tenants the user is a member of (scoped to the caller), newest first.
@@ -139,53 +151,33 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 		limit = 50
 	}
 	var (
-		rows pgx.Rows
+		rows []dbgen.TenantTenant
 		err  error
 	)
 	if cursor == "" {
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+tenantCols+`
-			FROM tenant.tenants
-			WHERE deleted_at IS NULL
-			  AND EXISTS (
-				SELECT 1 FROM rbac.user_roles ur
-				WHERE ur.tenant_id = tenant.tenants.id AND ur.user_id = $1
-			  )
-			ORDER BY created_at DESC, id DESC
-			LIMIT $2
-		`, userID, limit+1)
+		rows, err = r.q.ListTenantsForUser(ctx, dbgen.ListTenantsForUserParams{
+			UserID: userID,
+			Limit:  int32(limit + 1),
+		})
 	} else {
 		curT, curID, perr := paging.DecodeTimeUUID(cursor)
 		if perr != nil {
 			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
 		}
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+tenantCols+`
-			FROM tenant.tenants
-			WHERE deleted_at IS NULL
-			  AND EXISTS (
-				SELECT 1 FROM rbac.user_roles ur
-				WHERE ur.tenant_id = tenant.tenants.id AND ur.user_id = $1
-			  )
-			  AND (created_at, id) < ($2, $3)
-			ORDER BY created_at DESC, id DESC
-			LIMIT $4
-		`, userID, curT, curID, limit+1)
+		rows, err = r.q.ListTenantsForUserAfter(ctx, dbgen.ListTenantsForUserAfterParams{
+			UserID:          userID,
+			BeforeCreatedAt: curT,
+			BeforeID:        curID,
+			RowLimit:        int32(limit + 1),
+		})
 	}
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close()
 
-	var out []Tenant
-	for rows.Next() {
-		var t Tenant
-		var meta []byte
-		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Plan, &t.Region, &meta, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, "", err
-		}
-		t.Metadata = dbutil.Metadata(meta)
-		out = append(out, t)
+	out := make([]Tenant, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, *toDomain(row))
 	}
 	var next string
 	if len(out) > limit {
@@ -196,6 +188,9 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 	return out, next, nil
 }
 
+// Update applies a partial update. The SET clause is built dynamically from the
+// non-nil fields, so it intentionally stays hand-written (sqlc has no good story
+// for optional-column updates); it shares the domain's error/RETURNING conventions.
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*Tenant, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -235,26 +230,30 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 	q := `UPDATE tenant.tenants SET ` + ub.Assignments() +
 		` WHERE id = $` + strconv.Itoa(idAt) + ` AND deleted_at IS NULL RETURNING ` + tenantCols
 	row := tx.QueryRow(ctx, q, args...)
-	t, err := scanTenant(row)
-	if err != nil {
+	var rec dbgen.TenantTenant
+	if err := row.Scan(&rec.ID, &rec.Slug, &rec.Name, &rec.Status, &rec.Plan,
+		&rec.Region, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return t, nil
+	return toDomain(rec), nil
 }
 
+// tenantCols is the column list for the hand-written Update RETURNING clause;
+// it matches the field order scanned into dbgen.TenantTenant above (sans deleted_at).
+const tenantCols = `id, slug, name, status, plan, region, metadata, created_at, updated_at`
+
 func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	ct, err := r.pool.Exec(ctx, `
-		UPDATE tenant.tenants
-		SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL
-	`, id)
+	n, err := r.q.SoftDeleteTenant(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

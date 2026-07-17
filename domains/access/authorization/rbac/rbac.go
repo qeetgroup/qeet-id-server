@@ -14,8 +14,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/rbac/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
 )
@@ -37,81 +39,88 @@ type Role struct {
 
 type Repository struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
 
 // Pool exposes the connection pool so handlers can begin their own
 // transactions that wrap an RBAC mutation and its audit row.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
+// toPermission maps a generated RbacPermission row to the domain Permission type.
+func toPermission(row dbgen.RbacPermission) Permission {
+	return Permission{ID: row.ID, Key: row.Key, Description: row.Description}
+}
+
+// toRole maps a generated RbacRole row to the domain Role type.
+func toRole(row dbgen.RbacRole) Role {
+	return Role{
+		ID:          row.ID,
+		TenantID:    row.TenantID,
+		Name:        row.Name,
+		Description: row.Description,
+		IsSystem:    row.IsSystem,
+		CreatedAt:   row.CreatedAt,
+	}
+}
+
+// uuidPtrToPgtype converts a *uuid.UUID to pgtype.UUID for nullable UUID params.
+func uuidPtrToPgtype(u *uuid.UUID) pgtype.UUID {
+	if u == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *u, Valid: true}
+}
+
 func (r *Repository) UpsertPermission(ctx context.Context, tx pgx.Tx, key, desc string) (*Permission, error) {
-	row := tx.QueryRow(ctx, `
-		INSERT INTO rbac.permissions (key, description)
-		VALUES ($1, $2)
-		ON CONFLICT (key) DO UPDATE SET description = EXCLUDED.description
-		RETURNING id, key, description
-	`, key, desc)
-	var p Permission
-	if err := row.Scan(&p.ID, &p.Key, &p.Description); err != nil {
+	row, err := r.q.WithTx(tx).UpsertPermission(ctx, dbgen.UpsertPermissionParams{Key: key, Description: desc})
+	if err != nil {
 		return nil, err
 	}
+	p := toPermission(row)
 	return &p, nil
 }
 
 func (r *Repository) ListPermissions(ctx context.Context) ([]Permission, error) {
-	rows, err := r.pool.Query(ctx, `SELECT id, key, description FROM rbac.permissions ORDER BY key`)
+	rows, err := r.q.ListPermissions(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Permission
-	for rows.Next() {
-		var p Permission
-		if err := rows.Scan(&p.ID, &p.Key, &p.Description); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+	out := make([]Permission, len(rows))
+	for i, row := range rows {
+		out[i] = toPermission(row)
 	}
 	return out, nil
 }
 
 func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name, desc string, isSystem bool) (*Role, error) {
-	row := tx.QueryRow(ctx, `
-		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, tenant_id, name, description, is_system, created_at
-	`, tenantID, name, desc, isSystem)
-	var role Role
-	if err := row.Scan(&role.ID, &role.TenantID, &role.Name, &role.Description, &role.IsSystem, &role.CreatedAt); err != nil {
+	row, err := r.q.WithTx(tx).CreateRole(ctx, dbgen.CreateRoleParams{
+		TenantID:    tenantID,
+		Name:        name,
+		Description: desc,
+		IsSystem:    isSystem,
+	})
+	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return nil, errs.ErrConflict.WithDetail("role name exists for tenant")
 		}
 		return nil, err
 	}
+	role := toRole(row)
 	return &role, nil
 }
 
 func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, tenant_id, name, description, is_system, created_at
-		FROM rbac.roles
-		WHERE tenant_id = $1
-		ORDER BY name
-	`, tenantID)
+	rows, err := r.q.ListRoles(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Role
-	for rows.Next() {
-		var role Role
-		if err := rows.Scan(&role.ID, &role.TenantID, &role.Name, &role.Description, &role.IsSystem, &role.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, role)
+	out := make([]Role, len(rows))
+	for i, row := range rows {
+		out[i] = toRole(row)
 	}
 	return out, nil
 }
@@ -120,8 +129,7 @@ func (r *Repository) ListRoles(ctx context.Context, tenantID uuid.UUID) ([]Role,
 // role-permission routes carry only a {roleID} (no {tenantID}), so handlers use
 // this to enforce the role belongs to the caller's own tenant (QID-18).
 func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUID, error) {
-	var tid uuid.UUID
-	err := r.pool.QueryRow(ctx, `SELECT tenant_id FROM rbac.roles WHERE id = $1`, roleID).Scan(&tid)
+	tid, err := r.q.GetRoleTenant(ctx, roleID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, errs.ErrNotFound
 	}
@@ -132,58 +140,40 @@ func (r *Repository) RoleTenant(ctx context.Context, roleID uuid.UUID) (uuid.UUI
 }
 
 func (r *Repository) ListRolePermissions(ctx context.Context, roleID uuid.UUID) ([]Permission, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT p.id, p.key, p.description
-		FROM rbac.permissions p
-		JOIN rbac.role_permissions rp ON rp.permission_id = p.id
-		WHERE rp.role_id = $1
-		ORDER BY p.key
-	`, roleID)
+	rows, err := r.q.ListRolePermissions(ctx, roleID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Permission
-	for rows.Next() {
-		var p Permission
-		if err := rows.Scan(&p.ID, &p.Key, &p.Description); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+	out := make([]Permission, len(rows))
+	for i, row := range rows {
+		out[i] = toPermission(row)
 	}
 	return out, nil
 }
 
 func (r *Repository) GrantPermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO rbac.role_permissions (role_id, permission_id)
-		VALUES ($1, $2)
-		ON CONFLICT DO NOTHING
-	`, roleID, permID)
-	return err
+	return r.q.WithTx(tx).GrantPermission(ctx, dbgen.GrantPermissionParams{RoleID: roleID, PermissionID: permID})
 }
 
 func (r *Repository) RevokePermission(ctx context.Context, tx pgx.Tx, roleID, permID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
-		DELETE FROM rbac.role_permissions WHERE role_id = $1 AND permission_id = $2
-	`, roleID, permID)
-	return err
+	return r.q.WithTx(tx).RevokePermission(ctx, dbgen.RevokePermissionParams{RoleID: roleID, PermissionID: permID})
 }
 
 func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT DO NOTHING
-	`, userID, tenantID, roleID, grantedBy)
-	return err
+	return r.q.WithTx(tx).AssignUserRole(ctx, dbgen.AssignUserRoleParams{
+		UserID:    userID,
+		TenantID:  tenantID,
+		RoleID:    roleID,
+		GrantedBy: uuidPtrToPgtype(grantedBy),
+	})
 }
 
 func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
-		DELETE FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2 AND role_id = $3
-	`, userID, tenantID, roleID)
-	return err
+	return r.q.WithTx(tx).UnassignUserRole(ctx, dbgen.UnassignUserRoleParams{
+		UserID:   userID,
+		TenantID: tenantID,
+		RoleID:   roleID,
+	})
 }
 
 // AssignRoleToGroup grants a role to a group. The role and the group must both
@@ -192,6 +182,10 @@ func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenant
 // idempotent. The returned bool reports whether the role/group pair was valid
 // for this tenant (false => the caller should surface a 404), distinguishing a
 // genuine no-op from a cross-tenant or missing-row attempt.
+//
+// Left as raw SQL: the conditional CTE (INSERT … SELECT … WHERE EXISTS) is not
+// cleanly modelled by sqlc — the RETURNING 1 constant expression and the wrapping
+// SELECT EXISTS(FROM ins) OR EXISTS(…) don't map to a standard result type.
 func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
 	var valid bool
 	err := tx.QueryRow(ctx, `
@@ -215,10 +209,11 @@ func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, 
 
 // RemoveRoleFromGroup revokes a role from a group within a tenant.
 func (r *Repository) RemoveRoleFromGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
-		DELETE FROM rbac.group_roles WHERE group_id = $1 AND tenant_id = $2 AND role_id = $3
-	`, groupID, tenantID, roleID)
-	return err
+	return r.q.WithTx(tx).RemoveRoleFromGroup(ctx, dbgen.RemoveRoleFromGroupParams{
+		GroupID:  groupID,
+		TenantID: tenantID,
+		RoleID:   roleID,
+	})
 }
 
 // GroupRole is a role bound to a group, enriched with the role's name so the
@@ -231,24 +226,13 @@ type GroupRole struct {
 
 // ListGroupRoles returns every role granted to a group within a tenant.
 func (r *Repository) ListGroupRoles(ctx context.Context, groupID, tenantID uuid.UUID) ([]GroupRole, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT gr.role_id, ro.name, gr.granted_at
-		FROM rbac.group_roles gr
-		JOIN rbac.roles ro ON ro.id = gr.role_id
-		WHERE gr.group_id = $1 AND gr.tenant_id = $2
-		ORDER BY ro.name
-	`, groupID, tenantID)
+	rows, err := r.q.ListGroupRoles(ctx, dbgen.ListGroupRolesParams{GroupID: groupID, TenantID: tenantID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []GroupRole
-	for rows.Next() {
-		var g GroupRole
-		if err := rows.Scan(&g.RoleID, &g.Name, &g.GrantedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, g)
+	out := make([]GroupRole, len(rows))
+	for i, row := range rows {
+		out[i] = GroupRole{RoleID: row.RoleID, Name: row.Name, GrantedAt: row.GrantedAt}
 	}
 	return out, nil
 }
@@ -258,23 +242,11 @@ func (r *Repository) ListGroupRoles(ctx context.Context, groupID, tenantID uuid.
 // roles granted to a group the user belongs to. The two arms are scoped by
 // tenant_id independently so a grant can never leak across tenants.
 func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error) {
-	var ok bool
-	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM rbac.user_roles ur
-			JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
-			JOIN rbac.permissions p ON p.id = rp.permission_id
-			WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
-			UNION ALL
-			SELECT 1
-			FROM tenant.group_members gm
-			JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-			JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
-			JOIN rbac.permissions p ON p.id = rp.permission_id
-			WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
-		)
-	`, userID, tenantID, permKey).Scan(&ok)
+	ok, err := r.q.CheckPermission(ctx, dbgen.CheckPermissionParams{
+		UserID:   userID,
+		TenantID: tenantID,
+		PermKey:  permKey,
+	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
 	}
@@ -285,34 +257,10 @@ func (r *Repository) Check(ctx context.Context, userID, tenantID uuid.UUID, perm
 // tenant — via roles granted directly to the user UNION roles granted to any
 // group the user belongs to.
 func (r *Repository) EffectivePermissions(ctx context.Context, userID, tenantID uuid.UUID) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT p.key
-		FROM rbac.user_roles ur
-		JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
-		JOIN rbac.permissions p ON p.id = rp.permission_id
-		WHERE ur.user_id = $1 AND ur.tenant_id = $2
-		UNION
-		SELECT p.key
-		FROM tenant.group_members gm
-		JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-		JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
-		JOIN rbac.permissions p ON p.id = rp.permission_id
-		WHERE gm.user_id = $1 AND gm.tenant_id = $2
-		ORDER BY key
-	`, userID, tenantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var k string
-		if err := rows.Scan(&k); err != nil {
-			return nil, err
-		}
-		out = append(out, k)
-	}
-	return out, nil
+	return r.q.ListEffectivePermissions(ctx, dbgen.ListEffectivePermissionsParams{
+		UserID:   userID,
+		TenantID: tenantID,
+	})
 }
 
 // GrantStep is one link in an authorization decision's grant path: a role that
@@ -340,6 +288,11 @@ type Explanation struct {
 // evolve. It enumerates every role — direct or group-derived — that grants the
 // permission for this user/tenant. allowed == (len(Paths) > 0). Both arms are
 // scoped by tenant_id, so a path can never name a grant from another tenant.
+//
+// Left as raw SQL: the two-armed UNION ALL uses typed NULL literals
+// ('direct'::text, NULL::uuid, NULL::text) whose nullable-expression types
+// can't be expressed through the sqlc override configuration without additional
+// column-level overrides that would complicate the config.
 func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*Explanation, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id, ro.name

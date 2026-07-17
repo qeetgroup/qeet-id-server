@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	ratelimitsdbgen "github.com/qeetgroup/qeet-id/domains/operations/ratelimits/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
@@ -36,11 +37,11 @@ type Defaults struct {
 }
 
 type Handler struct {
-	Pool         *pgxpool.Pool
-	TenantLim    Limiter
-	UserLim      Limiter
-	APIKeyLim    Limiter
-	Defaults     Defaults
+	Pool      *pgxpool.Pool
+	TenantLim Limiter
+	UserLim   Limiter
+	APIKeyLim Limiter
+	Defaults  Defaults
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -76,28 +77,23 @@ type TenantLimits struct {
 }
 
 func (h *Handler) effectiveLimits(ctx context.Context, tenantID uuid.UUID) (TenantLimits, error) {
-	rows, err := h.Pool.Query(ctx, `
-		SELECT limit_key, rate, capacity FROM platform.rate_limit_overrides WHERE tenant_id = $1
-	`, tenantID)
+	// Create a lightweight Queries instance bound to the pool. This avoids
+	// adding a stored field to Handler (whose struct literal is built in the
+	// router composition root without a constructor call).
+	q := ratelimitsdbgen.New(h.Pool)
+	rows, err := q.GetRateLimitOverrides(ctx, tenantID)
 	if err != nil {
 		return TenantLimits{}, err
 	}
-	defer rows.Close()
 
 	out := TenantLimits{
 		Tenant: LimitConfig{Rate: &h.Defaults.TenantRate, Capacity: &h.Defaults.TenantCapacity},
 		User:   LimitConfig{Rate: &h.Defaults.UserRate, Capacity: &h.Defaults.UserCapacity},
 		APIKey: LimitConfig{Rate: &h.Defaults.APIKeyRate, Capacity: &h.Defaults.APIKeyCapacity},
 	}
-	for rows.Next() {
-		var key string
-		var rate float64
-		var capacity int
-		if err := rows.Scan(&key, &rate, &capacity); err != nil {
-			return TenantLimits{}, err
-		}
-		r, c := rate, capacity
-		switch key {
+	for _, row := range rows {
+		r, c := row.Rate, int(row.Capacity)
+		switch row.LimitKey {
 		case "tenant":
 			out.Tenant = LimitConfig{Rate: &r, Capacity: &c}
 		case "user":
@@ -106,7 +102,7 @@ func (h *Handler) effectiveLimits(ctx context.Context, tenantID uuid.UUID) (Tena
 			out.APIKey = LimitConfig{Rate: &r, Capacity: &c}
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {

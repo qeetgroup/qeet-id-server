@@ -19,8 +19,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/webhooks/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -40,17 +42,51 @@ type Subscription struct {
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	client *http.Client
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{
 		pool:   pool,
+		q:      dbgen.New(pool),
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
+
+// tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
+func tsPtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
+}
+
+// int32Ptr converts an int to *int32 for sqlc status-code params (nil when 0).
+func int32Ptr(v int) *int32 {
+	if v == 0 {
+		return nil
+	}
+	i := int32(v)
+	return &i
+}
+
+// strPtr returns nil for an empty string, &s otherwise (used for optional
+// error/body fields in delivery update params).
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// toTS converts a time.Time to a valid pgtype.Timestamptz.
+func toTS(t time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: t, Valid: true}
+}
 
 type CreateInput struct {
 	TenantID uuid.UUID `json:"tenant_id"`
@@ -63,72 +99,62 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 	if err != nil {
 		return nil, err
 	}
-	var sub Subscription
-	err = tx.QueryRow(ctx, `
-		INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, events)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, tenant_id, url, events, disabled_at, created_at
-	`, in.TenantID, in.URL, secret, in.Events).Scan(&sub.ID, &sub.TenantID, &sub.URL, &sub.Events, &sub.DisabledAt, &sub.CreatedAt)
+	row, err := s.q.WithTx(tx).CreateWebhookSubscription(ctx, dbgen.CreateWebhookSubscriptionParams{
+		TenantID: in.TenantID,
+		Url:      in.URL,
+		Secret:   secret,
+		Events:   in.Events,
+	})
 	if err != nil {
 		return nil, err
 	}
-	sub.Secret = secret
-	return &sub, nil
+	return &Subscription{
+		ID: row.ID, TenantID: row.TenantID, URL: row.Url,
+		Events: row.Events, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
+		Secret: secret,
+	}, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, url, events, disabled_at, created_at
-		FROM tenant.webhook_subscriptions
-		WHERE tenant_id = $1 ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListWebhookSubscriptions(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Subscription
-	for rows.Next() {
-		var sub Subscription
-		if err := rows.Scan(&sub.ID, &sub.TenantID, &sub.URL, &sub.Events, &sub.DisabledAt, &sub.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, sub)
+	out := make([]Subscription, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Subscription{
+			ID: row.ID, TenantID: row.TenantID, URL: row.Url,
+			Events: row.Events, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
+		})
 	}
 	return out, nil
 }
 
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Subscription, error) {
-	var sub Subscription
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, url, events, disabled_at, created_at
-		FROM tenant.webhook_subscriptions WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&sub.ID, &sub.TenantID, &sub.URL, &sub.Events, &sub.DisabledAt, &sub.CreatedAt)
+	row, err := s.q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &sub, nil
+	return &Subscription{
+		ID: row.ID, TenantID: row.TenantID, URL: row.Url,
+		Events: row.Events, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
+	}, nil
 }
 
 // Disable marks the subscription disabled and returns the (tenantID, url)
 // so the caller doesn't have to re-query for the audit row.
 func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) (uuid.UUID, string, error) {
-	var disabledTenant uuid.UUID
-	var url string
-	err := tx.QueryRow(ctx, `
-		UPDATE tenant.webhook_subscriptions SET disabled_at = NOW()
-		WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
-		RETURNING tenant_id, url
-	`, id, tenantID).Scan(&disabledTenant, &url)
+	row, err := s.q.WithTx(tx).DisableWebhookSubscription(ctx, dbgen.DisableWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	return disabledTenant, url, nil
+	return row.TenantID, row.Url, nil
 }
 
 // Delivery is one attempt-tracked dispatch of an event to a subscription,
@@ -150,6 +176,15 @@ type Delivery struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+// int32PtrToInt converts a *int32 to *int for the domain Delivery type.
+func int32PtrToInt(p *int32) *int {
+	if p == nil {
+		return nil
+	}
+	v := int(*p)
+	return &v
+}
+
 // ListDeliveries returns recent deliveries for a subscription, newest first.
 // Tenant-scoped via the subscription join, so one tenant can't read another's
 // delivery history.
@@ -157,45 +192,42 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT d.id, d.event_type, d.attempt, d.status_code, d.error,
-		       d.payload::text, d.response_body, d.delivered_at, d.next_attempt_at, d.dead_at, d.created_at
-		FROM tenant.webhook_deliveries d
-		JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
-		WHERE d.subscription_id = $1 AND sub.tenant_id = $2
-		ORDER BY d.created_at DESC
-		LIMIT $3
-	`, subscriptionID, tenantID, limit)
+	rows, err := s.q.ListWebhookDeliveries(ctx, dbgen.ListWebhookDeliveriesParams{
+		SubscriptionID: subscriptionID,
+		TenantID:       tenantID,
+		RowLimit:       int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Delivery, 0)
-	for rows.Next() {
-		var d Delivery
-		if err := rows.Scan(&d.ID, &d.EventType, &d.Attempt, &d.StatusCode, &d.Error,
-			&d.Payload, &d.ResponseBody, &d.DeliveredAt, &d.NextAttemptAt, &d.DeadAt, &d.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, d)
+	out := make([]Delivery, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Delivery{
+			ID:            row.ID,
+			EventType:     row.EventType,
+			Attempt:       int(row.Attempt),
+			StatusCode:    int32PtrToInt(row.StatusCode),
+			Error:         row.Error,
+			Payload:       row.DPayload,
+			ResponseBody:  row.ResponseBody,
+			DeliveredAt:   tsPtr(row.DeliveredAt),
+			NextAttemptAt: tsPtr(row.NextAttemptAt),
+			DeadAt:        tsPtr(row.DeadAt),
+			CreatedAt:     row.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // RetryDelivery re-queues a delivery for immediate redelivery by the dispatcher
 // (clears delivered_at + error and sets next_attempt_at to now). Tenant-scoped
 // via the subscription join. ErrNotFound when the delivery isn't the tenant's.
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE tenant.webhook_deliveries d
-		SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW()
-		FROM tenant.webhook_subscriptions sub
-		WHERE d.id = $1 AND d.subscription_id = sub.id AND sub.tenant_id = $2
-	`, deliveryID, tenantID)
+	n, err := s.q.RetryWebhookDelivery(ctx, dbgen.RetryWebhookDeliveryParams{DeliveryID: deliveryID, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -207,30 +239,19 @@ func (s *Service) Enqueue(ctx context.Context, tenantID uuid.UUID, eventType str
 	if err != nil {
 		return err
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT id FROM tenant.webhook_subscriptions
-		WHERE tenant_id = $1 AND disabled_at IS NULL
-		  AND ($2 = ANY(events) OR events = '{}'::text[])
-	`, tenantID, eventType)
+	ids, err := s.q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{
+		TenantID:  tenantID,
+		EventType: eventType,
+	})
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	var ids []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
 	for _, id := range ids {
-		_, err := s.pool.Exec(ctx, `
-			INSERT INTO tenant.webhook_deliveries (subscription_id, event_type, payload, next_attempt_at)
-			VALUES ($1, $2, $3, NOW())
-		`, id, eventType, body)
-		if err != nil {
+		if err := s.q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{
+			SubscriptionID: id,
+			EventType:      eventType,
+			Payload:        body,
+		}); err != nil {
 			return err
 		}
 	}
@@ -260,48 +281,19 @@ func (s *Service) RunDispatcher(ctx context.Context) {
 func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
 func (s *Service) tick(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
-		SELECT d.id, d.subscription_id, d.event_type, d.payload, d.attempt, sub.url, sub.secret
-		FROM tenant.webhook_deliveries d
-		JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
-		WHERE d.delivered_at IS NULL
-		  AND d.dead_at IS NULL
-		  AND d.next_attempt_at <= NOW()
-		  AND sub.disabled_at IS NULL
-		ORDER BY d.created_at
-		LIMIT 20
-		FOR UPDATE SKIP LOCKED
-	`)
+	batch, err := s.q.GetDueDeliveries(ctx)
 	if err != nil {
 		return err
 	}
-	type item struct {
-		ID, SubID uuid.UUID
-		Event     string
-		Payload   []byte
-		Attempt   int
-		URL       string
-		Secret    string
-	}
-	var batch []item
-	for rows.Next() {
-		var it item
-		if err := rows.Scan(&it.ID, &it.SubID, &it.Event, &it.Payload, &it.Attempt, &it.URL, &it.Secret); err != nil {
-			rows.Close()
-			return err
-		}
-		batch = append(batch, it)
-	}
-	rows.Close()
 	for _, it := range batch {
-		status, respBody, derr := s.deliver(ctx, it.URL, it.Secret, it.Event, it.Payload)
+		status, respBody, derr := s.deliver(ctx, it.Url, it.Secret, it.EventType, it.Payload)
 		now := time.Now()
 		if derr == nil && status >= 200 && status < 300 {
-			_, _ = s.pool.Exec(ctx, `
-				UPDATE tenant.webhook_deliveries
-				SET delivered_at = NOW(), status_code = $1, response_body = $2, attempt = attempt + 1, error = NULL
-				WHERE id = $3
-			`, status, truncate(respBody, 4000), it.ID)
+			_ = s.q.MarkDeliverySucceeded(ctx, dbgen.MarkDeliverySucceededParams{
+				StatusCode:   int32Ptr(status),
+				ResponseBody: strPtr(truncate(respBody, 4000)),
+				ID:           it.ID,
+			})
 			continue
 		}
 		errStr := ""
@@ -312,27 +304,26 @@ func (s *Service) tick(ctx context.Context) error {
 		// (dead domain, 404, decommissioned integration) would otherwise retry
 		// forever at the 1h backoff ceiling. dead_at marks it dead-lettered;
 		// RetryDelivery clears it for a manual re-send.
-		if it.Attempt+1 >= maxDeliveryAttempts {
-			_, _ = s.pool.Exec(ctx, `
-				UPDATE tenant.webhook_deliveries
-				SET attempt = attempt + 1, status_code = $1, response_body = $2, error = $3, dead_at = NOW()
-				WHERE id = $4
-			`, status, truncate(respBody, 4000), errStr, it.ID)
+		if int(it.Attempt)+1 >= maxDeliveryAttempts {
+			_ = s.q.DeadLetterDelivery(ctx, dbgen.DeadLetterDeliveryParams{
+				StatusCode:   int32Ptr(status),
+				ResponseBody: strPtr(truncate(respBody, 4000)),
+				Error:        strPtr(errStr),
+				ID:           it.ID,
+			})
 			continue
 		}
-		backoff := time.Duration(1<<min(it.Attempt, 8)) * 30 * time.Second
+		backoff := time.Duration(1<<min(int(it.Attempt), 8)) * 30 * time.Second
 		if backoff > time.Hour {
 			backoff = time.Hour
 		}
-		_, _ = s.pool.Exec(ctx, `
-			UPDATE tenant.webhook_deliveries
-			SET attempt = attempt + 1,
-			    status_code = $1,
-			    response_body = $2,
-			    error = $3,
-			    next_attempt_at = $4
-			WHERE id = $5
-		`, status, truncate(respBody, 4000), errStr, now.Add(backoff), it.ID)
+		_ = s.q.ScheduleDeliveryRetry(ctx, dbgen.ScheduleDeliveryRetryParams{
+			StatusCode:    int32Ptr(status),
+			ResponseBody:  strPtr(truncate(respBody, 4000)),
+			Error:         strPtr(errStr),
+			NextAttemptAt: toTS(now.Add(backoff)),
+			ID:            it.ID,
+		})
 	}
 	return nil
 }

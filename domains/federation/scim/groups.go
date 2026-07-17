@@ -21,7 +21,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/qeetgroup/qeet-id/domains/federation/scim/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 )
 
@@ -48,23 +50,21 @@ type groupMember struct {
 
 const groupRowCols = `id, name, external_id, created_at, updated_at`
 
-func scanGroupRow(row pgx.Row) (*groupRow, error) {
-	var g groupRow
-	if err := row.Scan(&g.ID, &g.Name, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
+func (s *Service) getGroup(ctx context.Context, tenantID, id uuid.UUID) (*groupRow, error) {
+	r, err := s.q.GetScimGroup(ctx, dbgen.GetScimGroupParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
 		return nil, err
 	}
-	return &g, nil
-}
-
-func (s *Service) getGroup(ctx context.Context, tenantID, id uuid.UUID) (*groupRow, error) {
-	row := s.pool.QueryRow(ctx, `
-		SELECT `+groupRowCols+` FROM tenant.groups
-		WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID)
-	return scanGroupRow(row)
+	return &groupRow{
+		ID:         r.ID,
+		Name:       r.Name,
+		ExternalID: r.ExternalID,
+		CreatedAt:  r.CreatedAt,
+		UpdatedAt:  r.UpdatedAt,
+	}, nil
 }
 
 func (s *Service) listGroups(ctx context.Context, tenantID uuid.UUID, nameFilter string, start, count int) ([]groupRow, int, error) {
@@ -103,26 +103,18 @@ func (s *Service) listGroups(ctx context.Context, tenantID uuid.UUID, nameFilter
 // listMembers returns a group's members (tenant-scoped, live users only),
 // joined to the user so SCIM can render members[].display.
 func (s *Service) listMembers(ctx context.Context, tenantID, groupID uuid.UUID) ([]groupMember, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT gm.user_id, u.email, u.display_name
-		FROM tenant.group_members gm
-		JOIN "user".users u ON u.id = gm.user_id
-		WHERE gm.group_id = $1 AND gm.tenant_id = $2 AND u.deleted_at IS NULL
-		ORDER BY u.email
-	`, groupID, tenantID)
+	rows, err := s.q.ListGroupMembers(ctx, dbgen.ListGroupMembersParams{
+		GroupID:  groupID,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []groupMember
-	for rows.Next() {
-		var m groupMember
-		if err := rows.Scan(&m.UserID, &m.Email, &m.DisplayName); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
+	out := make([]groupMember, len(rows))
+	for i, r := range rows {
+		out[i] = groupMember{UserID: r.UserID, Email: r.Email, DisplayName: r.DisplayName}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // createGroup inserts a group + its initial members atomically. Members are
@@ -135,27 +127,36 @@ func (s *Service) createGroup(ctx context.Context, tenantID uuid.UUID, name, ext
 	}
 	defer tx.Rollback(ctx)
 
-	var ext any
+	q := s.q.WithTx(tx)
+
+	var ext *string
 	if externalID != "" {
-		ext = externalID
+		ext = &externalID
 	}
-	var g groupRow
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO tenant.groups (tenant_id, name, external_id)
-		VALUES ($1, $2, $3)
-		RETURNING `+groupRowCols+`
-	`, tenantID, name, ext).Scan(&g.ID, &g.Name, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+	r, err := q.InsertScimGroup(ctx, dbgen.InsertScimGroupParams{
+		TenantID:   tenantID,
+		Name:       name,
+		ExternalID: ext,
+	})
+	if err != nil {
 		return nil, err
 	}
+	g := &groupRow{
+		ID:         r.ID,
+		Name:       r.Name,
+		ExternalID: r.ExternalID,
+		CreatedAt:  r.CreatedAt,
+		UpdatedAt:  r.UpdatedAt,
+	}
 	for _, uid := range members {
-		if err := addMemberTx(ctx, tx, tenantID, g.ID, uid); err != nil {
+		if err := addMemberTx(ctx, q, tenantID, g.ID, uid); err != nil {
 			return nil, err
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &g, nil
+	return g, nil
 }
 
 // replaceGroup does a full PUT: it overwrites displayName/externalId and
@@ -167,16 +168,16 @@ func (s *Service) replaceGroup(ctx context.Context, tenantID, id uuid.UUID, name
 	}
 	defer tx.Rollback(ctx)
 
+	q := s.q.WithTx(tx)
+
 	if err := touchGroupTx(ctx, tx, tenantID, id, &name, externalID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		DELETE FROM tenant.group_members WHERE group_id = $1 AND tenant_id = $2
-	`, id, tenantID); err != nil {
+	if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
 		return nil, err
 	}
 	for _, uid := range members {
-		if err := addMemberTx(ctx, tx, tenantID, id, uid); err != nil {
+		if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
 			return nil, err
 		}
 	}
@@ -195,10 +196,13 @@ func (s *Service) patchGroup(ctx context.Context, tenantID, id uuid.UUID, p *gro
 	}
 	defer tx.Rollback(ctx)
 
+	q := s.q.WithTx(tx)
+
 	// Confirm the group exists for this tenant before mutating membership.
-	if _, err := scanGroupRow(tx.QueryRow(ctx, `
-		SELECT `+groupRowCols+` FROM tenant.groups WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID)); err != nil {
+	if _, err := q.GetScimGroup(ctx, dbgen.GetScimGroupParams{ID: id, TenantID: tenantID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
 		return nil, err
 	}
 
@@ -208,21 +212,17 @@ func (s *Service) patchGroup(ctx context.Context, tenantID, id uuid.UUID, p *gro
 		}
 	}
 	if p.replaceMembers {
-		if _, err := tx.Exec(ctx, `
-			DELETE FROM tenant.group_members WHERE group_id = $1 AND tenant_id = $2
-		`, id, tenantID); err != nil {
+		if err := q.DeleteGroupMembers(ctx, dbgen.DeleteGroupMembersParams{GroupID: id, TenantID: tenantID}); err != nil {
 			return nil, err
 		}
 	}
 	for _, uid := range p.addMembers {
-		if err := addMemberTx(ctx, tx, tenantID, id, uid); err != nil {
+		if err := addMemberTx(ctx, q, tenantID, id, uid); err != nil {
 			return nil, err
 		}
 	}
 	for _, uid := range p.removeMembers {
-		if _, err := tx.Exec(ctx, `
-			DELETE FROM tenant.group_members WHERE group_id = $1 AND user_id = $2 AND tenant_id = $3
-		`, id, uid, tenantID); err != nil {
+		if err := q.RemoveGroupMember(ctx, dbgen.RemoveGroupMemberParams{GroupID: id, UserID: uid, TenantID: tenantID}); err != nil {
 			return nil, err
 		}
 	}
@@ -234,13 +234,11 @@ func (s *Service) patchGroup(ctx context.Context, tenantID, id uuid.UUID, p *gro
 
 // deleteGroup hard-deletes the group (group_members cascade) for this tenant.
 func (s *Service) deleteGroup(ctx context.Context, tenantID, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID)
+	n, err := s.q.DeleteScimGroup(ctx, dbgen.DeleteScimGroupParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -254,21 +252,22 @@ func (s *Service) getGroupTx(ctx context.Context, tenantID, id uuid.UUID) (*grou
 // same tenant and isn't deleted — this is the membership tenant-isolation
 // guard. Unknown/foreign users are skipped (no error), matching SCIM import
 // tolerance for stale member refs.
-func addMemberTx(ctx context.Context, tx pgx.Tx, tenantID, groupID, userID uuid.UUID) error {
-	var ok bool
-	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM "user".users WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)
-	`, userID, tenantID).Scan(&ok); err != nil {
+func addMemberTx(ctx context.Context, q *dbgen.Queries, tenantID, groupID, userID uuid.UUID) error {
+	ok, err := q.CheckUserInTenant(ctx, dbgen.CheckUserInTenantParams{
+		ID:       userID,
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+	})
+	if err != nil {
 		return err
 	}
 	if !ok {
 		return nil
 	}
-	_, err := tx.Exec(ctx, `
-		INSERT INTO tenant.group_members (group_id, user_id, tenant_id)
-		VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
-	`, groupID, userID, tenantID)
-	return err
+	return q.AddGroupMember(ctx, dbgen.AddGroupMemberParams{
+		GroupID:  groupID,
+		UserID:   userID,
+		TenantID: tenantID,
+	})
 }
 
 // touchGroupTx updates name/external_id (only the non-nil fields) and bumps

@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/risk/ipallow/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -79,35 +80,39 @@ func Evaluate(rules []Rule, ipStr string) (bool, string) {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
+// ruleFromModel converts the generated TenantIpRule to the domain Rule type.
+func ruleFromModel(m dbgen.TenantIpRule) Rule {
+	return Rule{
+		ID:        m.ID,
+		TenantID:  m.TenantID,
+		CIDR:      m.Cidr,
+		Label:     m.Label,
+		Action:    m.Action,
+		CreatedAt: m.CreatedAt,
+	}
+}
+
 func (s *Service) ListRules(ctx context.Context, tenantID uuid.UUID) ([]Rule, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, cidr, label, action, created_at
-		FROM tenant.ip_rules WHERE tenant_id = $1 ORDER BY action, created_at
-	`, tenantID)
+	rows, err := s.q.ListIPRules(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Rule{}
-	for rows.Next() {
-		var r Rule
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.CIDR, &r.Label, &r.Action, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]Rule, len(rows))
+	for i, r := range rows {
+		out[i] = ruleFromModel(r)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) Enabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
-	var enabled bool
-	err := s.pool.QueryRow(ctx, `SELECT enabled FROM tenant.ip_rules_config WHERE tenant_id = $1`, tenantID).Scan(&enabled)
+	enabled, err := s.q.GetIPRulesEnabled(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -115,12 +120,10 @@ func (s *Service) Enabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }
 
 func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, enabled bool) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO tenant.ip_rules_config (tenant_id, enabled, updated_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()
-	`, tenantID, enabled)
-	return err
+	return s.q.WithTx(tx).SetIPRulesEnabled(ctx, dbgen.SetIPRulesEnabledParams{
+		TenantID: tenantID,
+		Enabled:  enabled,
+	})
 }
 
 func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, cidr, label, action string) (*Rule, error) {
@@ -130,21 +133,28 @@ func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, ci
 	if action != "allow" && action != "deny" {
 		action = "allow"
 	}
-	var r Rule
-	err := tx.QueryRow(ctx, `
-		INSERT INTO tenant.ip_rules (tenant_id, cidr, label, action)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, tenant_id, cidr, label, action, created_at
-	`, tenantID, strings.TrimSpace(cidr), label, action).Scan(&r.ID, &r.TenantID, &r.CIDR, &r.Label, &r.Action, &r.CreatedAt)
-	return &r, err
+	m, err := s.q.WithTx(tx).InsertIPRule(ctx, dbgen.InsertIPRuleParams{
+		TenantID: tenantID,
+		Cidr:     strings.TrimSpace(cidr),
+		Label:    label,
+		Action:   action,
+	})
+	if err != nil {
+		return nil, err
+	}
+	r := ruleFromModel(m)
+	return &r, nil
 }
 
 func (s *Service) DeleteRule(ctx context.Context, tx pgx.Tx, tenantID, ruleID uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `DELETE FROM tenant.ip_rules WHERE id = $1 AND tenant_id = $2`, ruleID, tenantID)
+	n, err := s.q.WithTx(tx).DeleteIPRule(ctx, dbgen.DeleteIPRuleParams{
+		ID:       ruleID,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

@@ -17,8 +17,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/identity/domains/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -29,13 +31,14 @@ const dnsHostPrefix = "_qeet-verification."
 
 type Service struct {
 	pool     *pgxpool.Pool
+	q        *dbgen.Queries
 	resolver interface {
 		LookupTXT(ctx context.Context, name string) ([]string, error)
 	}
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, resolver: net.DefaultResolver}
+	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver}
 }
 
 type Domain struct {
@@ -87,6 +90,31 @@ func newToken() (string, error) {
 	return "qeet-verify-" + hex.EncodeToString(b), nil
 }
 
+// pgtypeToTimePtr converts a pgtype.Timestamptz returned by generated code to *time.Time.
+func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
+}
+
+// rowToDomain maps the common columns (id, domain, verification_token,
+// verified_at, created_at) to the domain Domain struct. This signature matches
+// the InsertDomainRow, GetDomainForVerifyRow, ListDomainsRow, and MarkDomainVerifiedRow
+// generated types, which all have identical fields.
+func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamptz, createdAt time.Time) Domain {
+	d := Domain{
+		ID:                id,
+		Domain:            domain,
+		VerificationToken: token,
+		VerifiedAt:        pgtypeToTimePtr(verifiedAt),
+		CreatedAt:         createdAt,
+	}
+	d.fillDNS()
+	return d
+}
+
 // Add registers a domain for a tenant and returns the DNS record to publish.
 func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Domain, error) {
 	domain := normalizeDomain(raw)
@@ -97,60 +125,47 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Dom
 	if err != nil {
 		return nil, err
 	}
-	var d Domain
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.domains (tenant_id, domain, verification_token)
-		VALUES ($1, $2, $3)
-		RETURNING id, domain, verification_token, verified_at, created_at
-	`, tenantID, domain, token).Scan(&d.ID, &d.Domain, &d.VerificationToken, &d.VerifiedAt, &d.CreatedAt)
+	row, err := s.q.InsertDomain(ctx, dbgen.InsertDomainParams{
+		TenantID:          tenantID,
+		Domain:            domain,
+		VerificationToken: token,
+	})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_tenant_domain") {
 			return nil, errs.ErrConflict.WithDetail("domain already added")
 		}
 		return nil, err
 	}
-	d.fillDNS()
+	d := rowToDomain(row.ID, row.Domain, row.VerificationToken, row.VerifiedAt, row.CreatedAt)
 	return &d, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, domain, verification_token, verified_at, created_at
-		FROM tenant.domains WHERE tenant_id = $1 ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListDomains(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Domain, 0)
-	for rows.Next() {
-		var d Domain
-		if err := rows.Scan(&d.ID, &d.Domain, &d.VerificationToken, &d.VerifiedAt, &d.CreatedAt); err != nil {
-			return nil, err
-		}
-		d.fillDNS()
+	out := make([]Domain, 0, len(rows))
+	for _, row := range rows {
+		d := rowToDomain(row.ID, row.Domain, row.VerificationToken, row.VerifiedAt, row.CreatedAt)
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Verify looks up the DNS TXT record and, if the token is present, marks the
 // domain verified. A missing record returns a friendly 422 (DNS may still be
 // propagating); an already-verified-by-another-tenant collision returns 409.
 func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, error) {
-	var d Domain
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, domain, verification_token, verified_at, created_at
-		FROM tenant.domains WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).Scan(&d.ID, &d.Domain, &d.VerificationToken, &d.VerifiedAt, &d.CreatedAt)
+	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	d := rowToDomain(row.ID, row.Domain, row.VerificationToken, row.VerifiedAt, row.CreatedAt)
 	if d.VerifiedAt != nil {
-		d.fillDNS()
 		return &d, nil // already verified — idempotent
 	}
 
@@ -169,27 +184,23 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, 
 			"We couldn't find the verification record yet. DNS changes can take a few minutes to propagate — add the TXT record and try again.")
 	}
 
-	err = s.pool.QueryRow(ctx, `
-		UPDATE tenant.domains SET verified_at = NOW()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING id, domain, verification_token, verified_at, created_at
-	`, id, tenantID).Scan(&d.ID, &d.Domain, &d.VerificationToken, &d.VerifiedAt, &d.CreatedAt)
+	updated, err := s.q.MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_verified_domain") {
 			return nil, errs.ErrConflict.WithMessage("This domain is already verified by another organization.")
 		}
 		return nil, err
 	}
-	d.fillDNS()
-	return &d, nil
+	verified := rowToDomain(updated.ID, updated.Domain, updated.VerificationToken, updated.VerifiedAt, updated.CreatedAt)
+	return &verified, nil
 }
 
 func (s *Service) Remove(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.domains WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteDomain(ctx, dbgen.DeleteDomainParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

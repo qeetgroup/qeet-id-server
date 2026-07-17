@@ -1,0 +1,11 @@
+-- Queries for the analytics domain.
+--
+-- ALL queries in this domain are complex aggregations: multi-CTE joins,
+-- generate_series calendar scaffolds, FILTER aggregate expressions, CASE WHEN
+-- returning mixed numeric types, and COALESCE(SUM(...) FILTER (...), 0) chains
+-- whose return types sqlc cannot infer without extensive overrides.
+--
+-- Every query therefore remains hand-written in analytics.go using *pgxpool.Pool
+-- directly.  This file exists only so sqlc generates the boilerplate db.go /
+-- models.go in ./dbgen (required by the project layout convention) without any
+-- query methods.

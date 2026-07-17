@@ -16,8 +16,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/vc/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
@@ -27,11 +29,12 @@ const vcContext = "https://www.w3.org/ns/credentials/v2"
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	issuer *tokens.Issuer
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, issuer: issuer}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
 type Credential struct {
@@ -47,6 +50,23 @@ type IssueResult struct {
 	CredentialID uuid.UUID  `json:"credential_id"`
 	JWT          string     `json:"jwt"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
+// pgtTS converts a *time.Time to pgtype.Timestamptz (null when nil).
+func pgtTS(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
+func tsPtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
 }
 
 // Issue records a credential and returns its signed JWT-VC. ttlSeconds <= 0
@@ -71,16 +91,17 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 		expiresAt = &e
 	}
 
-	var id uuid.UUID
-	var issuedAt time.Time
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO auth.credentials (tenant_id, subject, type, claims, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, issued_at
-	`, tenantID, subject, credType, claimsJSON, expiresAt).Scan(&id, &issuedAt)
+	row, err := s.q.CreateCredential(ctx, dbgen.CreateCredentialParams{
+		TenantID:  tenantID,
+		Subject:   subject,
+		Type:      credType,
+		Claims:    claimsJSON,
+		ExpiresAt: pgtTS(expiresAt),
+	})
 	if err != nil {
 		return nil, err
 	}
+	id, issuedAt := row.ID, row.IssuedAt
 
 	// credentialSubject = { id: <subject>, ...claims }.
 	subjectObj := map[string]any{"id": subject}
@@ -147,9 +168,8 @@ func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error)
 	// revoked, reject. (Absent record → can't disprove; treat as valid.)
 	if jti, _ := claims["jti"].(string); jti != "" {
 		if id, perr := uuid.Parse(jti); perr == nil {
-			var revokedAt *time.Time
-			qerr := s.pool.QueryRow(ctx, `SELECT revoked_at FROM auth.credentials WHERE id = $1`, id).Scan(&revokedAt)
-			if qerr == nil && revokedAt != nil {
+			revokedAt, qerr := s.q.GetCredentialRevocation(ctx, id)
+			if qerr == nil && revokedAt.Valid {
 				return &VerifyResult{Valid: false, Reason: "credential revoked"}, nil
 			}
 		}
@@ -158,35 +178,30 @@ func (s *Service) Verify(ctx context.Context, raw string) (*VerifyResult, error)
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, subject, type, issued_at, expires_at, revoked_at
-		FROM auth.credentials WHERE tenant_id = $1 ORDER BY issued_at DESC LIMIT 200
-	`, tenantID)
+	rows, err := s.q.ListCredentials(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Credential, 0)
-	for rows.Next() {
-		var c Credential
-		var revokedAt *time.Time
-		if err := rows.Scan(&c.ID, &c.Subject, &c.Type, &c.IssuedAt, &c.ExpiresAt, &revokedAt); err != nil {
-			return nil, err
-		}
-		c.Revoked = revokedAt != nil
-		out = append(out, c)
+	out := make([]Credential, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Credential{
+			ID:        row.ID,
+			Subject:   row.Subject,
+			Type:      row.Type,
+			IssuedAt:  row.IssuedAt,
+			ExpiresAt: tsPtr(row.ExpiresAt),
+			Revoked:   row.RevokedAt.Valid,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE auth.credentials SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
-	`, id, tenantID)
+	n, err := s.q.RevokeCredential(ctx, dbgen.RevokeCredentialParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

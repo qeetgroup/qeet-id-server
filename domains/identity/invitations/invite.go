@@ -11,13 +11,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/identity/invitations/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/security/hibp"
 	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id/platform/security/encryption"
+	"github.com/qeetgroup/qeet-id/platform/security/hibp"
 )
 
 type Invite struct {
@@ -39,6 +41,7 @@ type CreateInput struct {
 
 type Service struct {
 	pool       *pgxpool.Pool
+	q          *dbgen.Queries
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string
@@ -51,12 +54,66 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	if ttl <= 0 {
 		ttl = 14 * 24 * time.Hour
 	}
-	return &Service{pool: pool, sender: sender, ttl: ttl, baseAppURL: baseAppURL}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL}
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
 // cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
+
+// uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
+func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
+	if p == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: [16]byte(*p), Valid: true}
+}
+
+// pgtypeToUUIDPtr converts a pgtype.UUID returned by generated code to *uuid.UUID.
+func pgtypeToUUIDPtr(p pgtype.UUID) *uuid.UUID {
+	if !p.Valid {
+		return nil
+	}
+	uid := uuid.UUID(p.Bytes)
+	return &uid
+}
+
+// pgtypeToTimePtr converts a pgtype.Timestamptz to *time.Time.
+func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
+}
+
+// inviteFromInsertRow maps an InsertInviteRow to the domain Invite model.
+func inviteFromInsertRow(row dbgen.InsertInviteRow) Invite {
+	return Invite{
+		ID:         row.ID,
+		TenantID:   row.TenantID,
+		Email:      row.Email,
+		RoleID:     pgtypeToUUIDPtr(row.RoleID),
+		Status:     row.Status,
+		ExpiresAt:  row.ExpiresAt,
+		AcceptedAt: pgtypeToTimePtr(row.AcceptedAt),
+		CreatedAt:  row.CreatedAt,
+	}
+}
+
+// inviteFromListRow maps a ListInvitesRow to the domain Invite model.
+func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
+	return Invite{
+		ID:         row.ID,
+		TenantID:   row.TenantID,
+		Email:      row.Email,
+		RoleID:     pgtypeToUUIDPtr(row.RoleID),
+		Status:     row.Status,
+		ExpiresAt:  row.ExpiresAt,
+		AcceptedAt: pgtypeToTimePtr(row.AcceptedAt),
+		CreatedAt:  row.CreatedAt,
+	}
+}
 
 func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
 	raw, hash, err := codes.URLToken()
@@ -64,15 +121,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		return nil, "", err
 	}
 	expires := time.Now().UTC().Add(s.ttl)
-	row := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.invites (tenant_id, email, role_id, invited_by, token_hash, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
-	`, in.TenantID, in.Email, in.RoleID, invitedBy, hash, expires)
-	var iv Invite
-	if err := row.Scan(&iv.ID, &iv.TenantID, &iv.Email, &iv.RoleID, &iv.Status, &iv.ExpiresAt, &iv.AcceptedAt, &iv.CreatedAt); err != nil {
+	row, err := s.q.InsertInvite(ctx, dbgen.InsertInviteParams{
+		TenantID:  in.TenantID,
+		Email:     in.Email,
+		RoleID:    uuidPtrToPgtype(in.RoleID),
+		InvitedBy: uuidPtrToPgtype(invitedBy),
+		TokenHash: hash,
+		ExpiresAt: expires,
+	})
+	if err != nil {
 		return nil, "", err
 	}
+	iv := inviteFromInsertRow(row)
 	_ = s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      in.Email,
@@ -83,37 +143,23 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
-		FROM tenant.invites
-		WHERE tenant_id = $1
-		ORDER BY created_at DESC
-		LIMIT 200
-	`, tenantID)
+	rows, err := s.q.ListInvites(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Invite
-	for rows.Next() {
-		var iv Invite
-		if err := rows.Scan(&iv.ID, &iv.TenantID, &iv.Email, &iv.RoleID, &iv.Status, &iv.ExpiresAt, &iv.AcceptedAt, &iv.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, iv)
+	out := make([]Invite, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, inviteFromListRow(row))
 	}
 	return out, nil
 }
 
 func (s *Service) Revoke(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE tenant.invites SET status = 'revoked'
-		WHERE id = $1 AND status = 'pending'
-	`, id)
+	n, err := s.q.RevokeInvite(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -143,31 +189,18 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 	}
 	defer tx.Rollback(ctx)
 
-	var (
-		id        uuid.UUID
-		tenantID  uuid.UUID
-		email     string
-		roleID    *uuid.UUID
-		status    string
-		expiresAt time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT id, tenant_id, email, role_id, status, expires_at
-		FROM tenant.invites
-		WHERE token_hash = $1
-		FOR UPDATE
-	`, hash).Scan(&id, &tenantID, &email, &roleID, &status, &expiresAt)
+	inv, err := s.q.WithTx(tx).GetInviteForAccept(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrBadRequest.WithDetail("invalid token")
 		}
 		return nil, err
 	}
-	if status != "pending" {
-		return nil, errs.ErrBadRequest.WithDetail("invite " + status)
+	if inv.Status != "pending" {
+		return nil, errs.ErrBadRequest.WithDetail("invite " + inv.Status)
 	}
-	if time.Now().After(expiresAt) {
-		_, _ = tx.Exec(ctx, `UPDATE tenant.invites SET status = 'expired' WHERE id = $1`, id)
+	if time.Now().After(inv.ExpiresAt) {
+		_ = s.q.WithTx(tx).MarkInviteExpired(ctx, inv.ID)
 		_ = tx.Commit(ctx)
 		return nil, errs.ErrBadRequest.WithDetail("invite expired")
 	}
@@ -181,7 +214,7 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		INSERT INTO "user".users (tenant_id, email, display_name, status, email_verified_at)
 		VALUES ($1, $2, NULLIF($3,''), 'active', NOW())
 		RETURNING id
-	`, tenantID, email, in.DisplayName).Scan(&userID)
+	`, inv.TenantID, inv.Email, in.DisplayName).Scan(&userID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,20 +223,18 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 	`, userID, pwHash); err != nil {
 		return nil, err
 	}
-	if roleID != nil {
+	if roleID := pgtypeToUUIDPtr(inv.RoleID); roleID != nil {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO rbac.user_roles (user_id, tenant_id, role_id) VALUES ($1, $2, $3)
-		`, userID, tenantID, *roleID); err != nil {
+		`, userID, inv.TenantID, *roleID); err != nil {
 			return nil, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
-	`, id); err != nil {
+	if err := s.q.WithTx(tx).MarkInviteAccepted(ctx, inv.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return &AcceptResult{UserID: userID, TenantID: tenantID}, nil
+	return &AcceptResult{UserID: userID, TenantID: inv.TenantID}, nil
 }

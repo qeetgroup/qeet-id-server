@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/rebac/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -146,9 +147,10 @@ func resolve(fetch fetcher, objType, objID, relation, userID string, visited map
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // Tuple is the API/read projection of a stored relationship.
 type Tuple struct {
@@ -179,15 +181,15 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 	if strings.TrimSpace(relation) == "" {
 		return nil, errs.ErrUnprocessable.WithDetail("relation is required")
 	}
-	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO auth.relation_tuples
-			(tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (tenant_id, object_type, object_id, relation, subject_type, subject_id, subject_relation)
-		DO UPDATE SET tenant_id = EXCLUDED.tenant_id
-		RETURNING id
-	`, tenantID, o.Type, o.ID, relation, subj.Type, subj.ID, subj.Relation).Scan(&id)
+	id, err := s.q.InsertRelationTuple(ctx, dbgen.InsertRelationTupleParams{
+		TenantID:        tenantID,
+		ObjectType:      o.Type,
+		ObjectID:        o.ID,
+		Relation:        relation,
+		SubjectType:     subj.Type,
+		SubjectID:       subj.ID,
+		SubjectRelation: subj.Relation,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -195,11 +197,11 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM auth.relation_tuples WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -211,51 +213,44 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) (
 	if !ok {
 		return nil, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, relation, subject_type, subject_id, subject_relation
-		FROM auth.relation_tuples
-		WHERE tenant_id = $1 AND object_type = $2 AND object_id = $3
-		ORDER BY relation, subject_type, subject_id
-	`, tenantID, o.Type, o.ID)
+	rows, err := s.q.ListRelationTuplesByObject(ctx, dbgen.ListRelationTuplesByObjectParams{
+		TenantID:   tenantID,
+		ObjectType: o.Type,
+		ObjectID:   o.ID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Tuple, 0)
-	for rows.Next() {
-		var t Tuple
-		var st, si, sr string
-		if err := rows.Scan(&t.ID, &t.Relation, &st, &si, &sr); err != nil {
-			return nil, err
-		}
-		t.Object = object
-		t.Subject = subjectString(st, si, sr)
-		out = append(out, t)
+	out := make([]Tuple, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Tuple{
+			ID:       row.ID,
+			Object:   object,
+			Relation: row.Relation,
+			Subject:  subjectString(row.SubjectType, row.SubjectID, row.SubjectRelation),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // tupleFetcher returns a fetcher scoped to one tenant, backed by the database.
+// FetchSubjects is the hot-path query for Check/Explain/Expand.
 func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher {
 	return func(objectType, objectID, rel string) ([]tuple, error) {
-		rows, err := s.pool.Query(ctx, `
-			SELECT subject_type, subject_id, subject_relation
-			FROM auth.relation_tuples
-			WHERE tenant_id = $1 AND object_type = $2 AND object_id = $3 AND relation = $4
-		`, tenantID, objectType, objectID, rel)
+		rows, err := s.q.FetchSubjects(ctx, dbgen.FetchSubjectsParams{
+			TenantID:   tenantID,
+			ObjectType: objectType,
+			ObjectID:   objectID,
+			Relation:   rel,
+		})
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		var ts []tuple
-		for rows.Next() {
-			var t tuple
-			if err := rows.Scan(&t.subjectType, &t.subjectID, &t.subjectRelation); err != nil {
-				return nil, err
-			}
-			ts = append(ts, t)
+		ts := make([]tuple, len(rows))
+		for i, r := range rows {
+			ts[i] = tuple{subjectType: r.SubjectType, subjectID: r.SubjectID, subjectRelation: r.SubjectRelation}
 		}
-		return ts, rows.Err()
+		return ts, nil
 	}
 }
 
@@ -395,28 +390,24 @@ func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject
 	if !ok {
 		return nil, errs.ErrUnprocessable.WithDetail("subject must be \"type:id\" or \"type:id#relation\"")
 	}
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, object_type, object_id, relation, subject_relation
-		FROM auth.relation_tuples
-		WHERE tenant_id = $1 AND subject_type = $2 AND subject_id = $3
-		ORDER BY object_type, object_id, relation
-	`, tenantID, subj.Type, subj.ID)
+	rows, err := s.q.ListRelationTuplesBySubject(ctx, dbgen.ListRelationTuplesBySubjectParams{
+		TenantID:    tenantID,
+		SubjectType: subj.Type,
+		SubjectID:   subj.ID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Tuple, 0)
-	for rows.Next() {
-		var t Tuple
-		var ot, oi, sr string
-		if err := rows.Scan(&t.ID, &ot, &oi, &t.Relation, &sr); err != nil {
-			return nil, err
-		}
-		t.Object = graphNodeID(ot, oi)
-		t.Subject = subjectString(subj.Type, subj.ID, sr)
-		out = append(out, t)
+	out := make([]Tuple, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Tuple{
+			ID:       row.ID,
+			Object:   graphNodeID(row.ObjectType, row.ObjectID),
+			Relation: row.Relation,
+			Subject:  subjectString(subj.Type, subj.ID, row.SubjectRelation),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // --- handlers ---

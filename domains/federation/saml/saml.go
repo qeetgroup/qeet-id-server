@@ -29,11 +29,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	saml2 "github.com/russellhaering/gosaml2"
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -62,29 +64,43 @@ type Connection struct {
 
 type Service struct {
 	pool       *pgxpool.Pool
+	q          *dbgen.Queries
 	auth       *auth.Service
 	appBaseURL string
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
-	return &Service{pool: pool, auth: authSvc, appBaseURL: strings.TrimRight(appBaseURL, "/")}
+	return &Service{
+		pool:       pool,
+		q:          dbgen.New(pool),
+		auth:       authSvc,
+		appBaseURL: strings.TrimRight(appBaseURL, "/"),
+	}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-const connCols = `id, tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate,
-                  email_attribute, name_attribute, status, created_at, updated_at, last_login_at`
-
-func scanConn(row pgx.Row) (*Connection, error) {
-	var c Connection
-	if err := row.Scan(&c.ID, &c.TenantID, &c.Name, &c.IdpEntityID, &c.IdpSSOURL, &c.IdpCertificate,
-		&c.EmailAttribute, &c.NameAttribute, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
+// toConnection maps a sqlc-generated row to the API-facing Connection type.
+func toConnection(r dbgen.TenantSamlConnection) *Connection {
+	var lastLogin *time.Time
+	if r.LastLoginAt.Valid {
+		v := r.LastLoginAt.Time
+		lastLogin = &v
 	}
-	return &c, nil
+	return &Connection{
+		ID:             r.ID,
+		TenantID:       r.TenantID,
+		Name:           r.Name,
+		IdpEntityID:    r.IdpEntityID,
+		IdpSSOURL:      r.IdpSsoUrl,
+		IdpCertificate: r.IdpCertificate,
+		EmailAttribute: r.EmailAttribute,
+		NameAttribute:  r.NameAttribute,
+		Status:         r.Status,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+		LastLoginAt:    lastLogin,
+	}
 }
 
 type CreateInput struct {
@@ -102,42 +118,56 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	if status == "" {
 		status = "draft"
 	}
-	row := tx.QueryRow(ctx, `
-		INSERT INTO tenant.saml_connections
-			(tenant_id, name, idp_entity_id, idp_sso_url, idp_certificate, email_attribute, name_attribute, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING `+connCols,
-		tenantID, in.Name, in.IdpEntityID, in.IdpSSOURL, in.IdpCertificate,
-		in.EmailAttribute, in.NameAttribute, status)
-	return scanConn(row)
-}
-
-func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+connCols+` FROM tenant.saml_connections WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	row, err := s.q.WithTx(tx).InsertSamlConnection(ctx, dbgen.InsertSamlConnectionParams{
+		TenantID:       tenantID,
+		Name:           in.Name,
+		IdpEntityID:    in.IdpEntityID,
+		IdpSsoUrl:      in.IdpSSOURL,
+		IdpCertificate: in.IdpCertificate,
+		EmailAttribute: in.EmailAttribute,
+		NameAttribute:  in.NameAttribute,
+		Status:         status,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Connection
-	for rows.Next() {
-		var c Connection
-		if err := rows.Scan(&c.ID, &c.TenantID, &c.Name, &c.IdpEntityID, &c.IdpSSOURL, &c.IdpCertificate,
-			&c.EmailAttribute, &c.NameAttribute, &c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
+	return toConnection(row), nil
+}
+
+func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, error) {
+	rows, err := s.q.ListSamlConnections(ctx, tenantID)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	out := make([]Connection, len(rows))
+	for i, r := range rows {
+		out[i] = *toConnection(r)
+	}
+	return out, nil
 }
 
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
-	return scanConn(s.pool.QueryRow(ctx, `SELECT `+connCols+` FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2`, id, tenantID))
+	r, err := s.q.GetSamlConnection(ctx, dbgen.GetSamlConnectionParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toConnection(r), nil
 }
 
 // getByID loads a connection without tenant scoping — used by the public SSO
 // endpoints, where the (unguessable) connection UUID in the path is the key.
 func (s *Service) getByID(ctx context.Context, id uuid.UUID) (*Connection, error) {
-	return scanConn(s.pool.QueryRow(ctx, `SELECT `+connCols+` FROM tenant.saml_connections WHERE id = $1`, id))
+	r, err := s.q.GetSamlConnectionByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toConnection(r), nil
 }
 
 type UpdateInput struct {
@@ -151,29 +181,32 @@ type UpdateInput struct {
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
-	row := tx.QueryRow(ctx, `
-		UPDATE tenant.saml_connections SET
-			name            = COALESCE($3, name),
-			idp_entity_id   = COALESCE($4, idp_entity_id),
-			idp_sso_url     = COALESCE($5, idp_sso_url),
-			idp_certificate = COALESCE($6, idp_certificate),
-			email_attribute = COALESCE($7, email_attribute),
-			name_attribute  = COALESCE($8, name_attribute),
-			status          = COALESCE($9, status),
-			updated_at      = NOW()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING `+connCols,
-		id, tenantID, in.Name, in.IdpEntityID, in.IdpSSOURL, in.IdpCertificate,
-		in.EmailAttribute, in.NameAttribute, in.Status)
-	return scanConn(row)
+	r, err := s.q.WithTx(tx).UpdateSamlConnection(ctx, dbgen.UpdateSamlConnectionParams{
+		ID:             id,
+		TenantID:       tenantID,
+		Name:           in.Name,
+		IdpEntityID:    in.IdpEntityID,
+		IdpSsoUrl:      in.IdpSSOURL,
+		IdpCertificate: in.IdpCertificate,
+		EmailAttribute: in.EmailAttribute,
+		NameAttribute:  in.NameAttribute,
+		Status:         in.Status,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toConnection(r), nil
 }
 
 func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `DELETE FROM tenant.saml_connections WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.WithTx(tx).DeleteSamlConnection(ctx, dbgen.DeleteSamlConnectionParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -295,12 +328,13 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		return uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
 
-	var userID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		SELECT user_id FROM "user".external_identities
-		WHERE tenant_id = $1 AND provider = $2 AND subject = $3
-	`, tenantID, provider, subject).Scan(&userID)
+	userID, err := q.GetExternalIdentityUser(ctx, dbgen.GetExternalIdentityUserParams{
+		TenantID: tenantID,
+		Provider: provider,
+		Subject:  subject,
+	})
 	if err == nil {
 		return userID, tx.Commit(ctx)
 	}
@@ -308,30 +342,31 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		return uuid.Nil, err
 	}
 
-	err = tx.QueryRow(ctx, `
-		SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
-	`, email).Scan(&userID)
+	userID, err = q.GetUserByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		var displayName any
+		var displayName *string
 		if name != "" {
-			displayName = name
+			displayName = &name
 		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
-			VALUES ($1, $2, NOW(), $3, 'active')
-			RETURNING id
-		`, tenantID, email, displayName).Scan(&userID); err != nil {
+		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
+			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
+			Email:       email,
+			DisplayName: displayName,
+		})
+		if err != nil {
 			return uuid.Nil, err
 		}
 	} else if err != nil {
 		return uuid.Nil, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO "user".external_identities (user_id, tenant_id, provider, subject, email)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (tenant_id, provider, subject) DO NOTHING
-	`, userID, tenantID, provider, subject, email); err != nil {
+	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{
+		UserID:   userID,
+		TenantID: tenantID,
+		Provider: provider,
+		Subject:  subject,
+		Email:    &email,
+	}); err != nil {
 		return uuid.Nil, err
 	}
 	return userID, tx.Commit(ctx)
@@ -349,36 +384,44 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
 
-	var (
-		userID    uuid.UUID
-		tenantID  uuid.UUID
-		expiresAt time.Time
-		usedAt    *time.Time
-	)
-	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at, used_at
-		FROM auth.saml_login_codes WHERE code_hash = $1 FOR UPDATE
-	`, codeHash).Scan(&userID, &tenantID, &expiresAt, &usedAt)
+	row, err := q.ConsumeSamlLoginCode(ctx, codeHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid code")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if usedAt != nil {
+	if row.UsedAt.Valid {
 		return nil, errs.ErrUnauthorized.WithDetail("code already used")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return nil, errs.ErrUnauthorized.WithDetail("code expired")
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.saml_login_codes SET used_at = NOW() WHERE code_hash = $1`, codeHash); err != nil {
+	if err := q.MarkSamlLoginCodeUsed(ctx, codeHash); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, provider)
+	return s.auth.IssuePair(ctx, row.UserID, row.TenantID, ip, ua, provider)
+}
+
+// insertLoginCode persists a one-time code issued at the ACS endpoint.
+func (s *Service) insertLoginCode(ctx context.Context, codeHash string, userID, tenantID uuid.UUID, expiresAt time.Time) error {
+	return s.q.InsertSamlLoginCode(ctx, dbgen.InsertSamlLoginCodeParams{
+		CodeHash:  codeHash,
+		UserID:    userID,
+		TenantID:  tenantID,
+		ExpiresAt: expiresAt,
+	})
+}
+
+// touchLastLogin stamps last_login_at on the SP connection after a successful
+// ACS assertion. Fire-and-forget.
+func (s *Service) touchLastLogin(ctx context.Context, connID uuid.UUID) {
+	_ = s.q.TouchSamlLastLogin(ctx, connID)
 }
 
 // =====================================================================
@@ -788,15 +831,12 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
-	if _, err := h.Service.Pool().Exec(ctx, `
-		INSERT INTO auth.saml_login_codes (code_hash, user_id, tenant_id, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, codeHash, userID, conn.TenantID, time.Now().UTC().Add(loginCodeTTL)); err != nil {
+	if err := h.Service.insertLoginCode(ctx, codeHash, userID, conn.TenantID, time.Now().UTC().Add(loginCodeTTL)); err != nil {
 		slog.Error("saml acs: persist login code", "err", err)
 		httpx.WriteError(w, r, errs.ErrInternal)
 		return
 	}
-	_, _ = h.Service.Pool().Exec(ctx, `UPDATE tenant.saml_connections SET last_login_at = NOW() WHERE id = $1`, conn.ID)
+	h.Service.touchLastLogin(ctx, conn.ID)
 
 	// Hand the SPA the one-time code in the URL fragment (never sent to a
 	// server / proxy log); the SPA trades it at /saml/exchange.

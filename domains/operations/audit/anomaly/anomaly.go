@@ -33,10 +33,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+
+	dbgen "github.com/qeetgroup/qeet-id/domains/operations/audit/anomaly/dbgen"
 )
 
 const (
@@ -90,9 +93,12 @@ type Summary struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool)}
+}
 
 // baseline is the counter state for one (tenant, actor) pair.
 type baseline struct {
@@ -108,21 +114,20 @@ func emptyBaseline() baseline {
 
 func (s *Service) loadBaseline(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID) (baseline, error) {
 	b := emptyBaseline()
-	var actionsJSON, hoursJSON, ipsJSON []byte
-	err := tx.QueryRow(ctx, `
-		SELECT event_count, actions, hours, ips
-		FROM audit.actor_baselines WHERE tenant_id = $1 AND actor_user_id = $2
-		FOR UPDATE
-	`, tenantID, actorID).Scan(&b.eventCount, &actionsJSON, &hoursJSON, &ipsJSON)
+	row, err := s.q.WithTx(tx).GetActorBaseline(ctx, dbgen.GetActorBaselineParams{
+		TenantID:    tenantID,
+		ActorUserID: actorID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return b, nil
 	}
 	if err != nil {
 		return b, err
 	}
-	_ = json.Unmarshal(actionsJSON, &b.actions)
-	_ = json.Unmarshal(hoursJSON, &b.hours)
-	_ = json.Unmarshal(ipsJSON, &b.ips)
+	b.eventCount = row.EventCount
+	_ = json.Unmarshal(row.Actions, &b.actions)
+	_ = json.Unmarshal(row.Hours, &b.hours)
+	_ = json.Unmarshal(row.Ips, &b.ips)
 	return b, nil
 }
 
@@ -130,17 +135,14 @@ func (s *Service) saveBaseline(ctx context.Context, tx pgx.Tx, tenantID, actorID
 	actionsJSON, _ := json.Marshal(b.actions)
 	hoursJSON, _ := json.Marshal(b.hours)
 	ipsJSON, _ := json.Marshal(b.ips)
-	_, err := tx.Exec(ctx, `
-		INSERT INTO audit.actor_baselines (tenant_id, actor_user_id, event_count, actions, hours, ips, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, NOW())
-		ON CONFLICT (tenant_id, actor_user_id) DO UPDATE SET
-			event_count = EXCLUDED.event_count,
-			actions     = EXCLUDED.actions,
-			hours       = EXCLUDED.hours,
-			ips         = EXCLUDED.ips,
-			updated_at  = NOW()
-	`, tenantID, actorID, b.eventCount, actionsJSON, hoursJSON, ipsJSON)
-	return err
+	return s.q.WithTx(tx).UpsertActorBaseline(ctx, dbgen.UpsertActorBaselineParams{
+		TenantID:    tenantID,
+		ActorUserID: actorID,
+		EventCount:  b.eventCount,
+		Actions:     actionsJSON,
+		Hours:       hoursJSON,
+		Ips:         ipsJSON,
+	})
 }
 
 // score compares one event against the actor's baseline (as it stood before
@@ -211,41 +213,44 @@ type unscoredEvent struct {
 
 func (s *Service) settingsFor(ctx context.Context, tenantID uuid.UUID) (Settings, error) {
 	st := Settings{TenantID: tenantID, Enabled: true, ScoreThreshold: defaultScoreThreshold, MinBaselineEvents: defaultMinBaselineEvents}
-	err := s.pool.QueryRow(ctx, `
-		SELECT enabled, score_threshold, min_baseline_events
-		FROM audit.anomaly_settings WHERE tenant_id = $1
-	`, tenantID).Scan(&st.Enabled, &st.ScoreThreshold, &st.MinBaselineEvents)
+	row, err := s.q.GetAnomalySettings(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, nil
 	}
-	return st, err
+	if err != nil {
+		return st, err
+	}
+	st.Enabled = row.Enabled
+	st.ScoreThreshold = row.ScoreThreshold
+	st.MinBaselineEvents = int(row.MinBaselineEvents)
+	return st, nil
 }
 
 // tick processes one batch of unscored events. Each event is handled in its
 // own transaction so a single bad row can't block the rest of the batch, and
 // so the per-tenant advisory-lock-free baseline read/update stays small.
 func (s *Service) tick(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, actor_user_id, action, host(ip), created_at
-		FROM audit.events
-		WHERE scored_at IS NULL
-		ORDER BY created_at, id
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED
-	`, sweepBatch)
+	rows, err := s.q.ListUnscoredAuditEvents(ctx, int32(sweepBatch))
 	if err != nil {
 		return err
 	}
+
+	// Map the generated rows to unscoredEvent. ip is COALESCE(host(ip),'') →
+	// interface{}; convert to *string (nil when empty string).
 	var batch []unscoredEvent
-	for rows.Next() {
-		var e unscoredEvent
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.ActorUserID, &e.Action, &e.IP, &e.CreatedAt); err != nil {
-			rows.Close()
-			return err
+	for _, r := range rows {
+		e := unscoredEvent{
+			ID:        r.ID,
+			TenantID:  toUUIDPtr(r.TenantID),
+			ActorUserID: toUUIDPtr(r.ActorUserID),
+			Action:    r.Action,
+			CreatedAt: r.CreatedAt,
+		}
+		if ip, ok := r.Ip.(string); ok && ip != "" {
+			e.IP = &ip
 		}
 		batch = append(batch, e)
 	}
-	rows.Close()
 
 	for _, e := range batch {
 		if err := s.scoreOne(ctx, e); err != nil {
@@ -262,10 +267,12 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 	}
 	defer tx.Rollback(ctx)
 
+	qTx := s.q.WithTx(tx)
+
 	// No human actor (agent/service/system) — nothing to baseline. Mark
 	// scored and move on.
 	if e.TenantID == nil || e.ActorUserID == nil {
-		if _, err := tx.Exec(ctx, `UPDATE audit.events SET scored_at = NOW() WHERE id = $1`, e.ID); err != nil {
+		if err := qTx.MarkAuditEventScored(ctx, e.ID); err != nil {
 			return err
 		}
 		return tx.Commit(ctx)
@@ -292,11 +299,13 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 		if b.eventCount >= int64(settings.MinBaselineEvents) {
 			sc, reasons := score(b, e.Action, ip, hour)
 			if sc >= settings.ScoreThreshold {
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO audit.anomalies (tenant_id, event_id, actor_user_id, score, reasons)
-					VALUES ($1, $2, $3, $4, $5)
-					ON CONFLICT (event_id) DO NOTHING
-				`, *e.TenantID, e.ID, *e.ActorUserID, sc, reasons); err != nil {
+				if err := qTx.InsertAnomaly(ctx, dbgen.InsertAnomalyParams{
+					TenantID:    *e.TenantID,
+					EventID:     e.ID,
+					ActorUserID: pgtype.UUID{Bytes: *e.ActorUserID, Valid: true},
+					Score:       sc,
+					Reasons:     reasons,
+				}); err != nil {
 					return err
 				}
 			}
@@ -307,7 +316,7 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE audit.events SET scored_at = NOW() WHERE id = $1`, e.ID); err != nil {
+	if err := qTx.MarkAuditEventScored(ctx, e.ID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -333,23 +342,64 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-const listCols = `
-	a.id, a.tenant_id, a.event_id, a.actor_user_id, u.email,
-	a.score, a.reasons, a.status, a.resolved_at, a.resolved_by, a.created_at,
-	e.action, e.resource_type, host(e.ip), e.created_at
-`
-
-func scanAnomaly(row pgx.Row) (*Anomaly, error) {
-	var a Anomaly
-	if err := row.Scan(&a.ID, &a.TenantID, &a.EventID, &a.ActorUserID, &a.ActorEmail,
-		&a.Score, &a.Reasons, &a.Status, &a.ResolvedAt, &a.ResolvedBy, &a.CreatedAt,
-		&a.Action, &a.ResourceType, &a.IP, &a.EventAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
+// toUUIDPtr converts a pgtype.UUID (sqlc nullable uuid) to a *uuid.UUID,
+// returning nil for invalid (NULL) values.
+func toUUIDPtr(u pgtype.UUID) *uuid.UUID {
+	if !u.Valid {
+		return nil
 	}
-	return &a, nil
+	id := uuid.UUID(u.Bytes)
+	return &id
+}
+
+// toTimePtr converts a pgtype.Timestamptz (sqlc nullable timestamptz) to a
+// *time.Time, returning nil for invalid (NULL) values.
+func toTimePtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
+}
+
+// toAnomalyFromRow maps a ListAnomaliesRow or ListAnomaliesFilteredRow to an
+// Anomaly domain value. The two generated row types have the same fields so
+// this helper is generic over the shared fields via direct access.
+func rowToAnomaly(
+	id, tenantID, eventID uuid.UUID,
+	actorUserID pgtype.UUID,
+	actorEmail *string,
+	scoreVal float64,
+	reasons []string,
+	status string,
+	resolvedAt pgtype.Timestamptz,
+	resolvedBy pgtype.UUID,
+	createdAt time.Time,
+	action, resourceType string,
+	ipRaw interface{},
+	eventAt time.Time,
+) Anomaly {
+	// ip is COALESCE(host(e.ip), '') → interface{}; nil *string when empty.
+	var ipPtr *string
+	if ip, ok := ipRaw.(string); ok && ip != "" {
+		ipPtr = &ip
+	}
+	return Anomaly{
+		ID:           id,
+		TenantID:     tenantID,
+		EventID:      eventID,
+		ActorUserID:  toUUIDPtr(actorUserID),
+		ActorEmail:   actorEmail,
+		Score:        scoreVal,
+		Reasons:      reasons,
+		Status:       status,
+		ResolvedAt:   toTimePtr(resolvedAt),
+		ResolvedBy:   toUUIDPtr(resolvedBy),
+		CreatedAt:    createdAt,
+		Action:       action,
+		ResourceType: resourceType,
+		IP:           ipPtr,
+		EventAt:      eventAt,
+	}
 }
 
 // List returns a tenant's anomalies, most recent first. status filters to
@@ -358,58 +408,62 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, status string, l
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := `
-		SELECT ` + listCols + `
-		FROM audit.anomalies a
-		JOIN audit.events e ON e.id = a.event_id
-		LEFT JOIN "user".users u ON u.id = a.actor_user_id
-		WHERE a.tenant_id = $1
-	`
-	args := []any{tenantID}
-	if status != "" {
-		args = append(args, status)
-		q += ` AND a.status = $` + strconv.Itoa(len(args))
-	}
-	args = append(args, limit)
-	q += ` ORDER BY a.created_at DESC LIMIT $` + strconv.Itoa(len(args))
-
-	rows, err := s.pool.Query(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	out := []Anomaly{}
-	for rows.Next() {
-		a, err := scanAnomaly(rows)
+	if status != "" {
+		rows, err := s.q.ListAnomaliesFiltered(ctx, dbgen.ListAnomaliesFilteredParams{
+			TenantID: tenantID,
+			Status:   status,
+			RowLimit: int32(limit),
+		})
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, *a)
+		for _, r := range rows {
+			out = append(out, rowToAnomaly(r.ID, r.TenantID, r.EventID,
+				r.ActorUserID, r.Email, r.Score, r.Reasons, r.Status,
+				r.ResolvedAt, r.ResolvedBy, r.CreatedAt,
+				r.Action, r.ResourceType, r.Ip, r.EventAt))
+		}
+		return out, nil
 	}
-	return out, rows.Err()
+	rows, err := s.q.ListAnomalies(ctx, dbgen.ListAnomaliesParams{
+		TenantID: tenantID,
+		RowLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out = append(out, rowToAnomaly(r.ID, r.TenantID, r.EventID,
+			r.ActorUserID, r.Email, r.Score, r.Reasons, r.Status,
+			r.ResolvedAt, r.ResolvedBy, r.CreatedAt,
+			r.Action, r.ResourceType, r.Ip, r.EventAt))
+	}
+	return out, nil
 }
 
 func (s *Service) Summary(ctx context.Context, tenantID uuid.UUID) (*Summary, error) {
-	var sum Summary
-	err := s.pool.QueryRow(ctx, `
-		SELECT
-			count(*) FILTER (WHERE status = 'open'),
-			count(*) FILTER (WHERE status = 'resolved' AND resolved_at > NOW() - INTERVAL '7 days'),
-			count(*) FILTER (WHERE status = 'open' AND score >= 0.85)
-		FROM audit.anomalies WHERE tenant_id = $1
-	`, tenantID).Scan(&sum.Open, &sum.Resolved7d, &sum.HighScore)
-	return &sum, err
+	row, err := s.q.GetAnomalySummary(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return &Summary{
+		Open:       int(row.OpenCount),
+		Resolved7d: int(row.Resolved7d),
+		HighScore:  int(row.HighScore),
+	}, nil
 }
 
 func (s *Service) Resolve(ctx context.Context, tenantID, id, resolvedBy uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE audit.anomalies SET status = 'resolved', resolved_at = NOW(), resolved_by = $3
-		WHERE id = $1 AND tenant_id = $2 AND status = 'open'
-	`, id, tenantID, resolvedBy)
+	ct, err := s.q.ResolveAnomaly(ctx, dbgen.ResolveAnomalyParams{
+		ResolvedBy: pgtype.UUID{Bytes: resolvedBy, Valid: true},
+		ID:         id,
+		TenantID:   tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -427,16 +481,12 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	if in.MinBaselineEvents < 0 {
 		return nil, errs.ErrUnprocessable.WithDetail("min_baseline_events must be >= 0")
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO audit.anomaly_settings (tenant_id, enabled, score_threshold, min_baseline_events, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			enabled             = EXCLUDED.enabled,
-			score_threshold     = EXCLUDED.score_threshold,
-			min_baseline_events = EXCLUDED.min_baseline_events,
-			updated_at          = NOW()
-	`, tenantID, in.Enabled, in.ScoreThreshold, in.MinBaselineEvents)
-	if err != nil {
+	if err := s.q.UpsertAnomalySettings(ctx, dbgen.UpsertAnomalySettingsParams{
+		TenantID:          tenantID,
+		Enabled:           in.Enabled,
+		ScoreThreshold:    in.ScoreThreshold,
+		MinBaselineEvents: int32(in.MinBaselineEvents),
+	}); err != nil {
 		return nil, err
 	}
 	out := in

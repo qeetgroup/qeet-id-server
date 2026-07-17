@@ -20,8 +20,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	siemdbgen "github.com/qeetgroup/qeet-id/domains/operations/siem/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -62,11 +64,16 @@ type AuditEvent struct {
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *siemdbgen.Queries
 	client *http.Client
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, client: &http.Client{Timeout: 10 * time.Second}}
+	return &Service{
+		pool:   pool,
+		q:      siemdbgen.New(pool),
+		client: &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
 func validType(t string) bool {
@@ -82,55 +89,64 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 	if !strings.HasPrefix(endpoint, "https://") && !strings.HasPrefix(endpoint, "http://") {
 		return nil, errs.ErrUnprocessable.WithDetail("endpoint must be an absolute http(s) URL")
 	}
-	var sk Sink
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.log_sinks (tenant_id, type, endpoint, token, cursor_created_at, cursor_id)
-		VALUES ($1, $2, $3, $4, NOW(), '00000000-0000-0000-0000-000000000000')
-		RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
-	`, tenantID, typ, endpoint, token).Scan(&sk.ID, &sk.Type, &sk.Endpoint, &sk.Enabled, &sk.LastForwardedAt, &sk.LastError, &sk.CreatedAt)
+	row, err := s.q.InsertLogSink(ctx, siemdbgen.InsertLogSinkParams{
+		TenantID: tenantID, Type: typ, Endpoint: endpoint, Token: token,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &sk, nil
+	sk := &Sink{
+		ID: row.ID, Type: row.Type, Endpoint: row.Endpoint,
+		Enabled: row.Enabled, LastError: row.LastError, CreatedAt: row.CreatedAt,
+	}
+	if row.LastForwardedAt.Valid {
+		t := row.LastForwardedAt.Time
+		sk.LastForwardedAt = &t
+	}
+	return sk, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
-		FROM tenant.log_sinks WHERE tenant_id = $1 ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListLogSinks(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Sink, 0)
-	for rows.Next() {
-		var sk Sink
-		if err := rows.Scan(&sk.ID, &sk.Type, &sk.Endpoint, &sk.Enabled, &sk.LastForwardedAt, &sk.LastError, &sk.CreatedAt); err != nil {
-			return nil, err
+	out := make([]Sink, 0, len(rows))
+	for _, r := range rows {
+		sk := Sink{
+			ID: r.ID, Type: r.Type, Endpoint: r.Endpoint,
+			Enabled: r.Enabled, LastError: r.LastError, CreatedAt: r.CreatedAt,
+		}
+		if r.LastForwardedAt.Valid {
+			t := r.LastForwardedAt.Time
+			sk.LastForwardedAt = &t
 		}
 		out = append(out, sk)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool) error {
-	ct, err := s.pool.Exec(ctx, `UPDATE tenant.log_sinks SET enabled = $3 WHERE id = $1 AND tenant_id = $2`, id, tenantID, enabled)
+	n, err := s.q.SetLogSinkEnabled(ctx, siemdbgen.SetLogSinkEnabledParams{
+		Enabled: enabled, ID: id, TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.log_sinks WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteLogSink(ctx, siemdbgen.DeleteLogSinkParams{
+		ID: id, TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -161,24 +177,28 @@ type sinkRow struct {
 }
 
 func (s *Service) forwardDue(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, type, endpoint, token,
-		       COALESCE(cursor_created_at, NOW()), COALESCE(cursor_id, '00000000-0000-0000-0000-000000000000')
-		FROM tenant.log_sinks WHERE enabled
-	`)
+	rows, err := s.q.ListEnabledLogSinks(ctx)
 	if err != nil {
 		return err
 	}
 	var sinks []sinkRow
-	for rows.Next() {
-		var r sinkRow
-		if err := rows.Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.token, &r.cursorAt, &r.cursorID); err != nil {
-			rows.Close()
-			return err
+	for _, r := range rows {
+		sk := sinkRow{
+			id: r.ID, tenantID: r.TenantID,
+			typ: r.Type, endpoint: r.Endpoint, token: r.Token,
+			// Apply COALESCE defaults in Go: null cursor_created_at → NOW(),
+			// null cursor_id → zero UUID (matches the INSERT default).
+			cursorAt: time.Now(),
+			cursorID: uuid.UUID{},
 		}
-		sinks = append(sinks, r)
+		if r.CursorCreatedAt.Valid {
+			sk.cursorAt = r.CursorCreatedAt.Time
+		}
+		if r.CursorID.Valid {
+			sk.cursorID = uuid.UUID(r.CursorID.Bytes)
+		}
+		sinks = append(sinks, sk)
 	}
-	rows.Close()
 	for _, sk := range sinks {
 		s.forwardSink(ctx, sk)
 	}
@@ -203,62 +223,61 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) {
 		s.recordError(ctx, sk.id, err.Error())
 		return
 	}
-	_, _ = s.pool.Exec(ctx, `
-		UPDATE tenant.log_sinks
-		SET cursor_created_at = $2, cursor_id = $3, last_forwarded_at = NOW(), last_error = ''
-		WHERE id = $1
-	`, sk.id, lastAt, lastID)
+	// Advance the cursor; ignore errors (retry on next tick).
+	_ = s.q.AdvanceLogSinkCursor(ctx, siemdbgen.AdvanceLogSinkCursorParams{
+		CursorCreatedAt: pgtype.Timestamptz{Time: lastAt, Valid: true},
+		CursorID:        pgtype.UUID{Bytes: lastID, Valid: true},
+		ID:              sk.id,
+	})
 }
 
 func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt time.Time, afterID uuid.UUID) ([]AuditEvent, time.Time, uuid.UUID, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, actor_user_id, actor_type, action, resource_type, resource_id,
-		       host(ip), request_id, created_at
-		FROM audit.events
-		WHERE tenant_id = $1 AND (created_at, id) > ($2, $3)
-		ORDER BY created_at ASC, id ASC
-		LIMIT $4
-	`, tenantID, afterAt, afterID, forwardBatch)
+	// tenant_id is nullable in audit.events; we always query by a specific tenant.
+	genRows, err := s.q.FetchAuditEventsAfterCursor(ctx, siemdbgen.FetchAuditEventsAfterCursorParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		AfterAt:  afterAt,
+		AfterID:  afterID,
+		RowLimit: forwardBatch,
+	})
 	if err != nil {
 		return nil, afterAt, afterID, err
 	}
-	defer rows.Close()
 	var (
 		out    []AuditEvent
 		lastAt = afterAt
 		lastID = afterID
 	)
-	for rows.Next() {
-		var (
-			e       AuditEvent
-			id      uuid.UUID
-			tid     *uuid.UUID
-			actorID *uuid.UUID
-			resType *string
-			resID   *uuid.UUID
-		)
-		if err := rows.Scan(&id, &tid, &actorID, &e.ActorType, &e.Action, &resType, &resID, &e.IP, &e.RequestID, &e.CreatedAt); err != nil {
-			return nil, afterAt, afterID, err
+	for _, r := range genRows {
+		var e AuditEvent
+		e.ID = r.ID.String()
+		if r.TenantID.Valid {
+			e.TenantID = uuid.UUID(r.TenantID.Bytes).String()
 		}
-		e.ID = id.String()
-		if tid != nil {
-			e.TenantID = tid.String()
+		if r.ActorUserID.Valid {
+			as := uuid.UUID(r.ActorUserID.Bytes).String()
+			e.ActorUserID = &as
 		}
-		if actorID != nil {
-			s := actorID.String()
-			e.ActorUserID = &s
+		e.ActorType = r.ActorType
+		e.Action = r.Action
+		e.ResourceType = r.ResourceType
+		if r.ResourceID.Valid {
+			rs := uuid.UUID(r.ResourceID.Bytes).String()
+			e.ResourceID = &rs
 		}
-		if resType != nil {
-			e.ResourceType = *resType
+		// COALESCE(host(ip),'') in the query maps NULL ip to ""; convert back to nil.
+		if r.Host != "" {
+			h := r.Host
+			e.IP = &h
 		}
-		if resID != nil {
-			s := resID.String()
-			e.ResourceID = &s
+		// request_id is nullable TEXT; nil pointer means no request ID recorded.
+		if r.RequestID != nil {
+			e.RequestID = *r.RequestID
 		}
+		e.CreatedAt = r.CreatedAt
 		out = append(out, e)
-		lastAt, lastID = e.CreatedAt, id
+		lastAt, lastID = r.CreatedAt, r.ID
 	}
-	return out, lastAt, lastID, rows.Err()
+	return out, lastAt, lastID, nil
 }
 
 func (s *Service) post(ctx context.Context, endpoint string, headers map[string]string, body []byte) error {
@@ -285,7 +304,7 @@ func (s *Service) recordError(ctx context.Context, id uuid.UUID, msg string) {
 	if len(msg) > 500 {
 		msg = msg[:500]
 	}
-	_, _ = s.pool.Exec(ctx, `UPDATE tenant.log_sinks SET last_error = $2 WHERE id = $1`, id, msg)
+	_ = s.q.SetLogSinkError(ctx, siemdbgen.SetLogSinkErrorParams{LastError: msg, ID: id})
 }
 
 // buildRequest renders a batch of events into the body + headers each collector

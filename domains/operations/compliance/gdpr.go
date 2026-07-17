@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbgen "github.com/qeetgroup/qeet-id/domains/operations/compliance/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -34,6 +35,7 @@ type Request struct {
 
 type Service struct {
 	pool  *pgxpool.Pool
+	q     *dbgen.Queries
 	grace time.Duration
 }
 
@@ -41,7 +43,7 @@ func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
 	if grace <= 0 {
 		grace = 30 * 24 * time.Hour
 	}
-	return &Service{pool: pool, grace: grace}
+	return &Service{pool: pool, q: dbgen.New(pool), grace: grace}
 }
 
 type CreateInput struct {
@@ -52,52 +54,63 @@ type CreateInput struct {
 }
 
 func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error) {
-	var r Request
-	var reason any
+	// grace_until is pre-computed here (instead of NOW() + $5::interval) to
+	// avoid the pgtype.Interval parameter type mismatch in sqlc-generated code.
+	var reason *string
 	if in.Reason != "" {
-		reason = in.Reason
+		reason = &in.Reason
 	}
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO "user".purge_requests (tenant_id, user_id, requested_by, reason, grace_until)
-		VALUES ($1, $2, $3, $4, NOW() + $5::interval)
-		RETURNING id, tenant_id, user_id, requested_by, reason, status, grace_until, completed_at, created_at
-	`, in.TenantID, in.UserID, in.By, reason, formatInterval(s.grace)).
-		Scan(&r.ID, &r.TenantID, &r.UserID, &r.RequestedBy, &r.Reason, &r.Status, &r.GraceUntil, &r.CompletedAt, &r.CreatedAt)
+	row, err := s.q.InsertPurgeRequest(ctx, dbgen.InsertPurgeRequestParams{
+		TenantID:    in.TenantID,
+		UserID:      in.UserID,
+		RequestedBy: pgUUIDNullable(in.By),
+		Reason:      reason,
+		GraceUntil:  time.Now().UTC().Add(s.grace),
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &r, nil
+	return purgeRequestFromRow(row), nil
 }
 
 func (s *Service) Cancel(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `UPDATE "user".purge_requests SET status = 'cancelled' WHERE id = $1 AND status = 'pending'`, id)
+	ct, err := s.q.CancelPurgeRequest(ctx, id)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if ct == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, user_id, requested_by, reason, status, grace_until, completed_at, created_at
-		FROM "user".purge_requests WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 200
-	`, tenantID)
+	rows, err := s.q.ListPurgeRequests(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Request
-	for rows.Next() {
-		var r Request
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.UserID, &r.RequestedBy, &r.Reason, &r.Status, &r.GraceUntil, &r.CompletedAt, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]Request, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, *purgeRequestFromRow(r))
 	}
 	return out, nil
+}
+
+// purgeRequestFromRow maps a generated UserPurgeRequest model to the domain
+// Request type. The helper lives here to keep mapping logic co-located with
+// the repository code.
+func purgeRequestFromRow(r dbgen.UserPurgeRequest) *Request {
+	return &Request{
+		ID:          r.ID,
+		TenantID:    r.TenantID,
+		UserID:      r.UserID,
+		RequestedBy: toUUIDPtr(r.RequestedBy),
+		Reason:      r.Reason,
+		Status:      r.Status,
+		GraceUntil:  r.GraceUntil,
+		CompletedAt: toTimePtr(r.CompletedAt),
+		CreatedAt:   r.CreatedAt,
+	}
 }
 
 // Run is the background sweeper. It picks ripe purge requests and erases
@@ -125,27 +138,10 @@ func (s *Service) Run(ctx context.Context) {
 func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
 func (s *Service) tick(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id FROM "user".purge_requests
-		WHERE status = 'pending' AND grace_until <= NOW()
-		LIMIT 50 FOR UPDATE SKIP LOCKED
-	`)
+	batch, err := s.q.GetPendingPurgeRequests(ctx)
 	if err != nil {
 		return err
 	}
-	type ent struct {
-		ID, UserID uuid.UUID
-	}
-	var batch []ent
-	for rows.Next() {
-		var e ent
-		if err := rows.Scan(&e.ID, &e.UserID); err != nil {
-			rows.Close()
-			return err
-		}
-		batch = append(batch, e)
-	}
-	rows.Close()
 	for _, e := range batch {
 		if err := s.purgeOne(ctx, e.ID, e.UserID); err != nil {
 			slog.Warn("gdpr purge", "user", e.UserID, "err", err)
@@ -160,33 +156,24 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
-		UPDATE "user".users
-		SET email = 'redacted-' || id::text || '@gdpr.invalid',
-		    phone = NULL, display_name = NULL,
-		    metadata = '{}'::jsonb,
-		    email_verified_at = NULL, phone_verified_at = NULL,
-		    status = 'deleted', deleted_at = COALESCE(deleted_at, NOW()),
-		    updated_at = NOW()
-		WHERE id = $1
-	`, userID); err != nil {
+
+	qTx := dbgen.New(tx)
+	if err := qTx.PurgeUserPII(ctx, userID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM auth.password_credentials WHERE user_id = $1`, userID); err != nil {
+	if err := qTx.DeletePasswordCredentials(ctx, userID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_totp WHERE user_id = $1`, userID); err != nil {
+	if err := qTx.DeleteMFATOTP(ctx, userID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1`, userID); err != nil {
+	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at = COALESCE(revoked_at, NOW()) WHERE user_id = $1`, userID); err != nil {
+	if err := qTx.RevokeUserSessions(ctx, userID); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE "user".purge_requests SET status = 'completed', completed_at = NOW() WHERE id = $1
-	`, requestID); err != nil {
+	if err := qTx.CompletePurgeRequest(ctx, requestID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -215,92 +202,92 @@ type ExportInput struct {
 // RequestExport queues a data-export job for a user. The background sweep
 // (exportTick) builds the payload asynchronously; poll GetExport for status.
 func (s *Service) RequestExport(ctx context.Context, in ExportInput) (*ExportRequest, error) {
-	var r ExportRequest
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO "user".export_requests (tenant_id, user_id, requested_by)
-		VALUES ($1, $2, $3)
-		RETURNING id, tenant_id, user_id, requested_by, status, completed_at, created_at
-	`, in.TenantID, in.UserID, in.By).
-		Scan(&r.ID, &r.TenantID, &r.UserID, &r.RequestedBy, &r.Status, &r.CompletedAt, &r.CreatedAt)
+	row, err := s.q.InsertExportRequest(ctx, dbgen.InsertExportRequestParams{
+		TenantID:    in.TenantID,
+		UserID:      in.UserID,
+		RequestedBy: pgUUIDNullable(in.By),
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &r, nil
+	return &ExportRequest{
+		ID:          row.ID,
+		TenantID:    row.TenantID,
+		UserID:      row.UserID,
+		RequestedBy: toUUIDPtr(row.RequestedBy),
+		Status:      row.Status,
+		CompletedAt: toTimePtr(row.CompletedAt),
+		CreatedAt:   row.CreatedAt,
+	}, nil
 }
 
 // ListExports returns a tenant's export requests, most recent first.
 func (s *Service) ListExports(ctx context.Context, tenantID uuid.UUID) ([]ExportRequest, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, user_id, requested_by, status, error, completed_at, created_at
-		FROM "user".export_requests WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 200
-	`, tenantID)
+	rows, err := s.q.ListExportRequests(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]ExportRequest, 0)
-	for rows.Next() {
-		var r ExportRequest
-		if err := rows.Scan(&r.ID, &r.TenantID, &r.UserID, &r.RequestedBy, &r.Status, &r.Error, &r.CompletedAt, &r.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, r)
+	out := make([]ExportRequest, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ExportRequest{
+			ID:          r.ID,
+			TenantID:    r.TenantID,
+			UserID:      r.UserID,
+			RequestedBy: toUUIDPtr(r.RequestedBy),
+			Status:      r.Status,
+			Error:       r.Error,
+			CompletedAt: toTimePtr(r.CompletedAt),
+			CreatedAt:   r.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // GetExport fetches one export request, including its payload once ready.
 func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*ExportRequest, error) {
-	var r ExportRequest
-	var payload []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, user_id, requested_by, status, payload, error, completed_at, created_at
-		FROM "user".export_requests WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID).
-		Scan(&r.ID, &r.TenantID, &r.UserID, &r.RequestedBy, &r.Status, &payload, &r.Error, &r.CompletedAt, &r.CreatedAt)
+	r, err := s.q.GetExportRequest(ctx, dbgen.GetExportRequestParams{
+		ID:       id,
+		TenantID: tenantID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
 		return nil, err
 	}
-	if len(payload) > 0 {
-		if err := json.Unmarshal(payload, &r.Payload); err != nil {
+	out := &ExportRequest{
+		ID:          r.ID,
+		TenantID:    r.TenantID,
+		UserID:      r.UserID,
+		RequestedBy: toUUIDPtr(r.RequestedBy),
+		Status:      r.Status,
+		Error:       r.Error,
+		CompletedAt: toTimePtr(r.CompletedAt),
+		CreatedAt:   r.CreatedAt,
+	}
+	if len(r.Payload) > 0 {
+		if err := json.Unmarshal(r.Payload, &out.Payload); err != nil {
 			return nil, err
 		}
 	}
-	return &r, nil
+	return out, nil
 }
 
 // exportSweepTick picks pending export requests and builds their payload.
 // Runs on the same ticker cadence as the purge sweep (see Run).
 func (s *Service) exportSweepTick(ctx context.Context) error {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, tenant_id, user_id FROM "user".export_requests
-		WHERE status = 'pending'
-		LIMIT 20 FOR UPDATE SKIP LOCKED
-	`)
+	batch, err := s.q.GetPendingExportRequests(ctx)
 	if err != nil {
 		return err
 	}
-	type ent struct{ ID, TenantID, UserID uuid.UUID }
-	var batch []ent
-	for rows.Next() {
-		var e ent
-		if err := rows.Scan(&e.ID, &e.TenantID, &e.UserID); err != nil {
-			rows.Close()
-			return err
-		}
-		batch = append(batch, e)
-	}
-	rows.Close()
 	for _, e := range batch {
 		if err := s.buildExport(ctx, e.ID, e.TenantID, e.UserID); err != nil {
 			slog.Warn("gdpr export", "user", e.UserID, "err", err)
 			msg := err.Error()
-			_, _ = s.pool.Exec(ctx, `
-				UPDATE "user".export_requests SET status = 'failed', error = $2, completed_at = NOW() WHERE id = $1
-			`, e.ID, msg)
+			_ = s.q.FailExportRequest(ctx, dbgen.FailExportRequestParams{
+				ErrorMsg: &msg,
+				ID:       e.ID,
+			})
 		}
 	}
 	return nil
@@ -315,10 +302,10 @@ func (s *Service) buildExport(ctx context.Context, requestID, tenantID, userID u
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
-		UPDATE "user".export_requests SET status = 'ready', payload = $2, completed_at = NOW() WHERE id = $1
-	`, requestID, raw)
-	return err
+	return s.q.ReadyExportRequest(ctx, dbgen.ReadyExportRequestParams{
+		Payload: raw,
+		ID:      requestID,
+	})
 }
 
 type exportProfile struct {
@@ -358,85 +345,79 @@ type exportRole struct {
 // role assignments. Password hashes, TOTP secrets, and recovery-code hashes
 // are deliberately excluded — they're credentials, not personal data.
 func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUID) (map[string]any, error) {
-	var profile exportProfile
-	err := s.pool.QueryRow(ctx, `
-		SELECT email, phone, display_name, status, email_verified_at, phone_verified_at, created_at
-		FROM "user".users WHERE id = $1 AND tenant_id = $2
-	`, userID, tenantID).Scan(&profile.Email, &profile.Phone, &profile.DisplayName, &profile.Status,
-		&profile.EmailVerifiedAt, &profile.PhoneVerifiedAt, &profile.CreatedAt)
+	// user.users.tenant_id is nullable → pgtype.UUID param.
+	profileRow, err := s.q.GetUserProfileForExport(ctx, dbgen.GetUserProfileForExportParams{
+		UserID:   userID,
+		TenantID: pgUUIDNullable(&tenantID),
+	})
 	if err != nil {
 		return nil, err
+	}
+	profile := exportProfile{
+		Email:           profileRow.Email,
+		Phone:           profileRow.Phone,
+		DisplayName:     profileRow.DisplayName,
+		Status:          profileRow.Status,
+		EmailVerifiedAt: toTimePtr(profileRow.EmailVerifiedAt),
+		PhoneVerifiedAt: toTimePtr(profileRow.PhoneVerifiedAt),
+		CreatedAt:       profileRow.CreatedAt,
 	}
 
-	sessions := make([]exportSession, 0)
-	sRows, err := s.pool.Query(ctx, `
-		SELECT id, host(ip), user_agent, created_at, last_seen_at, revoked_at
-		FROM auth.sessions WHERE user_id = $1 AND tenant_id = $2 ORDER BY created_at DESC
-	`, userID, tenantID)
+	// auth.sessions.tenant_id is nullable (migration 0026) → pgtype.UUID param.
+	sessRows, err := s.q.ListUserSessionsForExport(ctx, dbgen.ListUserSessionsForExportParams{
+		UserID:   userID,
+		TenantID: pgUUIDNullable(&tenantID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	for sRows.Next() {
-		var sess exportSession
-		if err := sRows.Scan(&sess.ID, &sess.IP, &sess.UserAgent, &sess.CreatedAt, &sess.LastSeenAt, &sess.RevokedAt); err != nil {
-			sRows.Close()
-			return nil, err
+	sessions := make([]exportSession, 0, len(sessRows))
+	for _, r := range sessRows {
+		// ip is COALESCE(host(ip), '') → interface{}; nil *string when empty.
+		var ipPtr *string
+		if ip, ok := r.Ip.(string); ok && ip != "" {
+			ipPtr = &ip
 		}
-		sessions = append(sessions, sess)
-	}
-	sRows.Close()
-	if err := sRows.Err(); err != nil {
-		return nil, err
+		sessions = append(sessions, exportSession{
+			ID:         r.ID,
+			IP:         ipPtr,
+			UserAgent:  r.UserAgent,
+			CreatedAt:  r.CreatedAt,
+			LastSeenAt: r.LastSeenAt,
+			RevokedAt:  toTimePtr(r.RevokedAt),
+		})
 	}
 
-	passkeys := make([]exportPasskey, 0)
-	pRows, err := s.pool.Query(ctx, `
-		SELECT id, name, transports, created_at, last_used_at
-		FROM auth.passkey_credentials WHERE user_id = $1
-	`, userID)
+	pkRows, err := s.q.ListUserPasskeysForExport(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	for pRows.Next() {
-		var pk exportPasskey
-		if err := pRows.Scan(&pk.ID, &pk.Name, &pk.Transports, &pk.CreatedAt, &pk.LastUsedAt); err != nil {
-			pRows.Close()
-			return nil, err
-		}
-		passkeys = append(passkeys, pk)
-	}
-	pRows.Close()
-	if err := pRows.Err(); err != nil {
-		return nil, err
+	passkeys := make([]exportPasskey, 0, len(pkRows))
+	for _, r := range pkRows {
+		passkeys = append(passkeys, exportPasskey{
+			ID:         r.ID,
+			Name:       r.Name,
+			Transports: r.Transports,
+			CreatedAt:  r.CreatedAt,
+			LastUsedAt: toTimePtr(r.LastUsedAt),
+		})
 	}
 
-	roles := make([]exportRole, 0)
-	rRows, err := s.pool.Query(ctx, `
-		SELECT r.name, ur.granted_at
-		FROM rbac.user_roles ur
-		JOIN rbac.roles r ON r.id = ur.role_id
-		WHERE ur.user_id = $1 AND ur.tenant_id = $2
-	`, userID, tenantID)
+	roleRows, err := s.q.ListUserRolesForExport(ctx, dbgen.ListUserRolesForExportParams{
+		UserID:   userID,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	for rRows.Next() {
-		var role exportRole
-		if err := rRows.Scan(&role.RoleName, &role.GrantedAt); err != nil {
-			rRows.Close()
-			return nil, err
-		}
-		roles = append(roles, role)
-	}
-	rRows.Close()
-	if err := rRows.Err(); err != nil {
-		return nil, err
+	roles := make([]exportRole, 0, len(roleRows))
+	for _, r := range roleRows {
+		roles = append(roles, exportRole{RoleName: r.RoleName, GrantedAt: r.GrantedAt})
 	}
 
-	var mfaEnabled bool
-	err = s.pool.QueryRow(ctx, `
-		SELECT confirmed_at IS NOT NULL FROM auth.mfa_totp WHERE user_id = $1
-	`, userID).Scan(&mfaEnabled)
+	// GetUserMFAStatus returns ErrNoRows when the user has no TOTP row — that
+	// means mfaEnabled is false (the zero value), which is correct.
+	mfaEnabled, err := s.q.GetUserMFAStatus(ctx, userID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
@@ -449,11 +430,6 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 		"mfa_totp_enabled": mfaEnabled,
 		"generated_at":     time.Now().UTC(),
 	}, nil
-}
-
-func formatInterval(d time.Duration) string {
-	seconds := int64(d.Seconds())
-	return time.Duration(seconds * int64(time.Second)).String()
 }
 
 type Handler struct {

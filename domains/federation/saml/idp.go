@@ -40,6 +40,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -175,6 +176,7 @@ type SessionResolver interface {
 // IdP issues SAML assertions and manages the SP registry.
 type IdP struct {
 	pool         *pgxpool.Pool
+	q            *dbgen.Queries
 	signer       *idpSigner
 	sessions     SessionResolver
 	loginBaseURL string
@@ -187,6 +189,7 @@ func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions S
 	}
 	return &IdP{
 		pool:         pool,
+		q:            dbgen.New(pool),
 		signer:       signer,
 		sessions:     sessions,
 		loginBaseURL: strings.TrimRight(loginBaseURL, "/"),
@@ -195,20 +198,27 @@ func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions S
 
 func (i *IdP) Pool() *pgxpool.Pool { return i.pool }
 
-const spCols = `id, tenant_id, name, entity_id, acs_url, name_id_format,
-                name_id_attribute, certificate, status, created_at, updated_at, last_login_at`
-
-func scanSP(row pgx.Row) (*ServiceProvider, error) {
-	var sp ServiceProvider
-	if err := row.Scan(&sp.ID, &sp.TenantID, &sp.Name, &sp.EntityID, &sp.ACSURL,
-		&sp.NameIDFormat, &sp.NameIDAttribute, &sp.Certificate, &sp.Status,
-		&sp.CreatedAt, &sp.UpdatedAt, &sp.LastLoginAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
+// toSP maps a sqlc-generated row to the API-facing ServiceProvider type.
+func toSP(r dbgen.TenantSamlServiceProvider) *ServiceProvider {
+	var lastLogin *time.Time
+	if r.LastLoginAt.Valid {
+		v := r.LastLoginAt.Time
+		lastLogin = &v
 	}
-	return &sp, nil
+	return &ServiceProvider{
+		ID:              r.ID,
+		TenantID:        r.TenantID,
+		Name:            r.Name,
+		EntityID:        r.EntityID,
+		ACSURL:          r.AcsUrl,
+		NameIDFormat:    r.NameIDFormat,
+		NameIDAttribute: r.NameIDAttribute,
+		Certificate:     r.Certificate,
+		Status:          r.Status,
+		CreatedAt:       r.CreatedAt,
+		UpdatedAt:       r.UpdatedAt,
+		LastLoginAt:     lastLogin,
+	}
 }
 
 type CreateSPInput struct {
@@ -234,36 +244,43 @@ func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cr
 	if nidAttr == "" {
 		nidAttr = "email"
 	}
-	row := tx.QueryRow(ctx, `
-		INSERT INTO tenant.saml_service_providers
-			(tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING `+spCols,
-		tenantID, in.Name, in.EntityID, in.ACSURL, nidFmt, nidAttr, in.Certificate, status)
-	return scanSP(row)
-}
-
-func (i *IdP) ListSP(ctx context.Context, tenantID uuid.UUID) ([]ServiceProvider, error) {
-	rows, err := i.pool.Query(ctx, `SELECT `+spCols+` FROM tenant.saml_service_providers WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	r, err := i.q.WithTx(tx).InsertSamlSP(ctx, dbgen.InsertSamlSPParams{
+		TenantID:        tenantID,
+		Name:            in.Name,
+		EntityID:        in.EntityID,
+		AcsUrl:          in.ACSURL,
+		NameIDFormat:    nidFmt,
+		NameIDAttribute: nidAttr,
+		Certificate:     in.Certificate,
+		Status:          status,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []ServiceProvider
-	for rows.Next() {
-		var sp ServiceProvider
-		if err := rows.Scan(&sp.ID, &sp.TenantID, &sp.Name, &sp.EntityID, &sp.ACSURL,
-			&sp.NameIDFormat, &sp.NameIDAttribute, &sp.Certificate, &sp.Status,
-			&sp.CreatedAt, &sp.UpdatedAt, &sp.LastLoginAt); err != nil {
-			return nil, err
-		}
-		out = append(out, sp)
+	return toSP(r), nil
+}
+
+func (i *IdP) ListSP(ctx context.Context, tenantID uuid.UUID) ([]ServiceProvider, error) {
+	rows, err := i.q.ListSamlSPs(ctx, tenantID)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	out := make([]ServiceProvider, len(rows))
+	for j, r := range rows {
+		out[j] = *toSP(r)
+	}
+	return out, nil
 }
 
 func (i *IdP) GetSP(ctx context.Context, id, tenantID uuid.UUID) (*ServiceProvider, error) {
-	return scanSP(i.pool.QueryRow(ctx, `SELECT `+spCols+` FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2`, id, tenantID))
+	r, err := i.q.GetSamlSP(ctx, dbgen.GetSamlSPParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toSP(r), nil
 }
 
 type UpdateSPInput struct {
@@ -277,29 +294,32 @@ type UpdateSPInput struct {
 }
 
 func (i *IdP) UpdateSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateSPInput) (*ServiceProvider, error) {
-	row := tx.QueryRow(ctx, `
-		UPDATE tenant.saml_service_providers SET
-			name              = COALESCE($3, name),
-			entity_id         = COALESCE($4, entity_id),
-			acs_url           = COALESCE($5, acs_url),
-			name_id_format    = COALESCE($6, name_id_format),
-			name_id_attribute = COALESCE($7, name_id_attribute),
-			certificate       = COALESCE($8, certificate),
-			status            = COALESCE($9, status),
-			updated_at        = NOW()
-		WHERE id = $1 AND tenant_id = $2
-		RETURNING `+spCols,
-		id, tenantID, in.Name, in.EntityID, in.ACSURL, in.NameIDFormat,
-		in.NameIDAttribute, in.Certificate, in.Status)
-	return scanSP(row)
+	r, err := i.q.WithTx(tx).UpdateSamlSP(ctx, dbgen.UpdateSamlSPParams{
+		ID:              id,
+		TenantID:        tenantID,
+		Name:            in.Name,
+		EntityID:        in.EntityID,
+		AcsUrl:          in.ACSURL,
+		NameIDFormat:    in.NameIDFormat,
+		NameIDAttribute: in.NameIDAttribute,
+		Certificate:     in.Certificate,
+		Status:          in.Status,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toSP(r), nil
 }
 
 func (i *IdP) DeleteSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `DELETE FROM tenant.saml_service_providers WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := i.q.WithTx(tx).DeleteSamlSP(ctx, dbgen.DeleteSamlSPParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -308,26 +328,43 @@ func (i *IdP) DeleteSP(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) e
 // lookupSPByEntityID resolves a (non-disabled) SP by its EntityID for the SSO
 // endpoint, which isn't tenant-scoped in the URL.
 func (i *IdP) lookupSPByEntityID(ctx context.Context, entityID string) (*ServiceProvider, error) {
-	return scanSP(i.pool.QueryRow(ctx, `SELECT `+spCols+` FROM tenant.saml_service_providers
-		WHERE entity_id = $1 AND status <> 'disabled' ORDER BY created_at LIMIT 1`, entityID))
+	r, err := i.q.GetSamlSPByEntityID(ctx, entityID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return toSP(r), nil
 }
 
 // lookupSP resolves by provider UUID (IdP-initiated ?sp=<uuid>) or EntityID.
 func (i *IdP) lookupSP(ctx context.Context, key string) (*ServiceProvider, error) {
 	if id, err := uuid.Parse(key); err == nil {
-		return scanSP(i.pool.QueryRow(ctx, `SELECT `+spCols+` FROM tenant.saml_service_providers WHERE id = $1`, id))
+		r, err := i.q.GetSamlSPByUUID(ctx, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		return toSP(r), nil
 	}
 	return i.lookupSPByEntityID(ctx, key)
 }
 
 func (i *IdP) loadUser(ctx context.Context, userID uuid.UUID) (email, name string, tenantID uuid.UUID, err error) {
-	var displayName *string
-	err = i.pool.QueryRow(ctx, `SELECT email, display_name, tenant_id FROM "user".users WHERE id = $1 AND deleted_at IS NULL`, userID).
-		Scan(&email, &displayName, &tenantID)
-	if displayName != nil {
-		name = *displayName
+	row, err := i.q.GetUserForIdP(ctx, userID)
+	if err != nil {
+		return "", "", uuid.Nil, err
 	}
-	return email, name, tenantID, err
+	if row.DisplayName != nil {
+		name = *row.DisplayName
+	}
+	if row.TenantID.Valid {
+		tenantID = uuid.UUID(row.TenantID.Bytes)
+	}
+	return row.Email, name, tenantID, nil
 }
 
 func (i *IdP) recordIssued(ctx context.Context, r *http.Request, sp *ServiceProvider, userID uuid.UUID) error {
@@ -336,7 +373,7 @@ func (i *IdP) recordIssued(ctx context.Context, r *http.Request, sp *ServiceProv
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `UPDATE tenant.saml_service_providers SET last_login_at = NOW() WHERE id = $1`, sp.ID); err != nil {
+	if err := i.q.WithTx(tx).TouchSamlSPLastLogin(ctx, sp.ID); err != nil {
 		return err
 	}
 	tid, rid, uid := sp.TenantID, sp.ID, userID

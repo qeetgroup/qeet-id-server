@@ -17,9 +17,11 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
+	"github.com/qeetgroup/qeet-id/domains/access/passkeys/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
@@ -38,41 +40,49 @@ type Credential struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 	wa   *webauthn.WebAuthn
 	auth *auth.Service
 }
 
 func NewService(pool *pgxpool.Pool, wa *webauthn.WebAuthn, authSvc *auth.Service) *Service {
-	return &Service{pool: pool, wa: wa, auth: authSvc}
+	return &Service{pool: pool, q: dbgen.New(pool), wa: wa, auth: authSvc}
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Credential, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, user_id, name, transports, last_used_at, created_at
-		FROM auth.passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC
-	`, userID)
+	rows, err := s.q.ListPasskeyCredentials(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Credential
-	for rows.Next() {
-		var c Credential
-		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.Transports, &c.LastUsedAt, &c.CreatedAt); err != nil {
-			return nil, err
+	out := make([]Credential, 0, len(rows))
+	for _, m := range rows {
+		var lastUsedAt *time.Time
+		if m.LastUsedAt.Valid {
+			t := m.LastUsedAt.Time
+			lastUsedAt = &t
 		}
-		out = append(out, c)
+		out = append(out, Credential{
+			ID:         m.ID,
+			UserID:     m.UserID,
+			Name:       m.Name,
+			Transports: m.Transports,
+			LastUsedAt: lastUsedAt,
+			CreatedAt:  m.CreatedAt,
+		})
 	}
 	return out, nil
 }
 
 // Delete is scoped to the owner so one user can't delete another's passkey.
 func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2`, id, userID)
+	n, err := s.q.DeletePasskeyCredential(ctx, dbgen.DeletePasskeyCredentialParams{
+		ID:     id,
+		UserID: userID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -98,13 +108,7 @@ func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential {
 // loadUser builds a webauthnUser (with stored credentials) and returns the
 // user's tenant id (uuid.Nil when tenant-less).
 func (s *Service) loadUser(ctx context.Context, userID uuid.UUID) (*webauthnUser, uuid.UUID, error) {
-	var email string
-	var displayName *string
-	var tenantID *uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		SELECT email, display_name, tenant_id FROM "user".users
-		WHERE id = $1 AND deleted_at IS NULL
-	`, userID).Scan(&email, &displayName, &tenantID)
+	row, err := s.q.GetUserForWebAuthn(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, uuid.Nil, errs.ErrNotFound.WithDetail("user not found")
 	}
@@ -115,22 +119,19 @@ func (s *Service) loadUser(ctx context.Context, userID uuid.UUID) (*webauthnUser
 	if err != nil {
 		return nil, uuid.Nil, err
 	}
-	dn := email
-	if displayName != nil && *displayName != "" {
-		dn = *displayName
+	dn := row.Email
+	if row.DisplayName != nil && *row.DisplayName != "" {
+		dn = *row.DisplayName
 	}
 	var tid uuid.UUID
-	if tenantID != nil {
-		tid = *tenantID
+	if row.TenantID.Valid {
+		tid = uuid.UUID(row.TenantID.Bytes)
 	}
-	return &webauthnUser{id: userID, name: email, displayName: dn, creds: creds}, tid, nil
+	return &webauthnUser{id: userID, name: row.Email, displayName: dn, creds: creds}, tid, nil
 }
 
 func (s *Service) loadUserByEmail(ctx context.Context, email string) (*webauthnUser, uuid.UUID, error) {
-	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL
-	`, email).Scan(&id)
+	id, err := s.q.GetUserIDByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, uuid.Nil, errs.ErrNotFound.WithDetail("user not found")
 	}
@@ -141,38 +142,24 @@ func (s *Service) loadUserByEmail(ctx context.Context, email string) (*webauthnU
 }
 
 func (s *Service) loadCredentials(ctx context.Context, userID uuid.UUID) ([]webauthn.Credential, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT credential_id, public_key, sign_count, aaguid, transports
-		FROM auth.passkey_credentials WHERE user_id = $1
-	`, userID)
+	rows, err := s.q.GetPasskeyCredentialsForCeremony(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []webauthn.Credential
-	for rows.Next() {
-		var (
-			credID     []byte
-			pubKey     []byte
-			signCount  int64
-			aaguid     *uuid.UUID
-			transports []string
-		)
-		if err := rows.Scan(&credID, &pubKey, &signCount, &aaguid, &transports); err != nil {
-			return nil, err
-		}
-		c := webauthn.Credential{ID: credID, PublicKey: pubKey}
-		c.Authenticator.SignCount = uint32(signCount)
-		if aaguid != nil {
-			b := *aaguid
+	out := make([]webauthn.Credential, 0, len(rows))
+	for _, m := range rows {
+		c := webauthn.Credential{ID: m.CredentialID, PublicKey: m.PublicKey}
+		c.Authenticator.SignCount = uint32(m.SignCount)
+		if m.Aaguid.Valid {
+			b := uuid.UUID(m.Aaguid.Bytes)
 			c.Authenticator.AAGUID = b[:]
 		}
-		for _, t := range transports {
+		for _, t := range m.Transports {
 			c.Transport = append(c.Transport, protocol.AuthenticatorTransport(t))
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // storeSession persists in-flight ceremony state and returns its opaque id.
@@ -181,36 +168,40 @@ func (s *Service) storeSession(ctx context.Context, userID *uuid.UUID, kind stri
 	if err != nil {
 		return uuid.Nil, err
 	}
-	var id uuid.UUID
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO auth.webauthn_sessions (user_id, kind, data, expires_at)
-		VALUES ($1, $2, $3, $4) RETURNING id
-	`, userID, kind, raw, time.Now().UTC().Add(sessionTTL)).Scan(&id)
-	return id, err
+	var uidPG pgtype.UUID
+	if userID != nil {
+		uidPG = pgtype.UUID{Bytes: *userID, Valid: true}
+	}
+	return s.q.InsertWebAuthnSession(ctx, dbgen.InsertWebAuthnSessionParams{
+		UserID:    uidPG,
+		Kind:      kind,
+		Data:      raw,
+		ExpiresAt: time.Now().UTC().Add(sessionTTL),
+	})
 }
 
 // takeSession reads and deletes a ceremony session (single-use).
 func (s *Service) takeSession(ctx context.Context, id uuid.UUID) (kind string, userID *uuid.UUID, data *webauthn.SessionData, err error) {
-	var raw []byte
-	var expiresAt time.Time
-	err = s.pool.QueryRow(ctx, `
-		DELETE FROM auth.webauthn_sessions WHERE id = $1
-		RETURNING kind, user_id, data, expires_at
-	`, id).Scan(&kind, &userID, &raw, &expiresAt)
+	row, err := s.q.TakeWebAuthnSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, nil, errs.ErrBadRequest.WithDetail("invalid or used session")
 	}
 	if err != nil {
 		return "", nil, nil, err
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return "", nil, nil, errs.ErrBadRequest.WithDetail("session expired")
 	}
+	var uid *uuid.UUID
+	if row.UserID.Valid {
+		u := uuid.UUID(row.UserID.Bytes)
+		uid = &u
+	}
 	var sd webauthn.SessionData
-	if err := json.Unmarshal(raw, &sd); err != nil {
+	if err := json.Unmarshal(row.Data, &sd); err != nil {
 		return "", nil, nil, err
 	}
-	return kind, userID, &sd, nil
+	return row.Kind, uid, &sd, nil
 }
 
 // BeginRegister starts a registration ceremony for an authenticated user.
@@ -265,24 +256,29 @@ func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUI
 }
 
 func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *webauthn.Credential, name string) error {
-	var aaguid *uuid.UUID
+	var aaguidPG pgtype.UUID
 	if len(cred.Authenticator.AAGUID) == 16 {
 		if g, err := uuid.FromBytes(cred.Authenticator.AAGUID); err == nil && g != uuid.Nil {
-			aaguid = &g
+			aaguidPG = pgtype.UUID{Bytes: g, Valid: true}
 		}
 	}
 	transports := make([]string, 0, len(cred.Transport))
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	var namePtr any
+	var namePtr *string
 	if name != "" {
-		namePtr = name
+		namePtr = &name
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, userID, cred.ID, cred.PublicKey, int64(cred.Authenticator.SignCount), aaguid, transports, namePtr)
+	err := s.q.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
+		UserID:       userID,
+		CredentialID: cred.ID,
+		PublicKey:    cred.PublicKey,
+		SignCount:    int64(cred.Authenticator.SignCount),
+		Aaguid:       aaguidPG,
+		Transports:   transports,
+		Name:         namePtr,
+	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return errs.ErrConflict.WithDetail("passkey already registered")
@@ -318,56 +314,53 @@ func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, e
 	if err != nil {
 		return uuid.Nil, err
 	}
-	var tenantArg any
-	if tenantID != uuid.Nil {
-		tenantArg = tenantID
-	}
-	var dnArg any
+	var dnPtr *string
 	if displayName != "" {
-		dnArg = displayName
+		dnPtr = &displayName
 	}
-	var id uuid.UUID
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id)
-		VALUES ('signup', $1, $2, $3, $4, $5, $6) RETURNING id
-	`, raw, time.Now().UTC().Add(sessionTTL), subjectID, email, dnArg, tenantArg).Scan(&id)
-	return id, err
+	tenantPG := pgtype.UUID{}
+	if tenantID != uuid.Nil {
+		tenantPG = pgtype.UUID{Bytes: tenantID, Valid: true}
+	}
+	return s.q.InsertSignupWebAuthnSession(ctx, dbgen.InsertSignupWebAuthnSessionParams{
+		Data:               raw,
+		ExpiresAt:          time.Now().UTC().Add(sessionTTL),
+		SubjectID:          pgtype.UUID{Bytes: subjectID, Valid: true},
+		PendingEmail:       &email,
+		PendingDisplayName: dnPtr,
+		PendingTenantID:    tenantPG,
+	})
 }
 
 // takeSignupSession reads and deletes a pending-signup ceremony (single-use).
 func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupSession, error) {
-	var raw []byte
-	var expiresAt time.Time
-	var kind string
-	var subjectID *uuid.UUID
-	var email, displayName *string
-	var tenantID *uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		DELETE FROM auth.webauthn_sessions WHERE id = $1
-		RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id
-	`, id).Scan(&kind, &raw, &expiresAt, &subjectID, &email, &displayName, &tenantID)
+	row, err := s.q.TakeSignupWebAuthnSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrBadRequest.WithDetail("invalid or used session")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if kind != "signup" || subjectID == nil || email == nil {
+	if row.Kind != "signup" || !row.SubjectID.Valid || row.PendingEmail == nil {
 		return nil, errs.ErrBadRequest.WithDetail("not a signup session")
 	}
-	if time.Now().After(expiresAt) {
+	if time.Now().After(row.ExpiresAt) {
 		return nil, errs.ErrBadRequest.WithDetail("session expired")
 	}
 	var sd webauthn.SessionData
-	if err := json.Unmarshal(raw, &sd); err != nil {
+	if err := json.Unmarshal(row.Data, &sd); err != nil {
 		return nil, err
 	}
-	sess := &signupSession{subjectID: *subjectID, email: *email, data: &sd}
-	if displayName != nil {
-		sess.displayName = *displayName
+	sess := &signupSession{
+		subjectID: uuid.UUID(row.SubjectID.Bytes),
+		email:     *row.PendingEmail,
+		data:      &sd,
 	}
-	if tenantID != nil {
-		sess.tenantID = *tenantID
+	if row.PendingDisplayName != nil {
+		sess.displayName = *row.PendingDisplayName
+	}
+	if row.PendingTenantID.Valid {
+		sess.tenantID = uuid.UUID(row.PendingTenantID.Bytes)
 	}
 	return sess, nil
 }
@@ -406,23 +399,20 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 	// an in-progress email would slip through (QID-14) — password signup, which
 	// creates the row synchronously, has no such window. Scoped to non-expired
 	// sessions (5-min TTL) so an abandoned ceremony can't lock the email out.
-	var exists bool
+	var existsPtr *bool
 	var err error
 	if tenantID == uuid.Nil {
-		err = s.pool.QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM "user".users WHERE LOWER(email) = LOWER($1) AND tenant_id IS NULL AND deleted_at IS NULL)
-			    OR EXISTS (SELECT 1 FROM auth.webauthn_sessions WHERE kind = 'signup' AND LOWER(pending_email) = LOWER($1) AND pending_tenant_id IS NULL AND expires_at > now())
-		`, email).Scan(&exists)
+		existsPtr, err = s.q.CheckEmailExistsNoTenant(ctx, email)
 	} else {
-		err = s.pool.QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM "user".users WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 AND deleted_at IS NULL)
-			    OR EXISTS (SELECT 1 FROM auth.webauthn_sessions WHERE kind = 'signup' AND LOWER(pending_email) = LOWER($1) AND pending_tenant_id = $2 AND expires_at > now())
-		`, email, tenantID).Scan(&exists)
+		existsPtr, err = s.q.CheckEmailExistsForTenant(ctx, dbgen.CheckEmailExistsForTenantParams{
+			Lower:    email,
+			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		})
 	}
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
-	if exists {
+	if existsPtr != nil && *existsPtr {
 		return uuid.Nil, nil, errs.ErrConflict.WithDetail("email already exists")
 	}
 
@@ -525,19 +515,21 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 	}
 	defer tx.Rollback(ctx)
 
-	var tenantArg, dnArg any
+	qtx := s.q.WithTx(tx)
+
+	tenantPG := pgtype.UUID{}
 	if sess.tenantID != uuid.Nil {
-		tenantArg = sess.tenantID
+		tenantPG = pgtype.UUID{Bytes: sess.tenantID, Valid: true}
 	}
+	var dnPtr *string
 	if sess.displayName != "" {
-		dnArg = sess.displayName
+		dnPtr = &sess.displayName
 	}
-	var userID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		INSERT INTO "user".users (tenant_id, email, display_name)
-		VALUES ($1, $2, $3)
-		RETURNING id
-	`, tenantArg, sess.email, dnArg).Scan(&userID)
+	userID, err := qtx.InsertUserFromSignup(ctx, dbgen.InsertUserFromSignupParams{
+		TenantID:    tenantPG,
+		Email:       sess.email,
+		DisplayName: dnPtr,
+	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return uuid.Nil, errs.ErrConflict.WithDetail("email already exists")
@@ -545,24 +537,29 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 		return uuid.Nil, err
 	}
 
-	var aaguid *uuid.UUID
+	var aaguidPG pgtype.UUID
 	if len(cred.Authenticator.AAGUID) == 16 {
 		if g, gerr := uuid.FromBytes(cred.Authenticator.AAGUID); gerr == nil && g != uuid.Nil {
-			aaguid = &g
+			aaguidPG = pgtype.UUID{Bytes: g, Valid: true}
 		}
 	}
 	transports := make([]string, 0, len(cred.Transport))
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	var namePtr any
+	var namePtr *string
 	if name != "" {
-		namePtr = name
+		namePtr = &name
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, userID, cred.ID, cred.PublicKey, int64(cred.Authenticator.SignCount), aaguid, transports, namePtr); err != nil {
+	if err := qtx.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
+		UserID:       userID,
+		CredentialID: cred.ID,
+		PublicKey:    cred.PublicKey,
+		SignCount:    int64(cred.Authenticator.SignCount),
+		Aaguid:       aaguidPG,
+		Transports:   transports,
+		Name:         namePtr,
+	}); err != nil {
 		if pgxerr.IsUnique(err) {
 			return uuid.Nil, errs.ErrConflict.WithDetail("passkey already registered")
 		}
@@ -660,10 +657,10 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		return nil, errs.ErrBadRequest.WithDetail("not a login session")
 	}
 
-	if _, err := s.pool.Exec(ctx, `
-		UPDATE auth.passkey_credentials SET sign_count = $1, last_used_at = NOW()
-		WHERE credential_id = $2
-	`, int64(cred.Authenticator.SignCount), cred.ID); err != nil {
+	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
+		SignCount:    int64(cred.Authenticator.SignCount),
+		CredentialID: cred.ID,
+	}); err != nil {
 		return nil, err
 	}
 	return s.auth.IssuePair(ctx, loginUserID, tenantID, ip, ua, "passkey")
@@ -731,10 +728,10 @@ func (s *Service) FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cr
 	if err != nil {
 		return errs.ErrUnauthorized.WithDetail("mfa verification failed")
 	}
-	if _, err := s.pool.Exec(ctx, `
-		UPDATE auth.passkey_credentials SET sign_count = $1, last_used_at = NOW()
-		WHERE credential_id = $2
-	`, int64(cred.Authenticator.SignCount), cred.ID); err != nil {
+	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
+		SignCount:    int64(cred.Authenticator.SignCount),
+		CredentialID: cred.ID,
+	}); err != nil {
 		return err
 	}
 	return nil

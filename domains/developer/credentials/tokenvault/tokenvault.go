@@ -29,9 +29,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	secret "github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id/domains/developer/credentials/tokenvault/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -68,6 +70,7 @@ type GrantMeta struct {
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 	gcm  cipher.AEAD
 	http *http.Client
 }
@@ -88,7 +91,24 @@ func NewService(ctx context.Context, pool *pgxpool.Pool, kp secret.KeyProvider) 
 	if err != nil {
 		return nil, err
 	}
-	return &Service{pool: pool, gcm: gcm, http: &http.Client{Timeout: 10 * time.Second}}, nil
+	return &Service{pool: pool, q: dbgen.New(pool), gcm: gcm, http: &http.Client{Timeout: 10 * time.Second}}, nil
+}
+
+// pgtTS converts a *time.Time to pgtype.Timestamptz (null when nil).
+func pgtTS(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *t, Valid: true}
+}
+
+// tsPtr converts a pgtype.Timestamptz to *time.Time (nil when not valid).
+func tsPtr(p pgtype.Timestamptz) *time.Time {
+	if !p.Valid {
+		return nil
+	}
+	t := p.Time
+	return &t
 }
 
 func (s *Service) encrypt(plaintext string) (ciphertext, nonce []byte, err error) {
@@ -120,63 +140,61 @@ type RegisterProviderInput struct {
 }
 
 func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
-	var p Provider
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.token_vault_providers (tenant_id, provider, client_id, client_secret, authorize_url, token_url, scopes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (tenant_id, provider) DO UPDATE SET
-			client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret,
-			authorize_url = EXCLUDED.authorize_url, token_url = EXCLUDED.token_url,
-			scopes = EXCLUDED.scopes, updated_at = NOW()
-		RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
-	`, tenantID, in.Provider, in.ClientID, in.ClientSecret, in.AuthorizeURL, in.TokenURL, in.Scopes).
-		Scan(&p.ID, &p.Provider, &p.ClientID, &p.AuthorizeURL, &p.TokenURL, &p.Scopes, &p.CreatedAt, &p.UpdatedAt)
+	row, err := s.q.RegisterProvider(ctx, dbgen.RegisterProviderParams{
+		TenantID:     tenantID,
+		Provider:     in.Provider,
+		ClientID:     in.ClientID,
+		ClientSecret: in.ClientSecret,
+		AuthorizeUrl: in.AuthorizeURL,
+		TokenUrl:     in.TokenURL,
+		Scopes:       in.Scopes,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return &Provider{
+		ID: row.ID, Provider: row.Provider, ClientID: row.ClientID,
+		AuthorizeURL: row.AuthorizeUrl, TokenURL: row.TokenUrl, Scopes: row.Scopes,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}, nil
 }
 
 func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
-		FROM tenant.token_vault_providers WHERE tenant_id = $1 ORDER BY provider
-	`, tenantID)
+	rows, err := s.q.ListProviders(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Provider, 0)
-	for rows.Next() {
-		var p Provider
-		if err := rows.Scan(&p.ID, &p.Provider, &p.ClientID, &p.AuthorizeURL, &p.TokenURL, &p.Scopes, &p.CreatedAt, &p.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
+	out := make([]Provider, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Provider{
+			ID: row.ID, Provider: row.Provider, ClientID: row.ClientID,
+			AuthorizeURL: row.AuthorizeUrl, TokenURL: row.TokenUrl, Scopes: row.Scopes,
+			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provider string) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.token_vault_providers WHERE tenant_id = $1 AND provider = $2`, tenantID, provider)
+	n, err := s.q.DeleteProvider(ctx, dbgen.DeleteProviderParams{TenantID: tenantID, Provider: provider})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
 }
 
 func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
-	err = s.pool.QueryRow(ctx, `
-		SELECT client_id, client_secret, authorize_url, token_url, scopes
-		FROM tenant.token_vault_providers WHERE tenant_id = $1 AND provider = $2
-	`, tenantID, provider).Scan(&clientID, &clientSecret, &authorizeURL, &tokenURL, &scopes)
+	row, err := s.q.GetProviderConfig(ctx, dbgen.GetProviderConfigParams{TenantID: tenantID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = errs.ErrNotFound.WithDetail("provider not registered for this tenant")
+		return "", "", "", "", "", errs.ErrNotFound.WithDetail("provider not registered for this tenant")
 	}
-	return
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	return row.ClientID, row.ClientSecret, row.AuthorizeUrl, row.TokenUrl, row.Scopes, nil
 }
 
 // --- connect ceremony ---
@@ -196,10 +214,13 @@ func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, 
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`, state, tenantID, userID, provider, time.Now().UTC().Add(connectStateTTL)); err != nil {
+	if err := s.q.InsertConnectState(ctx, dbgen.InsertConnectStateParams{
+		State:     state,
+		TenantID:  tenantID,
+		UserID:    userID,
+		Provider:  provider,
+		ExpiresAt: time.Now().UTC().Add(connectStateTTL),
+	}); err != nil {
 		return "", err
 	}
 	u, err := url.Parse(authorizeURL)
@@ -244,20 +265,15 @@ func (r oauthTokenResponse) expiresInSeconds() int64 {
 // FinishConnect completes the ceremony: it validates the single-use state,
 // exchanges code for tokens, encrypts them, and upserts the grant.
 func (s *Service) FinishConnect(ctx context.Context, state, code, base string) error {
-	var tenantID, userID uuid.UUID
-	var provider string
-	var expiresAt time.Time
-	err := s.pool.QueryRow(ctx, `
-		DELETE FROM tenant.token_vault_connect_states WHERE state = $1
-		RETURNING tenant_id, user_id, provider, expires_at
-	`, state).Scan(&tenantID, &userID, &provider, &expiresAt)
+	cs, err := s.q.DeleteConnectState(ctx, state)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrBadRequest.WithDetail("invalid or used state")
 	}
 	if err != nil {
 		return err
 	}
-	if time.Now().After(expiresAt) {
+	tenantID, userID, provider := cs.TenantID, cs.UserID, cs.Provider
+	if time.Now().After(cs.ExpiresAt) {
 		return errs.ErrBadRequest.WithDetail("connect ceremony expired")
 	}
 
@@ -283,7 +299,8 @@ func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, pr
 	if err != nil {
 		return err
 	}
-	var refreshCT, refreshNonce any
+	// nil []byte == SQL NULL for nullable bytea columns.
+	var refreshCT, refreshNonce []byte
 	if tok.RefreshToken != "" {
 		ct, nonce, err := s.encrypt(tok.RefreshToken)
 		if err != nil {
@@ -291,29 +308,30 @@ func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, pr
 		}
 		refreshCT, refreshNonce = ct, nonce
 	}
-	var expiresAt any
+	var expiresAt pgtype.Timestamptz
 	if secs := tok.expiresInSeconds(); secs > 0 {
-		expiresAt = time.Now().UTC().Add(time.Duration(secs) * time.Second)
+		expiresAt = pgtype.Timestamptz{Time: time.Now().UTC().Add(time.Duration(secs) * time.Second), Valid: true}
 	}
 	tokenType := tok.TokenType
 	if tokenType == "" {
 		tokenType = "Bearer"
 	}
-	var scopeArg any
+	var scopeArg *string
 	if tok.Scope != "" {
-		scopeArg = tok.Scope
+		scopeArg = &tok.Scope
 	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO tenant.token_vault_grants
-			(tenant_id, user_id, provider, access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, token_type, scope, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (tenant_id, user_id, provider) DO UPDATE SET
-			access_token_ct = EXCLUDED.access_token_ct, access_token_nonce = EXCLUDED.access_token_nonce,
-			refresh_token_ct = COALESCE(EXCLUDED.refresh_token_ct, tenant.token_vault_grants.refresh_token_ct),
-			refresh_token_nonce = COALESCE(EXCLUDED.refresh_token_nonce, tenant.token_vault_grants.refresh_token_nonce),
-			token_type = EXCLUDED.token_type, scope = EXCLUDED.scope, expires_at = EXCLUDED.expires_at, updated_at = NOW()
-	`, tenantID, userID, provider, accessCT, accessNonce, refreshCT, refreshNonce, tokenType, scopeArg, expiresAt)
-	return err
+	return s.q.UpsertTokenGrant(ctx, dbgen.UpsertTokenGrantParams{
+		TenantID:          tenantID,
+		UserID:            userID,
+		Provider:          provider,
+		AccessTokenCt:     accessCT,
+		AccessTokenNonce:  accessNonce,
+		RefreshTokenCt:    refreshCT,
+		RefreshTokenNonce: refreshNonce,
+		TokenType:         tokenType,
+		Scope:             scopeArg,
+		ExpiresAt:         expiresAt,
+	})
 }
 
 // exchange POSTs a form-encoded OAuth2 token request and parses the response.
@@ -351,18 +369,16 @@ func (s *Service) exchange(ctx context.Context, tokenURL string, form url.Values
 // refresh token is on file. The raw refresh token is never returned to the
 // caller — only ever used internally to mint a new access token.
 func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID, provider string) (string, error) {
-	var accessCT, accessNonce, refreshCT, refreshNonce []byte
-	var expiresAt *time.Time
-	err := s.pool.QueryRow(ctx, `
-		SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
-		FROM tenant.token_vault_grants WHERE tenant_id = $1 AND user_id = $2 AND provider = $3
-	`, tenantID, userID, provider).Scan(&accessCT, &accessNonce, &refreshCT, &refreshNonce, &expiresAt)
+	grant, err := s.q.GetTokenGrant(ctx, dbgen.GetTokenGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrNotFound.WithDetail("no connected account for this provider")
 	}
 	if err != nil {
 		return "", err
 	}
+	accessCT, accessNonce := grant.AccessTokenCt, grant.AccessTokenNonce
+	refreshCT, refreshNonce := grant.RefreshTokenCt, grant.RefreshTokenNonce
+	expiresAt := tsPtr(grant.ExpiresAt)
 
 	if expiresAt == nil || time.Now().Before(expiresAt.Add(-expirySkew)) {
 		return s.decrypt(accessCT, accessNonce)
@@ -400,33 +416,30 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 }
 
 func (s *Service) ListGrants(ctx context.Context, tenantID, userID uuid.UUID) ([]GrantMeta, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT provider, external_account_id, scope, expires_at, created_at, updated_at
-		FROM tenant.token_vault_grants WHERE tenant_id = $1 AND user_id = $2 ORDER BY provider
-	`, tenantID, userID)
+	rows, err := s.q.ListGrants(ctx, dbgen.ListGrantsParams{TenantID: tenantID, UserID: userID})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]GrantMeta, 0)
-	for rows.Next() {
-		var g GrantMeta
-		if err := rows.Scan(&g.Provider, &g.ExternalAccountID, &g.Scope, &g.ExpiresAt, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, g)
+	out := make([]GrantMeta, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, GrantMeta{
+			Provider:          row.Provider,
+			ExternalAccountID: row.ExternalAccountID,
+			Scope:             row.Scope,
+			ExpiresAt:         tsPtr(row.ExpiresAt),
+			CreatedAt:         row.CreatedAt,
+			UpdatedAt:         row.UpdatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) Disconnect(ctx context.Context, tenantID, userID uuid.UUID, provider string) error {
-	ct, err := s.pool.Exec(ctx, `
-		DELETE FROM tenant.token_vault_grants WHERE tenant_id = $1 AND user_id = $2 AND provider = $3
-	`, tenantID, userID, provider)
+	n, err := s.q.DeleteGrant(ctx, dbgen.DeleteGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

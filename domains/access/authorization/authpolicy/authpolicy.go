@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/authorization/authpolicy/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/security/hibp"
@@ -86,6 +87,7 @@ func isSymbol(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) 
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 	// breach is the optional breached-password checker. Nil disables the check
 	// (a no-op), so dev/CI/offline deploys are unaffected; when set it is
 	// consulted on every tenant-scoped password validation and is itself
@@ -93,7 +95,7 @@ type Service struct {
 	breach *hibp.Checker
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // SetBreachChecker wires (or clears, with nil) the breached-password checker.
 // Called from cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
@@ -101,25 +103,27 @@ func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-const cols = `password_enabled, password_min_length, password_require_uppercase,
-              password_require_number, password_require_symbol, magic_link_enabled,
-              magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
-              self_registration_enabled, remember_device_enabled`
-
-func scan(row pgx.Row) (*Policy, error) {
-	var p Policy
-	if err := row.Scan(&p.PasswordEnabled, &p.PasswordMinLength, &p.PasswordRequireUppercase,
-		&p.PasswordRequireNumber, &p.PasswordRequireSymbol, &p.MagicLinkEnabled,
-		&p.MagicLinkTTLMinutes, &p.PasskeyEnabled, &p.OTPEmailEnabled, &p.OTPSMSEnabled,
-		&p.SelfRegistrationEnabled, &p.RememberDeviceEnabled); err != nil {
-		return nil, err
+// toDomain maps a generated TenantAuthPolicy row to the domain Policy model.
+func toDomain(row dbgen.TenantAuthPolicy) *Policy {
+	return &Policy{
+		PasswordEnabled:          row.PasswordEnabled,
+		PasswordMinLength:        int(row.PasswordMinLength),
+		PasswordRequireUppercase: row.PasswordRequireUppercase,
+		PasswordRequireNumber:    row.PasswordRequireNumber,
+		PasswordRequireSymbol:    row.PasswordRequireSymbol,
+		MagicLinkEnabled:         row.MagicLinkEnabled,
+		MagicLinkTTLMinutes:      int(row.MagicLinkTtlMinutes),
+		PasskeyEnabled:           row.PasskeyEnabled,
+		OTPEmailEnabled:          row.OtpEmailEnabled,
+		OTPSMSEnabled:            row.OtpSmsEnabled,
+		SelfRegistrationEnabled:  row.SelfRegistrationEnabled,
+		RememberDeviceEnabled:    row.RememberDeviceEnabled,
 	}
-	return &p, nil
 }
 
 // Get returns the tenant's policy, or defaults when none is stored.
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
-	p, err := scan(s.pool.QueryRow(ctx, `SELECT `+cols+` FROM tenant.auth_policy WHERE tenant_id = $1`, tenantID))
+	row, err := s.q.GetAuthPolicy(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		def := DefaultPolicy()
 		return &def, nil
@@ -127,7 +131,7 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 	if err != nil {
 		return nil, err
 	}
-	return p, nil
+	return toDomain(row), nil
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
@@ -143,32 +147,25 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	if p.MagicLinkTTLMinutes > 1440 {
 		p.MagicLinkTTLMinutes = 1440
 	}
-	return scan(tx.QueryRow(ctx, `
-		INSERT INTO tenant.auth_policy
-			(tenant_id, password_enabled, password_min_length, password_require_uppercase,
-			 password_require_number, password_require_symbol, magic_link_enabled,
-			 magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
-			 self_registration_enabled, remember_device_enabled, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			password_enabled = EXCLUDED.password_enabled,
-			password_min_length = EXCLUDED.password_min_length,
-			password_require_uppercase = EXCLUDED.password_require_uppercase,
-			password_require_number = EXCLUDED.password_require_number,
-			password_require_symbol = EXCLUDED.password_require_symbol,
-			magic_link_enabled = EXCLUDED.magic_link_enabled,
-			magic_link_ttl_minutes = EXCLUDED.magic_link_ttl_minutes,
-			passkey_enabled = EXCLUDED.passkey_enabled,
-			otp_email_enabled = EXCLUDED.otp_email_enabled,
-			otp_sms_enabled = EXCLUDED.otp_sms_enabled,
-			self_registration_enabled = EXCLUDED.self_registration_enabled,
-			remember_device_enabled = EXCLUDED.remember_device_enabled,
-			updated_at = NOW()
-		RETURNING `+cols,
-		tenantID, p.PasswordEnabled, p.PasswordMinLength, p.PasswordRequireUppercase,
-		p.PasswordRequireNumber, p.PasswordRequireSymbol, p.MagicLinkEnabled,
-		p.MagicLinkTTLMinutes, p.PasskeyEnabled, p.OTPEmailEnabled, p.OTPSMSEnabled,
-		p.SelfRegistrationEnabled, p.RememberDeviceEnabled))
+	row, err := s.q.WithTx(tx).UpsertAuthPolicy(ctx, dbgen.UpsertAuthPolicyParams{
+		TenantID:                 tenantID,
+		PasswordEnabled:          p.PasswordEnabled,
+		PasswordMinLength:        int32(p.PasswordMinLength),
+		PasswordRequireUppercase: p.PasswordRequireUppercase,
+		PasswordRequireNumber:    p.PasswordRequireNumber,
+		PasswordRequireSymbol:    p.PasswordRequireSymbol,
+		MagicLinkEnabled:         p.MagicLinkEnabled,
+		MagicLinkTtlMinutes:      int32(p.MagicLinkTTLMinutes),
+		PasskeyEnabled:           p.PasskeyEnabled,
+		OtpEmailEnabled:          p.OTPEmailEnabled,
+		OtpSmsEnabled:            p.OTPSMSEnabled,
+		SelfRegistrationEnabled:  p.SelfRegistrationEnabled,
+		RememberDeviceEnabled:    p.RememberDeviceEnabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toDomain(row), nil
 }
 
 // ValidateForTenant loads the tenant policy and validates a password against

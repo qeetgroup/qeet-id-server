@@ -13,8 +13,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
@@ -27,6 +29,7 @@ import (
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	users  *user.Repository
 	tokens *tokens.Issuer
 	// breach is the optional breached-password checker (nil = feature off,
@@ -56,7 +59,7 @@ type Service struct {
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
-	return &Service{pool: pool, users: users, tokens: t}
+	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t}
 }
 
 // EventEmitter delivers a webhook-shaped event to a tenant's subscriptions.
@@ -319,10 +322,11 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 		return nil, nil, nil, err
 	}
 	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, sessionID, refreshHash, refreshExp); err != nil {
+	if _, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		SessionID: sessionID,
+		TokenHash: refreshHash,
+		ExpiresAt: refreshExp,
+	}); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -342,12 +346,11 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 
 // SwitchTenant mints a token pair scoped to tenantID if the user is a member; ErrForbidden otherwise.
 func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*TokenPair, error) {
-	var member bool
-	if err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2
-		)
-	`, userID, tenantID).Scan(&member); err != nil {
+	member, err := s.q.CheckTenantMembership(ctx, dbgen.CheckTenantMembershipParams{
+		UserID:   userID,
+		TenantID: tenantID,
+	})
+	if err != nil {
 		return nil, err
 	}
 	if !member {
@@ -661,9 +664,10 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 	// Argon2id on a successful login. Best-effort: never fail the login on it.
 	if password.NeedsRehash(hash) {
 		if nh, herr := password.Hash(plain); herr == nil {
-			if _, uerr := s.pool.Exec(ctx,
-				`UPDATE auth.password_credentials SET password_hash = $1 WHERE user_id = $2`,
-				nh, u.ID); uerr != nil {
+			if uerr := s.q.UpdatePasswordCredentialHash(ctx, dbgen.UpdatePasswordCredentialHashParams{
+				PasswordHash: nh,
+				UserID:       u.ID,
+			}); uerr != nil {
 				slog.Warn("password rehash-on-login failed", "user_id", u.ID, "err", uerr)
 			}
 		}
@@ -731,10 +735,11 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		return nil, err
 	}
 	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, sessionID, refreshHash, refreshExp); err != nil {
+	if _, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		SessionID: sessionID,
+		TokenHash: refreshHash,
+		ExpiresAt: refreshExp,
+	}); err != nil {
 		return nil, err
 	}
 	if method == "" {
@@ -855,20 +860,21 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		return nil, err
 	}
 	newExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
-	var newID uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-		RETURNING id
-	`, sessionID, newHash, newExp).Scan(&newID); err != nil {
+	newID, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		SessionID: sessionID,
+		TokenHash: newHash,
+		ExpiresAt: newExp,
+	})
+	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.refresh_tokens SET used_at = NOW(), replaced_by = $1 WHERE id = $2
-	`, newID, id); err != nil {
+	if err := s.q.WithTx(tx).MarkRefreshTokenUsed(ctx, dbgen.MarkRefreshTokenUsedParams{
+		ReplacedBy: pgtype.UUID{Bytes: newID, Valid: true},
+		ID:         id,
+	}); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = $1`, sessionID); err != nil {
+	if err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID); err != nil {
 		return nil, err
 	}
 	access, exp, err := s.tokens.IssueAccess(userID, tenantID, sessionID, "")
@@ -942,10 +948,7 @@ func buildReuseEvents(userID, tenantID, sessionID, refreshID uuid.UUID, in Refre
 func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
 	userID, tenantID, sessionID, refreshID uuid.UUID, in RefreshInput,
 ) error {
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.sessions SET revoked_at = NOW()
-		WHERE id = $1 AND revoked_at IS NULL
-	`, sessionID); err != nil {
+	if err := s.q.WithTx(tx).RevokeSessionById(ctx, sessionID); err != nil {
 		return err
 	}
 

@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/auth-hooks/dbgen"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 )
@@ -41,11 +42,12 @@ type Hook struct {
 
 type Service struct {
 	pool   *pgxpool.Pool
+	q      *dbgen.Queries
 	client *http.Client
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, client: &http.Client{Timeout: hookTimeout}}
+	return &Service{pool: pool, q: dbgen.New(pool), client: &http.Client{Timeout: hookTimeout}}
 }
 
 // Run implements auth.LoginHook. It returns a non-nil (ErrForbidden) error to
@@ -58,13 +60,7 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 	if tenantID == uuid.Nil {
 		return nil, nil
 	}
-	var url, secret string
-	var failOpen bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT url, secret, fail_open FROM tenant.auth_hooks
-		WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
-		ORDER BY created_at LIMIT 1
-	`, tenantID).Scan(&url, &secret, &failOpen)
+	row, err := s.q.GetActiveHook(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) || err != nil {
 		return nil, nil // no hook (or can't load it) → never block login on infra
 	}
@@ -76,8 +72,8 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		"email":     email,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
-	body, callErr := s.call(ctx, url, secret, payload)
-	msg, denied, claims := decide(failOpen, callErr, body)
+	body, callErr := s.call(ctx, row.Url, row.Secret, payload)
+	msg, denied, claims := decide(row.FailOpen, callErr, body)
 	if denied {
 		return nil, errs.ErrForbidden.WithMessage(msg).WithDetail("blocked by auth hook")
 	}
@@ -147,57 +143,66 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret st
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 		return nil, errs.ErrUnprocessable.WithDetail("url must be an absolute http(s) URL")
 	}
-	var h Hook
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.auth_hooks (tenant_id, url, secret, fail_open)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, trigger, url, enabled, fail_open, created_at
-	`, tenantID, url, secret, failOpen).Scan(&h.ID, &h.Trigger, &h.URL, &h.Enabled, &h.FailOpen, &h.CreatedAt)
+	row, err := s.q.CreateHook(ctx, dbgen.CreateHookParams{
+		TenantID: tenantID,
+		Url:      url,
+		Secret:   secret,
+		FailOpen: failOpen,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &h, nil
+	return &Hook{
+		ID:        row.ID,
+		Trigger:   row.Trigger,
+		URL:       row.Url,
+		Enabled:   row.Enabled,
+		FailOpen:  row.FailOpen,
+		CreatedAt: row.CreatedAt,
+	}, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, trigger, url, enabled, fail_open, created_at
-		FROM tenant.auth_hooks WHERE tenant_id = $1 ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListHooks(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Hook, 0)
-	for rows.Next() {
-		var h Hook
-		if err := rows.Scan(&h.ID, &h.Trigger, &h.URL, &h.Enabled, &h.FailOpen, &h.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, h)
+	out := make([]Hook, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Hook{
+			ID:        row.ID,
+			Trigger:   row.Trigger,
+			URL:       row.Url,
+			Enabled:   row.Enabled,
+			FailOpen:  row.FailOpen,
+			CreatedAt: row.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool) error {
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE tenant.auth_hooks SET enabled = $3, fail_open = $4 WHERE id = $1 AND tenant_id = $2
-	`, id, tenantID, enabled, failOpen)
+	n, err := s.q.UpdateHook(ctx, dbgen.UpdateHookParams{
+		Enabled:  enabled,
+		FailOpen: failOpen,
+		ID:       id,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteHook(ctx, dbgen.DeleteHookParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil

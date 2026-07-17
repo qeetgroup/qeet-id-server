@@ -29,8 +29,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/federation/adminportal/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/federation/saml"
 	"github.com/qeetgroup/qeet-id/domains/federation/scim"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
@@ -64,21 +66,9 @@ type Link struct {
 // Has reports whether the link authorizes the given capability.
 func (l Link) Has(capability string) bool { return slices.Contains(l.Capabilities, capability) }
 
-const linkCols = `id, tenant_id, capabilities, created_by, expires_at, revoked_at, last_used_at, created_at`
-
-func scanLink(row pgx.Row) (*Link, error) {
-	var l Link
-	if err := row.Scan(&l.ID, &l.TenantID, &l.Capabilities, &l.CreatedBy, &l.ExpiresAt, &l.RevokedAt, &l.LastUsedAt, &l.CreatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
-		}
-		return nil, err
-	}
-	return &l, nil
-}
-
 type Service struct {
 	pool         *pgxpool.Pool
+	q            *dbgen.Queries
 	brandingRepo brandingLister
 	loginBaseURL string
 }
@@ -91,7 +81,30 @@ type brandingLister interface {
 }
 
 func NewService(pool *pgxpool.Pool, brandingRepo brandingLister, loginBaseURL string) *Service {
-	return &Service{pool: pool, brandingRepo: brandingRepo, loginBaseURL: strings.TrimRight(loginBaseURL, "/")}
+	return &Service{
+		pool:         pool,
+		q:            dbgen.New(pool),
+		brandingRepo: brandingRepo,
+		loginBaseURL: strings.TrimRight(loginBaseURL, "/"),
+	}
+}
+
+// pgUUIDToPtr converts a pgtype.UUID (nullable) to *uuid.UUID.
+func pgUUIDToPtr(u pgtype.UUID) *uuid.UUID {
+	if !u.Valid {
+		return nil
+	}
+	id := uuid.UUID(u.Bytes)
+	return &id
+}
+
+// pgTimeToPtr converts a pgtype.Timestamptz (nullable) to *time.Time.
+func pgTimeToPtr(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -138,14 +151,25 @@ func (s *Service) Generate(ctx context.Context, tx pgx.Tx, tenantID, createdBy u
 		return nil, "", err
 	}
 	expires := time.Now().UTC().Add(clampTTL(ttl))
-	row := tx.QueryRow(ctx, `
-		INSERT INTO tenant.admin_portal_links (tenant_id, token_hash, capabilities, created_by, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING `+linkCols,
-		tenantID, hash, caps, createdBy, expires)
-	l, err := scanLink(row)
+	row, err := s.q.WithTx(tx).InsertAdminPortalLink(ctx, dbgen.InsertAdminPortalLinkParams{
+		TenantID:     tenantID,
+		TokenHash:    hash,
+		Capabilities: caps,
+		CreatedBy:    pgtype.UUID{Bytes: createdBy, Valid: createdBy != uuid.Nil},
+		ExpiresAt:    expires,
+	})
 	if err != nil {
 		return nil, "", err
+	}
+	l := &Link{
+		ID:           row.ID,
+		TenantID:     row.TenantID,
+		Capabilities: row.Capabilities,
+		CreatedBy:    pgUUIDToPtr(row.CreatedBy),
+		ExpiresAt:    row.ExpiresAt,
+		RevokedAt:    pgTimeToPtr(row.RevokedAt),
+		LastUsedAt:   pgTimeToPtr(row.LastUsedAt),
+		CreatedAt:    row.CreatedAt,
 	}
 	return l, raw, nil
 }
@@ -156,34 +180,35 @@ func (s *Service) URL(rawToken string) string {
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Link, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT `+linkCols+` FROM tenant.admin_portal_links
-		WHERE tenant_id = $1 ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListAdminPortalLinksByTenant(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Link, 0)
-	for rows.Next() {
-		var l Link
-		if err := rows.Scan(&l.ID, &l.TenantID, &l.Capabilities, &l.CreatedBy, &l.ExpiresAt, &l.RevokedAt, &l.LastUsedAt, &l.CreatedAt); err != nil {
-			return nil, err
+	out := make([]Link, len(rows))
+	for i, r := range rows {
+		out[i] = Link{
+			ID:           r.ID,
+			TenantID:     r.TenantID,
+			Capabilities: r.Capabilities,
+			CreatedBy:    pgUUIDToPtr(r.CreatedBy),
+			ExpiresAt:    r.ExpiresAt,
+			RevokedAt:    pgTimeToPtr(r.RevokedAt),
+			LastUsedAt:   pgTimeToPtr(r.LastUsedAt),
+			CreatedAt:    r.CreatedAt,
 		}
-		out = append(out, l)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
-	ct, err := tx.Exec(ctx, `
-		UPDATE tenant.admin_portal_links SET revoked_at = NOW()
-		WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
-	`, id, tenantID)
+	n, err := s.q.WithTx(tx).RevokeAdminPortalLink(ctx, dbgen.RevokeAdminPortalLinkParams{
+		ID:       id,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -197,12 +222,22 @@ func (s *Service) Resolve(ctx context.Context, rawToken string) (*Link, error) {
 		return nil, errs.ErrUnauthorized.WithDetail("missing admin portal token")
 	}
 	hash := codes.Hash(rawToken)
-	l, err := scanLink(s.pool.QueryRow(ctx, `SELECT `+linkCols+` FROM tenant.admin_portal_links WHERE token_hash = $1`, hash))
-	if errors.Is(err, errs.ErrNotFound) {
+	row, err := s.q.GetAdminPortalLinkByHash(ctx, hash)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid admin portal link")
 	}
 	if err != nil {
 		return nil, err
+	}
+	l := &Link{
+		ID:           row.ID,
+		TenantID:     row.TenantID,
+		Capabilities: row.Capabilities,
+		CreatedBy:    pgUUIDToPtr(row.CreatedBy),
+		ExpiresAt:    row.ExpiresAt,
+		RevokedAt:    pgTimeToPtr(row.RevokedAt),
+		LastUsedAt:   pgTimeToPtr(row.LastUsedAt),
+		CreatedAt:    row.CreatedAt,
 	}
 	if l.RevokedAt != nil {
 		return nil, errs.ErrUnauthorized.WithDetail("this admin portal link has been revoked")
@@ -210,14 +245,12 @@ func (s *Service) Resolve(ctx context.Context, rawToken string) (*Link, error) {
 	if time.Now().After(l.ExpiresAt) {
 		return nil, errs.ErrUnauthorized.WithDetail("this admin portal link has expired")
 	}
-	_, _ = s.pool.Exec(ctx, `UPDATE tenant.admin_portal_links SET last_used_at = NOW() WHERE id = $1`, l.ID)
+	_ = s.q.TouchAdminPortalLinkUsed(ctx, l.ID)
 	return l, nil
 }
 
 func (s *Service) tenantName(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	var name string
-	err := s.pool.QueryRow(ctx, `SELECT name FROM tenant.tenants WHERE id = $1`, tenantID).Scan(&name)
-	return name, err
+	return s.q.GetTenantNameByID(ctx, tenantID)
 }
 
 // PortalBranding is the subset of branding.Branding a hosted, unauthenticated

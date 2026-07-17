@@ -22,8 +22,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id/domains/developer/agents/dbgen"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
@@ -37,12 +39,13 @@ type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string
 
 type Service struct {
 	pool    *pgxpool.Pool
+	q       *dbgen.Queries
 	issuer  *tokens.Issuer
 	emitter EventEmitter
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, issuer: issuer}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
 }
 
 // SetEmitter wires the webhook event emitter (called from cmd/server).
@@ -61,8 +64,7 @@ func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string
 // AgentStatus returns an agent's current lifecycle status. Used by the auth
 // middleware to deny suspended/decommissioned agents' tokens on every request.
 func (s *Service) AgentStatus(ctx context.Context, agentID uuid.UUID) (string, error) {
-	var status string
-	err := s.pool.QueryRow(ctx, `SELECT status FROM auth.agents WHERE id = $1`, agentID).Scan(&status)
+	status, err := s.q.GetAgentStatusByID(ctx, agentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrNotFound
 	}
@@ -106,9 +108,7 @@ func validateTransition(cur, target string) error {
 // states. Returns the previous status. Emits a webhook event (best-effort) on a
 // real change. disabled_at is kept in sync for legacy readers.
 func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target string) (string, error) {
-	var cur string
-	err := s.pool.QueryRow(ctx,
-		`SELECT status FROM auth.agents WHERE id = $1 AND tenant_id = $2`, id, tenantID).Scan(&cur)
+	cur, err := s.q.GetAgentStatus(ctx, dbgen.GetAgentStatusParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrNotFound
 	}
@@ -121,13 +121,14 @@ func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target
 	if cur == target {
 		return cur, nil // no-op
 	}
-	disabledAt := "NOW()"
+	// Resume sets status=active and clears disabled_at; all other transitions
+	// set the given status and stamp disabled_at=NOW().
 	if target == "active" {
-		disabledAt = "NULL"
+		err = s.q.ResumeAgent(ctx, dbgen.ResumeAgentParams{ID: id, TenantID: tenantID})
+	} else {
+		err = s.q.DeactivateAgent(ctx, dbgen.DeactivateAgentParams{Status: target, ID: id, TenantID: tenantID})
 	}
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE auth.agents SET status = $1, disabled_at = `+disabledAt+` WHERE id = $2 AND tenant_id = $3`,
-		target, id, tenantID); err != nil {
+	if err != nil {
 		return cur, err
 	}
 	s.emit(ctx, tenantID, "agent."+transitionEvent[target], map[string]any{
@@ -167,6 +168,20 @@ type Agent struct {
 	Secret string `json:"secret,omitempty"`
 }
 
+// pgUUID converts a non-nil uuid.UUID to pgtype.UUID for sqlc params.
+func pgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: [16]byte(id), Valid: true}
+}
+
+// uuidFromPg converts a pgtype.UUID to *uuid.UUID (nil when not valid).
+func uuidFromPg(p pgtype.UUID) *uuid.UUID {
+	if !p.Valid {
+		return nil
+	}
+	id := uuid.UUID(p.Bytes)
+	return &id
+}
+
 // clampTTL keeps agent token lifetimes short (ephemeral): 60s..1h, default 10m.
 func clampTTL(s int) int {
 	if s <= 0 {
@@ -194,11 +209,10 @@ func newSecret() (string, error) {
 // A sponsor must be an actual accountable member of the tenant, not just any
 // user row that happens to exist.
 func (s *Service) sponsorBelongsToTenant(ctx context.Context, tenantID, userID uuid.UUID) (bool, error) {
-	var ok bool
-	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2)
-	`, userID, tenantID).Scan(&ok)
-	return ok, err
+	return s.q.SponsorBelongsToTenant(ctx, dbgen.SponsorBelongsToTenantParams{
+		UserID:   userID,
+		TenantID: tenantID,
+	})
 }
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID) (*Agent, error) {
@@ -225,66 +239,76 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, s
 		return nil, err
 	}
 	ttl = clampTTL(ttl)
-	var a Agent
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO auth.agents (tenant_id, name, secret_hash, scopes, token_ttl_seconds, sponsor_user_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, name, scopes, token_ttl_seconds, sponsor_user_id, created_at
-	`, tenantID, name, hash, scopes, ttl, sponsorUserID).Scan(&a.ID, &a.Name, &a.Scopes, &a.TokenTTLSeconds, &a.SponsorUserID, &a.CreatedAt)
+	row, err := s.q.CreateAgent(ctx, dbgen.CreateAgentParams{
+		TenantID:        tenantID,
+		Name:            name,
+		SecretHash:      hash,
+		Scopes:          scopes,
+		TokenTtlSeconds: int32(ttl),
+		SponsorUserID:   pgUUID(sponsorUserID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	a.Status = "active" // DB default on insert
-	a.Secret = secret
-	return &a, nil
+	return &Agent{
+		ID:              row.ID,
+		Name:            row.Name,
+		Scopes:          row.Scopes,
+		TokenTTLSeconds: int(row.TokenTtlSeconds),
+		SponsorUserID:   uuidFromPg(row.SponsorUserID),
+		CreatedAt:       row.CreatedAt,
+		Status:          "active", // DB default on insert
+		Secret:          secret,
+	}, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Agent, error) {
 	// Decommissioned agents are terminal and excluded from listings.
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
-		FROM auth.agents WHERE tenant_id = $1 AND status <> 'decommissioned' ORDER BY created_at DESC
-	`, tenantID)
+	rows, err := s.q.ListAgents(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Agent, 0)
-	for rows.Next() {
-		var a Agent
-		if err := rows.Scan(&a.ID, &a.Name, &a.Scopes, &a.TokenTTLSeconds, &a.Status, &a.SponsorUserID, &a.CreatedAt); err != nil {
-			return nil, err
-		}
-		a.Disabled = a.Status != "active"
-		out = append(out, a)
+	out := make([]Agent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Agent{
+			ID:              row.ID,
+			Name:            row.Name,
+			Scopes:          row.Scopes,
+			TokenTTLSeconds: int(row.TokenTtlSeconds),
+			Status:          row.Status,
+			Disabled:        row.Status != "active",
+			SponsorUserID:   uuidFromPg(row.SponsorUserID),
+			CreatedAt:       row.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // AgentsSponsoredBy lists a tenant's (non-decommissioned) agents sponsored by
 // userID — what an admin needs to see before offboarding that person, so no
 // agent is left with an owner who no longer has access.
 func (s *Service) AgentsSponsoredBy(ctx context.Context, tenantID, userID uuid.UUID) ([]Agent, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, scopes, token_ttl_seconds, status, sponsor_user_id, created_at
-		FROM auth.agents
-		WHERE tenant_id = $1 AND sponsor_user_id = $2 AND status <> 'decommissioned'
-		ORDER BY created_at DESC
-	`, tenantID, userID)
+	rows, err := s.q.ListAgentsSponsoredBy(ctx, dbgen.ListAgentsSponsoredByParams{
+		TenantID: tenantID,
+		UserID:   pgUUID(userID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Agent, 0)
-	for rows.Next() {
-		var a Agent
-		if err := rows.Scan(&a.ID, &a.Name, &a.Scopes, &a.TokenTTLSeconds, &a.Status, &a.SponsorUserID, &a.CreatedAt); err != nil {
-			return nil, err
-		}
-		a.Disabled = a.Status != "active"
-		out = append(out, a)
+	out := make([]Agent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Agent{
+			ID:              row.ID,
+			Name:            row.Name,
+			Scopes:          row.Scopes,
+			TokenTTLSeconds: int(row.TokenTtlSeconds),
+			Status:          row.Status,
+			Disabled:        row.Status != "active",
+			SponsorUserID:   uuidFromPg(row.SponsorUserID),
+			CreatedAt:       row.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // TransferSponsor reassigns every agent sponsored by fromUserID (within
@@ -301,28 +325,29 @@ func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toU
 	} else if !ok {
 		return 0, errs.ErrUnprocessable.WithDetail("to_user_id must be a member of this tenant")
 	}
-	ct, err := s.pool.Exec(ctx, `
-		UPDATE auth.agents SET sponsor_user_id = $1
-		WHERE tenant_id = $2 AND sponsor_user_id = $3 AND status <> 'decommissioned'
-	`, toUserID, tenantID, fromUserID)
+	n, err := s.q.TransferAgentSponsor(ctx, dbgen.TransferAgentSponsorParams{
+		ToUserID:   pgUUID(toUserID),
+		TenantID:   tenantID,
+		FromUserID: pgUUID(fromUserID),
+	})
 	if err != nil {
 		return 0, err
 	}
-	n := int(ct.RowsAffected())
-	if n > 0 {
+	count := int(n)
+	if count > 0 {
 		s.emit(ctx, tenantID, "agent.sponsor_transferred", map[string]any{
-			"tenant_id": tenantID.String(), "from_user_id": fromUserID.String(), "to_user_id": toUserID.String(), "count": n,
+			"tenant_id": tenantID.String(), "from_user_id": fromUserID.String(), "to_user_id": toUserID.String(), "count": count,
 		})
 	}
-	return n, nil
+	return count, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM auth.agents WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+	n, err := s.q.DeleteAgent(ctx, dbgen.DeleteAgentParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if n == 0 {
 		return errs.ErrNotFound
 	}
 	return nil
@@ -332,19 +357,17 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 // incident response). Returns the number suspended and emits a single
 // kill-switch webhook event.
 func (s *Service) KillAll(ctx context.Context, tenantID uuid.UUID) (int, error) {
-	ct, err := s.pool.Exec(ctx,
-		`UPDATE auth.agents SET status = 'suspended', disabled_at = NOW() WHERE tenant_id = $1 AND status = 'active'`,
-		tenantID)
+	n, err := s.q.KillAllAgents(ctx, tenantID)
 	if err != nil {
 		return 0, err
 	}
-	n := int(ct.RowsAffected())
-	if n > 0 {
+	count := int(n)
+	if count > 0 {
 		s.emit(ctx, tenantID, "agent.kill_switch", map[string]any{
-			"tenant_id": tenantID.String(), "suspended": n,
+			"tenant_id": tenantID.String(), "suspended": count,
 		})
 	}
-	return n, nil
+	return count, nil
 }
 
 type TokenResponse struct {
@@ -361,33 +384,23 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 	if err != nil {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid agent_id")
 	}
-	var (
-		tenantID   uuid.UUID
-		secretHash string
-		scopes     []string
-		ttl        int
-		status     string
-	)
-	err = s.pool.QueryRow(ctx, `
-		SELECT tenant_id, secret_hash, scopes, token_ttl_seconds, status
-		FROM auth.agents WHERE id = $1
-	`, id).Scan(&tenantID, &secretHash, &scopes, &ttl, &status)
+	row, err := s.q.GetAgentForToken(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrUnauthorized.WithDetail("unknown agent")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if status != "active" {
-		return nil, errs.ErrUnauthorized.WithDetail("agent " + status)
+	if row.Status != "active" {
+		return nil, errs.ErrUnauthorized.WithDetail("agent " + row.Status)
 	}
-	if !password.Verify(secretHash, secret) {
+	if !password.Verify(row.SecretHash, secret) {
 		return nil, errs.ErrUnauthorized.WithDetail("invalid agent secret")
 	}
 
 	now := time.Now().UTC()
-	exp := now.Add(time.Duration(clampTTL(ttl)) * time.Second)
-	scope := strings.Join(scopes, " ")
+	exp := now.Add(time.Duration(clampTTL(int(row.TokenTtlSeconds))) * time.Second)
+	scope := strings.Join(row.Scopes, " ")
 
 	// Mirror the service-principal token shape (same issuer/audience so it
 	// verifies on the standard path) but mark actor_type="agent" + agent_id.
@@ -399,7 +412,7 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 		jwt.RegisteredClaims
 	}
 	claims := agentClaims{
-		TenantID:  tenantID,
+		TenantID:  row.TenantID,
 		Scope:     scope,
 		ActorType: "agent",
 		AgentID:   id.String(),
