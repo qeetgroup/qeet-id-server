@@ -6,7 +6,7 @@ import { useEffect } from "react";
 
 export type ShortcutGroup = {
   title: string;
-  items: { keys: string[]; description: string }[];
+  items: { keys: string[]; description: string; path?: string }[];
 };
 
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
@@ -21,14 +21,14 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "Go to",
     items: [
-      { keys: ["g", "d"], description: "Dashboard" },
-      { keys: ["g", "u"], description: "Users" },
-      { keys: ["g", "r"], description: "Roles & permissions" },
-      { keys: ["g", "i"], description: "Invitations" },
-      { keys: ["g", "t"], description: "Tenants" },
-      { keys: ["g", "w"], description: "Webhooks" },
-      { keys: ["g", "a"], description: "Audit logs" },
-      { keys: ["g", "s"], description: "Workspace settings" },
+      { keys: ["g", "d"], description: "Dashboard", path: "/" },
+      { keys: ["g", "u"], description: "Users", path: "/users" },
+      { keys: ["g", "r"], description: "Roles & permissions", path: "/authorization/roles" },
+      { keys: ["g", "i"], description: "Invitations", path: "/invitations" },
+      { keys: ["g", "t"], description: "Tenants", path: "/organizations/tenants" },
+      { keys: ["g", "w"], description: "Webhooks", path: "/developer/webhooks" },
+      { keys: ["g", "a"], description: "Audit logs", path: "/security/audit-logs" },
+      { keys: ["g", "s"], description: "Workspace settings", path: "/settings/workspace/general" },
     ],
   },
 ];
@@ -53,9 +53,10 @@ function isTypingTarget(el: EventTarget | null): boolean {
 type Options = {
   onHelp: () => void;
   navigate: (path: string) => void;
+  canNavigate?: (path: string) => boolean;
 };
 
-export function useGlobalShortcuts({ onHelp, navigate }: Options) {
+export function useGlobalShortcuts({ onHelp, navigate, canNavigate = () => true }: Options) {
   useEffect(() => {
     let awaitingGo = false;
     let goTimer: ReturnType<typeof setTimeout> | undefined;
@@ -72,7 +73,7 @@ export function useGlobalShortcuts({ onHelp, navigate }: Options) {
       if (awaitingGo) {
         const path = GO_TO[e.key.toLowerCase()];
         clearGo();
-        if (path) {
+        if (path && canNavigate(path)) {
           e.preventDefault();
           navigate(path);
         }
@@ -96,5 +97,5 @@ export function useGlobalShortcuts({ onHelp, navigate }: Options) {
       window.removeEventListener("keydown", onKeyDown);
       clearGo();
     };
-  }, [onHelp, navigate]);
+  }, [canNavigate, onHelp, navigate]);
 }

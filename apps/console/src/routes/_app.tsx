@@ -2,6 +2,8 @@ import { SidebarProvider } from "@qeetrix/ui";
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 
+import { CapabilityProvider, useCapabilities } from "@/features/access-control/capability-provider";
+import { AccessBoundary } from "@/features/access-control/components/access-boundary";
 import { AppSidebar } from "@/features/dashboard/components/app-sidebar";
 import { CommandPaletteLauncher } from "@/features/dashboard/components/command-palette-launcher";
 import { ConsoleHeader } from "@/features/dashboard/components/console-header";
@@ -19,8 +21,6 @@ export const Route = createFileRoute("/_app")({ component: AppLayout });
 // and i tried refresh the page, again it went to sign-in page").
 function AppLayout() {
   const navigate = useNavigate();
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -28,9 +28,23 @@ function AppLayout() {
     }
   }, [navigate]);
 
+  return (
+    <CapabilityProvider>
+      <ConsoleFrame />
+    </CapabilityProvider>
+  );
+}
+
+function ConsoleFrame() {
+  const navigate = useNavigate();
+  const access = useCapabilities();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
   useGlobalShortcuts({
     onHelp: useCallback(() => setShortcutsOpen(true), []),
     navigate: useCallback((path: string) => navigate({ to: path }), [navigate]),
+    canNavigate: access.canAccessPath,
   });
 
   return (
@@ -57,9 +71,12 @@ function AppLayout() {
         <ConsoleHeader
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenShortcuts={() => setShortcutsOpen(true)}
+          searchAvailable={access.state === "ready"}
         />
         <main id="main-content" tabIndex={-1} className="console-content focus:outline-none">
-          <Outlet />
+          <AccessBoundary>
+            <Outlet />
+          </AccessBoundary>
         </main>
       </div>
       <CommandPaletteLauncher open={paletteOpen} onOpenChange={setPaletteOpen} />

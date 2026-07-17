@@ -103,11 +103,11 @@ export const EMPTY_OVERVIEW: AnalyticsOverview = {
  * 60s — KPI cards don't need to be real-time, and the dashboard already
  * polls activity-feed components individually for fresher signals.
  */
-export function useAnalyticsOverview() {
+export function useAnalyticsOverview(enabled = true) {
   const tenantId = useTenantId();
   return useQuery({
     queryKey: ["analytics", "overview", tenantId],
-    enabled: !!tenantId,
+    enabled: !!tenantId && enabled,
     staleTime: 60_000,
     queryFn: async (): Promise<AnalyticsOverview> => {
       try {

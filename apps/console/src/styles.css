@@ -187,6 +187,12 @@ body {
   transform: scale(0.995);
 }
 
+.console-command-trigger:disabled {
+  cursor: wait;
+  opacity: 0.58;
+  transform: none;
+}
+
 .console-keycap {
   display: inline-flex;
   height: 1.45rem;
@@ -231,12 +237,6 @@ body {
   box-shadow:
     0 1px 2px color-mix(in oklab, var(--foreground) 4%, transparent),
     0 8px 24px -18px color-mix(in oklab, var(--foreground) 24%, transparent);
-}
-
-.console-shell [data-slot="card"]:hover {
-  box-shadow:
-    0 1px 2px color-mix(in oklab, var(--foreground) 5%, transparent),
-    0 12px 30px -20px color-mix(in oklab, var(--foreground) 28%, transparent);
 }
 
 .console-sidebar [data-slot="sidebar-inner"] {

@@ -14,6 +14,8 @@ import {
 import type * as React from "react";
 import { useTranslation } from "react-i18next";
 
+import type { Capability } from "@/features/access-control/capability-model";
+import { useCapabilities } from "@/features/access-control/capability-provider";
 import { formatAuditAction } from "../dashboard-model";
 import type { DashboardAuditEvent } from "../use-dashboard-activity";
 import { DashboardPanel } from "./dashboard-panel";
@@ -28,6 +30,7 @@ function getOperatorActions(t: (key: string) => string) {
       description: t("quickActions.inviteDesc"),
       href: "/invitations",
       tone: "brand" as const,
+      requiredPermissions: ["user.read", "user.write", "role.read"] satisfies Capability[],
     },
     {
       icon: KeyRoundIcon,
@@ -35,6 +38,7 @@ function getOperatorActions(t: (key: string) => string) {
       description: t("quickActions.apiKeyDesc"),
       href: "/auth/api/keys",
       tone: "info" as const,
+      requiredPermissions: ["apikey.read", "apikey.write"] satisfies Capability[],
     },
     {
       icon: ShieldAlertIcon,
@@ -42,6 +46,7 @@ function getOperatorActions(t: (key: string) => string) {
       description: t("quickActions.threatsDesc"),
       href: "/security/threats/anomalies",
       tone: "danger" as const,
+      requiredPermissions: ["audit.read"] satisfies Capability[],
     },
     {
       icon: FlaskConicalIcon,
@@ -49,6 +54,7 @@ function getOperatorActions(t: (key: string) => string) {
       description: "Evaluate a policy before it reaches production",
       href: "/authorization/simulator",
       tone: "warning" as const,
+      requiredPermissions: ["role.read"] satisfies Capability[],
     },
     {
       icon: FileTextIcon,
@@ -56,6 +62,7 @@ function getOperatorActions(t: (key: string) => string) {
       description: t("quickActions.auditDesc"),
       href: "/security/audit-logs",
       tone: "success" as const,
+      requiredPermissions: ["audit.read"] satisfies Capability[],
     },
   ];
 }
@@ -159,7 +166,12 @@ const actionTone = {
 
 export function OperatorActionsPanel({ className }: { className?: string }) {
   const { t } = useTranslation("dashboard");
-  const actions = getOperatorActions(t);
+  const access = useCapabilities();
+  const actions = getOperatorActions(t).filter((action) =>
+    access.canAll(action.requiredPermissions),
+  );
+
+  if (actions.length === 0) return null;
 
   return (
     <DashboardPanel

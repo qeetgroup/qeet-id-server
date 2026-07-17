@@ -11,10 +11,15 @@ import { WhatsNewDropdown } from "./whats-new-dropdown";
 type ConsoleHeaderProps = {
   onOpenPalette: () => void;
   onOpenShortcuts: () => void;
+  searchAvailable: boolean;
 };
 
 /** Persistent operator chrome shared by every admin route. */
-export function ConsoleHeader({ onOpenPalette, onOpenShortcuts }: ConsoleHeaderProps) {
+export function ConsoleHeader({
+  onOpenPalette,
+  onOpenShortcuts,
+  searchAvailable,
+}: ConsoleHeaderProps) {
   return (
     <header className="console-topbar">
       <div className="flex min-w-0 items-center gap-2">
@@ -27,7 +32,10 @@ export function ConsoleHeader({ onOpenPalette, onOpenShortcuts }: ConsoleHeaderP
         type="button"
         onClick={onOpenPalette}
         className="console-command-trigger"
-        aria-label="Search the control plane"
+        aria-label={
+          searchAvailable ? "Search the control plane" : "Search unavailable while access loads"
+        }
+        disabled={!searchAvailable}
       >
         <SearchIcon className="size-4 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">Search the control plane</span>
@@ -41,6 +49,7 @@ export function ConsoleHeader({ onOpenPalette, onOpenShortcuts }: ConsoleHeaderP
           className="md:hidden"
           aria-label="Search"
           onClick={onOpenPalette}
+          disabled={!searchAvailable}
         >
           <SearchIcon />
         </Button>

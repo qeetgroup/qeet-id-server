@@ -21,6 +21,8 @@ import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
+import { useCapabilities } from "@/features/access-control/capability-provider";
+import { ReadOnlyNotice } from "@/features/access-control/components/read-only-notice";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
@@ -41,6 +43,7 @@ function DeletedUsersPage() {
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const tenantId = useTenantId();
   const qc = useQueryClient();
+  const canWriteUsers = useCapabilities().can("user.write");
 
   const listQ = useQuery({
     queryKey: ["users", "deleted", tenantId],
@@ -66,6 +69,7 @@ function DeletedUsersPage() {
     <div className="flex min-w-0 flex-col gap-6">
       {confirmDialog}
       <PageHeader description={t("deleted.description")} />
+      {!canWriteUsers ? <ReadOnlyNotice /> : null}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
@@ -100,7 +104,9 @@ function DeletedUsersPage() {
                 <TableRow>
                   <TableHead>{t("deleted.colUser")}</TableHead>
                   <TableHead>{t("deleted.colDeleted")}</TableHead>
-                  <TableHead className="text-right">{t("deleted.colActions")}</TableHead>
+                  {canWriteUsers ? (
+                    <TableHead className="text-right">{t("deleted.colActions")}</TableHead>
+                  ) : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -115,32 +121,34 @@ function DeletedUsersPage() {
                     <TableCell className="text-xs text-muted-foreground">
                       <TimeSince value={u.deleted_at} />
                     </TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => restoreM.mutate(u.id)}
-                        disabled={restoreM.isPending}
-                      >
-                        <RotateCcwIcon /> {t("deleted.restoreBtn")}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          openConfirm({
-                            title: t("deleted.purgeTitle", { email: u.email }),
-                            description: t("deleted.purgeDescription"),
-                            variant: "destructive",
-                            confirmLabel: t("deleted.purgeLabel"),
-                            onConfirm: () => purgeM.mutate(u.id),
-                          })
-                        }
-                        disabled={purgeM.isPending}
-                      >
-                        <Trash2Icon /> {t("deleted.purgeBtn")}
-                      </Button>
-                    </TableCell>
+                    {canWriteUsers ? (
+                      <TableCell className="text-right whitespace-nowrap">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => restoreM.mutate(u.id)}
+                          disabled={restoreM.isPending}
+                        >
+                          <RotateCcwIcon /> {t("deleted.restoreBtn")}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            openConfirm({
+                              title: t("deleted.purgeTitle", { email: u.email }),
+                              description: t("deleted.purgeDescription"),
+                              variant: "destructive",
+                              confirmLabel: t("deleted.purgeLabel"),
+                              onConfirm: () => purgeM.mutate(u.id),
+                            })
+                          }
+                          disabled={purgeM.isPending}
+                        >
+                          <Trash2Icon /> {t("deleted.purgeBtn")}
+                        </Button>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>

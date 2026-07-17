@@ -2,7 +2,9 @@ import { CommandPalette, type CommandPaletteItem } from "@qeetrix/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 
-import { navGroups } from "@/config/navigation";
+import { filterNavigation, type NavGroup, navGroups } from "@/config/navigation";
+import type { Capability } from "@/features/access-control/capability-model";
+import { useCapabilities } from "@/features/access-control/capability-provider";
 
 /**
  * Flatten the sidebar nav tree into a single searchable list. Sub-items
@@ -11,15 +13,18 @@ import { navGroups } from "@/config/navigation";
  * without a `url` (parent-only nodes) are skipped — they exist only to
  * organise children.
  */
-function buildItems(): CommandPaletteItem[] {
+export function buildCommandPaletteItems(
+  groups: NavGroup[],
+  can: (permission?: Capability) => boolean = () => true,
+): CommandPaletteItem[] {
   const out: CommandPaletteItem[] = [];
-  for (const group of navGroups) {
+  for (const group of groups) {
     for (const item of group.items) {
       if (item.items && item.items.length > 0) {
         // Parent with children: surface the parent itself only if its url
         // is a leaf route (i.e. doesn't match any child's url).
         const isPureGroup = item.items.some((s) => s.url === item.url);
-        if (!isPureGroup) {
+        if (!isPureGroup && can(item.requiredPermission)) {
           out.push({
             id: item.url,
             title: item.title,
@@ -63,9 +68,18 @@ interface CommandPaletteLauncherProps {
  */
 export function CommandPaletteLauncher({ open, onOpenChange }: CommandPaletteLauncherProps) {
   const navigate = useNavigate();
-  const items = useMemo(() => buildItems(), []);
+  const access = useCapabilities();
+  const groups = useMemo(
+    () => (access.state === "ready" ? filterNavigation(navGroups, access.can) : []),
+    [access.can, access.state],
+  );
+  const items = useMemo(() => buildCommandPaletteItems(groups, access.can), [access.can, groups]);
 
   useEffect(() => {
+    if (access.state !== "ready") {
+      if (open) onOpenChange(false);
+      return;
+    }
     function onKey(e: KeyboardEvent) {
       const isMod = e.metaKey || e.ctrlKey;
       if (isMod && e.key.toLowerCase() === "k") {
@@ -75,7 +89,7 @@ export function CommandPaletteLauncher({ open, onOpenChange }: CommandPaletteLau
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onOpenChange]);
+  }, [access.state, open, onOpenChange]);
 
   return (
     <CommandPalette

@@ -24,6 +24,8 @@ import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
+import { useCapabilities } from "@/features/access-control/capability-provider";
+import { ReadOnlyNotice } from "@/features/access-control/components/read-only-notice";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
@@ -59,6 +61,10 @@ function UserDetailPage() {
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const { userId } = Route.useParams();
   const tenantId = useTenantId();
+  const access = useCapabilities();
+  const canWriteUsers = access.can("user.write");
+  const canViewAudit = access.can("audit.read");
+  const canViewRoles = access.can("role.read");
 
   const userQ = useQuery({
     queryKey: ["user", userId],
@@ -73,7 +79,7 @@ function UserDetailPage() {
       api<{ items: AuditEvent[] }>(`/v1/tenants/${tenantId}/audit`, {
         query: { actor_user_id: userId, limit: 10 },
       }),
-    enabled: !!tenantId,
+    enabled: !!tenantId && canViewAudit,
   });
 
   const qc = useQueryClient();
@@ -167,62 +173,66 @@ function UserDetailPage() {
         )}
       </Card>
 
+      {!canWriteUsers ? <ReadOnlyNotice /> : null}
+
       {/* Recent activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t("detail.activityTitle")}</CardTitle>
-          <CardDescription>
-            Last 10 audit events where this user was the actor.{" "}
-            <Link to="/security/audit-logs" className="underline">
-              View full audit log
-            </Link>
-            .
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          <DataState
-            isLoading={auditQ.isLoading}
-            isError={auditQ.isError}
-            error={auditQ.error}
-            isEmpty={!auditQ.data?.items?.length}
-            emptyIcon={FileSearchIcon}
-            emptyTitle={t("detail.activityEmpty")}
-            skeletonRows={3}
-          >
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("detail.colWhen")}</TableHead>
-                  <TableHead>{t("detail.colAction")}</TableHead>
-                  <TableHead>{t("detail.colResource")}</TableHead>
-                  <TableHead>{t("detail.colIp")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {auditQ.data?.items?.map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell>
-                      <TimeSince value={e.created_at} className="font-mono text-xs" />
-                    </TableCell>
-                    <TableCell className="font-medium">{e.action}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {e.resource_type}
-                      {e.resource_id && (
-                        <span className="ml-1 font-mono text-xs">
-                          ({e.resource_id.slice(0, 8)}…)
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {e.ip ?? "—"}
-                    </TableCell>
+      {canViewAudit ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("detail.activityTitle")}</CardTitle>
+            <CardDescription>
+              Last 10 audit events where this user was the actor.{" "}
+              <Link to="/security/audit-logs" className="underline">
+                View full audit log
+              </Link>
+              .
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <DataState
+              isLoading={auditQ.isLoading}
+              isError={auditQ.isError}
+              error={auditQ.error}
+              isEmpty={!auditQ.data?.items?.length}
+              emptyIcon={FileSearchIcon}
+              emptyTitle={t("detail.activityEmpty")}
+              skeletonRows={3}
+            >
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("detail.colWhen")}</TableHead>
+                    <TableHead>{t("detail.colAction")}</TableHead>
+                    <TableHead>{t("detail.colResource")}</TableHead>
+                    <TableHead>{t("detail.colIp")}</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </DataState>
-        </CardContent>
-      </Card>
+                </TableHeader>
+                <TableBody>
+                  {auditQ.data?.items?.map((e) => (
+                    <TableRow key={e.id}>
+                      <TableCell>
+                        <TimeSince value={e.created_at} className="font-mono text-xs" />
+                      </TableCell>
+                      <TableCell className="font-medium">{e.action}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {e.resource_type}
+                        {e.resource_id && (
+                          <span className="ml-1 font-mono text-xs">
+                            ({e.resource_id.slice(0, 8)}…)
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {e.ip ?? "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </DataState>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Quick links */}
       <Card>
@@ -233,28 +243,32 @@ function UserDetailPage() {
           <Link to="/users/sessions" className={buttonVariants({ variant: "outline", size: "sm" })}>
             {t("detail.allSessionsBtn")}
           </Link>
-          <Link
-            to="/authorization/roles"
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-          >
-            {t("detail.manageRolesBtn")}
-          </Link>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={resetMfa.isPending}
-            onClick={() =>
-              openConfirm({
-                title: t("detail.resetMfaConfirmTitle"),
-                description: t("detail.resetMfaConfirmDescription"),
-                variant: "destructive",
-                confirmLabel: t("detail.resetMfaConfirmLabel"),
-                onConfirm: () => resetMfa.mutate(),
-              })
-            }
-          >
-            {resetMfa.isPending ? t("detail.resetMfaPendingBtn") : t("detail.resetMfaBtn")}
-          </Button>
+          {canViewRoles ? (
+            <Link
+              to="/authorization/roles"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              {t("detail.manageRolesBtn")}
+            </Link>
+          ) : null}
+          {canWriteUsers ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={resetMfa.isPending}
+              onClick={() =>
+                openConfirm({
+                  title: t("detail.resetMfaConfirmTitle"),
+                  description: t("detail.resetMfaConfirmDescription"),
+                  variant: "destructive",
+                  confirmLabel: t("detail.resetMfaConfirmLabel"),
+                  onConfirm: () => resetMfa.mutate(),
+                })
+              }
+            >
+              {resetMfa.isPending ? t("detail.resetMfaPendingBtn") : t("detail.resetMfaBtn")}
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
     </div>

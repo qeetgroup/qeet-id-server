@@ -85,6 +85,9 @@ export function useEffectivePermissions(userId: string | null) {
   return useQuery({
     queryKey: ["effective-permissions", tenantId, userId],
     enabled: !!tenantId && !!userId,
+    staleTime: 60_000,
+    retry: false,
+    meta: { silent: true },
     queryFn: () =>
       api<{ permissions: string[] }>(`/v1/users/${userId}/tenants/${tenantId}/permissions`),
   });

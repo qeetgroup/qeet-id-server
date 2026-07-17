@@ -29,6 +29,12 @@ function reportError(error: unknown, meta?: Record<string, unknown>) {
   if (meta?.silent) return;
   if (!(error instanceof ApiError)) return;
   if (error.status === 401 || error.status === 400 || error.status === 422) return;
+  if (error.status === 403) {
+    toast.error("This action is no longer available", {
+      description: "Your workspace access may have changed. The console is refreshing it now.",
+    });
+    return;
+  }
   toast.error(error.message);
 }
 
@@ -44,12 +50,27 @@ function reportSuccess(meta?: MutationMeta) {
 }
 
 export function getContext() {
-  const queryClient = new QueryClient({
+  let queryClient: QueryClient;
+  const refreshCapabilities = (error: unknown, sourceQueryKey?: readonly unknown[]) => {
+    if (!(error instanceof ApiError) || error.status !== 403) return;
+    if (sourceQueryKey?.[0] === "effective-permissions") return;
+    queueMicrotask(() => {
+      void queryClient.invalidateQueries({ queryKey: ["effective-permissions"] });
+    });
+  };
+
+  queryClient = new QueryClient({
     queryCache: new QueryCache({
-      onError: (error, query) => reportError(error, query.meta),
+      onError: (error, query) => {
+        reportError(error, query.meta);
+        refreshCapabilities(error, query.queryKey);
+      },
     }),
     mutationCache: new MutationCache({
-      onError: (error, _vars, _ctx, mutation) => reportError(error, mutation.meta),
+      onError: (error, _vars, _ctx, mutation) => {
+        reportError(error, mutation.meta);
+        refreshCapabilities(error);
+      },
       onSuccess: (_data, _vars, _ctx, mutation) =>
         reportSuccess(mutation.meta as MutationMeta | undefined),
     }),

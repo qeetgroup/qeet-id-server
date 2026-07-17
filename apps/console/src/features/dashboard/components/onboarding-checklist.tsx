@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { useCapabilities } from "@/features/access-control/capability-provider";
 import * as apiClient from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
@@ -57,7 +58,12 @@ interface Step {
 
 function useSteps(): Step[] {
   const tenantId = useTenantId();
-  const enabled = !!tenantId;
+  const access = useCapabilities();
+  const canBrand = access.can("branding.write");
+  const canInvite = access.canAll(["user.read", "user.write", "role.read"]);
+  const canManageConnections = access.canAll(["connection.read", "connection.write"]);
+  const canManageApiKeys = access.canAll(["apikey.read", "apikey.write"]);
+  const canManageWebhooks = access.canAll(["webhook.read", "webhook.write"]);
 
   const branding = useQuery({
     queryKey: ["onboarding", "branding", tenantId],
@@ -65,7 +71,7 @@ function useSteps(): Step[] {
       apiClient.api<{ logo_url?: string | null; primary_color?: string | null }>(
         `/v1/tenants/${tenantId}/branding`,
       ),
-    enabled,
+    enabled: !!tenantId && canBrand,
     meta: { silent: true },
     staleTime: 30_000,
     retry: false,
@@ -80,7 +86,7 @@ function useSteps(): Step[] {
       apiClient.api<{ items: unknown[] }>(`/v1/users`, {
         query: { limit: 2 },
       }),
-    enabled,
+    enabled: !!tenantId && canInvite,
     meta: { silent: true },
     staleTime: 30_000,
     retry: false,
@@ -88,7 +94,7 @@ function useSteps(): Step[] {
   const webhooks = useQuery({
     queryKey: ["onboarding", "webhooks", tenantId],
     queryFn: () => apiClient.api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/webhooks`),
-    enabled,
+    enabled: !!tenantId && canManageWebhooks,
     meta: { silent: true },
     staleTime: 30_000,
     retry: false,
@@ -96,7 +102,7 @@ function useSteps(): Step[] {
   const oidc = useQuery({
     queryKey: ["onboarding", "oidc", tenantId],
     queryFn: () => apiClient.api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/oidc/clients`),
-    enabled,
+    enabled: !!tenantId && canManageConnections,
     meta: { silent: true },
     staleTime: 30_000,
     retry: false,
@@ -104,58 +110,82 @@ function useSteps(): Step[] {
   const apiKeys = useQuery({
     queryKey: ["onboarding", "api-keys", tenantId],
     queryFn: () => apiClient.api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/api-keys`),
-    enabled,
+    enabled: !!tenantId && canManageApiKeys,
     meta: { silent: true },
     staleTime: 30_000,
     retry: false,
   });
 
   return [
-    {
-      id: "branding",
-      icon: PaletteIcon,
-      title: "Set your brand",
-      description: "Upload a logo and pick your brand colours.",
-      ctaLabel: "Open branding",
-      ctaHref: "/settings/branding",
-      done: isDoneSafe(branding.data, branding.error, (d) => !!(d.logo_url || d.primary_color)),
-    },
-    {
-      id: "invite",
-      icon: UsersIcon,
-      title: "Invite your team",
-      description: "Bring in admins, engineers, or support staff.",
-      ctaLabel: "Invite teammates",
-      ctaHref: "/invitations",
-      done: isDoneSafe(users.data, users.error, (d) => (d.items?.length ?? 0) > 1),
-    },
-    {
-      id: "oauth-app",
-      icon: ShieldCheckIcon,
-      title: "Register an application",
-      description: "Hook up your first OAuth/OIDC client to start signing users in.",
-      ctaLabel: "Add application",
-      ctaHref: "/auth/connections/oidc",
-      done: isDoneSafe(oidc.data, oidc.error, (d) => (d.items?.length ?? 0) > 0),
-    },
-    {
-      id: "api-key",
-      icon: KeyRoundIcon,
-      title: "Create an API key",
-      description: "Service-to-service auth for your backend integrations.",
-      ctaLabel: "Create key",
-      ctaHref: "/auth/api/keys",
-      done: isDoneSafe(apiKeys.data, apiKeys.error, (d) => (d.items?.length ?? 0) > 0),
-    },
-    {
-      id: "webhook",
-      icon: WebhookIcon,
-      title: "Subscribe to an event webhook",
-      description: "Listen for sign-ins, role changes, audit events.",
-      ctaLabel: "Add webhook",
-      ctaHref: "/developer/webhooks",
-      done: isDoneSafe(webhooks.data, webhooks.error, (d) => (d.items?.length ?? 0) > 0),
-    },
+    ...(canBrand
+      ? [
+          {
+            id: "branding",
+            icon: PaletteIcon,
+            title: "Set your brand",
+            description: "Upload a logo and pick your brand colours.",
+            ctaLabel: "Open branding",
+            ctaHref: "/settings/branding",
+            done: isDoneSafe(
+              branding.data,
+              branding.error,
+              (d) => !!(d.logo_url || d.primary_color),
+            ),
+          },
+        ]
+      : []),
+    ...(canInvite
+      ? [
+          {
+            id: "invite",
+            icon: UsersIcon,
+            title: "Invite your team",
+            description: "Bring in admins, engineers, or support staff.",
+            ctaLabel: "Invite teammates",
+            ctaHref: "/invitations",
+            done: isDoneSafe(users.data, users.error, (d) => (d.items?.length ?? 0) > 1),
+          },
+        ]
+      : []),
+    ...(canManageConnections
+      ? [
+          {
+            id: "oauth-app",
+            icon: ShieldCheckIcon,
+            title: "Register an application",
+            description: "Hook up your first OAuth/OIDC client to start signing users in.",
+            ctaLabel: "Add application",
+            ctaHref: "/auth/connections/oidc",
+            done: isDoneSafe(oidc.data, oidc.error, (d) => (d.items?.length ?? 0) > 0),
+          },
+        ]
+      : []),
+    ...(canManageApiKeys
+      ? [
+          {
+            id: "api-key",
+            icon: KeyRoundIcon,
+            title: "Create an API key",
+            description: "Service-to-service auth for your backend integrations.",
+            ctaLabel: "Create key",
+            ctaHref: "/auth/api/keys",
+            done: isDoneSafe(apiKeys.data, apiKeys.error, (d) => (d.items?.length ?? 0) > 0),
+          },
+        ]
+      : []),
+    ...(canManageWebhooks
+      ? [
+          {
+            id: "webhook",
+            icon: WebhookIcon,
+            title: "Subscribe to an event webhook",
+            description: "Listen for sign-ins, role changes, audit events.",
+            ctaLabel: "Add webhook",
+            ctaHref: "/developer/webhooks",
+            done: isDoneSafe(webhooks.data, webhooks.error, (d) => (d.items?.length ?? 0) > 0),
+          },
+        ]
+      : []),
   ];
 }
 
@@ -173,6 +203,7 @@ export function OnboardingChecklist() {
   const steps = useSteps();
 
   if (dismissed) return null;
+  if (steps.length === 0) return null;
 
   const total = steps.length;
   const doneCount = steps.filter((s) => s.done === true).length;

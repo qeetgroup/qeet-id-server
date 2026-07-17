@@ -1,14 +1,19 @@
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarRail } from "@qeetrix/ui";
 import { QeetLogoMark } from "@qeetrix/ui/brand";
-import { LockKeyholeIcon } from "lucide-react";
 import type * as React from "react";
 
-import { navGroups } from "@/config/navigation";
+import { filterNavigation, navGroups, safeNavigation } from "@/config/navigation";
+import { useCapabilities } from "@/features/access-control/capability-provider";
+import { AccessModeIndicator } from "@/features/access-control/components/access-mode-indicator";
 
-import { NavMain } from "./nav-main";
+import { NavMain, NavMainSkeleton } from "./nav-main";
 import { TeamSwitcher } from "./team-switcher";
 
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
+  const access = useCapabilities();
+  const groups =
+    access.state === "ready" ? filterNavigation(navGroups, access.can) : safeNavigation(navGroups);
+
   return (
     <Sidebar collapsible="icon" className="console-sidebar" {...props}>
       <SidebarHeader className="gap-3 p-3">
@@ -32,15 +37,10 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         <TeamSwitcher />
       </SidebarHeader>
       <SidebarContent className="px-1 pb-3">
-        <NavMain groups={navGroups} />
+        {access.state === "resolving" ? <NavMainSkeleton /> : <NavMain groups={groups} />}
       </SidebarContent>
       <SidebarFooter className="p-3 pt-2">
-        <div className="flex items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/70 bg-white/3 px-2.5 py-2 text-[11px] text-sidebar-foreground/60 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <LockKeyholeIcon className="size-3.5 shrink-0 text-sidebar-foreground/70" />
-          <span className="truncate group-data-[collapsible=icon]:hidden">
-            Protected operator session
-          </span>
-        </div>
+        <AccessModeIndicator />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

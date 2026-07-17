@@ -58,6 +58,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { toast } from "sonner";
+
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import {
   BulkBar,
@@ -67,6 +68,8 @@ import {
   SortHeader,
 } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
+import { useCapabilities } from "@/features/access-control/capability-provider";
+import { ReadOnlyNotice } from "@/features/access-control/components/read-only-notice";
 import { type ApiError, api, tokenStore } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
@@ -102,6 +105,9 @@ const userCsvColumns: CsvColumn<User>[] = [
 function UsersPage() {
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const { t } = useTranslation("users");
+  const access = useCapabilities();
+  const canWriteUsers = access.can("user.write");
+  const canCreateUsers = access.canAll(["user.write", "role.read", "role.write"]);
   const tenantId = useTenantId();
   const currentUserId = tokenStore.getUserId();
   const qc = useQueryClient();
@@ -146,7 +152,19 @@ function UsersPage() {
     },
   });
   const rows = lv.view;
-  const selectableIds = rows.filter((u) => u.id !== currentUserId).map((u) => u.id);
+  const selectableIds = canWriteUsers
+    ? rows.filter((u) => u.id !== currentUserId).map((u) => u.id)
+    : [];
+
+  useEffect(() => {
+    if (!canWriteUsers) {
+      setEditing(null);
+      setSettingPassword(null);
+      setConfirmingDelete(null);
+      setSelectedIds(new Set());
+    }
+    if (!canCreateUsers) setCreating(false);
+  }, [canCreateUsers, canWriteUsers]);
 
   // Bulk delete fans out N single deletes (capped concurrency) since the
   // backend has no bulk endpoint; allSettled surfaces partial successes.
@@ -196,7 +214,9 @@ function UsersPage() {
       return { snapshots };
     },
     onError: (_err, _id, ctx) => {
-      ctx?.snapshots.forEach(([key, snap]) => qc.setQueryData(key, snap));
+      ctx?.snapshots.forEach(([key, snap]) => {
+        qc.setQueryData(key, snap);
+      });
     },
     onSuccess: () => {
       setConfirmingDelete(null);
@@ -245,15 +265,24 @@ function UsersPage() {
               <RefreshCwIcon className={usersQ.isFetching ? "animate-spin" : ""} />
               {t("common:actions.refresh")}
             </Button>
-            <Link to="/users/import" className={buttonVariants({ variant: "outline", size: "sm" })}>
-              <UploadCloudIcon /> {t("list.import")}
-            </Link>
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> {t("list.newUser")}
-            </Button>
+            {canWriteUsers ? (
+              <Link
+                to="/users/import"
+                className={buttonVariants({ variant: "outline", size: "sm" })}
+              >
+                <UploadCloudIcon /> {t("list.import")}
+              </Link>
+            ) : null}
+            {canCreateUsers ? (
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <PlusIcon /> {t("list.newUser")}
+              </Button>
+            ) : null}
           </>
         }
       />
+
+      {!canWriteUsers ? <ReadOnlyNotice /> : null}
 
       <Card>
         <CardHeader>
@@ -299,7 +328,7 @@ function UsersPage() {
             onClear={lv.clear}
           />
 
-          {selectedIds.size > 0 && (
+          {canWriteUsers && selectedIds.size > 0 && (
             <BulkBar
               count={selectedIds.size}
               progress={bulkProgress}
@@ -333,14 +362,16 @@ function UsersPage() {
               <Table className={denseCls}>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8">
-                      <MasterCheckbox
-                        selectableIds={selectableIds}
-                        selectedIds={selectedIds}
-                        onChange={setSelectedIds}
-                        label={t("list.selectAll")}
-                      />
-                    </TableHead>
+                    {canWriteUsers ? (
+                      <TableHead className="w-8">
+                        <MasterCheckbox
+                          selectableIds={selectableIds}
+                          selectedIds={selectedIds}
+                          onChange={setSelectedIds}
+                          label={t("list.selectAll")}
+                        />
+                      </TableHead>
+                    ) : null}
                     <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
                       {t("table.email")}
                     </SortHeader>
@@ -359,7 +390,9 @@ function UsersPage() {
                         {t("table.created")}
                       </SortHeader>
                     )}
-                    <TableHead className="text-right">{t("table.actions")}</TableHead>
+                    {canWriteUsers ? (
+                      <TableHead className="text-right">{t("table.actions")}</TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -368,22 +401,24 @@ function UsersPage() {
                     const isSelected = selectedIds.has(u.id);
                     return (
                       <TableRow key={u.id} className={isSelected ? "bg-muted/40" : undefined}>
-                        <TableCell>
-                          <RowCheckbox
-                            id={u.id}
-                            checked={isSelected}
-                            disabled={isSelf}
-                            label={t("list.selectOne", { email: u.email })}
-                            onChange={(id, checked) =>
-                              setSelectedIds((prev) => {
-                                const next = new Set(prev);
-                                if (checked) next.add(id);
-                                else next.delete(id);
-                                return next;
-                              })
-                            }
-                          />
-                        </TableCell>
+                        {canWriteUsers ? (
+                          <TableCell>
+                            <RowCheckbox
+                              id={u.id}
+                              checked={isSelected}
+                              disabled={isSelf}
+                              label={t("list.selectOne", { email: u.email })}
+                              onChange={(id, checked) =>
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(id);
+                                  else next.delete(id);
+                                  return next;
+                                })
+                              }
+                            />
+                          </TableCell>
+                        ) : null}
                         <TableCell className="font-medium">
                           <Link
                             to="/users/$userId"
@@ -433,36 +468,38 @@ function UsersPage() {
                             <TimeSince value={u.created_at} />
                           </TableCell>
                         )}
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={t("table.editUser")}
-                              onClick={() => setEditing(u)}
-                            >
-                              <PencilIcon />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={t("table.setPassword")}
-                              onClick={() => setSettingPassword(u)}
-                            >
-                              <KeyRoundIcon />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={t("table.deleteUser")}
-                              disabled={isSelf}
-                              title={isSelf ? t("table.deleteSelf") : t("table.deleteUser")}
-                              onClick={() => setConfirmingDelete(u.id)}
-                            >
-                              <Trash2Icon className="text-destructive" />
-                            </Button>
-                          </div>
-                        </TableCell>
+                        {canWriteUsers ? (
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t("table.editUser")}
+                                onClick={() => setEditing(u)}
+                              >
+                                <PencilIcon />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t("table.setPassword")}
+                                onClick={() => setSettingPassword(u)}
+                              >
+                                <KeyRoundIcon />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t("table.deleteUser")}
+                                disabled={isSelf}
+                                title={isSelf ? t("table.deleteSelf") : t("table.deleteUser")}
+                                onClick={() => setConfirmingDelete(u.id)}
+                              >
+                                <Trash2Icon className="text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        ) : null}
                       </TableRow>
                     );
                   })}
@@ -493,71 +530,79 @@ function UsersPage() {
         </CardContent>
       </Card>
 
-      <CreateUserSheet
-        open={creating}
-        onOpenChange={setCreating}
-        tenantId={tenantId}
-        onCreated={() => qc.invalidateQueries({ queryKey: ["users"] })}
-      />
+      {canCreateUsers ? (
+        <CreateUserSheet
+          open={creating}
+          onOpenChange={setCreating}
+          tenantId={tenantId}
+          onCreated={() => qc.invalidateQueries({ queryKey: ["users"] })}
+        />
+      ) : null}
 
-      <EditUserSheet
-        user={editing}
-        isSelf={!!editing && editing.id === currentUserId}
-        onOpenChange={(o) => !o && setEditing(null)}
-        onSaved={() => {
-          setEditing(null);
-          qc.invalidateQueries({ queryKey: ["users"] });
-        }}
-      />
+      {canWriteUsers ? (
+        <>
+          <EditUserSheet
+            user={editing}
+            isSelf={!!editing && editing.id === currentUserId}
+            onOpenChange={(o) => !o && setEditing(null)}
+            onSaved={() => {
+              setEditing(null);
+              qc.invalidateQueries({ queryKey: ["users"] });
+            }}
+          />
 
-      <SetPasswordSheet
-        user={settingPassword}
-        onOpenChange={(o) => !o && setSettingPassword(null)}
-        onSaved={() => setSettingPassword(null)}
-      />
+          <SetPasswordSheet
+            user={settingPassword}
+            onOpenChange={(o) => !o && setSettingPassword(null)}
+            onSaved={() => setSettingPassword(null)}
+          />
+        </>
+      ) : null}
 
-      <AlertDialog
-        open={!!confirmingDelete}
-        onOpenChange={(o) => {
-          if (!o && !deleteM.isPending) setConfirmingDelete(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t("delete.title")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {(() => {
-                const target = items.find((u) => u.id === confirmingDelete);
-                return target ? (
-                  <Trans
-                    t={t}
-                    i18nKey="delete.descriptionNamed"
-                    values={{ email: target.email }}
-                    components={{
-                      strong: <span className="font-medium text-foreground" />,
-                    }}
-                  />
-                ) : (
-                  t("delete.descriptionFallback")
-                );
-              })()}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteM.isPending}>
-              {t("common:actions.cancel")}
-            </AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={deleteM.isPending}
-              onClick={() => confirmingDelete && deleteM.mutate(confirmingDelete)}
-            >
-              {deleteM.isPending && <Loader2Icon className="animate-spin" />}
-              {deleteM.isPending ? t("common:actions.deleting") : t("common:actions.delete")}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {canWriteUsers ? (
+        <AlertDialog
+          open={!!confirmingDelete}
+          onOpenChange={(o) => {
+            if (!o && !deleteM.isPending) setConfirmingDelete(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("delete.title")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {(() => {
+                  const target = items.find((u) => u.id === confirmingDelete);
+                  return target ? (
+                    <Trans
+                      t={t}
+                      i18nKey="delete.descriptionNamed"
+                      values={{ email: target.email }}
+                      components={{
+                        strong: <span className="font-medium text-foreground" />,
+                      }}
+                    />
+                  ) : (
+                    t("delete.descriptionFallback")
+                  );
+                })()}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteM.isPending}>
+                {t("common:actions.cancel")}
+              </AlertDialogCancel>
+              <Button
+                variant="destructive"
+                disabled={deleteM.isPending}
+                onClick={() => confirmingDelete && deleteM.mutate(confirmingDelete)}
+              >
+                {deleteM.isPending && <Loader2Icon className="animate-spin" />}
+                {deleteM.isPending ? t("common:actions.deleting") : t("common:actions.delete")}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </div>
   );
 }
@@ -580,7 +625,7 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
   useEffect(() => {
     if (!roleId && roles.length > 0) {
       const member = roles.find((r) => /member/i.test(r.name));
-      setRoleId(member?.id ?? roles[roles.length - 1]!.id);
+      setRoleId(member?.id ?? roles.at(-1)?.id ?? "");
     }
   }, [roles, roleId]);
 
@@ -732,7 +777,10 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
   }
 
   const updateM = useMutation({
-    mutationFn: (body: UpdateBody) => api<User>(`/v1/users/${user!.id}`, { method: "PATCH", body }),
+    mutationFn: (body: UpdateBody) => {
+      if (!user) throw new Error("No user selected");
+      return api<User>(`/v1/users/${user.id}`, { method: "PATCH", body });
+    },
     onSuccess: onSaved,
     meta: { successMessage: t("toast.updated") },
   });
@@ -840,8 +888,10 @@ type SetPasswordSheetProps = {
 function SetPasswordSheet({ user, onOpenChange, onSaved }: SetPasswordSheetProps) {
   const { t } = useTranslation("users");
   const setM = useMutation({
-    mutationFn: (body: { password: string }) =>
-      api<void>(`/v1/users/${user!.id}/password`, { method: "POST", body }),
+    mutationFn: (body: { password: string }) => {
+      if (!user) throw new Error("No user selected");
+      return api<void>(`/v1/users/${user.id}/password`, { method: "POST", body });
+    },
     onSuccess: onSaved,
     meta: { successMessage: t("toast.passwordUpdated") },
   });

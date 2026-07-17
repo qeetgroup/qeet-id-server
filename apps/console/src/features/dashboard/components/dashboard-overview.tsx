@@ -1,4 +1,5 @@
 import {
+  Badge,
   Button,
   buttonVariants,
   Select,
@@ -30,6 +31,7 @@ import {
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { useCapabilities } from "@/features/access-control/capability-provider";
 import { formatShortDate, useAnalyticsOverview } from "@/lib/analytics";
 import { useTenantId } from "@/lib/auth";
 import {
@@ -66,11 +68,15 @@ function DashboardHeading({
   onRangeChange,
   generatedAt,
   loading,
+  telemetryAvailable,
+  canInvite,
 }: {
   range: DashboardRange;
   onRangeChange: (range: DashboardRange) => void;
   generatedAt?: string;
   loading: boolean;
+  telemetryAvailable: boolean;
+  canInvite: boolean;
 }) {
   const { t } = useTranslation("dashboard");
   const live = hasLiveTelemetry(generatedAt);
@@ -91,40 +97,46 @@ function DashboardHeading({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-        <div className="me-1 flex min-h-8 items-center gap-2 rounded-lg border border-border/75 bg-card/70 px-2.5 text-[11px] text-muted-foreground">
-          {loading ? (
-            <Skeleton className="h-3 w-28" />
-          ) : (
-            <>
-              <span
-                className={`size-1.5 rounded-full ${live ? "bg-success shadow-[0_0_0_3px_color-mix(in_oklab,var(--success)_16%,transparent)]" : "bg-warning"}`}
-                aria-hidden="true"
-              />
-              {live ? (
-                <span>
-                  Telemetry updated <TimeSince value={generatedAt} className="font-medium" />
-                </span>
+        {telemetryAvailable ? (
+          <>
+            <div className="me-1 flex min-h-8 items-center gap-2 rounded-lg border border-border/75 bg-card/70 px-2.5 text-[11px] text-muted-foreground">
+              {loading ? (
+                <Skeleton className="h-3 w-28" />
               ) : (
-                <span>Awaiting workspace telemetry</span>
+                <>
+                  <span
+                    className={`size-1.5 rounded-full ${live ? "bg-success shadow-[0_0_0_3px_color-mix(in_oklab,var(--success)_16%,transparent)]" : "bg-warning"}`}
+                    aria-hidden="true"
+                  />
+                  {live ? (
+                    <span>
+                      Telemetry updated <TimeSince value={generatedAt} className="font-medium" />
+                    </span>
+                  ) : (
+                    <span>Awaiting workspace telemetry</span>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </div>
-        <Select
-          value={range}
-          onValueChange={(value) => value && onRangeChange(value as DashboardRange)}
-        >
-          <SelectTrigger size="sm" className="min-w-36 bg-card">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="7d">{t("range7d")}</SelectItem>
-            <SelectItem value="14d">{t("range14d")}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Link to="/invitations" className={buttonVariants({ size: "sm" })}>
-          <UserPlusIcon /> {t("quickActions.inviteLabel")}
-        </Link>
+            </div>
+            <Select
+              value={range}
+              onValueChange={(value) => value && onRangeChange(value as DashboardRange)}
+            >
+              <SelectTrigger size="sm" className="min-w-36 bg-card">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7d">{t("range7d")}</SelectItem>
+                <SelectItem value="14d">{t("range14d")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        ) : null}
+        {canInvite ? (
+          <Link to="/invitations" className={buttonVariants({ size: "sm" })}>
+            <UserPlusIcon /> {t("quickActions.inviteLabel")}
+          </Link>
+        ) : null}
       </div>
     </header>
   );
@@ -133,15 +145,25 @@ function DashboardHeading({
 export function DashboardOverview() {
   const tenantId = useTenantId();
   const { t } = useTranslation("dashboard");
-  const analytics = useAnalyticsOverview();
-  const activity = useDashboardActivity(tenantId ?? undefined);
+  const access = useCapabilities();
+  const canViewAnalytics = access.can("analytics.read");
+  const canViewAudit = access.can("audit.read");
+  const canInvite = access.canAll(["user.read", "user.write", "role.read"]);
+  const analytics = useAnalyticsOverview(canViewAnalytics);
+  const activity = useDashboardActivity(tenantId ?? undefined, canViewAudit);
   const [range, setRange] = useState<DashboardRange>("14d");
   const take = range === "7d" ? 7 : 14;
 
-  if (analytics.isError) {
+  if (canViewAnalytics && analytics.isError) {
     return (
       <div className="flex min-w-0 flex-col gap-6">
-        <DashboardHeading range={range} onRangeChange={setRange} loading={false} />
+        <DashboardHeading
+          range={range}
+          onRangeChange={setRange}
+          loading={false}
+          telemetryAvailable
+          canInvite={canInvite}
+        />
         <section className="enterprise-panel grid min-h-80 place-items-center p-8 text-center">
           <div className="max-w-md">
             <span className="mx-auto grid size-12 place-items-center rounded-xl bg-destructive/10 text-destructive">
@@ -274,10 +296,34 @@ export function DashboardOverview() {
         onRangeChange={setRange}
         generatedAt={overview?.generated_at}
         loading={analytics.isLoading}
+        telemetryAvailable={canViewAnalytics}
+        canInvite={canInvite}
       />
 
-      <DashboardMetricRail metrics={metrics} loading={analytics.isLoading || !overview} />
-      {overview ? <DashboardSecondaryRail items={secondaryStats} /> : null}
+      {canViewAnalytics ? (
+        <>
+          <DashboardMetricRail metrics={metrics} loading={analytics.isLoading || !overview} />
+          {overview ? <DashboardSecondaryRail items={secondaryStats} /> : null}
+        </>
+      ) : (
+        <section className="enterprise-panel flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+              <ShieldCheckIcon className="size-4.5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-heading text-base font-semibold">Your operator view is scoped</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                Workspace analytics are not part of your role. Available navigation and actions are
+                tailored to your effective permissions.
+              </p>
+            </div>
+          </div>
+          <Badge variant="muted" className="w-fit shrink-0 capitalize">
+            {access.mode.replace("-", " ")} access
+          </Badge>
+        </section>
+      )}
 
       <div className="grid gap-3">
         <OnboardingChecklist />
@@ -285,28 +331,38 @@ export function DashboardOverview() {
       </div>
 
       <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-12">
-        <AuthenticationActivityPanel
-          className="xl:col-span-8"
-          rows={authenticationRows}
-          loading={analytics.isLoading}
-          take={take}
-        />
-        <LoginMethodMixPanel
-          className="xl:col-span-4"
-          rows={methodRows}
-          loading={analytics.isLoading}
-        />
-        <MfaAdoptionPanel className="xl:col-span-6" rows={mfaRows} loading={analytics.isLoading} />
-        <FailedLoginsPanel
-          className="xl:col-span-6"
-          rows={overview?.failed_logins_hourly_24h ?? []}
-          loading={analytics.isLoading}
-        />
-        <RecentActivityPanel
-          className="xl:col-span-8"
-          events={activity.data?.items ?? []}
-          loading={activity.isLoading}
-        />
+        {canViewAnalytics ? (
+          <>
+            <AuthenticationActivityPanel
+              className="xl:col-span-8"
+              rows={authenticationRows}
+              loading={analytics.isLoading}
+              take={take}
+            />
+            <LoginMethodMixPanel
+              className="xl:col-span-4"
+              rows={methodRows}
+              loading={analytics.isLoading}
+            />
+            <MfaAdoptionPanel
+              className="xl:col-span-6"
+              rows={mfaRows}
+              loading={analytics.isLoading}
+            />
+            <FailedLoginsPanel
+              className="xl:col-span-6"
+              rows={overview?.failed_logins_hourly_24h ?? []}
+              loading={analytics.isLoading}
+            />
+          </>
+        ) : null}
+        {canViewAudit ? (
+          <RecentActivityPanel
+            className="xl:col-span-8"
+            events={activity.data?.items ?? []}
+            loading={activity.isLoading}
+          />
+        ) : null}
         <OperatorActionsPanel className="xl:col-span-4" />
       </div>
     </div>

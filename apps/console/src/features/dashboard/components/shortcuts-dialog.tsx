@@ -1,5 +1,6 @@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@qeetrix/ui";
 
+import { useCapabilities } from "@/features/access-control/capability-provider";
 import { SHORTCUT_GROUPS } from "@/lib/shortcuts";
 
 type ShortcutsDialogProps = {
@@ -8,6 +9,12 @@ type ShortcutsDialogProps = {
 };
 
 export function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogProps) {
+  const access = useCapabilities();
+  const groups = SHORTCUT_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.path || access.canAccessPath(item.path)),
+  })).filter((group) => group.items.length > 0);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md">
@@ -17,7 +24,7 @@ export function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogProps) {
         </SheetHeader>
         <div className="flex-1 overflow-y-auto p-4">
           <div className="flex flex-col gap-6">
-            {SHORTCUT_GROUPS.map((group) => (
+            {groups.map((group) => (
               <div key={group.title}>
                 <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {group.title}
@@ -30,10 +37,9 @@ export function ShortcutsDialog({ open, onOpenChange }: ShortcutsDialogProps) {
                     >
                       <span className="text-muted-foreground">{item.description}</span>
                       <span className="flex items-center gap-1">
-                        {item.keys.map((k, i) => (
+                        {item.keys.map((k) => (
                           <kbd
-                            // Static key list has no stable id.
-                            key={i}
+                            key={`${item.description}-${k}`}
                             className="inline-flex h-5 min-w-5 select-none items-center justify-center rounded border bg-muted px-1.5 font-mono text-[11px] font-medium text-muted-foreground"
                           >
                             {k}

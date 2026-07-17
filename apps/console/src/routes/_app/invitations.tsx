@@ -43,6 +43,8 @@ import { useTranslation } from "react-i18next";
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { ListToolbar, SortHeader } from "@/components/data-table";
 import { PageHeader } from "@/components/page-header";
+import { useCapabilities } from "@/features/access-control/capability-provider";
+import { ReadOnlyNotice } from "@/features/access-control/components/read-only-notice";
 import { type ApiError, api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
@@ -69,13 +71,21 @@ function InvitationsPage() {
   const { t } = useTranslation("invitations");
   const tenantId = useTenantId();
   const qc = useQueryClient();
+  const access = useCapabilities();
+  const canWriteUsers = access.can("user.write");
+  const canReadRoles = access.can("role.read");
+  const canCreateInvites = canWriteUsers && canReadRoles;
   const [creating, setCreating] = useState(false);
   const [confirmDialog, openConfirm] = useConfirmDialog();
+
+  useEffect(() => {
+    if (!canCreateInvites) setCreating(false);
+  }, [canCreateInvites]);
 
   const listQ = useQuery({
     queryKey: ["invites", tenantId],
     queryFn: () => api<{ items: Invite[] }>(`/v1/tenants/${tenantId}/invites`),
-    enabled: !!tenantId,
+    enabled: !!tenantId && canReadRoles,
   });
 
   const rolesQ = useQuery({
@@ -130,12 +140,16 @@ function InvitationsPage() {
               <RefreshCwIcon className={listQ.isFetching ? "animate-spin" : ""} />
               {t("list.refresh")}
             </Button>
-            <Button size="sm" onClick={() => setCreating(true)}>
-              <PlusIcon /> {t("list.send")}
-            </Button>
+            {canCreateInvites ? (
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <PlusIcon /> {t("list.send")}
+              </Button>
+            ) : null}
           </>
         }
       />
+
+      {!canWriteUsers ? <ReadOnlyNotice /> : null}
 
       <Card>
         <CardHeader>
@@ -167,7 +181,7 @@ function InvitationsPage() {
               },
             ]}
             columns={[
-              { id: "role", label: t("list.columns.role") },
+              ...(canReadRoles ? [{ id: "role", label: t("list.columns.role") }] : []),
               { id: "expires", label: t("list.columns.expires") },
               { id: "sent", label: t("list.columns.sent") },
             ]}
@@ -199,7 +213,9 @@ function InvitationsPage() {
                   <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
                     {t("list.columns.email")}
                   </SortHeader>
-                  {lv.isVisible("role") && <TableHead>{t("list.columns.role")}</TableHead>}
+                  {canReadRoles && lv.isVisible("role") ? (
+                    <TableHead>{t("list.columns.role")}</TableHead>
+                  ) : null}
                   <TableHead>{t("list.columns.status")}</TableHead>
                   {lv.isVisible("expires") && (
                     <SortHeader columnKey="expires" sort={lv.sort} onToggle={lv.toggleSort}>
@@ -211,18 +227,20 @@ function InvitationsPage() {
                       {t("list.columns.sent")}
                     </SortHeader>
                   )}
-                  <TableHead className="text-right">{t("list.columns.actions")}</TableHead>
+                  {canWriteUsers ? (
+                    <TableHead className="text-right">{t("list.columns.actions")}</TableHead>
+                  ) : null}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((inv) => (
                   <TableRow key={inv.id}>
                     <TableCell className="font-medium">{inv.email}</TableCell>
-                    {lv.isVisible("role") && (
+                    {canReadRoles && lv.isVisible("role") ? (
                       <TableCell>
                         <Badge variant="muted">{roleName(inv.role_id)}</Badge>
                       </TableCell>
-                    )}
+                    ) : null}
                     <TableCell>
                       <StatusPill status={inv.status} />
                     </TableCell>
@@ -236,25 +254,27 @@ function InvitationsPage() {
                         <TimeSince value={inv.created_at} />
                       </TableCell>
                     )}
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={inv.status !== "pending" || revokeM.isPending}
-                        onClick={() =>
-                          openConfirm({
-                            title: t("confirm.revokeTitle", {
-                              email: inv.email,
-                            }),
-                            variant: "destructive",
-                            confirmLabel: t("confirm.revokeLabel"),
-                            onConfirm: () => revokeM.mutate(inv.id),
-                          })
-                        }
-                      >
-                        <Trash2Icon /> {t("table.revoke")}
-                      </Button>
-                    </TableCell>
+                    {canWriteUsers ? (
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={inv.status !== "pending" || revokeM.isPending}
+                          onClick={() =>
+                            openConfirm({
+                              title: t("confirm.revokeTitle", {
+                                email: inv.email,
+                              }),
+                              variant: "destructive",
+                              confirmLabel: t("confirm.revokeLabel"),
+                              onConfirm: () => revokeM.mutate(inv.id),
+                            })
+                          }
+                        >
+                          <Trash2Icon /> {t("table.revoke")}
+                        </Button>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))}
               </TableBody>
@@ -263,12 +283,14 @@ function InvitationsPage() {
         </CardContent>
       </Card>
 
-      <CreateInviteSheet
-        open={creating}
-        onOpenChange={setCreating}
-        currentTenantId={tenantId}
-        onCreated={() => qc.invalidateQueries({ queryKey: ["invites"] })}
-      />
+      {canCreateInvites ? (
+        <CreateInviteSheet
+          open={creating}
+          onOpenChange={setCreating}
+          currentTenantId={tenantId}
+          onCreated={() => qc.invalidateQueries({ queryKey: ["invites"] })}
+        />
+      ) : null}
     </div>
   );
 }
@@ -322,7 +344,7 @@ function CreateInviteSheet({
       return;
     }
     const member = rs.find((r) => /member/i.test(r.name));
-    setRoleId(member?.id ?? rs[rs.length - 1]!.id);
+    setRoleId(member?.id ?? rs.at(-1)?.id ?? "");
   }, [rolesQ.data]);
 
   const createM = useMutation({

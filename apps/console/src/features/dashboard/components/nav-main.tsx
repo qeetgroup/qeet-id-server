@@ -10,6 +10,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  Skeleton,
 } from "@qeetrix/ui";
 import { Link, useLocation } from "@tanstack/react-router";
 import { ChevronRightIcon } from "lucide-react";
@@ -99,5 +100,37 @@ export function NavMain({ groups }: { groups: NavGroup[] }) {
         </SidebarGroup>
       ))}
     </>
+  );
+}
+
+const NAV_SKELETON_GROUPS = [
+  { id: "workspace", rows: ["overview", "activity", "analytics"] },
+  { id: "directory", rows: ["users", "organizations", "groups", "invites"] },
+  { id: "access", rows: ["authentication", "authorization", "security"] },
+  { id: "operations", rows: ["developer", "settings", "billing", "audit"] },
+] as const;
+
+export function NavMainSkeleton() {
+  return (
+    <div role="status" aria-live="polite" aria-label="Checking available console sections">
+      {NAV_SKELETON_GROUPS.map((group) => (
+        <SidebarGroup key={group.id} className="py-1.5">
+          <SidebarGroupLabel className="h-7 px-2">
+            <span className="h-2 w-16 animate-pulse rounded bg-sidebar-foreground/10" />
+          </SidebarGroupLabel>
+          <SidebarMenu className="gap-0.5">
+            {group.rows.map((row) => (
+              <SidebarMenuItem key={row}>
+                <div className="flex h-8 items-center gap-2 rounded-md px-2" aria-hidden="true">
+                  <Skeleton className="size-4 shrink-0 rounded-sm bg-sidebar-foreground/10" />
+                  <Skeleton className="h-3 w-28 max-w-[70%] bg-sidebar-foreground/10 group-data-[collapsible=icon]:hidden" />
+                </div>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </SidebarGroup>
+      ))}
+      <span className="sr-only">Checking workspace access</span>
+    </div>
   );
 }
