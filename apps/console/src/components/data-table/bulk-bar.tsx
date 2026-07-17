@@ -16,8 +16,8 @@ type BulkBarProps = {
 // page surfaces selection count + actions identically.
 export function BulkBar({ count, progress, disabled, onClear, children }: BulkBarProps) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-y bg-muted/40 px-4 py-2 text-sm">
-      <span className="font-medium">{count} selected</span>
+    <div className="flex flex-wrap items-center gap-2 border-y border-primary/20 bg-primary/6 px-4 py-2.5 text-sm shadow-[inset_3px_0_0_var(--primary)]">
+      <span className="font-semibold tabular-nums">{count} selected</span>
       {progress && (
         // Announce fan-out progress to assistive tech — there's no toast until
         // the bulk action settles, so this polite live region voices each step.

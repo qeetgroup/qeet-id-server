@@ -25,25 +25,18 @@ export function PageHeader({ title, description, actions }: PageHeaderProps) {
   const meta = lookupNavTitle(pathname);
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="flex flex-col gap-1">
-        {(meta.group || meta.parent) && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            {meta.group && <span>{meta.group}</span>}
-            {meta.parent && (
-              <>
-                <span>›</span>
-                <span>{meta.parent.title}</span>
-              </>
-            )}
-          </div>
-        )}
-        <h1 className="font-heading text-2xl font-semibold tracking-tight">
+    <header className="page-heading">
+      <div className="min-w-0">
+        <h1 className="text-pretty font-heading text-2xl font-semibold sm:text-[1.75rem]">
           {title ?? meta.title}
         </h1>
-        {description && <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>}
+        {description && (
+          <p className="mt-1.5 max-w-3xl text-pretty text-sm leading-6 text-muted-foreground">
+            {description}
+          </p>
+        )}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
-    </div>
+      {actions && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{actions}</div>}
+    </header>
   );
 }

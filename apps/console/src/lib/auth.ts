@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { useSyncExternalStore } from "react";
 
 import { api, tokenStore } from "./api";
 
@@ -261,8 +262,7 @@ export function useLogout() {
 
 /** Returns the current tenant id stashed in localStorage. */
 export function useTenantId(): string | null {
-  if (typeof window === "undefined") return null;
-  return tokenStore.getTenantId();
+  return useSyncExternalStore(tokenStore.subscribe, tokenStore.getTenantId, () => null);
 }
 
 /** Whether the user has a stored access token. Read synchronously for guards. */

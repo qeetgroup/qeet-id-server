@@ -10,6 +10,7 @@ import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import appCss from "../styles.css?url";
 
 const THEME_STORAGE_KEY = "qeetid-admin-theme";
+const DEVTOOLS_ENABLED = import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEVTOOLS === "true";
 
 // Synchronous head script: runs while the browser is parsing <head>, before
 // any of <body> renders. Reads the saved theme (or falls back to the system
@@ -27,7 +28,14 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Qeet Identity" },
+      { title: "Qeet ID · Control plane" },
+      {
+        name: "description",
+        content:
+          "Qeet ID identity, authentication, authorization, and security operations console.",
+      },
+      { name: "theme-color", content: "#f5f7fa", media: "(prefers-color-scheme: light)" },
+      { name: "theme-color", content: "#11141a", media: "(prefers-color-scheme: dark)" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
@@ -55,6 +63,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static, source-controlled anti-flash script must execute before hydration */}
         <script dangerouslySetInnerHTML={{ __html: themeFlashScript }} />
         <HeadContent />
       </head>
@@ -62,16 +71,18 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <ThemeProvider defaultTheme="system" storageKey={THEME_STORAGE_KEY}>
           {children}
           <Toaster position="bottom-right" closeButton richColors />
-          <TanStackDevtools
-            config={{ position: "bottom-right" }}
-            plugins={[
-              {
-                name: "Tanstack Router",
-                render: <TanStackRouterDevtoolsPanel />,
-              },
-              TanStackQueryDevtools,
-            ]}
-          />
+          {DEVTOOLS_ENABLED ? (
+            <TanStackDevtools
+              config={{ position: "bottom-right" }}
+              plugins={[
+                {
+                  name: "Tanstack Router",
+                  render: <TanStackRouterDevtoolsPanel />,
+                },
+                TanStackQueryDevtools,
+              ]}
+            />
+          ) : null}
         </ThemeProvider>
         <Scripts />
       </body>

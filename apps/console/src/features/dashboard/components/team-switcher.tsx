@@ -55,11 +55,11 @@ export function TeamSwitcher() {
             render={
               <SidebarMenuButton
                 size="lg"
-                className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
+                className="h-13 border border-sidebar-border/70 bg-white/3 px-2.5 data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
               />
             }
           >
-            <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sm font-semibold text-sidebar-primary-foreground">
+            <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground shadow-[inset_0_1px_0_rgb(255_255_255/18%)]">
               {active ? initialOf(active.name) : <Building2Icon className="size-4" />}
             </div>
             <div className="grid flex-1 text-start text-sm leading-tight">
@@ -71,10 +71,17 @@ export function TeamSwitcher() {
               ) : active ? (
                 <>
                   <span className="truncate font-medium">{active.name}</span>
-                  <span className="truncate text-xs capitalize">{active.plan}</span>
+                  <span className="truncate text-[10px] capitalize text-sidebar-foreground/55">
+                    {active.plan} · {active.region}
+                  </span>
                 </>
               ) : (
-                <span className="truncate font-medium text-muted-foreground">No workspace</span>
+                <>
+                  <span className="truncate font-medium">No workspace</span>
+                  <span className="truncate text-[10px] text-sidebar-foreground/55">
+                    Create a tenant boundary
+                  </span>
+                </>
               )}
             </div>
             <ChevronsUpDownIcon className="ms-auto" />

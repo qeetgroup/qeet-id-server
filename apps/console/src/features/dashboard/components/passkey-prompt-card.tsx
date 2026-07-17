@@ -49,15 +49,18 @@ export function PasskeyPromptCard() {
   }
 
   return (
-    <Card className="border-sky-500/40 bg-sky-50/40 dark:bg-sky-950/15">
+    <Card className="border-info/25 bg-info/5 shadow-none hover:shadow-none">
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <FingerprintIcon className="mt-0.5 size-6 shrink-0 text-sky-600 dark:text-sky-400" />
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-info/10 text-info ring-1 ring-info/15">
+            <FingerprintIcon className="size-4" />
+          </span>
           <div>
-            <CardTitle className="text-base">Speed up sign-in with a passkey</CardTitle>
+            <CardTitle className="text-sm font-semibold">
+              Protect this operator account with a passkey
+            </CardTitle>
             <CardDescription>
-              Passkeys are faster than passwords and resist phishing. Your device handles the prompt
-              — Touch ID, Face ID, Windows Hello, or a security key.
+              Use Touch ID, Face ID, Windows Hello, or a security key for phishing-resistant access.
             </CardDescription>
           </div>
         </div>
@@ -65,15 +68,15 @@ export function PasskeyPromptCard() {
           <XIcon />
         </Button>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-2 border-t pt-3">
+      <CardContent className="flex flex-wrap items-center gap-2 border-t border-info/15 pt-3">
         <Link to="/auth/login-methods/passkeys" className={buttonVariants({ size: "sm" })}>
           <ZapIcon /> Add a passkey
         </Link>
         <Button variant="ghost" size="sm" onClick={handleDismiss}>
           Not now
         </Button>
-        <span className="ms-auto text-xs text-muted-foreground">
-          Recommended for admins and anyone with sensitive access.
+        <span className="ms-auto text-[11px] text-muted-foreground">
+          Recommended for privileged operators
         </span>
       </CardContent>
     </Card>

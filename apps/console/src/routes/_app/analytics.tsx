@@ -10,11 +10,6 @@ import {
   ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from "@qeetrix/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -25,7 +20,6 @@ import {
   UsersIcon,
   ZapIcon,
 } from "lucide-react";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
@@ -121,12 +115,6 @@ function EmptyChart({ message, height = "h-70" }: { message: string; height?: st
 
 function AnalyticsPage() {
   const { t } = useTranslation("dashboard");
-  // Range selector is kept for visual parity with the future API.
-  // Today the backend overview is fixed-window (24h / 7d / 14d / 30d
-  // depending on the metric); the selector is a no-op until §4.8 is
-  // extended with a range parameter.
-  const [range, setRange] = useState("30d");
-
   const { data, isLoading, isError, error } = useAnalyticsOverview();
 
   if (isError) {
@@ -164,22 +152,7 @@ function AnalyticsPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      <PageHeader
-        description={t("analytics.description")}
-        actions={
-          <Select value={range} onValueChange={(v) => v && setRange(v)}>
-            <SelectTrigger className="w-45">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="24h">{t("analytics.range24h")}</SelectItem>
-              <SelectItem value="7d">{t("analytics.range7d")}</SelectItem>
-              <SelectItem value="30d">{t("analytics.range30d")}</SelectItem>
-              <SelectItem value="90d">{t("analytics.range90d")}</SelectItem>
-            </SelectContent>
-          </Select>
-        }
-      />
+      <PageHeader description={t("analytics.description")} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {isLoading || !kpis ? (

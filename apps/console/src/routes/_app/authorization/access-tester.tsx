@@ -21,7 +21,7 @@ import { PageHeader } from "@/components/page-header";
 import { type ExplainPath, useExplainCheck } from "@/lib/access-check";
 import type { ApiError } from "@/lib/api";
 
-export const Route = createFileRoute("/_app/access/check")({
+export const Route = createFileRoute("/_app/authorization/access-tester")({
   component: AccessCheckPage,
 });
 

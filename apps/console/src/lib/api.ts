@@ -13,6 +13,11 @@ const TOKEN_KEY = "qeetid.access_token";
 const REFRESH_KEY = "qeetid.refresh_token";
 const TENANT_KEY = "qeetid.tenant_id";
 const USER_KEY = "qeetid.user_id";
+const TOKEN_STORE_EVENT = "qeetid:token-store-change";
+
+function notifyTokenStore() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(TOKEN_STORE_EVENT));
+}
 
 export const API_BASE_URL =
   (import.meta.env?.VITE_API_URL as string | undefined) ?? "http://localhost:4001";
@@ -39,15 +44,31 @@ export const tokenStore = {
     window.localStorage.removeItem(REFRESH_KEY);
     window.localStorage.removeItem(TENANT_KEY);
     window.localStorage.removeItem(USER_KEY);
+    notifyTokenStore();
   },
   getRefresh: () =>
     typeof window !== "undefined" ? window.localStorage.getItem(REFRESH_KEY) : null,
   setRefresh: (t: string) => window.localStorage.setItem(REFRESH_KEY, t),
   getTenantId: () =>
     typeof window !== "undefined" ? window.localStorage.getItem(TENANT_KEY) : null,
-  setTenantId: (id: string) => window.localStorage.setItem(TENANT_KEY, id),
+  setTenantId: (id: string) => {
+    window.localStorage.setItem(TENANT_KEY, id);
+    notifyTokenStore();
+  },
   getUserId: () => (typeof window !== "undefined" ? window.localStorage.getItem(USER_KEY) : null),
   setUserId: (id: string) => window.localStorage.setItem(USER_KEY, id),
+  subscribe: (listener: () => void) => {
+    if (typeof window === "undefined") return () => undefined;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === TENANT_KEY || event.key === null) listener();
+    };
+    window.addEventListener(TOKEN_STORE_EVENT, listener);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(TOKEN_STORE_EVENT, listener);
+      window.removeEventListener("storage", onStorage);
+    };
+  },
 };
 
 type RequestOpts = {

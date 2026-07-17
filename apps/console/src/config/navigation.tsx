@@ -1,22 +1,20 @@
 import {
   ActivityIcon,
   BadgeCheckIcon,
+  BlocksIcon,
   BotIcon,
-  BrainCircuitIcon,
   Building2Icon,
   ChartColumnIcon,
   CreditCardIcon,
   FingerprintIcon,
+  FlaskConicalIcon,
   GaugeIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
   LockKeyholeIcon,
   LogInIcon,
   MonitorSmartphoneIcon,
-  NetworkIcon,
   PaletteIcon,
-  RadioTowerIcon,
-  ScanSearchIcon,
   ScrollTextIcon,
   ServerCogIcon,
   Settings2Icon,
@@ -35,7 +33,6 @@ export type NavItem = {
   title: string;
   url: string;
   icon?: ReactNode;
-  isActive?: boolean;
   items?: { title: string; url: string }[];
 };
 
@@ -46,20 +43,19 @@ export type NavGroup = {
 
 export const navGroups: NavGroup[] = [
   {
-    label: "Platform",
+    label: "Workspace",
     items: [
       {
-        title: "Dashboard",
+        title: "Overview",
         url: "/",
         icon: <LayoutDashboardIcon />,
-        isActive: true,
       },
       { title: "Activity", url: "/activity", icon: <ActivityIcon /> },
       { title: "Analytics", url: "/analytics", icon: <ChartColumnIcon /> },
     ],
   },
   {
-    label: "Identity & Access",
+    label: "Directory",
     items: [
       {
         title: "Users",
@@ -74,7 +70,7 @@ export const navGroups: NavGroup[] = [
       },
       {
         title: "Organizations",
-        url: "/organizations",
+        url: "/organizations/tenants",
         icon: <Building2Icon />,
         items: [
           { title: "Tenants", url: "/organizations/tenants" },
@@ -83,48 +79,20 @@ export const navGroups: NavGroup[] = [
         ],
       },
       { title: "Groups", url: "/groups", icon: <UsersRoundIcon /> },
-      {
-        title: "Roles & Permissions",
-        url: "/access",
-        icon: <ShieldCheckIcon />,
-        items: [
-          { title: "Roles (RBAC)", url: "/access/roles" },
-          { title: "Permissions", url: "/access/permissions" },
-          { title: "Policies (ABAC)", url: "/access/policies" },
-          { title: "Relationships (ReBAC)", url: "/access/relationships" },
-          { title: "Resources", url: "/access/resources" },
-        ],
-      },
-      {
-        title: "Access Tester",
-        url: "/access/check",
-        icon: <ScanSearchIcon />,
-      },
     ],
   },
   {
     label: "Authentication",
     items: [
       {
-        title: "Login Methods",
-        url: "/auth/login-methods",
+        title: "Login methods",
+        url: "/auth/login-methods/password",
         icon: <LogInIcon />,
         items: [
           { title: "Password", url: "/auth/login-methods/password" },
           { title: "Passwordless", url: "/auth/login-methods/passwordless" },
           { title: "Passkeys", url: "/auth/login-methods/passkeys" },
-          { title: "Magic Links", url: "/auth/login-methods/magic-links" },
-        ],
-      },
-      { title: "Social Providers", url: "/auth/social", icon: <NetworkIcon /> },
-      {
-        title: "Multi-Factor Auth",
-        url: "/auth/mfa",
-        icon: <FingerprintIcon />,
-        items: [
-          { title: "TOTP", url: "/auth/mfa/totp" },
-          { title: "SMS / Email", url: "/auth/mfa/sms-email" },
-          { title: "Recovery Codes", url: "/auth/mfa/recovery-codes" },
+          { title: "Magic links", url: "/auth/login-methods/magic-links" },
         ],
       },
       {
@@ -132,21 +100,33 @@ export const navGroups: NavGroup[] = [
         url: "/auth/connections",
         icon: <WorkflowIcon />,
         items: [
+          { title: "Catalogue", url: "/auth/connections" },
+          { title: "Social providers", url: "/auth/social" },
           { title: "SAML 2.0", url: "/auth/connections/saml" },
           { title: "SAML IdP", url: "/auth/connections/saml-idp" },
           { title: "OIDC / OAuth 2.0", url: "/auth/connections/oidc" },
-          { title: "SCIM Provisioning", url: "/auth/connections/scim" },
+          { title: "SCIM provisioning", url: "/auth/connections/scim" },
           { title: "LDAP / AD", url: "/auth/connections/ldap" },
         ],
       },
       {
-        title: "API Keys & Tokens",
-        url: "/auth/api",
+        title: "Multi-factor auth",
+        url: "/auth/mfa/totp",
+        icon: <FingerprintIcon />,
+        items: [
+          { title: "TOTP", url: "/auth/mfa/totp" },
+          { title: "SMS / email", url: "/auth/mfa/sms-email" },
+          { title: "Recovery codes", url: "/auth/mfa/recovery-codes" },
+        ],
+      },
+      {
+        title: "API access",
+        url: "/auth/api/keys",
         icon: <KeyRoundIcon />,
         items: [
-          { title: "API Keys", url: "/auth/api/keys" },
-          { title: "Machine Identities", url: "/auth/api/machine-identities" },
-          { title: "Access Tokens", url: "/auth/api/tokens" },
+          { title: "API keys", url: "/auth/api/keys" },
+          { title: "Machine identities", url: "/auth/api/machine-identities" },
+          { title: "Access tokens", url: "/auth/api/tokens" },
           { title: "Consent grants", url: "/auth/api/consent-grants" },
           { title: "Signing keys", url: "/auth/api/signing-keys" },
           { title: "Secrets", url: "/auth/api/secrets" },
@@ -155,55 +135,96 @@ export const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Security & Compliance",
+    label: "Authorization",
     items: [
-      { title: "Overview", url: "/security", icon: <ShieldCheckIcon /> },
+      { title: "Overview", url: "/authorization", icon: <GaugeIcon /> },
       {
-        title: "Threat Protection",
-        url: "/security/threats",
-        icon: <ShieldAlertIcon />,
+        title: "Access model",
+        url: "/authorization/roles",
+        icon: <ShieldCheckIcon />,
         items: [
-          { title: "Bot Detection", url: "/security/threats/bots" },
-          { title: "Anomalies", url: "/security/threats/anomalies" },
-          { title: "Risk Settings", url: "/security/threats/risk-settings" },
-          { title: "Rate Limits", url: "/security/threats/rate-limits" },
-          { title: "IP Allowlist", url: "/security/threats/ip-allowlist" },
+          { title: "Roles", url: "/authorization/roles" },
+          { title: "Permissions", url: "/authorization/permissions" },
+          { title: "Resources", url: "/authorization/resources" },
+          { title: "RBAC", url: "/authorization/rbac" },
+          { title: "ABAC", url: "/authorization/abac" },
+          { title: "ReBAC", url: "/authorization/rebac" },
         ],
       },
       {
-        title: "Device Authorizations",
-        url: "/security/device-authorizations",
-        icon: <MonitorSmartphoneIcon />,
+        title: "Policy lifecycle",
+        url: "/authorization/builder",
+        icon: <BlocksIcon />,
+        items: [
+          { title: "Policy builder", url: "/authorization/builder" },
+          { title: "Templates", url: "/authorization/templates" },
+          { title: "Version history", url: "/authorization/versions" },
+        ],
       },
       {
-        title: "Rate Limit Policies",
+        title: "Decision tools",
+        url: "/authorization/simulator",
+        icon: <FlaskConicalIcon />,
+        items: [
+          { title: "Policy simulator", url: "/authorization/simulator" },
+          { title: "Decision explorer", url: "/authorization/explorer" },
+          { title: "Access tester", url: "/authorization/access-tester" },
+        ],
+      },
+      { title: "Audit", url: "/authorization/audit", icon: <ScrollTextIcon /> },
+      { title: "AI assistant", url: "/authorization/assistant", icon: <SparklesIcon /> },
+      { title: "Settings", url: "/authorization/settings", icon: <Settings2Icon /> },
+    ],
+  },
+  {
+    label: "Security",
+    items: [
+      { title: "Overview", url: "/security", icon: <ShieldCheckIcon /> },
+      {
+        title: "Threat protection",
+        url: "/security/threats/bots",
+        icon: <ShieldAlertIcon />,
+        items: [
+          { title: "Bot detection", url: "/security/threats/bots" },
+          { title: "Anomalies", url: "/security/threats/anomalies" },
+          { title: "Risk settings", url: "/security/threats/risk-settings" },
+          { title: "Threat rate limits", url: "/security/threats/rate-limits" },
+          { title: "IP allowlist", url: "/security/threats/ip-allowlist" },
+        ],
+      },
+      {
+        title: "Sessions & devices",
+        url: "/security/sessions",
+        icon: <MonitorSmartphoneIcon />,
+        items: [
+          { title: "Sessions", url: "/security/sessions" },
+          { title: "Device authorizations", url: "/security/device-authorizations" },
+        ],
+      },
+      {
+        title: "Rate limit policies",
         url: "/security/rate-limits",
         icon: <GaugeIcon />,
       },
       {
-        title: "Audit Logs",
+        title: "Monitoring",
         url: "/security/audit-logs",
         icon: <ScrollTextIcon />,
-      },
-      {
-        title: "Audit Intelligence",
-        url: "/security/audit-intelligence",
-        icon: <BrainCircuitIcon />,
-      },
-      {
-        title: "Log Streaming",
-        url: "/security/log-streaming",
-        icon: <RadioTowerIcon />,
+        items: [
+          { title: "Audit logs", url: "/security/audit-logs" },
+          { title: "Audit intelligence", url: "/security/audit-intelligence" },
+          { title: "Log streaming", url: "/security/log-streaming" },
+        ],
       },
       {
         title: "Compliance",
-        url: "/security/compliance",
+        url: "/security/compliance/soc2",
         icon: <LockKeyholeIcon />,
         items: [
           { title: "SOC 2", url: "/security/compliance/soc2" },
           { title: "GDPR", url: "/security/compliance/gdpr" },
           { title: "ISO 27001", url: "/security/compliance/iso27001" },
-          { title: "Data Retention", url: "/security/compliance/retention" },
+          { title: "Data retention", url: "/security/compliance/retention" },
         ],
       },
     ],
@@ -212,19 +233,19 @@ export const navGroups: NavGroup[] = [
     label: "Developer",
     items: [
       { title: "Webhooks", url: "/developer/webhooks", icon: <WebhookIcon /> },
-      { title: "Auth Hooks", url: "/developer/auth-hooks", icon: <ZapIcon /> },
+      { title: "Auth hooks", url: "/developer/auth-hooks", icon: <ZapIcon /> },
       {
-        title: "Agent Governance",
+        title: "Agent governance",
         url: "/developer/agents",
         icon: <SparklesIcon />,
       },
       {
-        title: "Verifiable Credentials",
+        title: "Verifiable credentials",
         url: "/developer/credentials",
         icon: <BadgeCheckIcon />,
       },
       {
-        title: "Bots & Automations",
+        title: "Bots & automations",
         url: "/developer/bots",
         icon: <BotIcon />,
       },
@@ -236,24 +257,25 @@ export const navGroups: NavGroup[] = [
     ],
   },
   {
-    label: "Settings",
+    label: "Administration",
     items: [
       {
         title: "Workspace",
-        url: "/settings/workspace",
+        url: "/settings/workspace/general",
         icon: <Settings2Icon />,
         items: [
           { title: "General", url: "/settings/workspace/general" },
+          { title: "Security policy", url: "/settings/workspace/security-policy" },
           { title: "Domains", url: "/settings/workspace/domains" },
           {
-            title: "Email Templates",
+            title: "Email templates",
             url: "/settings/workspace/email-templates",
           },
         ],
       },
       { title: "Branding", url: "/settings/branding", icon: <PaletteIcon /> },
       {
-        title: "Billing & Plan",
+        title: "Billing & plan",
         url: "/settings/billing",
         icon: <CreditCardIcon />,
       },

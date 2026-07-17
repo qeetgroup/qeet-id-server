@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import { ApiError, api } from "@/lib/api";
+import * as apiClient from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
 
 const DISMISS_KEY = "qeetid-admin-onboarding-dismissed";
@@ -39,7 +39,7 @@ function isDoneSafe<T>(
   err: unknown,
   predicate: (d: T) => boolean,
 ): boolean | "loading" {
-  if (err instanceof ApiError && err.status === 404) return false;
+  if (err instanceof apiClient.ApiError && err.status === 404) return false;
   if (err) return false;
   if (data === undefined) return "loading";
   return predicate(data);
@@ -62,7 +62,7 @@ function useSteps(): Step[] {
   const branding = useQuery({
     queryKey: ["onboarding", "branding", tenantId],
     queryFn: () =>
-      api<{ logo_url?: string | null; primary_color?: string | null }>(
+      apiClient.api<{ logo_url?: string | null; primary_color?: string | null }>(
         `/v1/tenants/${tenantId}/branding`,
       ),
     enabled,
@@ -77,7 +77,7 @@ function useSteps(): Step[] {
     // called that nonexistent path, so "Invite your team" could never
     // check itself off).
     queryFn: () =>
-      api<{ items: unknown[] }>(`/v1/users`, {
+      apiClient.api<{ items: unknown[] }>(`/v1/users`, {
         query: { limit: 2 },
       }),
     enabled,
@@ -87,7 +87,7 @@ function useSteps(): Step[] {
   });
   const webhooks = useQuery({
     queryKey: ["onboarding", "webhooks", tenantId],
-    queryFn: () => api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/webhooks`),
+    queryFn: () => apiClient.api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/webhooks`),
     enabled,
     meta: { silent: true },
     staleTime: 30_000,
@@ -95,7 +95,7 @@ function useSteps(): Step[] {
   });
   const oidc = useQuery({
     queryKey: ["onboarding", "oidc", tenantId],
-    queryFn: () => api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/oidc/clients`),
+    queryFn: () => apiClient.api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/oidc/clients`),
     enabled,
     meta: { silent: true },
     staleTime: 30_000,
@@ -103,7 +103,7 @@ function useSteps(): Step[] {
   });
   const apiKeys = useQuery({
     queryKey: ["onboarding", "api-keys", tenantId],
-    queryFn: () => api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/api-keys`),
+    queryFn: () => apiClient.api<{ items: unknown[] }>(`/v1/tenants/${tenantId}/api-keys`),
     enabled,
     meta: { silent: true },
     staleTime: 30_000,
@@ -191,13 +191,15 @@ export function OnboardingChecklist() {
 
   if (allDone) {
     return (
-      <Card className="border-emerald-500/40 bg-emerald-50/40 dark:bg-emerald-950/15">
+      <Card className="border-success/25 bg-success/5 shadow-none hover:shadow-none">
         <CardHeader className="flex flex-row items-start justify-between">
           <div className="flex items-center gap-3">
-            <PartyPopperIcon className="size-6 text-emerald-600 dark:text-emerald-400" />
+            <span className="grid size-9 place-items-center rounded-lg bg-success/10 text-success ring-1 ring-success/15">
+              <PartyPopperIcon className="size-4" />
+            </span>
             <div>
               <CardTitle className="text-base">Workspace fully set up</CardTitle>
-              <CardDescription>Nicely done — every onboarding task is complete.</CardDescription>
+              <CardDescription>Every control-plane setup task is complete.</CardDescription>
             </div>
           </div>
           <Button variant="ghost" size="icon" aria-label="Dismiss" onClick={handleDismiss}>
@@ -209,16 +211,23 @@ export function OnboardingChecklist() {
   }
 
   return (
-    <Card>
+    <Card className="border-border/80 bg-card/80 shadow-none hover:shadow-none">
       <CardHeader className="flex flex-row items-start justify-between">
         <div>
-          <CardTitle className="text-base">Get your workspace ready</CardTitle>
+          <CardTitle className="text-sm font-semibold">Workspace readiness</CardTitle>
           <CardDescription>
             {stillLoading ? "Checking your setup…" : `${doneCount} of ${total} steps complete.`}
           </CardDescription>
-          <div className="mt-3 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+          <div
+            className="mt-3 h-1.5 w-48 max-w-full overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-label="Workspace setup progress"
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={doneCount}
+          >
             <div
-              className="h-full bg-primary transition-all"
+              className="h-full bg-primary transition-[width] duration-300 ease-(--ease-decelerate)"
               style={{ width: `${(doneCount / total) * 100}%` }}
               aria-hidden="true"
             />
@@ -228,7 +237,7 @@ export function OnboardingChecklist() {
           <XIcon />
         </Button>
       </CardHeader>
-      <ul className="divide-y border-t">
+      <ul className="divide-y divide-border/70 border-t border-border/70">
         {steps.map((step) => {
           const Icon = step.icon;
           const isDone = step.done === true;
@@ -236,13 +245,13 @@ export function OnboardingChecklist() {
             <li
               key={step.id}
               className={cn(
-                "flex items-center gap-3 px-4 py-3 transition-colors",
+                "flex items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-muted/25",
                 isDone && "text-muted-foreground",
               )}
             >
               <div className="shrink-0">
                 {isDone ? (
-                  <CheckCircle2Icon className="size-5 text-emerald-500" />
+                  <CheckCircle2Icon className="size-5 text-success" />
                 ) : (
                   <CircleIcon className="size-5 text-muted-foreground/50" />
                 )}
