@@ -70,7 +70,7 @@ export default function (data) {
     JSON.stringify({
       object: "document:security-runbook",
       relation: "viewer",
-      user_id: `user:${data.userId}`,
+      user_id: data.userId,
     }),
     { headers: { ...headers, "Content-Type": "application/json" } },
   );

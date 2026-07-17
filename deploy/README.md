@@ -286,6 +286,23 @@ If the EC2 box is lost, the data is safe in RDS. To rebuild:
 - **SSH (22) open to `0.0.0.0/0`** — scope to your IP, or move deploys to SSM.
 - **Single instance** — `REDIS_URL` blank, in-process rate limits (correct for one
   box). Add ElastiCache + set `REDIS_URL` only if you run >1 app instance.
+- **Event fan-out is log-only by default** — `NATS_URL` blank, so the outbox
+  dispatcher only logs drained events. Set `NATS_URL=nats://host:4222` to publish
+  real domain events (subject = event topic) for other Qeet products to consume.
+  The outbox owns durability (at-least-once, retry + DLQ), so a broker blip is
+  retried, not lost.
 - **RDS backups** — default 7-day retention; enable PITR / longer retention for prod.
 - **`SECRETS_PROVIDER=static`** — uses `SECRETS_KEY`. Optionally move to
   `aws-kms` (`KMS_KEY_ID` + `SECRETS_WRAPPED_DEK`) later.
+- **Row-Level-Security enforcement (defense-in-depth)** — migration `0082` adds RLS
+  policies to every tenant-scoped table plus a least-privilege role `qeet_app`, but
+  RLS is **inert until the app connects as a non-superuser role** (superusers bypass
+  RLS). To enforce, on the host:
+  1. Grant the role a login once (as the RDS master):
+     `ALTER ROLE qeet_app WITH LOGIN PASSWORD '<secret>';` and grant it `CONNECT` on the DB.
+  2. In `/opt/qeet-id/.env` set `DB_URL` to the `qeet_app` role and
+     `DB_MIGRATE_URL` to the master/owner role (so migrations keep DDL rights):
+     `DB_MIGRATE_URL=postgres://<master>:<pw>@<rds-host>:5432/qeet_id`.
+  3. Redeploy. Verify with `curl -fsS .../readyz` and confirm a cross-tenant query
+     returns no rows for the app role. (Local dev proof: connect as `qeet_app`, `SET
+     app.tenant_id='<other-tenant>'`, and confirm 0 rows on a populated table.)

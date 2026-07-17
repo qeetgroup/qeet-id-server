@@ -8,8 +8,16 @@ Pre-1.0 minor versions may include breaking changes — they will be called out 
 
 ---
 
-## 1.0.0 (2026-06-22)
+## [Unreleased]
 
+> **Status: pre-1.0 — no versioned release has been published yet.** An earlier draft of this file dated a
+> `1.0.0` release on 2026-06-22; that was premature — nothing has actually been launched. The first `1.0.0`
+> tag will be cut at the initial public GA. **[ROADMAP.md](./ROADMAP.md) is the single source of truth for
+> current shipped-vs-planned status;** this file records what lands in each release from that tag onward. (A
+> still-earlier pre-implementation snapshot here — WebAuthn/SAML/SCIM/billing as 501s, HS256, bcrypt — no
+> longer matches the codebase; all of those have since shipped.)
+
+The changes below are the work staged for that first release.
 
 ### Features
 
@@ -29,7 +37,3 @@ Pre-1.0 minor versions may include breaking changes — they will be called out 
 
 * **backend:** unify SAML error envelope, bound SMTP, log encode errors ([2fed216](https://github.com/qeetgroup/qeet-id/commit/2fed21639b4318adafb729fda113d5de026f080f))
 * rename qeet-identity → qeet-id across module path, URLs, names ([9c438ef](https://github.com/qeetgroup/qeet-id/commit/9c438ef523875ecd5a9ee2692ac67b762d5f3b99))
-
-## [Unreleased]
-
-This section tracked a pre-implementation snapshot (WebAuthn/SAML/SCIM/billing as 501s, HS256, bcrypt) that no longer matches the codebase — all of those shipped as part of or before `1.0.0` below. **[ROADMAP.md](./ROADMAP.md) is the single source of truth for current shipped-vs-planned status**; this file only records what actually landed in each release going forward.

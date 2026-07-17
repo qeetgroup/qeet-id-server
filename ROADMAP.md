@@ -4,7 +4,7 @@ The full picture of **what's available today** and **what's planned next** — p
 package structure that lands with future work. The [README](./README.md) links here.
 
 **Legend:** ✅ shipped · 🟠 planned (high) · 🟡 planned (medium) · 🟢 planned (later) · ⏳ external ops (not code)
-**Status:** pre-1.0, **July 2026 GA** target — reconciled against source on 2026-07-06 (migrations 0001–0064, `domains/`/`apps/`/`sdk/`). Every ✅ below is backed by real code; remaining gaps live in the 🔭 Planned section.
+**Status:** pre-1.0, **July 2026 GA** target — reconciled against source on 2026-07-06; migration range refreshed 2026-07-17 (migrations 0001–0081, latest `0081_compliance_evidence`; `domains/`/`apps/`/`sdk/`). Every ✅ below is backed by real code; remaining gaps live in the 🔭 Planned section.
 This file is the **single source of truth** for shipped-vs-pending status and the competitive matrix (see 🏁 Competitive position below) — it absorbed the retired `QEET-ID-STATUS.md` on 2026-07-06. The competitive backlog is distilled by the [`product-manager`](./.claude/agents/product-manager.md) agent into `qeet-files/qeet-id/FEATURE-PROPOSALS.md`.
 
 ---

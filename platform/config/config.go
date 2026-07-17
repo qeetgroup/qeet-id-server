@@ -29,6 +29,12 @@ type Config struct {
 	DBURL      string `envconfig:"DB_URL" required:"true"`
 	DBMinConns int32  `envconfig:"DB_MIN_CONNS" default:"2"`
 	DBMaxConns int32  `envconfig:"DB_MAX_CONNS" default:"10"`
+	// DBMigrateURL, when set, is used to run migrations (and only migrations)
+	// instead of DB_URL. Point it at an owner/superuser role when DB_URL is a
+	// dedicated least-privilege application role that is subject to Row-Level
+	// Security and cannot run DDL. Empty (default) = run migrations as DB_URL,
+	// preserving the single-role setup.
+	DBMigrateURL string `envconfig:"DB_MIGRATE_URL"`
 
 	JWTSecret   string `envconfig:"JWT_SECRET" required:"true"`
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
@@ -123,6 +129,12 @@ type Config struct {
 	// RedisURL enables shared (cross-replica) rate limiting, e.g.
 	// redis://:pass@host:6379/0. Empty = in-process limits (single instance).
 	RedisURL string `envconfig:"REDIS_URL" default:""`
+
+	// NATSURL enables real cross-product event fan-out: the transactional outbox
+	// dispatcher publishes drained domain events to NATS (subject = event topic,
+	// e.g. nats://host:4222). Empty (default) keeps the dependency-free log-only
+	// publisher, so single-product / self-host setups are unaffected.
+	NATSURL string `envconfig:"NATS_URL" default:""`
 
 	// Card payments (Stripe / Razorpay) for paid plan changes. Each provider is
 	// OFF until its keys are set; with none configured, billing stays on the

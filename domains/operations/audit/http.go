@@ -121,6 +121,23 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/audit/verify", h.verify)
 }
 
+// MountPublic registers the unauthenticated platform-chain verify endpoint.
+// It is mounted in the public route group so any external party can
+// independently confirm the platform audit log is intact — the "provable
+// audit" guarantee — without holding a Qeet ID account. Per-tenant
+// verification (which would expose tenant activity) stays behind auth in Mount.
+func (h *Handler) MountPublic(r chi.Router) {
+	r.Get("/audit/verify", h.verifyPublic)
+}
+
+// publicVerifyResult is the deliberately minimal, non-tenant-scoped view
+// returned by verifyPublic: enough to confirm the platform audit chain is
+// intact, with no tenant data, row identifiers, or per-tenant activity exposed.
+type publicVerifyResult struct {
+	ChainValid  bool `json:"chain_valid"`
+	RowsChecked int  `json:"rows_checked"`
+}
+
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
@@ -163,4 +180,21 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// verifyPublic verifies the platform-level audit hash chain (the rows with a
+// NULL tenant_id) and returns only whether the chain is intact and how many
+// rows were checked — no tenant scope, no row identifiers. Unauthenticated by
+// design so an external auditor can confirm the platform has not tampered with
+// its own audit log.
+func (h *Handler) verifyPublic(w http.ResponseWriter, r *http.Request) {
+	res, err := h.Verifier.Verify(r.Context(), nil)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, publicVerifyResult{
+		ChainValid:  res.OK,
+		RowsChecked: res.RowsChecked,
+	})
 }

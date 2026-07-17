@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id/platform/database/rlsctx"
 	"github.com/qeetgroup/qeet-id/platform/security/tokens"
 )
 
@@ -128,6 +129,12 @@ func EnforceTenantScope(next http.Handler) http.Handler {
 				WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
 				return
 			}
+			// Propagate the validated tenant scope so the DB pool can stamp it
+			// onto the connection for Row-Level Security (defense-in-depth
+			// backstop to the handlers' own tenant_id predicates). Only routes
+			// with a matched {tenantID} carry this; account-level/self-scoped
+			// routes intentionally do not (they run with RLS bypassed).
+			r = r.WithContext(rlsctx.WithTenant(r.Context(), got))
 		}
 		next.ServeHTTP(w, r)
 	})

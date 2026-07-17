@@ -241,6 +241,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Billing.MountPublic(r)     // /billing/webhooks/{provider}: Stripe/Razorpay (signature-verified)
 			d.Agent.MountPublic(r)       // /agents/token: AI-agent credential → ephemeral scoped token
 			d.VC.MountPublic(r)          // /credentials/verify: verify a presented JWT-VC (any relying party)
+			d.Audit.MountPublic(r)       // /audit/verify: platform-chain integrity check (any external party, no auth)
 			d.Passkey.MountPublic(r)     // passwordless passkey login
 			d.AdminPortal.MountPublic(r) // /admin-portal/{token}/...: token-gated SAML/SCIM self-serve config
 			d.OIDC.MountBrowser(r)       // /oauth/authorize (SSO cookie) + decision + token-code

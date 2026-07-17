@@ -1,0 +1,71 @@
+name: Perf
+
+# Load/latency benchmarks (k6). Runs nightly and on demand — not on every PR,
+# because the runs are slow and the authz script is single-user (so it also
+# trips the per-user rate limiter, which would flake a per-PR gate).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+
+jobs:
+  k6:
+    name: k6 benchmarks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qeet
+          POSTGRES_PASSWORD: qeet
+          POSTGRES_DB: qeet_id
+        ports:
+          - 5001:5432
+        options: >-
+          --health-cmd "pg_isready -U qeet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Dev mode relaxes the production boot-gate (ephemeral keys are fine for a
+      # perf run); the schema is auto-migrated on boot from the embedded files.
+      SERVICE_ENV: dev
+      DB_URL: postgres://qeet:qeet@localhost:5001/qeet_id?sslmode=disable
+      JWT_SECRET: ci-perf-jwt-secret-value-32-bytes-min
+      BASE_URL: http://localhost:4001
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install k6
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz | tar xz
+          sudo mv k6-*/k6 /usr/local/bin/k6
+          k6 version
+
+      - name: Start server (auto-migrates on boot)
+        run: |
+          nohup go run ./cmd/server > /tmp/server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:4001/readyz >/dev/null 2>&1; then echo "ready"; exit 0; fi
+            sleep 1
+          done
+          echo "server did not become ready:" >&2; cat /tmp/server.log >&2; exit 1
+
+      - name: Seed demo data (authz fixtures)
+        run: go run ./cmd/seed
+
+      - name: JWKS/discovery latency (SLO gate — p95 < 20ms)
+        run: k6 run tests/performance/discovery.js
+
+      - name: RBAC + ReBAC /check (informational — single user hits rate limits)
+        continue-on-error: true
+        run: k6 run tests/performance/authz.js
+
+      - name: Server logs (on failure)
+        if: failure()
+        run: cat /tmp/server.log || true

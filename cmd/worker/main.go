@@ -62,8 +62,16 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Outbox event publisher: NATS when NATS_URL is set, else log-only.
+	outboxPub, closeOutboxPub, err := outbox.NewPublisher(cfg.NATSURL)
+	if err != nil {
+		slog.Error("outbox publisher", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = closeOutboxPub() }()
+
 	// Mirror the workers registered in cmd/server/main.go buildDeps().
-	outboxDispatcher := outbox.NewDispatcher(pool, outbox.LogPublisher{}, 2*time.Second, 50)
+	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
 	webhookService := webhook.NewService(pool)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	retentionService := retention.NewService(pool)

@@ -474,6 +474,35 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/audit/verify:
+    get:
+      operationId: get_v1_audit_verify
+      summary: Verify platform audit chain (public)
+      description: >-
+        Verifies the platform-level audit hash chain (the rows with no tenant)
+        and returns only whether the chain is intact and how many rows were
+        checked. Unauthenticated by design so any external party can
+        independently confirm the platform has not tampered with its audit log;
+        per-tenant verification is at /v1/tenants/{tenantID}/audit/verify and
+        requires auth.
+      tags:
+        - Audit
+      security: []
+      responses:
+        '200':
+          description: '{ chain_valid: bool, rows_checked: int }'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chain_valid:
+                    type: boolean
+                  rows_checked:
+                    type: integer
+                required:
+                  - chain_valid
+                  - rows_checked
   /v1/tenants/{tenantID}/audit/verify:
     get:
       operationId: get_v1_tenants_ByTenantID_audit_verify

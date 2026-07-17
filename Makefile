@@ -1,4 +1,4 @@
-.PHONY: install dev build test lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev build test test-integration bench lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
 
 ifneq (,$(wildcard .env))
     include .env
@@ -8,6 +8,9 @@ endif
 # DB_URL comes from .env (included above); this is the fallback when .env is absent.
 DB_URL        ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
 MIGRATIONS_DIR = platform/database/migrations
+# k6 targets a running server; from the k6 Docker image the host is
+# host.docker.internal. Override for a remote/CI target (e.g. http://localhost:4001).
+BASE_URL      ?= http://host.docker.internal:4001
 
 install:
 	go mod download
@@ -20,6 +23,19 @@ build:
 
 test:
 	go test ./...
+
+# Integration flows against an ephemeral Postgres via testcontainers (needs Docker).
+test-integration:
+	go test -tags integration -count=1 ./tests/integration/...
+
+# Load/perf tests via k6 (Docker image — no host install needed). Needs the
+# server running against seeded data first: `make db-up seed dev`. discovery is
+# a hard SLO gate; authz is informational at default load (single seeded user,
+# so it also exercises the per-user rate limiter). Override BASE_URL for a
+# non-Docker/remote target.
+bench:
+	docker run --rm -i grafana/k6 run -e BASE_URL=$(BASE_URL) - < tests/performance/discovery.js
+	-docker run --rm -i grafana/k6 run -e BASE_URL=$(BASE_URL) - < tests/performance/authz.js
 
 lint:
 	go vet ./...

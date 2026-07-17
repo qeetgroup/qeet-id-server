@@ -142,6 +142,21 @@ func main() {
 		slog.Info("tracing disabled (no-op): set OTEL_EXPORTER_OTLP_ENDPOINT to enable")
 	}
 
+	// Run migrations first, as the owner role — DB_MIGRATE_URL if set, otherwise
+	// DB_URL. This must precede opening the runtime pool: when DB_URL is a
+	// dedicated least-privilege app role (RLS-subject, no DDL rights), the schema
+	// and that role's grants are created here, by the owner, before the app ever
+	// connects as it.
+	migrateURL := cfg.DBMigrateURL
+	if migrateURL == "" {
+		migrateURL = cfg.DBURL
+	}
+	slog.Info("running database migrations")
+	if err := dbmigrations.Run(migrateURL); err != nil {
+		slog.Error("migrations failed", "err", err)
+		os.Exit(1)
+	}
+
 	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
 		slog.Error("connect db", "err", err)
@@ -149,13 +164,18 @@ func main() {
 	}
 	defer pool.Close()
 
-	slog.Info("running database migrations")
-	if err := dbmigrations.Run(cfg.DBURL); err != nil {
-		slog.Error("migrations failed", "err", err)
+	// Outbox event publisher: NATS when NATS_URL is set, else log-only.
+	outboxPub, closeOutboxPub, err := outbox.NewPublisher(cfg.NATSURL)
+	if err != nil {
+		slog.Error("outbox publisher", "err", err)
 		os.Exit(1)
 	}
+	defer func() { _ = closeOutboxPub() }()
+	if cfg.NATSURL != "" {
+		slog.Info("outbox publishing to NATS", "url", cfg.NATSURL)
+	}
 
-	deps, workers := buildDeps(rootCtx, cfg, pool)
+	deps, workers := buildDeps(rootCtx, cfg, pool, outboxPub)
 
 	if cfg.CSRFDisabled {
 		slog.Warn("CSRF protection is DISABLED (dev only) — set CSRF_DISABLED=false to re-enable")
@@ -255,7 +275,7 @@ type namedWorker struct {
 // buildDeps constructs every repository, service, and handler and returns the
 // HTTP dependency set plus the background workers to supervise. Keeping all
 // wiring here lets main() focus on process lifecycle.
-func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) (httpapi.Deps, []namedWorker) {
+func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (httpapi.Deps, []namedWorker) {
 	signingKeyPEM := cfg.JWTSigningKey
 	if signingKeyPEM == "" {
 		if cfg.ServiceEnv != "dev" {
@@ -550,7 +570,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool) 
 		RateLimitStore:   rlStore,
 	}
 
-	outboxDispatcher := outbox.NewDispatcher(pool, outbox.LogPublisher{}, 2*time.Second, 50)
+	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
 	workers := []namedWorker{
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "webhook", run: webhookService.RunDispatcher},
