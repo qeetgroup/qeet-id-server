@@ -102,7 +102,7 @@ type Config struct {
 
 	// LoginBaseURL is the origin of the hosted login app (qeetid-login) that
 	// the OAuth authorize flow redirects to for sign-in and consent.
-	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3004"`
+	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3003"`
 
 	// GeoCountryHeader is the request header a trusted upstream proxy (e.g.
 	// Cloudflare's CF-IPCountry) sets to the client's resolved country, used

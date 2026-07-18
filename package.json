@@ -5,7 +5,8 @@
   "workspaces": [
     "apps/console",
     "apps/login",
-    "apps/website"
+    "apps/website",
+    "tests/e2e"
   ],
   "trustedDependencies": [
     "esbuild",

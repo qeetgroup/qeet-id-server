@@ -36,7 +36,7 @@ bun install
 bun run dev           # all apps
 bun run dev:console   # console  :3002  (@qeet-id/console)
 bun run dev:website   # website  :3001  (@qeet-id/web)
-bun run dev:login     # login    :3004  (@qeet-id/login)
+bun run dev:login     # login    :3003  (@qeet-id/login)
 bun run build | lint | format | check | typecheck | test
 ```
 

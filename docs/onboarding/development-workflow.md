@@ -62,7 +62,7 @@ bun run dev:console    # now start normally
 
 **Login app (`@qeetid/login`):**
 ```bash
-bun run dev:login    # starts Next.js dev on :3004
+bun run dev:login    # starts Next.js dev on :3003
 ```
 
 **Website (`@qeetid/web`):**
@@ -117,7 +117,7 @@ Never commit `.env` or any file containing secrets. The safety gate (`Config.Val
 
 ```bash
 make help           # full list of targets
-make kill           # free stuck dev-server ports (kills :3001, :3002, :3004, :4001)
+make kill           # free stuck dev-server ports (kills :3001, :3002, :3003, :4001)
 make format         # gofmt + biome format
 make tidy           # go mod tidy
 make build          # compile go binary (ldflags-stamped)
