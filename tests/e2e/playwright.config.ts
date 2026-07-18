@@ -10,7 +10,7 @@ export default defineConfig({
   reporter: [["html", { outputFolder: "playwright-report" }]],
 
   use: {
-    baseURL: "http://localhost:3004",
+    baseURL: "http://localhost:3003",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
@@ -43,7 +43,7 @@ export default defineConfig({
     {
       command: "bun run dev:login",
       cwd: "../..",
-      url: "http://localhost:3004",
+      url: "http://localhost:3003",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     },

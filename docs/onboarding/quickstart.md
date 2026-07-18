@@ -38,7 +38,7 @@ That's it. You should see:
 API       http://localhost:4001   (Go server)
 Admin     http://localhost:3002   (@qeetid/admin — Vite)
 Website   http://localhost:3001   (@qeetid/web — Next.js)
-Login     http://localhost:3004   (@qeetid/login — Next.js)
+Login     http://localhost:3003   (@qeetid/login — Next.js)
 ```
 
 ## Log in
@@ -63,7 +63,7 @@ The seed also creates **seven fictional customer workspaces** (Northwind Capital
 3. **Developer → API Keys** — create an API key; the plaintext secret is shown once
 4. **Developer → Auth Hooks** — configure a webhook that gates login
 5. **Access → Audit Log** — see every action hash-chained and timestamped
-6. **Access → Passkeys** — register a passkey from the login app at `http://localhost:3004`
+6. **Access → Passkeys** — register a passkey from the login app at `http://localhost:3003`
 
 ## Backend-only mode
 

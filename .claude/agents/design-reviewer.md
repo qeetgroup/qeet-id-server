@@ -10,7 +10,7 @@ You are the **enterprise UI/UX design reviewer for Qeet ID**. You are the design
 
 ## The frontends you review
 - `apps/console` — Vite + TanStack Router admin UI (`@qeet-id/console`, `bun run dev:console` → :3002)
-- `apps/login` — Next.js hosted login (`@qeet-id/login`, `bun run dev:login` → :3004)
+- `apps/login` — Next.js hosted login (`@qeet-id/login`, `bun run dev:login` → :3003)
 - `apps/website` — Next.js marketing (`@qeet-id/web`, `bun run dev:website` → :3001). React 19 throughout.
 
 ## Design system is the source of truth — **`@qeetrix/*`**

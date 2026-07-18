@@ -17,7 +17,7 @@ Qeet ID is a passkeys-first, multi-tenant identity platform — a self-hostable 
 ```mermaid
 flowchart LR
     subgraph qeetid["Qeet ID"]
-        eu(["End Users"]) --> login["apps/login (Next.js, :3004)"] --> authp["/v1/auth/*"]
+        eu(["End Users"]) --> login["apps/login (Next.js, :3003)"] --> authp["/v1/auth/*"]
         oa(["Org Admins"]) --> console["apps/console (Vite, :3002)"] --> usersp["/v1/users/*"]
         dev(["Developers"]) --> openapi["api/openapi/"] --> keysp["/v1/api-keys/*"]
         sa(["Service Accts"]) --> bearer["Bearer JWT (client_credentials)"] --> v1p["/v1/..."]
@@ -33,7 +33,7 @@ flowchart TB
     subgraph qeetid["Qeet ID"]
         subgraph fe["Frontends (Bun workspaces)"]
             admin["@qeet-id/console<br/>Vite :3002"]
-            login["@qeet-id/login<br/>Next.js :3004"]
+            login["@qeet-id/login<br/>Next.js :3003"]
             web["@qeet-id/website<br/>Next.js :3001"]
         end
         subgraph api["Go API (cmd/server, chi v5, :4001) — platform/api/rest/router.go mounts all domain handlers"]
@@ -85,7 +85,7 @@ Each context owns its own PostgreSQL schema. Cross-context calls go through smal
 |---|---|
 | API | `http://localhost:4001` |
 | Admin console | `http://localhost:3002` |
-| Login app | `http://localhost:3004` |
+| Login app | `http://localhost:3003` |
 | Website | `http://localhost:3001` |
 | OpenAPI specs | `api/openapi/` (5 bounded-context files) |
 | Postman collection | `api/postman/qeet-id.postman_collection.json` |

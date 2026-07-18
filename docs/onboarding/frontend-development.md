@@ -7,7 +7,7 @@ Qeet ID has three frontend apps in Bun workspaces. All are TypeScript + React 19
 | App | Package | Framework | Port | Purpose |
 |---|---|---|---|---|
 | Admin console | `@qeetid/admin` | Vite + TanStack Router | 3002 | Tenant management, user admin, developer tools |
-| Hosted login | `@qeetid/login` | Next.js | 3004 | Login, signup, MFA, recovery, consent flows |
+| Hosted login | `@qeetid/login` | Next.js | 3003 | Login, signup, MFA, recovery, consent flows |
 | Website | `@qeetid/web` | Next.js | 3001 | Marketing pages, changelog, customers |
 
 ## Setup
@@ -21,7 +21,7 @@ make install       # installs all workspace deps (bun install at root)
 ```bash
 make dev              # all three apps + backend simultaneously
 bun run dev:console   # admin console only (:3002)
-bun run dev:login     # login app only (:3004)
+bun run dev:login     # login app only (:3003)
 bun run dev:website   # website only (:3001)
 ```
 

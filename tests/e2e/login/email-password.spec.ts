@@ -8,7 +8,7 @@ test.describe("Email + password login", () => {
   });
 
   test("wrong password shows error", async ({ page }) => {
-    await page.goto("http://localhost:3004");
+    await page.goto("http://localhost:3003");
     await page.getByLabel("Email").fill(DEMO_USERS.member.email);
     await page.getByLabel("Password").fill("wrong-password");
     await page.getByRole("button", { name: "Sign in" }).click();
@@ -16,7 +16,7 @@ test.describe("Email + password login", () => {
   });
 
   test("unknown email shows error", async ({ page }) => {
-    await page.goto("http://localhost:3004");
+    await page.goto("http://localhost:3003");
     await page.getByLabel("Email").fill("nobody@example.com");
     await page.getByLabel("Password").fill("Password123!");
     await page.getByRole("button", { name: "Sign in" }).click();

@@ -21,7 +21,7 @@ export const DEMO_USERS = {
 } as const;
 
 export async function loginAs(page: Page, email: string, password: string): Promise<void> {
-  await page.goto("http://localhost:3004");
+  await page.goto("http://localhost:3003");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();

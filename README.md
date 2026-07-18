@@ -77,7 +77,7 @@ flowchart TB
 
     subgraph frontends["Frontends"]
         direction LR
-        login["Hosted Login<br/>Next.js · :3004"]
+        login["Hosted Login<br/>Next.js · :3003"]
         console["Admin Console<br/>Vite + TanStack · :3002"]
         website["Website<br/>Next.js · :3001"]
     end
@@ -203,7 +203,7 @@ make dev
 | Command | App | URL |
 |:---|:---|:---|
 | `bun run --filter @qeet-id/console dev` | Admin console | <http://localhost:3002> |
-| `bun run --filter @qeet-id/login dev` | Hosted login | <http://localhost:3004> |
+| `bun run --filter @qeet-id/login dev` | Hosted login | <http://localhost:3003> |
 | `bun run --filter @qeet-id/web dev` | Marketing site | <http://localhost:3001> |
 
 Sanity check: `curl localhost:4001/healthz` · Demo login: **`saibabu@qeet.in`** / **`Password123!`**

@@ -88,4 +88,4 @@ flowchart TB
 
 ### Development
 
-In `SERVICE_ENV=dev`, `ALLOWED_ORIGINS` can include `http://localhost:3001`, `http://localhost:3002`, `http://localhost:3004` to allow the frontend dev servers to call the API. These origins must not be deployed to production.
+In `SERVICE_ENV=dev`, `ALLOWED_ORIGINS` can include `http://localhost:3001`, `http://localhost:3002`, `http://localhost:3003` to allow the frontend dev servers to call the API. These origins must not be deployed to production.

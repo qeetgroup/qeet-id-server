@@ -6,7 +6,7 @@ End-to-end tests that drive the full stack through a browser. These tests verify
 
 - **Playwright** (TypeScript) — browser automation
 - **@playwright/test** — test runner
-- **Three apps under test**: Login (`localhost:3004`), Admin (`localhost:3002`), Website (`localhost:3001`)
+- **Three apps under test**: Login (`localhost:3003`), Admin (`localhost:3002`), Website (`localhost:3001`)
 
 ## Prerequisites
 
