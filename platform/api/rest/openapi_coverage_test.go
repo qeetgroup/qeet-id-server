@@ -39,13 +39,16 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/identity/organizations/branding"
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/identity/verification"
+	"github.com/qeetgroup/qeet-id/domains/operations/activity"
 	"github.com/qeetgroup/qeet-id/domains/operations/analytics"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id/domains/operations/billing"
 	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
+	"github.com/qeetgroup/qeet-id/domains/operations/copilot"
 	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
+	"github.com/qeetgroup/qeet-id/domains/operations/search"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id/platform/observability/health"
@@ -93,6 +96,9 @@ func testDeps() Deps {
 		TokenVault:     &tokenvault.Handler{},
 		ABAC:           &abac.Handler{},
 		AuthZEN:        &authzen.Handler{},
+		Copilot:        &copilot.Handler{},
+		Search:         &search.Handler{},
+		Activity:       &activity.Handler{},
 		SAML:           &saml.Handler{IdP: &saml.IdP{}},
 		AdminPortal:    &adminportal.Handler{},
 		LDAP:           &ldap.Handler{},

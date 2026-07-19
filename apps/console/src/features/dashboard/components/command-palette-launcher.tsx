@@ -1,17 +1,22 @@
-import { CommandPalette, type CommandPaletteItem } from "@qeetrix/ui";
-import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+// CommandPaletteLauncher — global ⌘K / Ctrl-K entry point.
+//
+// Preserves the original open/onOpenChange contract so _app.tsx requires no
+// changes. Renders UniversalSearch (the evolved palette) wrapped in
+// SearchProvider, which assembles navigation + command sources and builds
+// SearchContext from the router + capability hooks.
 
-import { filterNavigation, type NavGroup, navGroups } from "@/config/navigation";
+import type { CommandPaletteItem } from "@qeetrix/ui";
+import { useEffect } from "react";
+
+import type { NavGroup } from "@/config/navigation";
 import type { Capability } from "@/features/access-control/capability-model";
 import { useCapabilities } from "@/features/access-control/capability-provider";
+import { SearchProvider, UniversalSearch } from "@/features/search";
 
 /**
- * Flatten the sidebar nav tree into a single searchable list. Sub-items
- * inherit the parent's group label and prefix the parent title so a
- * search for "Audit" surfaces "Audit Logs" without ambiguity. Items
- * without a `url` (parent-only nodes) are skipped — they exist only to
- * organise children.
+ * Flatten the sidebar nav tree into a CommandPaletteItem[] list.
+ * Kept here for backward-compatibility; the universal search uses
+ * buildNavSearchItems from registry/navigation-source.tsx instead.
  */
 export function buildCommandPaletteItems(
   groups: NavGroup[],
@@ -21,8 +26,6 @@ export function buildCommandPaletteItems(
   for (const group of groups) {
     for (const item of group.items) {
       if (item.items && item.items.length > 0) {
-        // Parent with children: surface the parent itself only if its url
-        // is a leaf route (i.e. doesn't match any child's url).
         const isPureGroup = item.items.some((s) => s.url === item.url);
         if (!isPureGroup && can(item.requiredPermission)) {
           out.push({
@@ -61,20 +64,15 @@ interface CommandPaletteLauncherProps {
 }
 
 /**
- * CommandPaletteLauncher wires the global Cmd-K / Ctrl-K shortcut to a
- * navigation palette populated from the sidebar config. Lives inside
- * the app layout so the keyboard handler and the navigate hook share
- * the same router context.
+ * CommandPaletteLauncher wires the ⌘K / Ctrl-K shortcut to the UniversalSearch
+ * palette. Lives inside CapabilityProvider (via the ConsoleFrame in _app.tsx)
+ * so the shortcut can gate on access.state before opening.
  */
 export function CommandPaletteLauncher({ open, onOpenChange }: CommandPaletteLauncherProps) {
-  const navigate = useNavigate();
   const access = useCapabilities();
-  const groups = useMemo(
-    () => (access.state === "ready" ? filterNavigation(navGroups, access.can) : []),
-    [access.can, access.state],
-  );
-  const items = useMemo(() => buildCommandPaletteItems(groups, access.can), [access.can, groups]);
 
+  // Own the ⌘K shortcut here — same design as the original launcher so the
+  // keyboard behaviour is unchanged from the operator's perspective.
   useEffect(() => {
     if (access.state !== "ready") {
       if (open) onOpenChange(false);
@@ -92,15 +90,8 @@ export function CommandPaletteLauncher({ open, onOpenChange }: CommandPaletteLau
   }, [access.state, open, onOpenChange]);
 
   return (
-    <CommandPalette
-      open={open}
-      onOpenChange={onOpenChange}
-      items={items}
-      placeholder="Jump to…"
-      onSelect={(item) => {
-        // item.id is the route URL.
-        navigate({ to: item.id });
-      }}
-    />
+    <SearchProvider>
+      <UniversalSearch open={open} onOpenChange={onOpenChange} />
+    </SearchProvider>
   );
 }

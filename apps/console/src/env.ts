@@ -14,6 +14,10 @@ export const env = createEnv({
 
   client: {
     VITE_APP_TITLE: z.string().min(1).optional(),
+    // Build-time kill switch for the AI Copilot surface. Defaults on; the real
+    // runtime gate is the backend `/v1/copilot/status`. Set "false" to omit the
+    // workspace entirely (e.g. an air-gapped build).
+    VITE_COPILOT_ENABLED: z.enum(["true", "false"]).optional(),
   },
 
   /**

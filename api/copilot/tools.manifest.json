@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1",
+  "description": "Canonical Qeet ID Copilot tool catalog. Loaded by the Go orchestrator (go:embed → Anthropic `tools` defs) and by the frontend tool-registry (which attaches run()). Names are the contract; a qa parity test asserts both sides match. Adding a tool = edit this file + a frontend run() + the backend needs no code change.",
+  "tools": [
+    {
+      "name": "search_users",
+      "category": "directory",
+      "title": "Search users",
+      "description": "Search users in the current tenant by free-text query and/or status. Returns a redacted list of users (id, email, name, status). Read-only.",
+      "capability": "user.read",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "string", "description": "Free-text search over email/name." },
+          "status": { "type": "string", "enum": ["active", "suspended", "invited", "deleted"] },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_user",
+      "category": "directory",
+      "title": "Create user",
+      "description": "Create a new user in a tenant. Optionally assign an initial role. If no password is given, the user is created for invitation/passwordless onboarding.",
+      "capability": "user.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "name": { "type": "string" },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "description": "Optional initial password."
+          },
+          "tenant_id": { "type": "string", "description": "Tenant the user belongs to." },
+          "role_id": { "type": "string", "description": "Optional role to assign on creation." }
+        },
+        "required": ["email", "tenant_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_user",
+      "category": "directory",
+      "title": "Update user",
+      "description": "Update a user's mutable profile fields (currently display name).",
+      "capability": "user.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "string" },
+          "name": { "type": "string" }
+        },
+        "required": ["user_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "disable_user",
+      "category": "directory",
+      "title": "Disable user",
+      "description": "Suspend a user, immediately blocking their sign-in. Reversible with enable_user. Destructive: requires confirmation.",
+      "capability": "user.write",
+      "destructive": true,
+      "input_schema": {
+        "type": "object",
+        "properties": { "user_id": { "type": "string" } },
+        "required": ["user_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "enable_user",
+      "category": "directory",
+      "title": "Enable user",
+      "description": "Re-activate a suspended user, restoring their ability to sign in.",
+      "capability": "user.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": { "user_id": { "type": "string" } },
+        "required": ["user_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_user",
+      "category": "directory",
+      "title": "Delete user",
+      "description": "Soft-delete a user. Destructive: requires confirmation and shows the affected user before proceeding.",
+      "capability": "user.write",
+      "destructive": true,
+      "input_schema": {
+        "type": "object",
+        "properties": { "user_id": { "type": "string" } },
+        "required": ["user_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "reset_user_mfa",
+      "category": "directory",
+      "title": "Reset user MFA",
+      "description": "Remove a user's enrolled MFA factors, forcing re-enrollment at next sign-in. Use when a user has lost their device. Destructive: requires confirmation. (There is no admin endpoint to ENABLE a specific factor for another user — MFA enrollment is a self-scoped ceremony.)",
+      "capability": "user.write",
+      "destructive": true,
+      "input_schema": {
+        "type": "object",
+        "properties": { "user_id": { "type": "string" } },
+        "required": ["user_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_organization",
+      "category": "directory",
+      "title": "Create organization",
+      "description": "Create a new organization (tenant).",
+      "capability": "tenant.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "slug": {
+            "type": "string",
+            "description": "Optional URL slug; derived from name if omitted."
+          }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_role",
+      "category": "directory",
+      "title": "Create role",
+      "description": "Create a role in the current tenant. Permissions are granted separately with grant_permission.",
+      "capability": "role.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["name"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "assign_role",
+      "category": "directory",
+      "title": "Assign role to user",
+      "description": "Assign an existing role to a user within the current tenant.",
+      "capability": "role.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "user_id": { "type": "string" },
+          "role_id": { "type": "string" }
+        },
+        "required": ["user_id", "role_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "grant_permission",
+      "category": "directory",
+      "title": "Grant permission to role",
+      "description": "Grant a permission to a role. Broadens what every user holding the role can do.",
+      "capability": "role.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "role_id": { "type": "string" },
+          "permission_id": { "type": "string" }
+        },
+        "required": ["role_id", "permission_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_strict_mfa",
+      "category": "authz",
+      "title": "Set strict MFA",
+      "description": "Toggle strict MFA for the tenant by disabling adaptive device-remembering (remember_device_enabled). When strict, every sign-in must complete MFA with no adaptive skip.",
+      "capability": "policy.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": { "enabled": { "type": "boolean" } },
+        "required": ["enabled"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_oauth_client",
+      "category": "credentials",
+      "title": "Create OAuth client",
+      "description": "Register a new OAuth/OIDC client application. Confidential clients return a client_secret exactly once — it is shown to the operator only and is never sent to the model.",
+      "capability": "connection.write",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["public", "confidential"] },
+          "redirect_uris": { "type": "array", "items": { "type": "string" } },
+          "grant_types": { "type": "array", "items": { "type": "string" } },
+          "scopes": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["name", "type"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "rotate_oauth_client_secret",
+      "category": "credentials",
+      "title": "Rotate OAuth client secret",
+      "description": "Rotate a confidential OAuth client's secret. The old secret stops working. The new secret is shown to the operator once and never sent to the model. Destructive: requires confirmation.",
+      "capability": "connection.write",
+      "destructive": true,
+      "input_schema": {
+        "type": "object",
+        "properties": { "client_id": { "type": "string" } },
+        "required": ["client_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "rotate_signing_keys",
+      "category": "credentials",
+      "title": "Rotate signing keys",
+      "description": "Rotate the tenant's OIDC token-signing keys. The current key is invalidated after the grace window. Returns key material shown to the operator only, never to the model. Destructive: requires confirmation.",
+      "capability": "connection.write",
+      "destructive": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_audit_logs",
+      "category": "audit",
+      "title": "Search audit logs",
+      "description": "Search the tenant's append-only audit log by free-text, action, resource type, and/or actor. Read-only.",
+      "capability": "audit.read",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "string" },
+          "action": { "type": "string" },
+          "resource_type": { "type": "string" },
+          "actor_user_id": { "type": "string" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_sessions",
+      "category": "audit",
+      "title": "List sessions",
+      "description": "List active sessions for the current principal. Note: this endpoint is self-scoped — there is no admin cross-user session search — so it returns the calling operator's own sessions only.",
+      "capability": "user.read",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "simulate_authorization",
+      "category": "authz",
+      "title": "Simulate authorization",
+      "description": "Evaluate whether a subject may perform an action on a resource using a chosen decision engine (AuthZEN/ABAC/RBAC/ReBAC). Returns the decision plus an explain trace. Read-only — nothing is changed.",
+      "capability": "role.read",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "engine": { "type": "string", "enum": ["authzen", "abac", "rbac", "rebac"] },
+          "subject": { "description": "Subject identifier or attributes, per engine." },
+          "resource": { "description": "Resource identifier or {type,id,attrs}, per engine." },
+          "action": { "type": "string" },
+          "context": { "type": "object", "additionalProperties": true }
+        },
+        "required": ["engine", "subject", "resource", "action"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generate_terraform",
+      "category": "codegen",
+      "title": "Generate Terraform",
+      "description": "Generate Terraform (HCL) for an existing resource by reading its live configuration. Client-side templating; nothing is applied.",
+      "capability": "connection.read",
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "resource_type": { "type": "string", "enum": ["oidc_client", "tenant", "role"] },
+          "resource_id": { "type": "string" }
+        },
+        "required": ["resource_type"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generate_sdk_snippet",
+      "category": "codegen",
+      "title": "Generate SDK snippet",
+      "description": "Generate a client code snippet (curl/TypeScript/Go/Python) for a known Qeet ID endpoint. Informational; client-side.",
+      "capability": null,
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "endpoint": { "type": "string" },
+          "language": { "type": "string", "enum": ["curl", "typescript", "go", "python"] }
+        },
+        "required": ["endpoint", "language"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "generate_api_example",
+      "category": "codegen",
+      "title": "Generate API example",
+      "description": "Generate an example request/response for a Qeet ID endpoint derived from its OpenAPI shape. Informational; client-side.",
+      "capability": null,
+      "destructive": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "endpoint": { "type": "string" },
+          "method": { "type": "string", "enum": ["GET", "POST", "PATCH", "PUT", "DELETE"] }
+        },
+        "required": ["endpoint", "method"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

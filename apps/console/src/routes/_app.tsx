@@ -2,8 +2,10 @@ import { SidebarProvider } from "@qeetrix/ui";
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 
+import { env } from "@/env";
 import { CapabilityProvider, useCapabilities } from "@/features/access-control/capability-provider";
 import { AccessBoundary } from "@/features/access-control/components/access-boundary";
+import { CopilotLauncher, CopilotProvider, CopilotWorkspace } from "@/features/copilot";
 import { AppSidebar } from "@/features/dashboard/components/app-sidebar";
 import { CommandPaletteLauncher } from "@/features/dashboard/components/command-palette-launcher";
 import { ConsoleHeader } from "@/features/dashboard/components/console-header";
@@ -11,6 +13,8 @@ import { ImpersonationBanner } from "@/features/dashboard/components/impersonati
 import { ShortcutsDialog } from "@/features/dashboard/components/shortcuts-dialog";
 import { isAuthenticated } from "@/lib/auth";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
+
+const COPILOT_ENABLED = env.VITE_COPILOT_ENABLED !== "false";
 
 export const Route = createFileRoute("/_app")({ component: AppLayout });
 
@@ -79,6 +83,14 @@ function ConsoleFrame() {
           </AccessBoundary>
         </main>
       </div>
+      {COPILOT_ENABLED ? (
+        <CopilotProvider>
+          {/* Docked mode renders as an in-flow flex sibling here, so opening the
+              Copilot reflows the workspace instead of covering it. */}
+          <CopilotWorkspace />
+          <CopilotLauncher />
+        </CopilotProvider>
+      ) : null}
       <CommandPaletteLauncher open={paletteOpen} onOpenChange={setPaletteOpen} />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </SidebarProvider>

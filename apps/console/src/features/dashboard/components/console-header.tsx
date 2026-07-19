@@ -1,12 +1,13 @@
 import { Button, Separator, SidebarTrigger } from "@qeetrix/ui";
 import { KeyboardIcon, SearchIcon } from "lucide-react";
 
+import { CopilotTrigger } from "@/features/copilot";
+
 import { DynamicBreadcrumb } from "./dynamic-breadcrumb";
 import { HeaderUser } from "./header-user";
 import { LanguageSwitcher } from "./language-switcher";
 import { NotificationsInbox } from "./notifications-inbox";
 import { ThemeToggle } from "./theme-toggle";
-import { WhatsNewDropdown } from "./whats-new-dropdown";
 
 type ConsoleHeaderProps = {
   onOpenPalette: () => void;
@@ -63,7 +64,7 @@ export function ConsoleHeader({
         >
           <KeyboardIcon />
         </Button>
-        <WhatsNewDropdown />
+        <CopilotTrigger />
         <NotificationsInbox />
         <div className="hidden xl:block">
           <LanguageSwitcher />

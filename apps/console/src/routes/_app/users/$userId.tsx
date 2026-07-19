@@ -18,16 +18,19 @@ import {
   TableRow,
   TimeSince,
 } from "@qeetrix/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import { ArrowLeftIcon, FileSearchIcon, MailIcon, PhoneIcon } from "lucide-react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useConfirmDialog } from "@/components/confirm-dialog";
 import { useCapabilities } from "@/features/access-control/capability-provider";
 import { ReadOnlyNotice } from "@/features/access-control/components/read-only-notice";
+import { useRegisterContext } from "@/features/copilot/context/context-registry";
 import { api } from "@/lib/api";
 import { useTenantId } from "@/lib/auth";
+import { useResetUserMfa } from "@/lib/users";
 
 export const Route = createFileRoute("/_app/users/$userId")({
   component: UserDetailPage,
@@ -60,6 +63,7 @@ function UserDetailPage() {
   const { t } = useTranslation("users");
   const [confirmDialog, openConfirm] = useConfirmDialog();
   const { userId } = Route.useParams();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const tenantId = useTenantId();
   const access = useCapabilities();
   const canWriteUsers = access.can("user.write");
@@ -70,6 +74,21 @@ function UserDetailPage() {
     queryKey: ["user", userId],
     queryFn: () => api<User>(`/v1/users/${userId}`),
   });
+
+  // Publish the current user as the copilot's selection context. The email
+  // label is filled once the query resolves; the id is always available from
+  // the URL param. Memoized so useRegisterContext sees a stable reference.
+  const copilotCtx = useMemo(
+    () => ({
+      selection: {
+        kind: "user" as const,
+        id: userId,
+        label: userQ.data?.email,
+      },
+    }),
+    [userId, userQ.data?.email],
+  );
+  useRegisterContext(pathname, copilotCtx);
 
   // Recent audit events authored by this user. Filtered server-side via
   // the actor_user_id parameter the audit list endpoint already accepts.
@@ -82,17 +101,10 @@ function UserDetailPage() {
     enabled: !!tenantId && canViewAudit,
   });
 
-  const qc = useQueryClient();
   // Admin account-recovery: clear the user's MFA so they can re-enroll. Gated
-  // server-side on user.write; audited as mfa.admin_reset.
-  const resetMfa = useMutation({
-    mutationFn: () => api<{ message: string }>(`/v1/users/${userId}/mfa`, { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["user", userId] });
-      qc.invalidateQueries({ queryKey: ["user-activity", userId] });
-    },
-    meta: { successMessage: "Multi-factor authentication reset for this user" },
-  });
+  // server-side on user.write; audited as mfa.admin_reset. Extracted to
+  // lib/users.ts so the copilot reset_user_mfa tool shares the same hook.
+  const resetMfa = useResetUserMfa();
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -262,7 +274,7 @@ function UserDetailPage() {
                   description: t("detail.resetMfaConfirmDescription"),
                   variant: "destructive",
                   confirmLabel: t("detail.resetMfaConfirmLabel"),
-                  onConfirm: () => resetMfa.mutate(),
+                  onConfirm: () => resetMfa.mutate(userId),
                 })
               }
             >

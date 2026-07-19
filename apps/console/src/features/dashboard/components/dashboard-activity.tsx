@@ -1,4 +1,4 @@
-import { Badge, buttonVariants, cn, Skeleton, TimeSince } from "@qeetrix/ui";
+import { Badge, buttonVariants, cn, EmptyState, Skeleton, TimeSince } from "@qeetrix/ui";
 import { Link } from "@tanstack/react-router";
 import {
   ActivityIcon,
@@ -16,8 +16,9 @@ import { useTranslation } from "react-i18next";
 
 import type { Capability } from "@/features/access-control/capability-model";
 import { useCapabilities } from "@/features/access-control/capability-provider";
-import { formatAuditAction } from "../dashboard-model";
-import type { DashboardAuditEvent } from "../use-dashboard-activity";
+import { LiveIndicator } from "@/features/activity/components/live-indicator";
+import type { ActivityEvent } from "@/features/activity/types";
+import { useDashboardActivity } from "../use-dashboard-activity";
 import { DashboardPanel } from "./dashboard-panel";
 
 const ACTIVITY_SKELETON_IDS = ["one", "two", "three", "four", "five"] as const;
@@ -67,41 +68,58 @@ function getOperatorActions(t: (key: string) => string) {
   ];
 }
 
-function eventIcon(action: string): React.ReactNode {
-  if (action.startsWith("user.login") || action.startsWith("session.")) return <LogInIcon />;
-  if (action.startsWith("user.")) return <UserIcon />;
-  if (action.startsWith("mfa.") || action.startsWith("api_key.")) return <KeyRoundIcon />;
+function eventIcon(event: ActivityEvent): React.ReactNode {
+  const cat = event.category.toLowerCase();
+  if (cat === "authentication" || event.type.startsWith("session.")) return <LogInIcon />;
+  if (cat === "user" || event.type.startsWith("user.")) return <UserIcon />;
+  if (cat === "mfa" || cat === "apikey") return <KeyRoundIcon />;
   return <ActivityIcon />;
 }
 
-export function RecentActivityPanel({
-  events,
-  loading,
-  className,
-}: {
-  events: DashboardAuditEvent[];
-  loading: boolean;
-  className?: string;
-}) {
+// ---------------------------------------------------------------------------
+// RecentActivityPanel — now self-contained, reads from the shared activity store
+// ---------------------------------------------------------------------------
+
+/**
+ * Dashboard widget showing the latest ~10 live activity events.
+ * Acquires the shared SSE subscription so events arrive in real-time.
+ * When the stream is connecting, shows loading skeletons.
+ * Links to the full Live Activity Center at /activity.
+ */
+export function RecentActivityPanel({ className }: { className?: string }) {
   const { t } = useTranslation("dashboard");
+  const { events, status, connecting } = useDashboardActivity(undefined, true);
+
+  const hasCritical = events.some((e) => e.severity === "critical" || e.severity === "error");
 
   return (
     <DashboardPanel
       className={className}
-      title={t("activity.title")}
+      title={
+        <span className="flex items-center gap-2">
+          {t("activity.title")}
+          <LiveIndicator status={status} />
+        </span>
+      }
       description={t("activity.description")}
       contentClassName="p-0 sm:p-0"
       action={
         <Link
-          to="/security/audit-logs"
+          to="/activity"
           className={buttonVariants({ variant: "ghost", size: "sm" })}
+          aria-label="Open full activity center"
         >
           {t("activity.viewAll")}
         </Link>
       }
     >
-      {loading ? (
-        <ul className="divide-y divide-border/60" aria-label="Loading recent activity">
+      {/* Disconnected / reconnecting with no events yet → show skeletons */}
+      {connecting ? (
+        <ul
+          className="divide-y divide-border/60"
+          aria-label="Loading recent activity"
+          aria-busy="true"
+        >
           {ACTIVITY_SKELETON_IDS.map((id) => (
             <li key={id} className="flex items-center gap-3 px-4 py-3.5 sm:px-4.5">
               <Skeleton className="size-9 shrink-0 rounded-lg" />
@@ -114,47 +132,80 @@ export function RecentActivityPanel({
           ))}
         </ul>
       ) : events.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center px-6 py-10 text-center">
-          <span className="grid size-11 place-items-center rounded-xl bg-muted text-muted-foreground">
-            <ActivityIcon className="size-5" />
-          </span>
-          <p className="mt-3 text-sm font-semibold">{t("activity.emptyTitle")}</p>
-          <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-            {t("activity.emptyDescription")}
-          </p>
+        <div className="flex min-h-64 items-center justify-center px-6 py-10">
+          <EmptyState
+            icon={ActivityIcon}
+            title={t("activity.emptyTitle")}
+            description={t("activity.emptyDescription")}
+            action={<LiveIndicator status={status} />}
+          />
         </div>
       ) : (
-        <ol className="divide-y divide-border/60">
-          {events.map((event) => (
-            <li
-              key={event.id}
-              className="group flex min-w-0 items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-muted/35 sm:px-4.5"
-            >
-              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground ring-1 ring-foreground/6 [&_svg]:size-3.5">
-                {eventIcon(event.action)}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{formatAuditAction(event.action)}</p>
-                <div className="mt-1 flex min-w-0 items-center gap-2">
-                  <Badge variant="muted" className="max-w-32 truncate text-[10px]">
-                    {event.actor_type}
-                  </Badge>
-                  <span className="truncate text-[11px] text-muted-foreground">
-                    {event.resource_type}
-                  </span>
+        <ol
+          className="divide-y divide-border/60"
+          aria-label="Recent activity events"
+          aria-live="polite"
+        >
+          {events.map((event) => {
+            const isCritical = event.severity === "critical" || event.severity === "error";
+            return (
+              <li
+                key={event.id}
+                className={cn(
+                  "group flex min-w-0 items-center gap-3 px-4 py-3 transition-colors duration-150 hover:bg-muted/35 sm:px-4.5",
+                  isCritical && "bg-destructive/5 hover:bg-destructive/10",
+                )}
+              >
+                <span
+                  className={cn(
+                    "grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground ring-1 ring-foreground/6 [&_svg]:size-3.5",
+                    isCritical && "bg-destructive/10 text-destructive ring-destructive/15",
+                  )}
+                  aria-hidden="true"
+                >
+                  {eventIcon(event)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{event.title}</p>
+                  <div className="mt-1 flex min-w-0 items-center gap-2">
+                    {event.actor?.type && (
+                      <Badge variant="muted" className="max-w-32 truncate text-[10px]">
+                        {event.actor.type}
+                      </Badge>
+                    )}
+                    <span className="truncate text-[11px] text-muted-foreground">
+                      {event.category}
+                    </span>
+                    {isCritical && (
+                      <Badge variant="destructive" className="ml-auto text-[10px]">
+                        {event.severity}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <TimeSince
-                value={event.created_at}
-                className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
-              />
-            </li>
-          ))}
+                <TimeSince
+                  value={event.at}
+                  className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+                />
+              </li>
+            );
+          })}
         </ol>
+      )}
+
+      {/* Unread / critical alert for screen readers */}
+      {hasCritical && (
+        <div role="alert" className="sr-only">
+          Critical security events detected in the activity feed
+        </div>
       )}
     </DashboardPanel>
   );
 }
+
+// ---------------------------------------------------------------------------
+// OperatorActionsPanel — unchanged from original
+// ---------------------------------------------------------------------------
 
 const actionTone = {
   brand: "bg-primary/10 text-primary",
