@@ -191,14 +191,26 @@ function UserDetailPage() {
       {canViewAudit ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t("detail.activityTitle")}</CardTitle>
-            <CardDescription>
-              Last 10 audit events where this user was the actor.{" "}
-              <Link to="/security/audit-logs" className="underline">
-                View full audit log
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">{t("detail.activityTitle")}</CardTitle>
+                <CardDescription>
+                  Last 10 audit events where this user was the actor.{" "}
+                  <Link to="/security/audit-logs" className="underline">
+                    View full audit log
+                  </Link>
+                  .
+                </CardDescription>
+              </div>
+              <Link
+                to="/users/$userId/timeline"
+                params={{ userId }}
+                className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="View full identity timeline for this user"
+              >
+                View full timeline →
               </Link>
-              .
-            </CardDescription>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <DataState

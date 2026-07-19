@@ -71,6 +71,7 @@ import { Route as AppAuthorizationAbacRouteImport } from './routes/_app/authoriz
 import { Route as AppAuthSocialRouteImport } from './routes/_app/auth/social'
 import { Route as AppDeveloperWebhooksIndexRouteImport } from './routes/_app/developer/webhooks/index'
 import { Route as AppAuthConnectionsIndexRouteImport } from './routes/_app/auth/connections/index'
+import { Route as AppUsersUserIdTimelineRouteImport } from './routes/_app/users/$userId_.timeline'
 import { Route as AppSettingsWorkspaceSecurityPolicyRouteImport } from './routes/_app/settings/workspace/security-policy'
 import { Route as AppSettingsWorkspaceGeneralRouteImport } from './routes/_app/settings/workspace/general'
 import { Route as AppSettingsWorkspaceEmailTemplatesRouteImport } from './routes/_app/settings/workspace/email-templates'
@@ -426,6 +427,11 @@ const AppAuthConnectionsIndexRoute = AppAuthConnectionsIndexRouteImport.update({
   path: '/auth/connections/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppUsersUserIdTimelineRoute = AppUsersUserIdTimelineRouteImport.update({
+  id: '/users/$userId_/timeline',
+  path: '/users/$userId/timeline',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSettingsWorkspaceSecurityPolicyRoute =
   AppSettingsWorkspaceSecurityPolicyRouteImport.update({
     id: '/settings/workspace/security-policy',
@@ -702,6 +708,7 @@ export interface FileRoutesByFullPath {
   '/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
   '/settings/workspace/security-policy': typeof AppSettingsWorkspaceSecurityPolicyRoute
+  '/users/$userId/timeline': typeof AppUsersUserIdTimelineRoute
   '/auth/connections/': typeof AppAuthConnectionsIndexRoute
   '/developer/webhooks/': typeof AppDeveloperWebhooksIndexRoute
   '/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
@@ -797,6 +804,7 @@ export interface FileRoutesByTo {
   '/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
   '/settings/workspace/security-policy': typeof AppSettingsWorkspaceSecurityPolicyRoute
+  '/users/$userId/timeline': typeof AppUsersUserIdTimelineRoute
   '/auth/connections': typeof AppAuthConnectionsIndexRoute
   '/developer/webhooks': typeof AppDeveloperWebhooksIndexRoute
   '/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
@@ -895,6 +903,7 @@ export interface FileRoutesById {
   '/_app/settings/workspace/email-templates': typeof AppSettingsWorkspaceEmailTemplatesRoute
   '/_app/settings/workspace/general': typeof AppSettingsWorkspaceGeneralRoute
   '/_app/settings/workspace/security-policy': typeof AppSettingsWorkspaceSecurityPolicyRoute
+  '/_app/users/$userId_/timeline': typeof AppUsersUserIdTimelineRoute
   '/_app/auth/connections/': typeof AppAuthConnectionsIndexRoute
   '/_app/developer/webhooks/': typeof AppDeveloperWebhooksIndexRoute
   '/_app/auth/connections/oidc/$clientId': typeof AppAuthConnectionsOidcClientIdRoute
@@ -992,6 +1001,7 @@ export interface FileRouteTypes {
     | '/settings/workspace/email-templates'
     | '/settings/workspace/general'
     | '/settings/workspace/security-policy'
+    | '/users/$userId/timeline'
     | '/auth/connections/'
     | '/developer/webhooks/'
     | '/auth/connections/oidc/$clientId'
@@ -1087,6 +1097,7 @@ export interface FileRouteTypes {
     | '/settings/workspace/email-templates'
     | '/settings/workspace/general'
     | '/settings/workspace/security-policy'
+    | '/users/$userId/timeline'
     | '/auth/connections'
     | '/developer/webhooks'
     | '/auth/connections/oidc/$clientId'
@@ -1184,6 +1195,7 @@ export interface FileRouteTypes {
     | '/_app/settings/workspace/email-templates'
     | '/_app/settings/workspace/general'
     | '/_app/settings/workspace/security-policy'
+    | '/_app/users/$userId_/timeline'
     | '/_app/auth/connections/'
     | '/_app/developer/webhooks/'
     | '/_app/auth/connections/oidc/$clientId'
@@ -1632,6 +1644,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAuthConnectionsIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/users/$userId_/timeline': {
+      id: '/_app/users/$userId_/timeline'
+      path: '/users/$userId/timeline'
+      fullPath: '/users/$userId/timeline'
+      preLoaderRoute: typeof AppUsersUserIdTimelineRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/settings/workspace/security-policy': {
       id: '/_app/settings/workspace/security-policy'
       path: '/settings/workspace/security-policy'
@@ -1945,6 +1964,7 @@ interface AppRouteChildren {
   AppSettingsWorkspaceEmailTemplatesRoute: typeof AppSettingsWorkspaceEmailTemplatesRoute
   AppSettingsWorkspaceGeneralRoute: typeof AppSettingsWorkspaceGeneralRoute
   AppSettingsWorkspaceSecurityPolicyRoute: typeof AppSettingsWorkspaceSecurityPolicyRoute
+  AppUsersUserIdTimelineRoute: typeof AppUsersUserIdTimelineRoute
   AppAuthConnectionsIndexRoute: typeof AppAuthConnectionsIndexRoute
   AppDeveloperWebhooksIndexRoute: typeof AppDeveloperWebhooksIndexRoute
   AppAuthConnectionsOidcClientIdRoute: typeof AppAuthConnectionsOidcClientIdRoute
@@ -2032,6 +2052,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsWorkspaceGeneralRoute: AppSettingsWorkspaceGeneralRoute,
   AppSettingsWorkspaceSecurityPolicyRoute:
     AppSettingsWorkspaceSecurityPolicyRoute,
+  AppUsersUserIdTimelineRoute: AppUsersUserIdTimelineRoute,
   AppAuthConnectionsIndexRoute: AppAuthConnectionsIndexRoute,
   AppDeveloperWebhooksIndexRoute: AppDeveloperWebhooksIndexRoute,
   AppAuthConnectionsOidcClientIdRoute: AppAuthConnectionsOidcClientIdRoute,
