@@ -164,6 +164,27 @@ type Config struct {
 	WebAuthnRPID          string `envconfig:"WEBAUTHN_RP_ID" default:""`
 	WebAuthnRPDisplayName string `envconfig:"WEBAUTHN_RP_DISPLAY_NAME" default:""`
 	WebAuthnRPOriginsRaw  string `envconfig:"WEBAUTHN_RP_ORIGINS" default:""`
+
+	// AI Copilot (enterprise feature). Empty CopilotProvider disables the
+	// feature: /status returns configured=false, conversation CRUD still works,
+	// and .../messages returns 409 copilot_unconfigured.
+	//
+	// CopilotProvider selects the inference backend:
+	//   "anthropic" — Anthropic Messages API (default when set)
+	//   "openai"    — OpenAI Chat Completions API; also works with any hosted
+	//                 OpenAI-compatible endpoint (Groq, OpenRouter, Gemini …)
+	// CopilotAPIKey is held server-side only — never serialized to any response.
+	// CopilotModel is the model id (e.g. claude-sonnet-5, gpt-4o, llama-3.1-70b).
+	// CopilotMaxTokens is the max_tokens ceiling per API call (default 4096).
+	// CopilotBaseURL overrides the provider's default API base URL. Leave empty
+	// to use each provider's own default (Anthropic: https://api.anthropic.com,
+	// OpenAI: https://api.openai.com/v1). Set to a hosted endpoint to use Groq,
+	// OpenRouter, or any other OpenAI-compatible service with provider=openai.
+	CopilotProvider  string `envconfig:"COPILOT_PROVIDER" default:""`
+	CopilotAPIKey    string `envconfig:"COPILOT_API_KEY" default:""`
+	CopilotModel     string `envconfig:"COPILOT_MODEL" default:"claude-sonnet-5"`
+	CopilotMaxTokens int    `envconfig:"COPILOT_MAX_TOKENS" default:"4096"`
+	CopilotBaseURL   string `envconfig:"COPILOT_BASE_URL" default:""`
 }
 
 func Load() (*Config, error) {
@@ -216,6 +237,10 @@ func (c *Config) Validate() error {
 	}
 	if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) {
 		problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost")
+	}
+	// Copilot: if a provider is named, the API key must also be set.
+	if strings.TrimSpace(c.CopilotProvider) != "" && strings.TrimSpace(c.CopilotAPIKey) == "" {
+		problems = append(problems, "COPILOT_API_KEY is required when COPILOT_PROVIDER is set")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("insecure configuration for SERVICE_ENV=%q:\n  - %s", c.ServiceEnv, strings.Join(problems, "\n  - "))

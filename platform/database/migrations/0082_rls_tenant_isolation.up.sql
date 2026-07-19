@@ -6,7 +6,7 @@
 --
 -- Model
 -- -----
--- The application runs as a dedicated least-privilege role (`qeet_app`) that is
+-- The application runs as a dedicated least-privilege role (`qid_app`) that is
 -- NOT the table owner, so RLS applies to it. Migrations run as the owner
 -- (DB_MIGRATE_URL), which bypasses RLS with ENABLE-only (no FORCE) so DDL and
 -- data backfills keep working. On every connection checkout the pool stamps two
@@ -18,7 +18,7 @@
 --
 -- Activation is OPT-IN: while the app connects as a superuser (e.g. the default
 -- local `postgres`), RLS is inert (superusers always bypass). Point DB_URL at
--- the non-superuser `qeet_app` role (with DB_MIGRATE_URL at the owner) to
+-- the non-superuser `qid_app` role (with DB_MIGRATE_URL at the owner) to
 -- enforce. The role is created here WITHOUT login; infra/the deploy runbook
 -- grants it LOGIN + a password out of band (no secret in version control).
 --
@@ -29,22 +29,22 @@
 -- 1. Least-privilege application role (idempotent; login/password added by infra).
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'qeet_app') THEN
-    CREATE ROLE qeet_app NOLOGIN;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'qid_app') THEN
+    CREATE ROLE qid_app NOLOGIN;
   END IF;
 END $$;
 
 -- 2. Grants: schema usage + table/sequence DML, plus defaults for future objects
 --    created by the owner running later migrations.
-GRANT USAGE ON SCHEMA public, tenant, "user", auth, rbac, audit, platform TO qeet_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA tenant, "user", auth, rbac, audit, platform TO qeet_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA tenant, "user", auth, rbac, audit, platform TO qeet_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA tenant, "user", auth, rbac, audit, platform GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO qeet_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA tenant, "user", auth, rbac, audit, platform GRANT USAGE, SELECT ON SEQUENCES TO qeet_app;
+GRANT USAGE ON SCHEMA public, tenant, "user", auth, rbac, audit, platform TO qid_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA tenant, "user", auth, rbac, audit, platform TO qid_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA tenant, "user", auth, rbac, audit, platform TO qid_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA tenant, "user", auth, rbac, audit, platform GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO qid_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA tenant, "user", auth, rbac, audit, platform GRANT USAGE, SELECT ON SEQUENCES TO qid_app;
 
 -- 3. Enable RLS + a uniform tenant-isolation policy on every table that carries
 --    a tenant_id. ENABLE (not FORCE): the owner still bypasses (so migrations
---    work); non-owner roles like qeet_app are enforced.
+--    work); non-owner roles like qid_app are enforced.
 DO $$
 DECLARE r record;
 BEGIN

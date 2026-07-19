@@ -19,6 +19,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mattn/go-isatty"
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/qeetgroup/qeet-id/domains/access/authentication"
@@ -56,16 +57,22 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/identity/organizations/branding"
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/identity/verification"
+	"github.com/qeetgroup/qeet-id/domains/operations/activity"
 	"github.com/qeetgroup/qeet-id/domains/operations/analytics"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id/domains/operations/billing"
 	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
+	"github.com/qeetgroup/qeet-id/domains/operations/copilot"
 	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
 	"github.com/qeetgroup/qeet-id/domains/operations/notifications"
 	"github.com/qeetgroup/qeet-id/domains/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
+	"github.com/qeetgroup/qeet-id/domains/operations/search"
 	"github.com/qeetgroup/qeet-id/domains/operations/siem"
+	"github.com/qeetgroup/qeet-id/platform/ai"
+	"github.com/qeetgroup/qeet-id/platform/ai/anthropic"
+	"github.com/qeetgroup/qeet-id/platform/ai/openai"
 	httpapi "github.com/qeetgroup/qeet-id/platform/api/rest"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
@@ -373,6 +380,66 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authzenService := authzen.NewService(rbacRepo, rebacService) // OpenID AuthZEN PDP facade over RBAC/ReBAC
 	agentService := agent.NewService(pool, issuer)               // AI-agent identities (ephemeral scoped tokens)
 	vcService := vc.NewService(pool, issuer)                     // W3C verifiable credentials (JWT-VC)
+
+	// AI Copilot: provider unset ⇒ feature disabled (handler still mounts; /status
+	// reports configured=false; .../messages returns 409 copilot_unconfigured).
+	//
+	// COPILOT_PROVIDER selects the inference backend:
+	//   "anthropic" — Anthropic Messages API (wraps anthropic.Client via ai.Provider)
+	//   "openai"    — OpenAI Chat Completions API or any hosted OpenAI-compatible
+	//                 endpoint (Groq, OpenRouter, Gemini, …); set COPILOT_BASE_URL
+	//                 to point at a non-OpenAI compatible endpoint.
+	copilotService := copilot.NewService(pool)
+	copilotConfigured := cfg.CopilotProvider != "" && cfg.CopilotAPIKey != ""
+	var copilotOrchestrator *copilot.Orchestrator
+	if copilotConfigured {
+		var provider ai.Provider
+		switch strings.ToLower(cfg.CopilotProvider) {
+		case "openai":
+			c := openai.New(cfg.CopilotAPIKey, cfg.CopilotBaseURL, cfg.CopilotModel, cfg.CopilotMaxTokens, nil)
+			provider = c
+		default: // "anthropic" and any unrecognised value fall back to Anthropic
+			c := anthropic.New(cfg.CopilotAPIKey, cfg.CopilotBaseURL, cfg.CopilotModel, cfg.CopilotMaxTokens, nil)
+			provider = anthropic.NewProvider(c)
+		}
+		copilotOrchestrator = copilot.NewOrchestrator(provider, copilotService)
+		slog.Info("AI copilot enabled", "provider", cfg.CopilotProvider, "model", cfg.CopilotModel)
+	} else {
+		slog.Info("AI copilot disabled (COPILOT_PROVIDER/COPILOT_API_KEY not set)")
+	}
+	copilotHandler := &copilot.Handler{
+		Service:      copilotService,
+		Orchestrator: copilotOrchestrator,
+		Configured:   copilotConfigured,
+		Provider:     cfg.CopilotProvider,
+		Model:        cfg.CopilotModel,
+	}
+	// Live Activity hub: subscribes to NATS outbox events (when NATS_URL is set)
+	// and fans them out to authenticated SSE connections filtered by tenant.
+	// When NATS_URL is empty the hub acts as a no-op broker — the SSE stream
+	// still connects and serves history/replay, but no live events are pushed.
+	var activityNATSConn *nats.Conn
+	if cfg.NATSURL != "" {
+		nc, err := nats.Connect(cfg.NATSURL,
+			nats.Name("qeet-id-activity-sub"),
+			nats.MaxReconnects(-1),
+			nats.ReconnectWait(2*time.Second),
+		)
+		if err != nil {
+			slog.Error("activity: connect nats subscriber", "err", err)
+			os.Exit(1)
+		}
+		activityNATSConn = nc
+		slog.Info("activity hub: connected to NATS", "url", cfg.NATSURL)
+	}
+	if activityNATSConn != nil {
+		defer func() { _ = activityNATSConn.Drain() }()
+	}
+	activityHub := activity.NewHub(activityNATSConn)
+
+	// Universal search: read-only fan-out across resource types. Reuses the
+	// rbacRepo for per-type permission checks; no new DB objects required.
+	searchService := search.NewService(pool, rbacRepo)
 	webhookService := webhook.NewService(pool)
 	// Agent lifecycle: emit webhook events on transitions, and let the auth
 	// middleware deny suspended/decommissioned agents' tokens per request.
@@ -557,6 +624,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		AuthZEN:       &authzen.Handler{Service: authzenService},
 		Agent:         &agent.Handler{Service: agentService},
 		VC:            &vc.Handler{Service: vcService},
+		Copilot:       copilotHandler,
+		Search:        &search.Handler{Service: searchService},
+		Activity:      activity.NewHandler(pool, activityHub),
 		Health:        healthHandler,
 		InFlight:      inFlight,
 

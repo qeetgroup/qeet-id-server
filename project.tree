@@ -1,0 +1,314 @@
+├── .claude
+│  ├── agents
+│  ├── scheduling
+│  └── scripts
+├── .github
+│  ├── ISSUE_TEMPLATE
+│  └── workflows
+├── .vscode
+├── api
+│  ├── openapi
+│  └── postman
+├── apps
+│  ├── console
+│  │  ├── .vscode
+│  │  ├── public
+│  │  └── src
+│  │    ├── components
+│  │    │  └── data-table
+│  │    ├── config
+│  │    ├── features
+│  │    │  ├── access-control
+│  │    │  │  └── components
+│  │    │  ├── auth
+│  │    │  │  └── components
+│  │    │  ├── authorization
+│  │    │  │  └── components
+│  │    │  │    ├── canvas
+│  │    │  │    ├── code-preview
+│  │    │  │    ├── condition-builder
+│  │    │  │    ├── explain
+│  │    │  │    ├── graph
+│  │    │  │    └── shared
+│  │    │  ├── compliance
+│  │    │  └── dashboard
+│  │    │    └── components
+│  │    ├── i18n
+│  │    │  └── locales
+│  │    │    ├── de
+│  │    │    ├── en
+│  │    │    ├── es
+│  │    │    ├── fr
+│  │    │    ├── hi
+│  │    │    ├── ja
+│  │    │    ├── pt
+│  │    │    └── zh
+│  │    ├── integrations
+│  │    │  └── tanstack-query
+│  │    ├── lib
+│  │    └── routes
+│  │      ├── _app
+│  │      │  ├── auth
+│  │      │  │  ├── api
+│  │      │  │  ├── connections
+│  │      │  │  │  └── oidc
+│  │      │  │  ├── login-methods
+│  │      │  │  └── mfa
+│  │      │  ├── authorization
+│  │      │  ├── developer
+│  │      │  │  └── webhooks
+│  │      │  ├── groups
+│  │      │  ├── organizations
+│  │      │  ├── security
+│  │      │  │  ├── compliance
+│  │      │  │  └── threats
+│  │      │  ├── settings
+│  │      │  │  └── workspace
+│  │      │  └── users
+│  │      ├── _auth
+│  │      └── account
+│  ├── login
+│  │  └── src
+│  │    ├── app
+│  │    │  ├── admin-portal
+│  │    │  │  └── [token]
+│  │    │  ├── consent
+│  │    │  ├── device
+│  │    │  ├── forgot-password
+│  │    │  ├── logged-out
+│  │    │  ├── login
+│  │    │  ├── reset
+│  │    │  └── signup
+│  │    ├── components
+│  │    ├── i18n
+│  │    │  └── locales
+│  │    │    └── en
+│  │    └── lib
+│  └── website
+│    ├── public
+│    │  └── avatars
+│    └── src
+│      ├── app
+│      │  ├── (marketing)
+│      │  │  ├── about
+│      │  │  ├── blog
+│      │  │  │  └── [slug]
+│      │  │  ├── careers
+│      │  │  ├── changelog
+│      │  │  ├── compare
+│      │  │  │  ├── auth0
+│      │  │  │  ├── clerk
+│      │  │  │  ├── stytch
+│      │  │  │  └── workos
+│      │  │  ├── contact
+│      │  │  ├── customers
+│      │  │  │  └── [slug]
+│      │  │  ├── docs
+│      │  │  ├── features
+│      │  │  ├── legal
+│      │  │  │  ├── dpa
+│      │  │  │  ├── privacy
+│      │  │  │  ├── subprocessors
+│      │  │  │  └── terms
+│      │  │  ├── pricing
+│      │  │  ├── security
+│      │  │  └── status
+│      │  └── api
+│      │    └── contact
+│      ├── components
+│      │  └── marketing
+│      │    ├── blocks
+│      │    ├── data
+│      │    ├── effects
+│      │    ├── motion
+│      │    └── sections
+│      └── lib
+├── cmd
+│  ├── migrate
+│  ├── scheduler
+│  ├── seed
+│  ├── server
+│  └── worker
+├── deploy
+│  ├── base
+│  │  ├── docker
+│  │  ├── helm
+│  │  │  └── qeet-id
+│  │  │    └── templates
+│  │  ├── kubernetes
+│  │  │  └── base
+│  │  ├── observability
+│  │  │  ├── grafana
+│  │  │  │  └── dashboards
+│  │  │  └── prometheus
+│  │  └── terraform
+│  │    └── modules
+│  │      ├── ecr
+│  │      ├── kms
+│  │      └── rds
+│  └── environments
+│    ├── dev
+│    ├── prod
+│    │  ├── compose
+│    │  └── kubernetes
+│    ├── stage
+│    │  └── kubernetes
+│    └── test
+├── docs
+│  ├── adr
+│  ├── api
+│  ├── architecture
+│  │  └── diagrams
+│  ├── compliance
+│  ├── onboarding
+│  ├── runbooks
+│  └── security
+├── domains
+│  ├── access
+│  │  ├── authentication
+│  │  │  └── dbgen
+│  │  ├── authorization
+│  │  │  ├── abac
+│  │  │  ├── authpolicy
+│  │  │  │  └── dbgen
+│  │  │  ├── authzen
+│  │  │  ├── policy
+│  │  │  ├── rbac
+│  │  │  │  └── dbgen
+│  │  │  └── rebac
+│  │  │    └── dbgen
+│  │  ├── mfa
+│  │  │  └── dbgen
+│  │  ├── passkeys
+│  │  │  └── dbgen
+│  │  ├── recovery
+│  │  │  └── dbgen
+│  │  ├── risk
+│  │  │  └── ipallow
+│  │  │    └── dbgen
+│  │  └── threat-detection
+│  │    ├── bot
+│  │    │  └── dbgen
+│  │    ├── risk
+│  │    │  └── dbgen
+│  │    └── threat
+│  │      └── dbgen
+│  ├── developer
+│  │  ├── agents
+│  │  │  └── dbgen
+│  │  ├── api-keys
+│  │  │  └── dbgen
+│  │  ├── auth-hooks
+│  │  │  └── dbgen
+│  │  ├── credentials
+│  │  │  ├── secrets
+│  │  │  │  └── dbgen
+│  │  │  ├── tokenvault
+│  │  │  │  └── dbgen
+│  │  │  └── vc
+│  │  │    └── dbgen
+│  │  ├── service-accounts
+│  │  │  └── dbgen
+│  │  └── webhooks
+│  │    └── dbgen
+│  ├── federation
+│  │  ├── adminportal
+│  │  │  └── dbgen
+│  │  ├── ldap
+│  │  │  └── dbgen
+│  │  ├── oidc
+│  │  │  └── dbgen
+│  │  ├── saml
+│  │  │  └── dbgen
+│  │  ├── scim
+│  │  │  └── dbgen
+│  │  └── social
+│  │    └── dbgen
+│  ├── identity
+│  │  ├── domains
+│  │  │  └── dbgen
+│  │  ├── groups
+│  │  │  └── dbgen
+│  │  ├── invitations
+│  │  │  └── dbgen
+│  │  ├── organizations
+│  │  │  ├── branding
+│  │  │  │  └── dbgen
+│  │  │  └── dbgen
+│  │  ├── users
+│  │  │  └── dbgen
+│  │  └── verification
+│  │    └── dbgen
+│  └── operations
+│    ├── analytics
+│    ├── audit
+│    │  ├── anomaly
+│    │  │  └── dbgen
+│    │  └── dbgen
+│    ├── billing
+│    │  └── dbgen
+│    ├── compliance
+│    │  └── dbgen
+│    ├── email-templates
+│    │  └── dbgen
+│    ├── notifications
+│    │  └── dbgen
+│    ├── ratelimits
+│    │  └── dbgen
+│    ├── retention
+│    │  └── dbgen
+│    └── siem
+│      └── dbgen
+├── platform
+│  ├── api
+│  │  └── rest
+│  │    ├── codes
+│  │    ├── errs
+│  │    ├── httpx
+│  │    └── paging
+│  ├── cache
+│  │  └── ratelimit
+│  ├── config
+│  ├── database
+│  │  ├── migrations
+│  │  ├── postgres
+│  │  │  ├── dbutil
+│  │  │  └── pgxerr
+│  │  └── rlsctx
+│  ├── events
+│  │  └── outbox
+│  ├── messaging
+│  │  └── notifier
+│  ├── observability
+│  │  ├── buildinfo
+│  │  ├── health
+│  │  ├── logging
+│  │  ├── metrics
+│  │  └── tracing
+│  ├── security
+│  │  ├── encryption
+│  │  │  └── totp
+│  │  ├── hibp
+│  │  └── tokens
+│  └── workers
+├── tests
+│  ├── architecture
+│  ├── e2e
+│  │  ├── admin
+│  │  ├── fixtures
+│  │  └── login
+│  ├── fixtures
+│  ├── integration
+│  ├── performance
+│  └── security
+│    └── semgrep
+└── tools
+  ├── benchmarks
+  │  └── jwt_signing
+  ├── codegen
+  ├── development
+  ├── migration-tools
+  ├── openapi-split
+  ├── qa
+  │  └── route-audit
+  └── scripts

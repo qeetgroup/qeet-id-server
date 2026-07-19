@@ -43,15 +43,18 @@ import (
 	"github.com/qeetgroup/qeet-id/domains/identity/organizations/branding"
 	"github.com/qeetgroup/qeet-id/domains/identity/users"
 	"github.com/qeetgroup/qeet-id/domains/identity/verification"
+	"github.com/qeetgroup/qeet-id/domains/operations/activity"
 	"github.com/qeetgroup/qeet-id/domains/operations/analytics"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit"
 	"github.com/qeetgroup/qeet-id/domains/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id/domains/operations/billing"
 	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
+	"github.com/qeetgroup/qeet-id/domains/operations/copilot"
 	"github.com/qeetgroup/qeet-id/domains/operations/email-templates"
 	"github.com/qeetgroup/qeet-id/domains/operations/notifications"
 	"github.com/qeetgroup/qeet-id/domains/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id/domains/operations/retention"
+	"github.com/qeetgroup/qeet-id/domains/operations/search"
 	"github.com/qeetgroup/qeet-id/domains/operations/siem"
 	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
 	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
@@ -107,12 +110,15 @@ type Deps struct {
 	Notification  *notification.Handler
 	DomainVerify  *domainverify.Handler
 	SIEM          *siem.Handler
+	Copilot       *copilot.Handler
 	AuthHook      *authhook.Handler
 	ABAC          *abac.Handler
 	ReBAC         *rebac.Handler
 	AuthZEN       *authzen.Handler
 	Agent         *agent.Handler
 	VC            *vc.Handler
+	Search        *search.Handler
+	Activity      *activity.Handler
 	Health        *health.Handler
 	InFlight      *httpx.InFlight
 
@@ -315,6 +321,9 @@ func NewRouter(d Deps) http.Handler {
 			d.AuthZEN.Mount(r)      // /tenants/{id}/access/v1/evaluation: OpenID AuthZEN PDP facade over RBAC/ReBAC
 			d.Agent.Mount(r)        // /tenants/{id}/agents: AI-agent identity admin
 			d.VC.Mount(r)           // /tenants/{id}/credentials: verifiable credential issuance
+			d.Copilot.Mount(r)      // /copilot/status + /copilot/conversations: AI copilot
+			d.Search.Mount(r)       // /search: universal tenant-scoped, RBAC-gated fuzzy search
+			d.Activity.Mount(r)     // /activity + /activity/stream: live activity feed (audit.read gated)
 		})
 	})
 

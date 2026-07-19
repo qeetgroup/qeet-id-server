@@ -13,6 +13,25 @@
     "lightningcss",
     "msw"
   ],
+  "overrides": {
+    "@base-ui/react": "^1.5.0",
+    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.3",
+    "@tiptap/pm": "^3.27.0",
+    "@tiptap/react": "^3.27.0",
+    "@tiptap/starter-kit": "^3.27.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "embla-carousel-react": "^8.6.0",
+    "lucide-react": "^0.577.0",
+    "react-day-picker": "^9.9.0",
+    "react-resizable-panels": "^4.11.2",
+    "recharts": "^3.8.1",
+    "shadcn": "^4.7.0",
+    "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.3.6",
+    "qrcode": "^1.5.4"
+  },
   "packageManager": "bun@1.3.14",
   "scripts": {
     "dev": "bun run --filter './apps/*' dev",
@@ -25,10 +44,16 @@
     "check": "biome check --diagnostic-level=error .",
     "typecheck": "bun run --filter './apps/*' typecheck",
     "test": "bun run --filter './apps/*' test",
-    "clean": "rm -rf node_modules apps/*/node_modules apps/*/dist apps/*/.netlify apps/*/.output"
+    "clean": "rm -rf node_modules apps/*/node_modules apps/*/dist apps/*/.netlify apps/*/.output",
+    "generate:tree": "struct -i node_modules -i .next -i .output -i dist -i target -i bin -i playwright-report -i bun.lock -i go.sum -i src -i dbgen -i locales -d -o project.tree",
+    "generate:tree:console": "struct -i node_modules -i .output -i dist -o apps/console/project.tree apps/console",
+    "generate:tree:login": "struct -i node_modules -i .next -o apps/login/project.tree apps/login",
+    "generate:tree:website": "struct -i node_modules -i .next -o apps/website/project.tree apps/website",
+    "generate:tree:all": "bun run generate:tree && bun run generate:tree:console && bun run generate:tree:login && bun run generate:tree:website"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
+    "@structure-codes/cli": "^0.0.6",
     "typescript": "^7.0.2"
   }
 }

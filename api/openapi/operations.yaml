@@ -35,7 +35,266 @@ tags:
     description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
   - name: Compliance
     description: SOC 2 and ISO 27001 live evidence generation from real tenant system state.
+  - name: Copilot
+    description: >-
+      AI copilot inference service — streaming conversation turns, conversation
+      management, and configuration status. Tool execution runs client-side
+      under the user's own token (RBAC/RLS/audit inherited). API key is
+      server-side only and never returned by any endpoint.
+  - name: Search
+    description: >-
+      Universal tenant-scoped fuzzy search across all resource types. Results
+      are RBAC-gated per type — the caller only sees resources their role
+      allows them to read.
+  - name: Activity
+    description: >-
+      Live Activity feed — a real-time SSE event stream and cursor-paginated
+      history, both sourced from the hash-chained audit log and the NATS outbox.
+      Tenant-scoped; requires audit.read. The SSE stream fans out domain events
+      from the transactional outbox; reconnects replay missed events via
+      Last-Event-ID.
 paths:
+  /v1/activity:
+    get:
+      operationId: get_v1_activity
+      summary: Activity history
+      description: >-
+        Returns a cursor-paginated list of ActivityEvent derived from the
+        tenant-scoped audit log. Severity and category are computed from the
+        event type and applied post-fetch. Tenant is derived from the JWT
+        principal only — never from URL or body.
+      tags:
+        - Activity
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: >-
+            Opaque pagination cursor from a previous response next_cursor field.
+            Encodes the ID of the last seen event.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum events to return (1–200; default 50).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: types
+          in: query
+          required: false
+          description: >-
+            Comma-separated list of exact event types (audit action values, e.g.
+            "user.created,user.deleted"). Omit to return all types.
+          schema:
+            type: string
+            example: 'user.created,user.deleted'
+        - name: severity
+          in: query
+          required: false
+          description: >-
+            Minimum severity level. Events below this level are excluded.
+            Severity is derived from the event type, not stored in the DB.
+          schema:
+            type: string
+            enum: [info, success, warning, error, critical]
+        - name: category
+          in: query
+          required: false
+          description: >-
+            Filter by event category (authentication, authorization, security,
+            directory, developer, system). Derived from the event type prefix.
+          schema:
+            type: string
+            enum:
+              - authentication
+              - authorization
+              - security
+              - directory
+              - developer
+              - system
+        - name: actor
+          in: query
+          required: false
+          description: Filter by actor user UUID.
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          required: false
+          description: >-
+            Free-text search over action, resource_type, actor_type, user_agent,
+            and metadata. Evaluated as a PostgreSQL websearch_to_tsquery
+            expression — supports quoted phrases, exclusions (-saml), and OR.
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: Inclusive lower bound on event timestamp (RFC3339).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          description: Inclusive upper bound on event timestamp (RFC3339).
+          schema:
+            type: string
+            format: date-time
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Paginated activity events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityResponse'
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/activity/stream:
+    get:
+      operationId: get_v1_activity_stream
+      summary: Live activity stream (SSE)
+      description: >-
+        Opens a Server-Sent Events stream of ActivityEvent frames for the
+        caller's tenant. Each frame is `event: activity\ndata: <json>\n\n`;
+        periodic `: keep-alive` comments prevent proxy timeouts.
+
+
+        When `Last-Event-ID` is supplied the server replays up to 100 audit
+        events newer than that ID (chronological order) before switching to
+        the live stream, covering reconnect gaps.
+
+
+        Server-side filters (`?types`, `?severity`, `?category`) are applied
+        to both the replay and the live stream. The connection tenant is
+        derived from the JWT principal only — never from the URL or body.
+
+
+        The write deadline is extended to 1 hour. Set
+        `X-Accel-Buffering: no` is already set by the server (Nginx/Caddy
+        proxy buffering disabled).
+      tags:
+        - Activity
+      parameters:
+        - name: types
+          in: query
+          required: false
+          description: >-
+            Comma-separated event type prefixes to match (e.g. "user,auth").
+            An event matches if its type equals or starts with any listed value.
+          schema:
+            type: string
+        - name: severity
+          in: query
+          required: false
+          description: Minimum severity level to stream.
+          schema:
+            type: string
+            enum: [info, success, warning, error, critical]
+        - name: category
+          in: query
+          required: false
+          description: Exact category to stream; omit for all.
+          schema:
+            type: string
+            enum:
+              - authentication
+              - authorization
+              - security
+              - directory
+              - developer
+              - system
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: >-
+            SSE stream of ActivityEvent frames. Event name: "activity".
+            Periodic "`: keep-alive`" comments maintain the connection.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/search:
+    get:
+      operationId: get_v1_search
+      summary: Universal search
+      description: >-
+        Tenant-scoped, RBAC-enforced fuzzy search that fans out across
+        user, organization, group, role, oidc_client, and audit_event
+        resource types. Each type is gated behind its read permission
+        (user.read, tenant.read, group.read, role.read, connection.read,
+        audit.read); types the caller cannot read are silently excluded.
+        Matching uses ILIKE '%q%' (parameterised). Results are scored and
+        returned in descending relevance order. Pagination is cursor-based
+        and opaque.
+      tags:
+        - Search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query (1+ characters after trimming).
+          schema:
+            type: string
+        - name: types
+          in: query
+          required: false
+          description: >-
+            Comma-separated list of resource types to search.
+            Allowed values: user, organization, group, role, oidc_client,
+            audit_event. Omit to search all permitted types.
+          schema:
+            type: string
+            example: 'user,group'
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque pagination cursor from a previous response's next_cursor field.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: Maximum results to return (1–50; default 20).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/rate-limits:
     get:
       operationId: get_v1_tenants_ByTenantID_rate_limits
@@ -1645,6 +1904,268 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/copilot/status:
+    get:
+      operationId: get_v1_copilot_status
+      summary: Copilot configuration status
+      description: >-
+        Returns whether the AI copilot is configured server-side and which
+        provider/model is active. Never returns key material. Used by the
+        console to render the unconfigured setup state.
+      tags:
+        - Copilot
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Copilot status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/copilot/conversations:
+    get:
+      operationId: get_v1_copilot_conversations
+      summary: List conversations
+      description: >-
+        Returns all copilot conversations for the authenticated user within
+        their tenant, ordered by pinned-first then most-recently-updated.
+      tags:
+        - Copilot
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Conversation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CopilotConversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_v1_copilot_conversations
+      summary: Create conversation
+      description: Creates a new copilot conversation thread for the authenticated user.
+      tags:
+        - Copilot
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: Optional title; defaults to "New conversation".
+      responses:
+        '201':
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotConversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/copilot/conversations/{conversationID}:
+    get:
+      operationId: get_v1_copilot_conversations_ByConversationID
+      summary: Get conversation with messages
+      description: >-
+        Returns a single conversation and its full message history in
+        chronological order.
+      tags:
+        - Copilot
+      parameters:
+        - name: conversationID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Conversation with messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversation:
+                    $ref: '#/components/schemas/CopilotConversation'
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CopilotMessage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_copilot_conversations_ByConversationID
+      summary: Update conversation
+      description: Rename or pin/unpin a conversation.
+      tags:
+        - Copilot
+      parameters:
+        - name: conversationID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                pinned:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotConversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_copilot_conversations_ByConversationID
+      summary: Delete conversation
+      description: Deletes a conversation and all its messages.
+      tags:
+        - Copilot
+      parameters:
+        - name: conversationID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/copilot/conversations/{conversationID}/messages:
+    post:
+      operationId: post_v1_copilot_conversations_ByConversationID_messages
+      summary: Send a message / continue with tool results (SSE stream)
+      description: >-
+        Opens a streaming turn of the AI copilot conversation.
+        The response is a `text/event-stream` of SSE frames (thinking, token,
+        tool_call, tool_result, error, done). Each frame is
+        `event: <type>\ndata: <json>\n\n`.
+
+
+        On `stop_reason=tool_use` the stream ends with `done{reason:"tool_use"}`;
+        the browser executes the tool under its own bearer token and posts
+        `tool_results` to this same endpoint to continue generation.
+
+
+        Requires `COPILOT_PROVIDER` configured server-side; returns
+        `409 copilot_unconfigured` otherwise.
+      tags:
+        - Copilot
+      parameters:
+        - name: conversationID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  description: User text input for this turn (mutually exclusive with tool_results).
+                tool_results:
+                  type: array
+                  description: >-
+                    Tool execution results from the previous turn (continuation
+                    after client-side tool execution). Mutually exclusive with
+                    message.
+                  items:
+                    type: object
+                    properties:
+                      tool_call_id:
+                        type: string
+                      name:
+                        type: string
+                      output:
+                        type: object
+                        additionalProperties: true
+                      error:
+                        type: object
+                        properties:
+                          code:
+                            type: string
+                          message:
+                            type: string
+                context:
+                  type: object
+                  description: >-
+                    Console context for grounding (current route, selection).
+                    Treated as untrusted; never used for authorization.
+                  additionalProperties: true
+      responses:
+        '200':
+          description: >-
+            SSE stream of StreamEvent frames. Event types: thinking, token,
+            tool_call, tool_result, error, done.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Copilot not configured (COPILOT_PROVIDER/COPILOT_API_KEY unset)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
   securitySchemes:
     bearerAuth:
@@ -1705,6 +2226,243 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    ActivityActor:
+      type: object
+      description: The principal that caused an activity event.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Actor user UUID (absent for system/agent actors).
+        name:
+          type: string
+          description: Display name when resolvable; omitted otherwise.
+        type:
+          type: string
+          description: Actor type (e.g. "user", "system", "agent").
+      required: [type]
+    ActivityTarget:
+      type: object
+      description: The resource the event acted upon.
+      properties:
+        type:
+          type: string
+          description: Resource type (e.g. "user", "group", "tenant").
+        id:
+          type: string
+          format: uuid
+          description: Resource UUID (omitted for un-keyed resources).
+        label:
+          type: string
+          description: Human-readable resource label when available.
+      required: [type]
+    ActivityEvent:
+      type: object
+      description: >-
+        Unified representation of a domain event, derived from either the live
+        NATS outbox stream or the durable audit log. Category and severity are
+        computed from the event type and are never stored in the DB.
+      required: [id, type, category, severity, title, at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >-
+            For audit-log events this is the stable audit.events row UUID and
+            is safe to use as Last-Event-ID for reconnect replay. For live NATS
+            events a fresh UUID is generated per delivery.
+        type:
+          type: string
+          description: >-
+            Audit action string (e.g. "user.created", "auth.login.failed").
+            Dot-namespaced; first segment is the resource type.
+          example: user.created
+        category:
+          type: string
+          description: >-
+            Coarse operational category derived from the event type prefix.
+          enum:
+            - authentication
+            - authorization
+            - security
+            - directory
+            - developer
+            - system
+        severity:
+          type: string
+          description: >-
+            Derived severity level.
+            critical — security incident (token reuse, threat detection);
+            warning — failure or destructive operation;
+            success — positive transition (create, enable, login);
+            info — everything else.
+          enum: [info, success, warning, error, critical]
+        title:
+          type: string
+          description: Human-readable title derived from the event type.
+          example: 'User Created'
+        description:
+          type: string
+          description: Optional extended description.
+        actor:
+          $ref: '#/components/schemas/ActivityActor'
+        target:
+          $ref: '#/components/schemas/ActivityTarget'
+        at:
+          type: string
+          format: date-time
+          description: Event timestamp (UTC, RFC3339).
+        source:
+          type: string
+          description: Event source identifier (e.g. service name).
+        ip:
+          type: string
+          description: Requester IP address (dot-decimal or IPv6).
+        location:
+          type: string
+          description: Best-effort geo location derived from IP (optional).
+        device:
+          type: string
+          description: Device label parsed from user-agent (optional).
+        browser:
+          type: string
+          description: Browser label parsed from user-agent (optional).
+        status:
+          type: string
+          description: Application-level status carried in the event (optional).
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Domain-specific supplementary fields (non-normative).
+    ActivityResponse:
+      type: object
+      description: Paginated activity history response.
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityEvent'
+        next_cursor:
+          type: string
+          description: >-
+            Opaque cursor for the next page. Present only when more results
+            exist; omitted when this is the last page.
+    SearchResult:
+      type: object
+      description: One item returned by the universal search endpoint.
+      required: [type, id, title, subtitle, url, status, updated_at, score, metadata]
+      properties:
+        type:
+          type: string
+          description: Resource type.
+          enum: [user, organization, group, role, oidc_client, audit_event]
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: Human-readable primary label (e.g. display name or resource name).
+        subtitle:
+          type: string
+          description: Secondary label (e.g. email or slug).
+        url:
+          type: string
+          description: Console deep-link for this resource.
+        status:
+          type: string
+          description: Resource lifecycle status (e.g. "active", "suspended", "recorded").
+        updated_at:
+          type: string
+          format: date-time
+          description: Last-updated timestamp (uses created_at for immutable resources).
+        score:
+          type: number
+          format: float
+          description: >-
+            Relevance score in [0.5, 1.0]: 1.0 = exact match, 0.75 = prefix
+            match, 0.5 = substring match. Results are sorted desc by score.
+        metadata:
+          type: object
+          description: Type-specific supplementary fields (non-normative).
+          additionalProperties: true
+    SearchResponse:
+      type: object
+      description: Paginated search result envelope.
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        next_cursor:
+          type: string
+          description: >-
+            Opaque cursor for the next page. Present only when more results
+            exist; omitted (not null) when this is the last page.
+    CopilotStatus:
+      type: object
+      description: AI copilot configuration state. Never contains key material.
+      properties:
+        configured:
+          type: boolean
+          description: True when COPILOT_PROVIDER and COPILOT_API_KEY are set.
+        provider:
+          type: string
+          description: Provider name (e.g. "anthropic"); empty when not configured.
+        model:
+          type: string
+          description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.
+    CopilotConversation:
+      type: object
+      description: A named copilot conversation thread (tenant + user scoped).
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        pinned:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CopilotMessage:
+      type: object
+      description: >-
+        One turn in a copilot conversation. `content` is an array of Anthropic
+        content blocks (text / tool_use / tool_result) stored verbatim.
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant, tool]
+        content:
+          type: array
+          description: Anthropic content-block array.
+          items:
+            type: object
+            additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
     AuditAnomaly:
       type: object
       properties:

@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
-  PaginationBar,
+  Pagination,
   Table,
   TableBody,
   TableCell,
@@ -392,7 +392,7 @@ function AuditLogsPage() {
                   </TableBody>
                 </Table>
                 {(cursor || auditQ.data.next_cursor) && (
-                  <PaginationBar
+                  <Pagination
                     hasPrev={!!cursor}
                     hasNext={!!auditQ.data.next_cursor}
                     onFirst={() => setCursor(undefined)}

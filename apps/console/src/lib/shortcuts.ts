@@ -14,6 +14,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "General",
     items: [
       { keys: ["⌘", "K"], description: "Open command palette / search" },
+      { keys: ["⌘", "J"], description: "Toggle the AI Copilot" },
       { keys: ["?"], description: "Show this shortcuts panel" },
       { keys: ["Esc"], description: "Close any drawer or dialog" },
     ],

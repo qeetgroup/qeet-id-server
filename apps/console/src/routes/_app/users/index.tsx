@@ -21,7 +21,7 @@ import {
   FieldGroup,
   FieldLabel,
   Input,
-  PaginationBar,
+  Pagination,
   Select,
   SelectContent,
   SelectItem,
@@ -75,6 +75,7 @@ import { useTenantId } from "@/lib/auth";
 import { type CsvColumn, exportToCsv, exportToJson } from "@/lib/export";
 import { useListView } from "@/lib/list-view";
 import { useRoles } from "@/lib/rbac-groups";
+import { useCreateUser, useDeleteUser, useUpdateUser } from "@/lib/users";
 
 export const Route = createFileRoute("/_app/users/")({ component: UsersPage });
 
@@ -201,29 +202,7 @@ function UsersPage() {
     meta: { silent: true }, // we toast manually with combined ok/failed
   });
 
-  const deleteM = useMutation({
-    mutationFn: (id: string) => api<void>(`/v1/users/${id}`, { method: "DELETE" }),
-    onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: ["users"] });
-      const snapshots = qc.getQueriesData<UsersResponse>({
-        queryKey: ["users"],
-      });
-      qc.setQueriesData<UsersResponse>({ queryKey: ["users"] }, (prev) =>
-        prev ? { ...prev, items: prev.items.filter((u) => u.id !== id) } : prev,
-      );
-      return { snapshots };
-    },
-    onError: (_err, _id, ctx) => {
-      ctx?.snapshots.forEach(([key, snap]) => {
-        qc.setQueryData(key, snap);
-      });
-    },
-    onSuccess: () => {
-      setConfirmingDelete(null);
-      qc.invalidateQueries({ queryKey: ["users"] });
-    },
-    meta: { successMessage: t("toast.deleted") },
-  });
+  const deleteM = useDeleteUser();
 
   function runBulkDelete() {
     const ids = Array.from(selectedIds);
@@ -358,174 +337,172 @@ function UsersPage() {
               lv.hasActiveFilters ? t("list.emptyDescriptionFiltered") : t("list.emptyDescription")
             }
           >
-            <>
-              <Table className={denseCls}>
-                <TableHeader>
-                  <TableRow>
-                    {canWriteUsers ? (
-                      <TableHead className="w-8">
-                        <MasterCheckbox
-                          selectableIds={selectableIds}
-                          selectedIds={selectedIds}
-                          onChange={setSelectedIds}
-                          label={t("list.selectAll")}
-                        />
-                      </TableHead>
-                    ) : null}
-                    <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
-                      {t("table.email")}
+            <Table className={denseCls}>
+              <TableHeader>
+                <TableRow>
+                  {canWriteUsers ? (
+                    <TableHead className="w-8">
+                      <MasterCheckbox
+                        selectableIds={selectableIds}
+                        selectedIds={selectedIds}
+                        onChange={setSelectedIds}
+                        label={t("list.selectAll")}
+                      />
+                    </TableHead>
+                  ) : null}
+                  <SortHeader columnKey="email" sort={lv.sort} onToggle={lv.toggleSort}>
+                    {t("table.email")}
+                  </SortHeader>
+                  {lv.isVisible("name") && (
+                    <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
+                      {t("table.name")}
                     </SortHeader>
-                    {lv.isVisible("name") && (
-                      <SortHeader columnKey="name" sort={lv.sort} onToggle={lv.toggleSort}>
-                        {t("table.name")}
-                      </SortHeader>
-                    )}
-                    <TableHead>{t("table.role")}</TableHead>
-                    <SortHeader columnKey="status" sort={lv.sort} onToggle={lv.toggleSort}>
-                      {t("table.status")}
+                  )}
+                  <TableHead>{t("table.role")}</TableHead>
+                  <SortHeader columnKey="status" sort={lv.sort} onToggle={lv.toggleSort}>
+                    {t("table.status")}
+                  </SortHeader>
+                  {lv.isVisible("verified") && <TableHead>{t("table.emailVerified")}</TableHead>}
+                  {lv.isVisible("created") && (
+                    <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
+                      {t("table.created")}
                     </SortHeader>
-                    {lv.isVisible("verified") && <TableHead>{t("table.emailVerified")}</TableHead>}
-                    {lv.isVisible("created") && (
-                      <SortHeader columnKey="created" sort={lv.sort} onToggle={lv.toggleSort}>
-                        {t("table.created")}
-                      </SortHeader>
-                    )}
-                    {canWriteUsers ? (
-                      <TableHead className="text-right">{t("table.actions")}</TableHead>
-                    ) : null}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((u) => {
-                    const isSelf = u.id === currentUserId;
-                    const isSelected = selectedIds.has(u.id);
-                    return (
-                      <TableRow key={u.id} className={isSelected ? "bg-muted/40" : undefined}>
-                        {canWriteUsers ? (
-                          <TableCell>
-                            <RowCheckbox
-                              id={u.id}
-                              checked={isSelected}
-                              disabled={isSelf}
-                              label={t("list.selectOne", { email: u.email })}
-                              onChange={(id, checked) =>
-                                setSelectedIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (checked) next.add(id);
-                                  else next.delete(id);
-                                  return next;
-                                })
-                              }
-                            />
-                          </TableCell>
-                        ) : null}
-                        <TableCell className="font-medium">
-                          <Link
-                            to="/users/$userId"
-                            params={{ userId: u.id }}
-                            className="hover:underline"
-                          >
-                            {u.email}
-                          </Link>
-                          {isSelf && (
-                            <Badge variant="muted" className="ml-2">
-                              {t("list.you")}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        {lv.isVisible("name") && (
-                          <TableCell className="text-muted-foreground">
-                            {u.display_name ?? "—"}
-                          </TableCell>
-                        )}
+                  )}
+                  {canWriteUsers ? (
+                    <TableHead className="text-right">{t("table.actions")}</TableHead>
+                  ) : null}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.map((u) => {
+                  const isSelf = u.id === currentUserId;
+                  const isSelected = selectedIds.has(u.id);
+                  return (
+                    <TableRow key={u.id} className={isSelected ? "bg-muted/40" : undefined}>
+                      {canWriteUsers ? (
                         <TableCell>
-                          {u.roles && u.roles.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {u.roles.map((r) => (
-                                <Badge key={r} variant="secondary">
-                                  {r}
-                                </Badge>
-                              ))}
-                            </div>
+                          <RowCheckbox
+                            id={u.id}
+                            checked={isSelected}
+                            disabled={isSelf}
+                            label={t("list.selectOne", { email: u.email })}
+                            onChange={(id, checked) =>
+                              setSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(id);
+                                else next.delete(id);
+                                return next;
+                              })
+                            }
+                          />
+                        </TableCell>
+                      ) : null}
+                      <TableCell className="font-medium">
+                        <Link
+                          to="/users/$userId"
+                          params={{ userId: u.id }}
+                          className="hover:underline"
+                        >
+                          {u.email}
+                        </Link>
+                        {isSelf && (
+                          <Badge variant="muted" className="ml-2">
+                            {t("list.you")}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      {lv.isVisible("name") && (
+                        <TableCell className="text-muted-foreground">
+                          {u.display_name ?? "—"}
+                        </TableCell>
+                      )}
+                      <TableCell>
+                        {u.roles && u.roles.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {u.roles.map((r) => (
+                              <Badge key={r} variant="secondary">
+                                {r}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <StatusPill status={u.status} />
+                      </TableCell>
+                      {lv.isVisible("verified") && (
+                        <TableCell>
+                          {u.email_verified_at ? (
+                            <TimeSince value={u.email_verified_at} />
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
                         </TableCell>
+                      )}
+                      {lv.isVisible("created") && (
                         <TableCell>
-                          <StatusPill status={u.status} />
+                          <TimeSince value={u.created_at} />
                         </TableCell>
-                        {lv.isVisible("verified") && (
-                          <TableCell>
-                            {u.email_verified_at ? (
-                              <TimeSince value={u.email_verified_at} />
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                        )}
-                        {lv.isVisible("created") && (
-                          <TableCell>
-                            <TimeSince value={u.created_at} />
-                          </TableCell>
-                        )}
-                        {canWriteUsers ? (
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={t("table.editUser")}
-                                onClick={() => setEditing(u)}
-                              >
-                                <PencilIcon />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={t("table.setPassword")}
-                                onClick={() => setSettingPassword(u)}
-                              >
-                                <KeyRoundIcon />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={t("table.deleteUser")}
-                                disabled={isSelf}
-                                title={isSelf ? t("table.deleteSelf") : t("table.deleteUser")}
-                                onClick={() => setConfirmingDelete(u.id)}
-                              >
-                                <Trash2Icon className="text-destructive" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        ) : null}
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-              {(cursorStack.length > 0 || !!usersQ.data?.next_cursor) && (
-                <PaginationBar
-                  hasPrev={cursorStack.length > 0}
-                  hasNext={!!usersQ.data?.next_cursor}
-                  onFirst={() => {
-                    setCursorStack([]);
+                      )}
+                      {canWriteUsers ? (
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("table.editUser")}
+                              onClick={() => setEditing(u)}
+                            >
+                              <PencilIcon />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("table.setPassword")}
+                              onClick={() => setSettingPassword(u)}
+                            >
+                              <KeyRoundIcon />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={t("table.deleteUser")}
+                              disabled={isSelf}
+                              title={isSelf ? t("table.deleteSelf") : t("table.deleteUser")}
+                              onClick={() => setConfirmingDelete(u.id)}
+                            >
+                              <Trash2Icon className="text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      ) : null}
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            {(cursorStack.length > 0 || !!usersQ.data?.next_cursor) && (
+              <Pagination
+                hasPrev={cursorStack.length > 0}
+                hasNext={!!usersQ.data?.next_cursor}
+                onFirst={() => {
+                  setCursorStack([]);
+                  setSelectedIds(new Set());
+                }}
+                onNext={() => {
+                  const next = usersQ.data?.next_cursor;
+                  if (next) {
+                    setCursorStack((s) => [...s, next]);
                     setSelectedIds(new Set());
-                  }}
-                  onNext={() => {
-                    const next = usersQ.data?.next_cursor;
-                    if (next) {
-                      setCursorStack((s) => [...s, next]);
-                      setSelectedIds(new Set());
-                    }
-                  }}
-                  itemsOnPage={rows.length}
-                  pageSize={50}
-                  loading={usersQ.isFetching}
-                />
-              )}
-            </>
+                  }
+                }}
+                itemsOnPage={rows.length}
+                pageSize={50}
+                loading={usersQ.isFetching}
+              />
+            )}
           </DataState>
         </CardContent>
       </Card>
@@ -594,7 +571,12 @@ function UsersPage() {
               <Button
                 variant="destructive"
                 disabled={deleteM.isPending}
-                onClick={() => confirmingDelete && deleteM.mutate(confirmingDelete)}
+                onClick={() =>
+                  confirmingDelete &&
+                  deleteM.mutate(confirmingDelete, {
+                    onSuccess: () => setConfirmingDelete(null),
+                  })
+                }
               >
                 {deleteM.isPending && <Loader2Icon className="animate-spin" />}
                 {deleteM.isPending ? t("common:actions.deleting") : t("common:actions.delete")}
@@ -629,32 +611,8 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
     }
   }, [roles, roleId]);
 
-  const createM = useMutation({
-    mutationFn: async (vars: {
-      tenant_id: string;
-      email: string;
-      password: string;
-      display_name?: string;
-      phone?: string;
-      role_id?: string;
-    }) => {
-      const { role_id, ...body } = vars;
-      const user = await api<User>("/v1/users", { method: "POST", body });
-      // The members list is rbac.user_roles-based, so a user is only "in" the
-      // workspace once they hold a role — grant the chosen one now.
-      if (role_id) {
-        await api<void>(`/v1/users/${user.id}/tenants/${body.tenant_id}/roles/${role_id}`, {
-          method: "POST",
-        });
-      }
-      return user;
-    },
-    onSuccess: () => {
-      onCreated();
-      onOpenChange(false);
-    },
-    meta: { successMessage: t("toast.created") },
-  });
+  // Extracted to lib/users.ts so the copilot create_user tool shares the same hook.
+  const createM = useCreateUser();
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -665,14 +623,22 @@ function CreateUserSheet({ open, onOpenChange, tenantId, onCreated }: CreateUser
             e.preventDefault();
             if (!tenantId) return;
             const data = new FormData(e.currentTarget);
-            createM.mutate({
-              tenant_id: tenantId,
-              email: String(data.get("email") ?? "").trim(),
-              password: String(data.get("password") ?? ""),
-              display_name: String(data.get("display_name") ?? "").trim() || undefined,
-              phone: String(data.get("phone") ?? "").trim() || undefined,
-              role_id: roleId || undefined,
-            });
+            createM.mutate(
+              {
+                tenant_id: tenantId,
+                email: String(data.get("email") ?? "").trim(),
+                password: String(data.get("password") ?? ""),
+                display_name: String(data.get("display_name") ?? "").trim() || undefined,
+                phone: String(data.get("phone") ?? "").trim() || undefined,
+                role_id: roleId || undefined,
+              },
+              {
+                onSuccess: () => {
+                  onCreated();
+                  onOpenChange(false);
+                },
+              },
+            );
           }}
         >
           <SheetHeader>
@@ -758,12 +724,6 @@ type EditUserSheetProps = {
   onSaved: () => void;
 };
 
-type UpdateBody = {
-  display_name?: string | null;
-  phone?: string | null;
-  status?: "active" | "suspended";
-};
-
 function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetProps) {
   const { t } = useTranslation("users");
   // Reset selected status when the editing target changes.
@@ -776,14 +736,8 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
     setStatus(user.status === "suspended" ? "suspended" : "active");
   }
 
-  const updateM = useMutation({
-    mutationFn: (body: UpdateBody) => {
-      if (!user) throw new Error("No user selected");
-      return api<User>(`/v1/users/${user.id}`, { method: "PATCH", body });
-    },
-    onSuccess: onSaved,
-    meta: { successMessage: t("toast.updated") },
-  });
+  // Extracted to lib/users.ts so the copilot update_user tool shares the same hook.
+  const updateM = useUpdateUser();
 
   return (
     <Sheet open={!!user} onOpenChange={onOpenChange}>
@@ -796,12 +750,18 @@ function EditUserSheet({ user, isSelf, onOpenChange, onSaved }: EditUserSheetPro
               const data = new FormData(e.currentTarget);
               const displayName = String(data.get("display_name") ?? "").trim();
               const phone = String(data.get("phone") ?? "").trim();
-              updateM.mutate({
-                display_name: displayName || null,
-                phone: phone || null,
-                // Don't allow suspending yourself.
-                ...(isSelf ? {} : { status }),
-              });
+              updateM.mutate(
+                {
+                  userId: user.id,
+                  body: {
+                    display_name: displayName || null,
+                    phone: phone || null,
+                    // Don't allow suspending yourself.
+                    ...(isSelf ? {} : { status }),
+                  },
+                },
+                { onSuccess: onSaved },
+              );
             }}
           >
             <SheetHeader>

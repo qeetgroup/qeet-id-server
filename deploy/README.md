@@ -295,14 +295,14 @@ If the EC2 box is lost, the data is safe in RDS. To rebuild:
 - **`SECRETS_PROVIDER=static`** — uses `SECRETS_KEY`. Optionally move to
   `aws-kms` (`KMS_KEY_ID` + `SECRETS_WRAPPED_DEK`) later.
 - **Row-Level-Security enforcement (defense-in-depth)** — migration `0082` adds RLS
-  policies to every tenant-scoped table plus a least-privilege role `qeet_app`, but
+  policies to every tenant-scoped table plus a least-privilege role `qid_app`, but
   RLS is **inert until the app connects as a non-superuser role** (superusers bypass
   RLS). To enforce, on the host:
   1. Grant the role a login once (as the RDS master):
-     `ALTER ROLE qeet_app WITH LOGIN PASSWORD '<secret>';` and grant it `CONNECT` on the DB.
-  2. In `/opt/qeet-id/.env` set `DB_URL` to the `qeet_app` role and
+     `ALTER ROLE qid_app WITH LOGIN PASSWORD '<secret>';` and grant it `CONNECT` on the DB.
+  2. In `/opt/qeet-id/.env` set `DB_URL` to the `qid_app` role and
      `DB_MIGRATE_URL` to the master/owner role (so migrations keep DDL rights):
      `DB_MIGRATE_URL=postgres://<master>:<pw>@<rds-host>:5432/qeet_id`.
   3. Redeploy. Verify with `curl -fsS .../readyz` and confirm a cross-tenant query
-     returns no rows for the app role. (Local dev proof: connect as `qeet_app`, `SET
+     returns no rows for the app role. (Local dev proof: connect as `qid_app`, `SET
      app.tenant_id='<other-tenant>'`, and confirm 0 rows on a populated table.)

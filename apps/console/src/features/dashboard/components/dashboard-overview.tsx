@@ -33,7 +33,7 @@ import { useTranslation } from "react-i18next";
 
 import { useCapabilities } from "@/features/access-control/capability-provider";
 import { formatShortDate, useAnalyticsOverview } from "@/lib/analytics";
-import { useTenantId } from "@/lib/auth";
+
 import {
   authMethodColor,
   type DashboardRange,
@@ -41,7 +41,6 @@ import {
   mfaMethodColor,
   takeLatest,
 } from "../dashboard-model";
-import { useDashboardActivity } from "../use-dashboard-activity";
 import { OperatorActionsPanel, RecentActivityPanel } from "./dashboard-activity";
 import {
   AuthenticationActivityPanel,
@@ -143,14 +142,12 @@ function DashboardHeading({
 }
 
 export function DashboardOverview() {
-  const tenantId = useTenantId();
   const { t } = useTranslation("dashboard");
   const access = useCapabilities();
   const canViewAnalytics = access.can("analytics.read");
   const canViewAudit = access.can("audit.read");
   const canInvite = access.canAll(["user.read", "user.write", "role.read"]);
   const analytics = useAnalyticsOverview(canViewAnalytics);
-  const activity = useDashboardActivity(tenantId ?? undefined, canViewAudit);
   const [range, setRange] = useState<DashboardRange>("14d");
   const take = range === "7d" ? 7 : 14;
 
@@ -356,13 +353,7 @@ export function DashboardOverview() {
             />
           </>
         ) : null}
-        {canViewAudit ? (
-          <RecentActivityPanel
-            className="xl:col-span-8"
-            events={activity.data?.items ?? []}
-            loading={activity.isLoading}
-          />
-        ) : null}
+        {canViewAudit ? <RecentActivityPanel className="xl:col-span-8" /> : null}
         <OperatorActionsPanel className="xl:col-span-4" />
       </div>
     </div>

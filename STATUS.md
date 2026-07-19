@@ -161,7 +161,7 @@ Grouped by area. Every item is backed by real Go code + routes + (mostly) tests.
 | 4 | **RDS PITR / backups + DR drill** | ⏳ ops | Tier 1 (backups), Tier 2 (drill) | Enable PITR; run the DR runbook once (target RTO < 30s / RPO < 5m). |
 | 5 | **External penetration test — zero-critical gate** | ⏳ ops | **Tier 2 (hard gate)** | PRD makes "zero critical findings" a GA prerequisite. Engage a firm ~6 weeks before Tier 2. **The single biggest schedule driver.** |
 | 6 | **Billing go-live** — Stripe + Razorpay production keys | ⏳ ops | Tier 1 (if paid at launch) | Checkout code complete & webhook-verified; needs 5 env keys + one live validation. |
-| 7 | **RLS prod activation** | ⏳ ops | Tier 2 | Code done (B-1). Grant `qeet_app` LOGIN+password from a secret and set `DB_URL`/`DB_MIGRATE_URL` per `deploy/README.md` §9. |
+| 7 | **RLS prod activation** | ⏳ ops | Tier 2 | Code done (B-1). Grant `qid_app` LOGIN+password from a secret and set `DB_URL`/`DB_MIGRATE_URL` per `deploy/README.md` §9. |
 | 8 | **i18n completion** | 🟡 polish | Tier 2 | Console `en` fully externalized; **7 other locales ~53%**; `login` app en-only; emails not localized. Needs human translation + retrofit. |
 | 9 | **a11y — WCAG 2.2 AA legacy screens** | 🟡 polish | Tier 2 | Gate wired via Biome `a11y`; new/critical flows compliant; **~70 older console screens** need retrofit. |
 | 10 | **Managed-cloud infra** (multi-region/HA, K8s/Helm/Terraform go-live) | 🟡 ops | Managed offering only | Staged & "structurally validated", not the live path. Self-host single-node is production-viable today. |
@@ -211,13 +211,13 @@ Full build/vet/unit (54 pkgs) + integration suites green after all changes.
   `EnforceTenantScope`). PRD/TAD + workspace guide claimed DB-level RLS — untrue. The app also ran as the
   `postgres` **superuser**, which bypasses RLS, so a policies-only migration would be inert.
 - **Fix (opt-in, safe for existing single-role deploys):** migration `0082_rls_tenant_isolation` creates a
-  least-privilege role `qeet_app` + grants and `ENABLE`s RLS + a `tenant_isolation` policy on **all 64
+  least-privilege role `qid_app` + grants and `ENABLE`s RLS + a `tenant_isolation` policy on **all 64
   tenant-scoped tables** (`ENABLE` not `FORCE`, so the owner still runs migrations/backfills while the non-owner
   app role is enforced). Pool `BeforeAcquire`/`AfterRelease` stamp `app.tenant_id` / `app.bypass_rls` per checkout
   from the request context (new `rlsctx` package + `EnforceTenantScope`, keyed off the validated `{tenantID}` so
   cross-tenant-by-design queries run bypassed). New `DB_MIGRATE_URL` (owner) vs `DB_URL` (app role) split; blank
   `DB_MIGRATE_URL` = unchanged single-role behavior. Runbook: `deploy/README.md` §9, `.env.example`.
-- **Verified live:** boots/serves as `qeet_app`; direct DB proof — `bypass=on`→all 463 audit rows, `tenant=A`→68,
+- **Verified live:** boots/serves as `qid_app`; direct DB proof — `bypass=on`→all 463 audit rows, `tenant=A`→68,
   `=B`→37, bogus→**0**, unscoped→**0 (fail-closed)**; cross-tenant API→403.
 - **Remaining:** prod activation is ops ([§3](#3-what-is-pending-before-launch--the-real-ga-checklist) #7); future migrations adding a tenant-scoped table must enable RLS on it too.
 
@@ -313,7 +313,7 @@ Sequenced across the PRD's phases through H1 2028:
 - ✅ **Secure-by-default boot-gate** blocks an insecure prod start.
 - ⏳ **Before prod go-live:** provision the live KMS CMK (#1), email DNS (#3), RDS PITR (#4), billing keys if
   selling (#6), mount `jwt_signing_key.pem` / SAML keys (deploy runbook), and put a WAF/CDN (Cloudflare/AWS Shield)
-  at the edge (also supplies the geo header for adaptive risk). To enforce RLS, flip to the `qeet_app` DB role (#7).
+  at the edge (also supplies the geo header for adaptive risk). To enforce RLS, flip to the `qid_app` DB role (#7).
 - 🟡 **Rotate the JWT signing key set every 90 days** (self-hoster expectation, `SECURITY.md`).
 - 🟡 **Scaling later:** Helm/K8s/Terraform are staged; validate (`helm lint`, `terraform validate`) before first use.
 - **Performance (measured, dev machine):** OIDC discovery/JWKS **p95 ≈ 3.2 ms** (SLO < 20 ms); RBAC + recursive
@@ -379,7 +379,7 @@ launch). Target a compliance-badged launch **early Q1 2027 (e.g. Tue 2027-02-16)
 ### ☐ Before Tier 2 (2026-09-29)
 6. ☐ **Engage a pentest firm by ~2026-08-25; remediate all criticals** (#5).
 7. ☐ Formal OIDC + SAML + SCIM conformance/interop certification (#2).
-8. ☐ RLS prod activation — grant `qeet_app` LOGIN+password, set `DB_URL`/`DB_MIGRATE_URL` (#7, `deploy/README.md` §9).
+8. ☐ RLS prod activation — grant `qid_app` LOGIN+password, set `DB_URL`/`DB_MIGRATE_URL` (#7, `deploy/README.md` §9).
 9. ☐ Complete i18n (7 locales + login app + emails) and a11y legacy-screen retrofit (#8/#9).
 10. ☐ Run a DR drill; record RTO/RPO (#4).
 11. ☐ Launch the bug-bounty program (#11).
@@ -396,7 +396,7 @@ Compiled from **7 parallel audits** (full PRD read, full TAD read, backend catal
 audit, ROADMAP/CHANGELOG/GAP-ANALYSIS review, SDK exploration), then a same-day **remediation pass** with direct
 verification: `go build`/`go vet` ✅, unit suite (54 packages) ✅, all three SDKs build/typecheck/test ✅, a real
 **local boot + HTTP smoke test** ([§1a](#1a-live-boot--smoke-test-run-2026-07-17-local)), a **login → authed
-tenant-scoped read** flow, a **direct DB-level RLS enforcement proof** (as `qeet_app`), an **agent kill-switch
+tenant-scoped read** flow, a **direct DB-level RLS enforcement proof** (as `qid_app`), an **agent kill-switch
 end-to-end proof**, a **NATS publish→subscribe end-to-end proof**, the **full testcontainers integration suite**,
 and **k6 performance benchmarks**.
 
