@@ -233,7 +233,7 @@ flowchart LR
 
 Release image is cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id-server`. Migrations run automatically on startup — no separate image needed.
 
-> Kubernetes (Helm), Terraform (RDS/ECR/KMS), kustomize overlays, and Prometheus/Grafana/OTel configs live in the separate **`qeet-deploy/qeet-id-deploy`** repo (`base/` + `environments/`) — this repo only builds the image (`build-image.yml`) → GHCR.
+> Kubernetes (Helm), Terraform (RDS/ECR/KMS), kustomize overlays, and Prometheus/Grafana/OTel configs live in the separate **`qeet-deploy/qeet-id-deploy`** repo (`base/` + `environments/`), along with the deploy/CD workflow.
 
 ---
 

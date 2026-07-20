@@ -49,7 +49,7 @@ Entrypoint [cmd/server/main.go](cmd/server/main.go); HTTP wiring in [platform/ap
 
 ## Deployment
 
-Single Docker container on EC2 (`ap-south-2`) behind Caddy, Postgres on RDS; migrations auto-apply on startup (`//go:embed`). This repo's [`.github/workflows/build-image.yml`](.github/workflows/build-image.yml) builds the image → GHCR; **deploy manifests (compose/Caddy/Helm/Terraform) + the CD workflow live in the separate `qeet-deploy/qeet-id-deploy` repo** (full runbook there). Frontends deploy separately.
+Single Docker container on EC2 (`ap-south-2`) behind Caddy, Postgres on RDS; migrations auto-apply on startup (`//go:embed`). **Deploy (build image → GHCR + SSH rollout) and all manifests (compose/Caddy/Helm/Terraform) live in the separate `qeet-deploy/qeet-id-deploy` repo** (full runbook there). Frontends deploy separately.
 
 ## Gotchas
 
