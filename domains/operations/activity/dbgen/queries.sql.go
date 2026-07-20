@@ -22,18 +22,20 @@ FROM audit.events
 WHERE tenant_id = $1
   AND ($2::text[] IS NULL OR action = ANY($2))
   AND ($3::uuid IS NULL OR actor_user_id = $3)
-  AND ($4::timestamptz IS NULL OR created_at >= $4)
-  AND ($5::timestamptz IS NULL OR created_at <= $5)
-  AND ($6::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $6))
-  AND ($7::timestamptz IS NULL OR created_at < $7 OR (created_at = $7 AND id < $8::uuid))
+  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4))
+  AND ($5::timestamptz IS NULL OR created_at >= $5)
+  AND ($6::timestamptz IS NULL OR created_at <= $6)
+  AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($8::timestamptz IS NULL OR created_at < $8 OR (created_at = $8 AND id < $9::uuid))
 ORDER BY created_at DESC, id DESC
-LIMIT $9
+LIMIT $10
 `
 
 type ListActivityHistoryParams struct {
 	TenantID pgtype.UUID
 	Actions  []string
 	ActorID  pgtype.UUID
+	Subject  pgtype.UUID
 	FromTs   pgtype.Timestamptz
 	ToTs     pgtype.Timestamptz
 	Q        *string
@@ -60,16 +62,20 @@ type ListActivityHistoryRow struct {
 // Static queries against audit.events; compiled by sqlc into ./dbgen.
 // All queries are scoped by tenant_id (multi-tenancy).
 // Cursor-paginated history, newest first. Optional filters: action type array,
-// actor, time range, and GIN full-text search. The cursor carries both
-// created_at and id so the tuple comparison can be expanded — sqlc does not
-// support row-value predicates, so (created_at, id) < (cursor_ts, cursor_id)
-// is rewritten as the equivalent OR expression.
+// actor, subject (actor OR user-resource target), time range, and GIN full-text
+// search. The cursor carries both created_at and id so the tuple comparison can
+// be expanded — sqlc does not support row-value predicates, so
+// (created_at, id) < (cursor_ts, cursor_id) is rewritten as the equivalent OR
+// expression.
 // ip is nullable INET; COALESCE(host(ip), ”)::text ensures a non-null string.
+// subject captures a user's full identity timeline: every event where that user
+// is either the actor or the target of a 'user' resource event.
 func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHistoryParams) ([]ListActivityHistoryRow, error) {
 	rows, err := q.db.Query(ctx, listActivityHistory,
 		arg.TenantID,
 		arg.Actions,
 		arg.ActorID,
+		arg.Subject,
 		arg.FromTs,
 		arg.ToTs,
 		arg.Q,

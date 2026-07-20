@@ -123,6 +123,16 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: subject
+          in: query
+          required: false
+          description: >-
+            Identity timeline filter. When set, returns every event where the
+            given user UUID is either the actor OR the target of a 'user'
+            resource event. Omit to return events for all subjects.
+          schema:
+            type: string
+            format: uuid
         - name: q
           in: query
           required: false

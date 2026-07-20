@@ -101,6 +101,7 @@ type ListFilter struct {
 	Severity string     // post-fetch: minimum severity
 	Category string     // post-fetch: exact category
 	ActorID  uuid.UUID  // filter by actor_user_id; uuid.Nil = all
+	Subject  *uuid.UUID // identity timeline: actor OR user-resource target; nil = all
 	Search   string     // full-text via websearch_to_tsquery
 	From     *time.Time // inclusive lower bound on created_at
 	To       *time.Time // inclusive upper bound on created_at

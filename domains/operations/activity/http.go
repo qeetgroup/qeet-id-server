@@ -191,6 +191,11 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 			f.ActorID = id
 		}
 	}
+	if raw := r.URL.Query().Get("subject"); raw != "" {
+		if id, err2 := uuid.Parse(raw); err2 == nil {
+			f.Subject = &id
+		}
+	}
 	if raw := r.URL.Query().Get("from"); raw != "" {
 		if t, err2 := time.Parse(time.RFC3339, raw); err2 == nil {
 			f.From = &t
@@ -244,6 +249,9 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 
 	if f.ActorID != uuid.Nil {
 		params.ActorID = pgtype.UUID{Bytes: f.ActorID, Valid: true}
+	}
+	if f.Subject != nil {
+		params.Subject = pgtype.UUID{Bytes: *f.Subject, Valid: true}
 	}
 	if f.From != nil {
 		params.FromTs = pgtype.Timestamptz{Time: *f.From, Valid: true}
