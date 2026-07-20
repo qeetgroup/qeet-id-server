@@ -1,0 +1,169 @@
+├── .dockerignore
+├── .env.production
+├── .gitignore
+├── AGENTS.md
+├── CLAUDE.md
+├── next-env.d.ts
+├── next.config.ts
+├── package.json
+├── postcss.config.mjs
+├── public
+│  ├── apple-icon.png
+│  ├── avatars
+│  │  ├── dev.jpg
+│  │  ├── jun.jpg
+│  │  ├── marcus.jpg
+│  │  ├── priya.jpg
+│  │  └── sofia.jpg
+│  ├── favicon.ico
+│  ├── file.svg
+│  ├── globe.svg
+│  ├── icon.png
+│  ├── next.svg
+│  ├── qeet-logo-on-dark.svg
+│  ├── qeet-logo-on-light.svg
+│  ├── vercel.svg
+│  └── window.svg
+├── README.md
+├── src
+│  ├── app
+│  │  ├── (marketing)
+│  │  │  ├── about
+│  │  │  │  └── page.tsx
+│  │  │  ├── blog
+│  │  │  │  ├── [slug]
+│  │  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  │  └── page.tsx
+│  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  └── page.tsx
+│  │  │  ├── careers
+│  │  │  │  └── page.tsx
+│  │  │  ├── changelog
+│  │  │  │  └── page.tsx
+│  │  │  ├── compare
+│  │  │  │  ├── auth0
+│  │  │  │  │  └── page.tsx
+│  │  │  │  ├── clerk
+│  │  │  │  │  └── page.tsx
+│  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  ├── page.tsx
+│  │  │  │  ├── stytch
+│  │  │  │  │  └── page.tsx
+│  │  │  │  └── workos
+│  │  │  │    └── page.tsx
+│  │  │  ├── contact
+│  │  │  │  └── page.tsx
+│  │  │  ├── customers
+│  │  │  │  ├── [slug]
+│  │  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  │  └── page.tsx
+│  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  └── page.tsx
+│  │  │  ├── docs
+│  │  │  │  └── page.tsx
+│  │  │  ├── features
+│  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  └── page.tsx
+│  │  │  ├── layout.tsx
+│  │  │  ├── legal
+│  │  │  │  ├── dpa
+│  │  │  │  │  └── page.tsx
+│  │  │  │  ├── privacy
+│  │  │  │  │  └── page.tsx
+│  │  │  │  ├── subprocessors
+│  │  │  │  │  └── page.tsx
+│  │  │  │  └── terms
+│  │  │  │    └── page.tsx
+│  │  │  ├── page.tsx
+│  │  │  ├── pricing
+│  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  └── page.tsx
+│  │  │  ├── security
+│  │  │  │  ├── opengraph-image.tsx
+│  │  │  │  └── page.tsx
+│  │  │  └── status
+│  │  │    └── page.tsx
+│  │  ├── api
+│  │  │  └── contact
+│  │  │    └── route.ts
+│  │  ├── globals.css
+│  │  ├── layout.tsx
+│  │  ├── opengraph-image.tsx
+│  │  ├── robots.ts
+│  │  └── sitemap.ts
+│  ├── components
+│  │  └── marketing
+│  │    ├── blocks
+│  │    │  ├── arrow-cta.tsx
+│  │    │  ├── bezel-card.tsx
+│  │    │  ├── case-study-card.tsx
+│  │    │  ├── code-tabs.tsx
+│  │    │  ├── customer-card.tsx
+│  │    │  ├── customer-logo-block.tsx
+│  │    │  ├── eyebrow.tsx
+│  │    │  ├── initials-avatar.tsx
+│  │    │  └── logo-wall.tsx
+│  │    ├── button-link.tsx
+│  │    ├── comparison-page.tsx
+│  │    ├── contact-form.tsx
+│  │    ├── data
+│  │    │  └── pricing.ts
+│  │    ├── effects
+│  │    │  ├── aurora.tsx
+│  │    │  ├── blur-text.tsx
+│  │    │  ├── border-beam.tsx
+│  │    │  ├── code-block.tsx
+│  │    │  ├── dot-pattern.tsx
+│  │    │  ├── glow-card.tsx
+│  │    │  ├── grain-overlay.tsx
+│  │    │  ├── marquee.tsx
+│  │    │  ├── number-ticker.tsx
+│  │    │  ├── orb.tsx
+│  │    │  ├── shape-grid.tsx
+│  │    │  ├── shiny-text.tsx
+│  │    │  ├── spotlight-card.tsx
+│  │    │  └── threads.tsx
+│  │    ├── faq-accordion.tsx
+│  │    ├── legal-page.tsx
+│  │    ├── motion
+│  │    │  ├── fade-rise.tsx
+│  │    │  ├── index.ts
+│  │    │  ├── magnetic.tsx
+│  │    │  ├── parallax.tsx
+│  │    │  ├── reveal.tsx
+│  │    │  ├── scroll-progress.tsx
+│  │    │  ├── stagger.tsx
+│  │    │  ├── tilt.tsx
+│  │    │  └── word-reveal.tsx
+│  │    ├── page-hero.tsx
+│  │    ├── pricing-calculator.tsx
+│  │    ├── qeet-mark.tsx
+│  │    ├── section.tsx
+│  │    ├── sections
+│  │    │  ├── compare.tsx
+│  │    │  ├── cta.tsx
+│  │    │  ├── faq.tsx
+│  │    │  ├── features.tsx
+│  │    │  ├── hero.tsx
+│  │    │  ├── how-it-works.tsx
+│  │    │  ├── integrations.tsx
+│  │    │  ├── logo-cloud.tsx
+│  │    │  ├── pricing.tsx
+│  │    │  ├── security.tsx
+│  │    │  ├── stats.tsx
+│  │    │  └── testimonials.tsx
+│  │    ├── site-footer.tsx
+│  │    ├── site-header.tsx
+│  │    ├── sticky-cta-bar.tsx
+│  │    ├── structured-data.tsx
+│  │    └── theme-toggle.tsx
+│  └── lib
+│    ├── blog.ts
+│    ├── changelog.ts
+│    ├── customers.ts
+│    ├── links.ts
+│    ├── og.tsx
+│    └── use-reduced-motion.ts
+├── tsconfig.json
+├── tsconfig.tsbuildinfo
+└── vercel.json

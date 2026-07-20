@@ -1,0 +1,61 @@
+├── .gitignore
+├── next-env.d.ts
+├── next.config.ts
+├── package.json
+├── postcss.config.mjs
+├── src
+│  ├── app
+│  │  ├── admin-portal
+│  │  │  └── [token]
+│  │  │    ├── admin-portal-view.tsx
+│  │  │    └── page.tsx
+│  │  ├── consent
+│  │  │  ├── consent-form.tsx
+│  │  │  └── page.tsx
+│  │  ├── device
+│  │  │  ├── device-form.tsx
+│  │  │  └── page.tsx
+│  │  ├── forgot-password
+│  │  │  ├── forgot-password-form.tsx
+│  │  │  └── page.tsx
+│  │  ├── globals.css
+│  │  ├── layout.tsx
+│  │  ├── logged-out
+│  │  │  ├── logged-out-content.tsx
+│  │  │  └── page.tsx
+│  │  ├── login
+│  │  │  ├── login-form.tsx
+│  │  │  └── page.tsx
+│  │  ├── page.tsx
+│  │  ├── reset
+│  │  │  ├── page.tsx
+│  │  │  └── reset-form.tsx
+│  │  └── signup
+│  │    ├── page.tsx
+│  │    └── signup-form.tsx
+│  ├── components
+│  │  ├── auth-card.tsx
+│  │  ├── auth-shell.tsx
+│  │  ├── form-alert.tsx
+│  │  ├── scope-list.tsx
+│  │  └── social-providers.tsx
+│  ├── i18n
+│  │  ├── index.ts
+│  │  ├── locales
+│  │  │  └── en
+│  │  │    ├── common.json
+│  │  │    ├── consent.json
+│  │  │    ├── device.json
+│  │  │    ├── loggedOut.json
+│  │  │    ├── login.json
+│  │  │    ├── recovery.json
+│  │  │    └── signup.json
+│  │  ├── provider.tsx
+│  │  └── README.md
+│  └── lib
+│    ├── admin-portal.ts
+│    ├── api.ts
+│    └── branding.ts
+├── tsconfig.json
+├── tsconfig.tsbuildinfo
+└── vercel.json
