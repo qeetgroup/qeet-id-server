@@ -16,9 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/activity/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/activity/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Handler is the HTTP surface for the Live Activity feature: a real-time SSE

@@ -10,9 +10,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Handler owns the HTTP surface for the copilot feature.

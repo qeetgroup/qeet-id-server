@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	httpx "github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	httpx "github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // generateRaw, Verify's malformed-key branch, and Middleware's scheme handling

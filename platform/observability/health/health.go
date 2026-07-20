@@ -16,8 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/observability/buildinfo"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Check is a single readiness probe. It must return promptly (it shares a

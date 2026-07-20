@@ -14,11 +14,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/identity/users/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/paging"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/domains/identity/users/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/paging"
+	"github.com/qeetgroup/qeet-id-server/platform/database/postgres/dbutil"
+	"github.com/qeetgroup/qeet-id-server/platform/database/postgres/pgxerr"
 )
 
 // parseUserMetadata decodes the JSONB metadata column. JSONB is guaranteed

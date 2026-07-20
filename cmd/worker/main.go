@@ -17,17 +17,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit/anomaly"
-	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
-	"github.com/qeetgroup/qeet-id/domains/operations/retention"
-	"github.com/qeetgroup/qeet-id/domains/operations/siem"
-	"github.com/qeetgroup/qeet-id/platform/config"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres"
-	"github.com/qeetgroup/qeet-id/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id/platform/observability/logging"
-	"github.com/qeetgroup/qeet-id/platform/workers"
+	"github.com/qeetgroup/qeet-id-server/domains/developer/webhooks"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit/anomaly"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/compliance"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/retention"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/siem"
+	"github.com/qeetgroup/qeet-id-server/platform/config"
+	"github.com/qeetgroup/qeet-id-server/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/platform/observability/buildinfo"
+	"github.com/qeetgroup/qeet-id-server/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/platform/workers"
 )
 
 func main() {

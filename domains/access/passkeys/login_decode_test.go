@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Regression for P2-06: /v1/passkeys/login/begin must accept a JSON body with

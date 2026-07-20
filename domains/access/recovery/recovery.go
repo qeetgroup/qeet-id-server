@@ -14,13 +14,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/access/recovery/dbgen"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/security/hibp"
-	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
-	"github.com/qeetgroup/qeet-id/platform/security/encryption"
+	"github.com/qeetgroup/qeet-id-server/domains/access/recovery/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/security/hibp"
+	"github.com/qeetgroup/qeet-id-server/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id-server/platform/security/encryption"
 )
 
 // AuditCtx carries the per-request client context recovery handlers

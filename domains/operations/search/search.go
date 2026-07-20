@@ -34,8 +34,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/search/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/search/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 // permissionChecker is a narrow read-only interface over rbac.Repository.

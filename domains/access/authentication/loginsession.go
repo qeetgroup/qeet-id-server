@@ -9,9 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/security/tokens"
+	"github.com/qeetgroup/qeet-id-server/domains/access/authentication/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/security/tokens"
 )
 
 // LoginSessionCookie is the browser SSO cookie for the hosted login/consent

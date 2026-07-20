@@ -22,7 +22,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/qeetgroup/qeet-id/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/platform/ai"
 )
 
 const (

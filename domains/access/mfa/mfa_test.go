@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/security/encryption"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/security/encryption"
 )
 
 func TestMaskDestination(t *testing.T) {

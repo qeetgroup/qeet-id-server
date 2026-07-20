@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id/platform/ai/anthropic"
+	"github.com/qeetgroup/qeet-id-server/platform/ai/anthropic"
 )
 
 // cannedSSE is a representative Anthropic SSE stream for a simple text reply.

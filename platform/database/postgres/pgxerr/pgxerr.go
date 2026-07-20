@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 // IsUnique reports whether err is a Postgres unique_violation (23505).

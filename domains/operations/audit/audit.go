@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	dbgen "github.com/qeetgroup/qeet-id/domains/operations/audit/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/domains/operations/audit/dbgen"
 )
 
 const chainSeed = "0000000000000000000000000000000000000000000000000000000000000000"

@@ -35,7 +35,7 @@ package <name>
 
 import (
     "context"
-    "github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+    "github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
     "github.com/jackc/pgx/v5/pgxpool"
 )
 

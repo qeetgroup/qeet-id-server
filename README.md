@@ -8,7 +8,7 @@
 
 <br>
 
-[![CI](https://github.com/qeetgroup/qeet-id/actions/workflows/ci.yml/badge.svg)](./.github/workflows/ci.yml)
+[![CI](https://github.com/qeetgroup/qeet-id-server/actions/workflows/ci.yml/badge.svg)](./.github/workflows/ci.yml)
 [![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](./go.mod)
 [![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./api/openapi/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -78,8 +78,6 @@ flowchart TB
     subgraph frontends["Frontends"]
         direction LR
         login["Hosted Login<br/>Next.js · :3003"]
-        console["Admin Console<br/>Vite + TanStack · :3002"]
-        website["Website<br/>Next.js · :3001"]
     end
 
     subgraph api["Go API · chi v5 · cmd/server · :4001"]
@@ -99,10 +97,8 @@ flowchart TB
     pg[("PostgreSQL 16 · pgx v5<br/>6 schemas · multi-tenant by tenant_id<br/>optional Redis rate-limit")]
     egress["Egress · SMTP · HIBP · Webhooks<br/>SIEM stream · Payments<br/>(transactional outbox)"]
 
-    clients --> login & console & website
+    clients --> login
     login --> mw
-    console --> mw
-    website --> mw
     platform --> pg
     platform --> egress
 ```
@@ -176,17 +172,13 @@ All planned packages/surfaces are tracked in [ROADMAP.md](./ROADMAP.md).
 
 ```bash
 # 1. Clone
-git clone https://github.com/qeetgroup/qeet-id && cd qeet-id
+git clone https://github.com/qeetgroup/qeet-id-server && cd qeet-id-server
 
 # 2. Install dependencies
 go mod download
-bun install
 
 # 3. Copy env files
 cp .env.example .env                                      # backend — DB_URL has a working local default
-cp apps/console/.env.example apps/console/.env            # admin frontend
-cp apps/login/.env.example apps/login/.env.local          # hosted login
-cp apps/website/.env.example apps/website/.env.local      # marketing site
 
 # 4. Start Postgres + apply migrations
 make db-up migrate-up
@@ -198,13 +190,7 @@ make seed
 make dev
 ```
 
-**Frontend apps — each in its own terminal:**
-
-| Command | App | URL |
-|:---|:---|:---|
-| `bun run --filter @qeet-id/console dev` | Admin console | <http://localhost:3002> |
-| `bun run --filter @qeet-id/login dev` | Hosted login | <http://localhost:3003> |
-| `bun run --filter @qeet-id/web dev` | Marketing site | <http://localhost:3001> |
+**Frontends** run from their own repos now — hosted login `qeet-hosted/qeet-id-login` (:3003), admin console `qeet-consoles/qeet-id-console` (:3002), marketing site `qeet-websites/qeet-id-website` (:3001).
 
 Sanity check: `curl localhost:4001/healthz` · Demo login: **`saibabu@qeet.in`** / **`Password123!`**
 
@@ -245,9 +231,9 @@ flowchart LR
     app --> rds[("AWS RDS<br/>Postgres 16")]
 ```
 
-Release image is cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id`. Migrations run automatically on startup — no separate image needed.
+Release image is cosign-signed with SBOM + provenance: `ghcr.io/qeetgroup/qeet-id-server`. Migrations run automatically on startup — no separate image needed.
 
-> Kubernetes (Helm), Terraform (RDS/ECR/KMS), kustomize overlays, and Prometheus/Grafana/OTel configs live in [`deploy/base/`](./deploy/) + [`deploy/environments/`](./deploy/) for when you're ready to scale to Kubernetes.
+> Kubernetes (Helm), Terraform (RDS/ECR/KMS), kustomize overlays, and Prometheus/Grafana/OTel configs live in the separate **`qeet-deploy/qeet-id-deploy`** repo (`base/` + `environments/`) — this repo only builds the image (`build-image.yml`) → GHCR.
 
 ---
 
@@ -259,7 +245,6 @@ Every push runs the full gate in [CI](./.github/workflows/ci.yml); the same chec
 make test                            # backend unit + arch-fitness tests (go test ./...)
 go test -tags integration ./tests/integration/...   # real Postgres via testcontainers (needs Docker)
 make lint                            # go vet — CI additionally runs golangci-lint
-bun run lint && bun run typecheck && bun run build && bun run test   # frontend (Bun workspaces, all 3 apps)
 ```
 
 CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `golangci-lint`, `govulncheck`, and `gitleaks`. Coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired yet — tracked in [ROADMAP.md](./ROADMAP.md). [`tests/performance/`](./tests/performance/) has k6 load scripts (auth, user CRUD, RBAC/ReBAC `/check`) for manual local runs — not wired into CI, no published numbers yet.
@@ -269,7 +254,7 @@ CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `g
 ## 🛠 Tech stack
 
 - **Backend** — Go 1.25 · chi v5 · pgx v5 (hand-written SQL, no ORM — [ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) · ES256 JWTs + JWKS rotation · Argon2id · AES-256-GCM vault · transactional outbox + DLQ
-- **Frontend** — React 19 · admin on Vite + TanStack · web/login on Next.js 16 · Tailwind 4 + the shared [`@qeetrix/*`](../qeetrix/) design system · Bun workspaces (`bun run --filter`) · Biome (lint + format) · TypeScript 7 (Next.js apps pinned to 6)
+- **Frontends (separate repos)** — hosted login (`qeet-hosted/qeet-id-login`, Next.js), admin console (`qeet-consoles/qeet-id-console`, Vite + TanStack), marketing site (`qeet-websites/qeet-id-website`, Next.js) · React 19 · Tailwind 4 · shared `@qeetrix/*` design system
 - **Data** — PostgreSQL (`tenant`/`user`/`auth`/`rbac`/`audit`/`platform` schemas), multi-tenant by `tenant_id` · optional Redis for cross-replica rate limiting
 
 ---

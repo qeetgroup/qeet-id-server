@@ -8,9 +8,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/database/rlsctx"
-	"github.com/qeetgroup/qeet-id/platform/security/tokens"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/database/rlsctx"
+	"github.com/qeetgroup/qeet-id-server/platform/security/tokens"
 )
 
 // AuthVerifier resolves a bearer token to a Principal.

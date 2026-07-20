@@ -3,7 +3,7 @@ package anthropic
 import (
 	"context"
 
-	"github.com/qeetgroup/qeet-id/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/platform/ai"
 )
 
 // Provider wraps Client to satisfy the ai.Provider interface. It converts the

@@ -22,11 +22,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/developer/webhooks/dbgen"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/domains/developer/webhooks/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 type Subscription struct {

@@ -36,7 +36,7 @@ import (
 	"testing"
 )
 
-const module = "github.com/qeetgroup/qeet-id"
+const module = "github.com/qeetgroup/qeet-id-server"
 
 type goPackage struct {
 	ImportPath string

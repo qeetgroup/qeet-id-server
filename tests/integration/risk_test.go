@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/risk"
+	"github.com/qeetgroup/qeet-id-server/domains/access/threat-detection/risk"
 )
 
 const macUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/17.0 Safari/605.1.15"

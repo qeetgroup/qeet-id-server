@@ -12,11 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/identity/organizations/branding/dbgen"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/dbutil"
+	"github.com/qeetgroup/qeet-id-server/domains/identity/organizations/branding/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/database/postgres/dbutil"
 )
 
 type Branding struct {

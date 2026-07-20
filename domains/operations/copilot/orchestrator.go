@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/ai"
 )
 
 // systemPrompt is the standing instruction sent to the model on every turn.

@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	ratelimitsdbgen "github.com/qeetgroup/qeet-id/domains/operations/ratelimits/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
-	"github.com/qeetgroup/qeet-id/platform/cache/ratelimit"
+	ratelimitsdbgen "github.com/qeetgroup/qeet-id-server/domains/operations/ratelimits/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/cache/ratelimit"
 )
 
 // Limiter is the subset of ratelimit.TenantLimiter used by this package.

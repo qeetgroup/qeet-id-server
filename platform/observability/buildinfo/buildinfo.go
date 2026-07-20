@@ -6,9 +6,9 @@
 // Stamp with, e.g.:
 //
 //	go build -ldflags "\
-//	  -X github.com/qeetgroup/qeet-id/platform/buildinfo.Version=v1.2.3 \
-//	  -X github.com/qeetgroup/qeet-id/platform/buildinfo.Commit=$(git rev-parse --short HEAD) \
-//	  -X github.com/qeetgroup/qeet-id/platform/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+//	  -X github.com/qeetgroup/qeet-id-server/platform/buildinfo.Version=v1.2.3 \
+//	  -X github.com/qeetgroup/qeet-id-server/platform/buildinfo.Commit=$(git rev-parse --short HEAD) \
+//	  -X github.com/qeetgroup/qeet-id-server/platform/buildinfo.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 package buildinfo
 
 import "runtime/debug"

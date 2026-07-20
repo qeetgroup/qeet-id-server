@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id/domains/access/threat-detection/risk/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/access/threat-detection/risk/dbgen"
 )
 
 // deviceKey normalizes a User-Agent string to a coarse browser+OS pair (e.g.

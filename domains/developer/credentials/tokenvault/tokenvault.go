@@ -32,11 +32,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	secret "github.com/qeetgroup/qeet-id/domains/developer/credentials/secrets"
-	"github.com/qeetgroup/qeet-id/domains/developer/credentials/tokenvault/dbgen"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	secret "github.com/qeetgroup/qeet-id-server/domains/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/domains/developer/credentials/tokenvault/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 const connectStateTTL = 10 * time.Minute

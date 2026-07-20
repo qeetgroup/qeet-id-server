@@ -16,15 +16,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
-	"github.com/qeetgroup/qeet-id/domains/identity/users"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/database/postgres/pgxerr"
-	"github.com/qeetgroup/qeet-id/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id/platform/security/encryption"
-	"github.com/qeetgroup/qeet-id/platform/security/hibp"
-	"github.com/qeetgroup/qeet-id/platform/security/tokens"
+	"github.com/qeetgroup/qeet-id-server/domains/access/authentication/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/identity/users"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/database/postgres/pgxerr"
+	"github.com/qeetgroup/qeet-id-server/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/platform/security/encryption"
+	"github.com/qeetgroup/qeet-id-server/platform/security/hibp"
+	"github.com/qeetgroup/qeet-id-server/platform/security/tokens"
 )
 
 type Service struct {

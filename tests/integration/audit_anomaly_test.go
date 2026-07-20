@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit/anomaly"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit/anomaly"
 )
 
 func recordAuditEvent(t *testing.T, ctx context.Context, tenantID, actorID uuid.UUID, action, ip string) {

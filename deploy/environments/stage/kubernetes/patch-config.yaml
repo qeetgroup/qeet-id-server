@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: qeet-id-config
-data:
-  APP_BASE_URL: "https://api.staging.id.qeet.in"
-  ALLOWED_ORIGINS: "https://admin.staging.id.qeet.in,https://staging.id.qeet.in"

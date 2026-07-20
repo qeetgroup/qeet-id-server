@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	copilotdbgen "github.com/qeetgroup/qeet-id/domains/operations/copilot/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	copilotdbgen "github.com/qeetgroup/qeet-id-server/domains/operations/copilot/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 // Conversation is a named thread between one user and the copilot.

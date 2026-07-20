@@ -17,8 +17,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
-	"github.com/qeetgroup/qeet-id/platform/security/tokens"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/security/tokens"
 )
 
 // TestEnforceTenantScope locks in the central cross-tenant guard (QID-18): a

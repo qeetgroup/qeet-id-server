@@ -14,10 +14,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/identity/verification/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id-server/domains/identity/verification/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/messaging/notifier"
 )
 
 type Service struct {

@@ -191,4 +191,4 @@ By participating, you agree to abide by our [Code of Conduct](./CODE_OF_CONDUCT.
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/qeetgroup/qeet-id/discussions) (once enabled) or reach out at `hello@qeet.in`.
+Open a [GitHub Discussion](https://github.com/qeetgroup/qeet-id-server/discussions) (once enabled) or reach out at `hello@qeet.in`.

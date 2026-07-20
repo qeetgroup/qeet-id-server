@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authentication/dbgen"
+	"github.com/qeetgroup/qeet-id-server/domains/access/authentication/dbgen"
 )
 
 // Brute-force lockout policy. After maxFailedLogins consecutive failed logins

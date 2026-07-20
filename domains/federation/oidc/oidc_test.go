@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
-	"github.com/qeetgroup/qeet-id/platform/security/tokens"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id-server/platform/security/tokens"
 )
 
 func testIssuer(t *testing.T) *tokens.Issuer {

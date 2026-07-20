@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qeetgroup/qeet-id/platform/ai"
-	"github.com/qeetgroup/qeet-id/platform/ai/openai"
+	"github.com/qeetgroup/qeet-id-server/platform/ai"
+	"github.com/qeetgroup/qeet-id-server/platform/ai/openai"
 )
 
 // cannedOpenAITextSSE is a representative OpenAI Chat Completions SSE stream

@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id/domains/operations/audit/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/domains/operations/audit/dbgen"
 )
 
 // VerifyResult summarises a chain-verification pass for a single tenant.

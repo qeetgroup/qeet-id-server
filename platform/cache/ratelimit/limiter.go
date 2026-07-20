@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Store is the token-bucket backend.

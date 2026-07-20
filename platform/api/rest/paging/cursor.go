@@ -13,7 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 // EncodeTimeUUID packs (created_at, id) into a base64url-encoded

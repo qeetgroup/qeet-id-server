@@ -20,7 +20,7 @@ Microservices were attractive for long-term scalability but would introduce sign
 
 Build Qeet ID as a **modular monolith**:
 
-- **Single Go module** rooted at the repository root (`github.com/qeetgroup/qeet-id`)
+- **Single Go module** rooted at the repository root (`github.com/qeetgroup/qeet-id-server`)
 - **Single PostgreSQL instance** with one schema per bounded context
 - **Five bounded contexts** as enforced package boundaries (see ADR-0002)
 - **One deployable binary** (`cmd/server/main.go`)

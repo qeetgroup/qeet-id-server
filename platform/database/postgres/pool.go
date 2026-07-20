@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/platform/database/rlsctx"
+	"github.com/qeetgroup/qeet-id-server/platform/database/rlsctx"
 )
 
 func NewPool(ctx context.Context, url string, minConns, maxConns int32) (*pgxpool.Pool, error) {

@@ -23,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/qeetgroup/qeet-id/domains/federation/scim/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/domains/federation/scim/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 const schemaGroup = "urn:ietf:params:scim:schemas:core:2.0:Group"

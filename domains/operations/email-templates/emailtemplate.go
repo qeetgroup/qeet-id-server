@@ -20,10 +20,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
-	emailtemplatedbgen "github.com/qeetgroup/qeet-id/domains/operations/email-templates/dbgen"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
+	emailtemplatedbgen "github.com/qeetgroup/qeet-id-server/domains/operations/email-templates/dbgen"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Definition is a catalog entry: a known template key with its built-in

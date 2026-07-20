@@ -8,7 +8,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 // TestRunBulkImport_PartialSuccess verifies that bad and duplicate rows are

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	copilotmanifest "github.com/qeetgroup/qeet-id/api/copilot"
-	"github.com/qeetgroup/qeet-id/platform/ai"
+	copilotmanifest "github.com/qeetgroup/qeet-id-server/api/copilot"
+	"github.com/qeetgroup/qeet-id-server/platform/ai"
 )
 
 // toolManifestEntry is the JSON shape of one tool entry in tools.manifest.json.

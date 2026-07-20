@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
 )
 
 type errorBody struct {

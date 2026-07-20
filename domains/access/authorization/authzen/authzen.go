@@ -21,10 +21,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id/domains/access/authorization/rebac"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/errs"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/domains/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/domains/access/authorization/rebac"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/httpx"
 )
 
 // Subject/Resource/Action are the AuthZEN core request entities.

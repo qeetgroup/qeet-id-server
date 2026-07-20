@@ -14,7 +14,7 @@ Shared test helpers and fixtures used by Go integration and security tests.
 ## Usage
 
 ```go
-import "github.com/qeetgroup/qeet-id/tests/fixtures"
+import "github.com/qeetgroup/qeet-id-server/tests/fixtures"
 
 func TestSomething(t *testing.T) {
     pool := fixtures.NewTestDB(t)      // spins up testcontainer, runs migrations

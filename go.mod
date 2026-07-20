@@ -1,4 +1,4 @@
-module github.com/qeetgroup/qeet-id
+module github.com/qeetgroup/qeet-id-server
 
 go 1.25.0
 

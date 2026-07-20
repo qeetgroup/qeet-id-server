@@ -29,8 +29,8 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/qeetgroup/qeet-id/domains/identity/users"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/codes"
+	"github.com/qeetgroup/qeet-id-server/domains/identity/users"
+	"github.com/qeetgroup/qeet-id-server/platform/api/rest/codes"
 )
 
 var testPool *pgxpool.Pool
