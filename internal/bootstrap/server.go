@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"errors"
 	"log/slog"
-	stdhttp "net/http"
+	"net/http"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
@@ -12,8 +12,8 @@ import (
 // goroutine. A fatal serve error (anything other than the expected
 // ErrServerClosed raised during graceful shutdown) triggers stop() to unwind
 // the process.
-func startHTTPServer(cfg *config.Config, router stdhttp.Handler, stop func()) *stdhttp.Server {
-	srv := &stdhttp.Server{
+func startHTTPServer(cfg *config.Config, router http.Handler, stop func()) *http.Server {
+	srv := &http.Server{
 		Addr:         ":" + cfg.HTTPPort,
 		Handler:      router,
 		ReadTimeout:  cfg.HTTPReadTimeout,
@@ -21,7 +21,7 @@ func startHTTPServer(cfg *config.Config, router stdhttp.Handler, stop func()) *s
 	}
 	go func() {
 		slog.Info("listening", "addr", srv.Addr, "service", cfg.ServiceName, "env", cfg.ServiceEnv)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server error", "err", err)
 			stop()
 		}

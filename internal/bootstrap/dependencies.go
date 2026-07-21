@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	stdhttp "net/http"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -158,7 +158,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// and is fail-open at runtime (a HIBP outage allows the password). Only the
 	// 5-char SHA-1 prefix ever leaves the process — never the plaintext.
 	if cfg.BreachedPasswordCheck {
-		breachChecker := hibp.New(&stdhttp.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
+		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
 		authPolicyService.SetBreachChecker(breachChecker) // user set-password (via ValidateForTenant)
 		authService.SetBreachChecker(breachChecker)       // signup
 		recoveryService.SetBreachChecker(breachChecker)   // password reset

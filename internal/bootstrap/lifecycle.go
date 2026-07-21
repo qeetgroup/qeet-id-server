@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"context"
 	"log/slog"
-	stdhttp "net/http"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,7 +17,7 @@ import (
 // row. It runs once rootCtx is cancelled (SIGINT/SIGTERM, or a fatal serve
 // error via startHTTPServer's stop()).
 func gracefulShutdown(
-	srv *stdhttp.Server,
+	srv *http.Server,
 	deps Deps,
 	waitWorkers func(),
 	tracerShutdown func(context.Context) error,
