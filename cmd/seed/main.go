@@ -40,16 +40,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/service-accounts"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/domains"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
@@ -150,7 +150,7 @@ func main() {
 	authhookSvc := authhook.NewService(pool)
 	inviteSvc := invite.NewService(pool, notifier.LogSender{}, 14*24*time.Hour, cfg.AppBaseURL)
 	domainSvc := domainverify.NewService(pool)
-	emailTplSvc := emailtemplate.NewService(pool)
+	emailTplSvc := email.NewService(pool)
 	retentionSvc := retention.NewService(pool)
 	siemSvc := siem.NewService(pool)
 	ipallowSvc := ipallow.NewService(pool)

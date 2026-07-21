@@ -41,15 +41,15 @@ admin console → `qeet-consoles/qeet-id-console` (:3002), marketing site → `q
 **Backend** — a single Go module `github.com/qeetgroup/qeet-id-server`; **all code lives under [internal/](internal/)**. The 5 bounded contexts sit directly under `internal/`, pure infra under [internal/platform/](internal/platform/), and the composition root under [internal/bootstrap/](internal/bootstrap/):
 
 - **internal/access/** — authentication, authorization (rbac/rebac/policy), mfa, passkeys, recovery, risk, threat
-- **internal/identity/** — users, organizations (tenant), groups, invitations, verification, domains
+- **internal/identity/** — users, tenant, groups, invitations, verification, domainverify
 - **internal/federation/** — oidc, saml, scim, ldap, social
-- **internal/developer/** — api-keys, service-accounts, credentials, auth-hooks, webhooks, agents
-- **internal/operations/** — audit, analytics, notifications, email, retention, compliance, billing, siem
+- **internal/developer/** — api-keys, principal, credentials, auth-hooks, webhooks, agents
+- **internal/operations/** — audit, analytics, notifications, email, retention, gdpr, billing, siem
 - **internal/platform/** — pure infra only: http, database, cache, config, crypto, events, messaging, observability, ai, jobs
 
 **Dependency rule** (the whole point of the layout): `internal/platform/*` is **pure infra** — it imports no bounded context, no `cmd/*`, and not `internal/bootstrap`. The 5 contexts may import `internal/platform/*` but never `cmd/*` or `internal/bootstrap`. **Only `internal/bootstrap`** — the composition root — imports and wires everything together (the chi router + permission table live there); `cmd/*` entrypoints just call into it.
 
-Only packages with real code exist; planned work lives in [ROADMAP.md](ROADMAP.md), not empty dirs. **Folder name ≠ Go package clause is intentional and legal** (e.g. `internal/access/authentication` = `package auth`, `internal/identity/organizations` = `package tenant`; hyphenated `api-keys`→`apikey`, `service-accounts`→`principal`).
+Only packages with real code exist; planned work lives in [ROADMAP.md](ROADMAP.md), not empty dirs. The former semantic folder≠package mismatches were aligned to **folder == package** (`organizations`→`tenant`, `compliance`→`gdpr`, `identity/domains`→`domainverify`, `service-accounts`→`principal`, `email`→`package email`). **A few folders still differ where the package uses a shorter idiomatic name — intentional and legal** (e.g. `internal/access/authentication` = `package auth`, `internal/developer/api-keys` = `package apikey`, `internal/platform/jobs` = `package worker`).
 
 Entrypoint [cmd/api/main.go](cmd/api/main.go); HTTP wiring in [internal/bootstrap/router.go](internal/bootstrap/router.go) (chi v5). Postgres via pgx v5, **multi-tenant by `tenant_id`** across schemas, with **defense-in-depth Postgres RLS** (migration `0082`): the pool stamps `app.tenant_id`/`app.bypass_rls` per checkout and policies enforce it — but only when the app connects as the non-superuser `qid_app` role (`DB_URL`) with migrations on the owner role (`DB_MIGRATE_URL`); inert under a superuser connection. See `qeet-deploy/qeet-id-deploy/README.md` §9. Config is envconfig-driven ([internal/platform/config/config.go](internal/platform/config/config.go)); `HTTP_PORT` defaults to `4001`. Transactional outbox + webhook dispatcher (DLQ); the outbox dispatcher publishes domain events to **NATS** when `NATS_URL` is set (else log-only). Hash-chained append-only audit log. API contract = 5 bounded-context OpenAPI 3.1 specs in [api/openapi/](api/openapi/) (no monolith spec).
 

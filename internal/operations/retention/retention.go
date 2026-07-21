@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	retentiondbgen "github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/retention/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -44,11 +44,11 @@ func clampDays(d int) int {
 
 type Service struct {
 	pool *pgxpool.Pool
-	q    *retentiondbgen.Queries
+	q    *dbgen.Queries
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: retentiondbgen.New(pool)}
+	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -70,7 +70,7 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) 
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
 	p.DeletedUsersDays = clampDays(p.DeletedUsersDays)
-	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, retentiondbgen.UpsertRetentionPolicyParams{
+	row, err := s.q.WithTx(tx).UpsertRetentionPolicy(ctx, dbgen.UpsertRetentionPolicyParams{
 		TenantID:            tenantID,
 		DeletedUsersEnabled: p.DeletedUsersEnabled,
 		DeletedUsersDays:    int32(p.DeletedUsersDays),
@@ -88,7 +88,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
 	// "user".users.tenant_id is NOT NULL UUID; sqlc infers pgtype.UUID here due
 	// to the quoted "user" schema — pass Valid: true to match a non-null value.
-	n, err := s.q.CountRipeDeletedUsers(ctx, retentiondbgen.CountRipeDeletedUsersParams{
+	n, err := s.q.CountRipeDeletedUsers(ctx, dbgen.CountRipeDeletedUsersParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
 		Days:     int32(clampDays(days)),
 	})
@@ -99,7 +99,7 @@ func (s *Service) RipeDeletedUsers(ctx context.Context, tenantID uuid.UUID, days
 // the number purged.
 func (s *Service) PurgeTenant(ctx context.Context, tenantID uuid.UUID, days int) (int, error) {
 	// See RipeDeletedUsers for the pgtype.UUID note.
-	n, err := s.q.PurgeRipeDeletedUsers(ctx, retentiondbgen.PurgeRipeDeletedUsersParams{
+	n, err := s.q.PurgeRipeDeletedUsers(ctx, dbgen.PurgeRipeDeletedUsersParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
 		Days:     int32(clampDays(days)),
 	})

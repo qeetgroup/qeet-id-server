@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	copilotdbgen "github.com/qeetgroup/qeet-id-server/internal/operations/copilot/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/copilot/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -90,12 +90,12 @@ type serviceStore interface {
 // Service owns conversation and message persistence via sqlc-generated queries.
 type Service struct {
 	pool *pgxpool.Pool
-	q    *copilotdbgen.Queries
+	q    *dbgen.Queries
 }
 
 // NewService returns a Service backed by the given pool.
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: copilotdbgen.New(pool)}
+	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
 // Pool returns the underlying connection pool. Used by Handler for audit
@@ -108,7 +108,7 @@ func (s *Service) CreateConversation(ctx context.Context, tenantID, userID uuid.
 	if title == "" {
 		title = "New conversation"
 	}
-	row, err := s.q.CreateConversation(ctx, copilotdbgen.CreateConversationParams{
+	row, err := s.q.CreateConversation(ctx, dbgen.CreateConversationParams{
 		TenantID: tenantID,
 		UserID:   userID,
 		Title:    title,
@@ -122,7 +122,7 @@ func (s *Service) CreateConversation(ctx context.Context, tenantID, userID uuid.
 // ListConversations returns all conversations for a tenant+user, ordered by
 // pinned-first then most-recently-updated.
 func (s *Service) ListConversations(ctx context.Context, tenantID, userID uuid.UUID) ([]Conversation, error) {
-	rows, err := s.q.ListConversations(ctx, copilotdbgen.ListConversationsParams{
+	rows, err := s.q.ListConversations(ctx, dbgen.ListConversationsParams{
 		TenantID: tenantID,
 		UserID:   userID,
 	})
@@ -140,7 +140,7 @@ func (s *Service) ListConversations(ctx context.Context, tenantID, userID uuid.U
 // errs.ErrNotFound when the conversation does not exist or belongs to a
 // different tenant/user.
 func (s *Service) GetConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) (*Conversation, []Message, error) {
-	row, err := s.q.GetConversation(ctx, copilotdbgen.GetConversationParams{
+	row, err := s.q.GetConversation(ctx, dbgen.GetConversationParams{
 		ID:       conversationID,
 		TenantID: tenantID,
 		UserID:   userID,
@@ -161,7 +161,7 @@ func (s *Service) GetConversation(ctx context.Context, tenantID, userID, convers
 // PatchConversation updates title and/or pinned on a conversation. Returns
 // errs.ErrNotFound when the conversation does not exist or is out of scope.
 func (s *Service) PatchConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID, in PatchConversationInput) (*Conversation, error) {
-	row, err := s.q.PatchConversation(ctx, copilotdbgen.PatchConversationParams{
+	row, err := s.q.PatchConversation(ctx, dbgen.PatchConversationParams{
 		Title:    in.Title,
 		Pinned:   in.Pinned,
 		ID:       conversationID,
@@ -180,7 +180,7 @@ func (s *Service) PatchConversation(ctx context.Context, tenantID, userID, conve
 // DeleteConversation removes a conversation and all its messages (cascade).
 // Returns errs.ErrNotFound when the conversation is out of scope.
 func (s *Service) DeleteConversation(ctx context.Context, tenantID, userID, conversationID uuid.UUID) error {
-	n, err := s.q.DeleteConversation(ctx, copilotdbgen.DeleteConversationParams{
+	n, err := s.q.DeleteConversation(ctx, dbgen.DeleteConversationParams{
 		ID:       conversationID,
 		TenantID: tenantID,
 		UserID:   userID,
@@ -206,7 +206,7 @@ func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uu
 
 	qtx := s.q.WithTx(tx)
 
-	msgRow, err := qtx.InsertMessage(ctx, copilotdbgen.InsertMessageParams{
+	msgRow, err := qtx.InsertMessage(ctx, dbgen.InsertMessageParams{
 		TenantID:       tenantID,
 		ConversationID: conversationID,
 		Role:           role,
@@ -216,7 +216,7 @@ func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uu
 		return nil, err
 	}
 
-	if err := qtx.TouchConversation(ctx, copilotdbgen.TouchConversationParams{
+	if err := qtx.TouchConversation(ctx, dbgen.TouchConversationParams{
 		ConversationID: conversationID,
 		TenantID:       tenantID,
 	}); err != nil {
@@ -231,7 +231,7 @@ func (s *Service) AppendMessage(ctx context.Context, tenantID, conversationID uu
 
 // listMessages returns all messages for a conversation in chronological order.
 func (s *Service) listMessages(ctx context.Context, tenantID, conversationID uuid.UUID) ([]Message, error) {
-	rows, err := s.q.ListMessages(ctx, copilotdbgen.ListMessagesParams{
+	rows, err := s.q.ListMessages(ctx, dbgen.ListMessagesParams{
 		ConversationID: conversationID,
 		TenantID:       tenantID,
 	})
@@ -246,7 +246,7 @@ func (s *Service) listMessages(ctx context.Context, tenantID, conversationID uui
 }
 
 // convFromRow maps a dbgen.CopilotConversation to the domain Conversation type.
-func convFromRow(r copilotdbgen.CopilotConversation) *Conversation {
+func convFromRow(r dbgen.CopilotConversation) *Conversation {
 	return &Conversation{
 		ID:        r.ID,
 		TenantID:  r.TenantID,
@@ -259,7 +259,7 @@ func convFromRow(r copilotdbgen.CopilotConversation) *Conversation {
 }
 
 // msgFromRow maps a dbgen.CopilotMessage to the domain Message type.
-func msgFromRow(r copilotdbgen.CopilotMessage) *Message {
+func msgFromRow(r dbgen.CopilotMessage) *Message {
 	return &Message{
 		ID:             r.ID,
 		TenantID:       r.TenantID,

@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	ratelimitsdbgen "github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -80,7 +80,7 @@ func (h *Handler) effectiveLimits(ctx context.Context, tenantID uuid.UUID) (Tena
 	// Create a lightweight Queries instance bound to the pool. This avoids
 	// adding a stored field to Handler (whose struct literal is built in the
 	// router composition root without a constructor call).
-	q := ratelimitsdbgen.New(h.Pool)
+	q := dbgen.New(h.Pool)
 	rows, err := q.GetRateLimitOverrides(ctx, tenantID)
 	if err != nil {
 		return TenantLimits{}, err

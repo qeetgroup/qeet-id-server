@@ -16,7 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 

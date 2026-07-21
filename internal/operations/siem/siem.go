@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	siemdbgen "github.com/qeetgroup/qeet-id-server/internal/operations/siem/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/siem/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -64,14 +64,14 @@ type AuditEvent struct {
 
 type Service struct {
 	pool   *pgxpool.Pool
-	q      *siemdbgen.Queries
+	q      *dbgen.Queries
 	client *http.Client
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{
 		pool:   pool,
-		q:      siemdbgen.New(pool),
+		q:      dbgen.New(pool),
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -89,7 +89,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 	if !strings.HasPrefix(endpoint, "https://") && !strings.HasPrefix(endpoint, "http://") {
 		return nil, errs.ErrUnprocessable.WithDetail("endpoint must be an absolute http(s) URL")
 	}
-	row, err := s.q.InsertLogSink(ctx, siemdbgen.InsertLogSinkParams{
+	row, err := s.q.InsertLogSink(ctx, dbgen.InsertLogSinkParams{
 		TenantID: tenantID, Type: typ, Endpoint: endpoint, Token: token,
 	})
 	if err != nil {
@@ -127,7 +127,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) 
 }
 
 func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool) error {
-	n, err := s.q.SetLogSinkEnabled(ctx, siemdbgen.SetLogSinkEnabledParams{
+	n, err := s.q.SetLogSinkEnabled(ctx, dbgen.SetLogSinkEnabledParams{
 		Enabled: enabled, ID: id, TenantID: tenantID,
 	})
 	if err != nil {
@@ -140,7 +140,7 @@ func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enable
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.DeleteLogSink(ctx, siemdbgen.DeleteLogSinkParams{
+	n, err := s.q.DeleteLogSink(ctx, dbgen.DeleteLogSinkParams{
 		ID: id, TenantID: tenantID,
 	})
 	if err != nil {
@@ -224,7 +224,7 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) {
 		return
 	}
 	// Advance the cursor; ignore errors (retry on next tick).
-	_ = s.q.AdvanceLogSinkCursor(ctx, siemdbgen.AdvanceLogSinkCursorParams{
+	_ = s.q.AdvanceLogSinkCursor(ctx, dbgen.AdvanceLogSinkCursorParams{
 		CursorCreatedAt: pgtype.Timestamptz{Time: lastAt, Valid: true},
 		CursorID:        pgtype.UUID{Bytes: lastID, Valid: true},
 		ID:              sk.id,
@@ -233,7 +233,7 @@ func (s *Service) forwardSink(ctx context.Context, sk sinkRow) {
 
 func (s *Service) fetchEvents(ctx context.Context, tenantID uuid.UUID, afterAt time.Time, afterID uuid.UUID) ([]AuditEvent, time.Time, uuid.UUID, error) {
 	// tenant_id is nullable in audit.events; we always query by a specific tenant.
-	genRows, err := s.q.FetchAuditEventsAfterCursor(ctx, siemdbgen.FetchAuditEventsAfterCursorParams{
+	genRows, err := s.q.FetchAuditEventsAfterCursor(ctx, dbgen.FetchAuditEventsAfterCursorParams{
 		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
 		AfterAt:  afterAt,
 		AfterID:  afterID,
@@ -304,7 +304,7 @@ func (s *Service) recordError(ctx context.Context, id uuid.UUID, msg string) {
 	if len(msg) > 500 {
 		msg = msg[:500]
 	}
-	_ = s.q.SetLogSinkError(ctx, siemdbgen.SetLogSinkErrorParams{LastError: msg, ID: id})
+	_ = s.q.SetLogSinkError(ctx, dbgen.SetLogSinkErrorParams{LastError: msg, ID: id})
 }
 
 // buildRequest renders a batch of events into the body + headers each collector

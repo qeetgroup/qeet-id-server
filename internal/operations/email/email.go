@@ -1,4 +1,4 @@
-// Package emailtemplate manages per-tenant transactional email templates. The
+// Package email manages per-tenant transactional email templates. The
 // catalog of known templates and their default subject/body lives in code
 // (matching the strings the send-flows use today); tenants store only
 // overrides. Render substitutes {{variable}} placeholders.
@@ -6,7 +6,7 @@
 // Render is exported so the verification / recovery / invite / mfa send-flows
 // can resolve a tenant's template at send time; wiring those call sites is the
 // integration step that follows.
-package emailtemplate
+package email
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	emailtemplatedbgen "github.com/qeetgroup/qeet-id-server/internal/operations/email/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/email/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -123,11 +123,11 @@ func Render(s string, vars map[string]string) string {
 
 type Service struct {
 	pool *pgxpool.Pool
-	q    *emailtemplatedbgen.Queries
+	q    *dbgen.Queries
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: emailtemplatedbgen.New(pool)}
+	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
@@ -167,7 +167,7 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 	if !ok {
 		return nil, errs.ErrNotFound.WithDetail("unknown template key")
 	}
-	row, err := s.q.GetEmailTemplateOverride(ctx, emailtemplatedbgen.GetEmailTemplateOverrideParams{
+	row, err := s.q.GetEmailTemplateOverride(ctx, dbgen.GetEmailTemplateOverrideParams{
 		TenantID: tenantID, TemplateKey: key,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -189,7 +189,7 @@ func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key
 	if strings.TrimSpace(subject) == "" || strings.TrimSpace(body) == "" {
 		return nil, errs.ErrUnprocessable.WithDetail("subject and body are required")
 	}
-	if err := s.q.WithTx(tx).UpsertEmailTemplate(ctx, emailtemplatedbgen.UpsertEmailTemplateParams{
+	if err := s.q.WithTx(tx).UpsertEmailTemplate(ctx, dbgen.UpsertEmailTemplateParams{
 		TenantID: tenantID, TemplateKey: key, Subject: subject, Body: body,
 	}); err != nil {
 		return nil, err
@@ -204,7 +204,7 @@ func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key 
 	if !ok {
 		return nil, errs.ErrNotFound.WithDetail("unknown template key")
 	}
-	if err := s.q.WithTx(tx).DeleteEmailTemplate(ctx, emailtemplatedbgen.DeleteEmailTemplateParams{
+	if err := s.q.WithTx(tx).DeleteEmailTemplate(ctx, dbgen.DeleteEmailTemplateParams{
 		TenantID: tenantID, TemplateKey: key,
 	}); err != nil {
 		return nil, err

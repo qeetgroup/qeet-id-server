@@ -15,18 +15,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	notificationdbgen "github.com/qeetgroup/qeet-id-server/internal/operations/notifications/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/notifications/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 type Service struct {
 	pool *pgxpool.Pool
-	q    *notificationdbgen.Queries
+	q    *dbgen.Queries
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: notificationdbgen.New(pool)}
+	return &Service{pool: pool, q: dbgen.New(pool)}
 }
 
 type Notification struct {
@@ -48,7 +48,7 @@ func (s *Service) Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, 
 	}
 	// tenant_id is nullable in auth.notifications; pass Valid=false for uuid.Nil.
 	tid := pgtype.UUID{Bytes: tenantID, Valid: tenantID != uuid.Nil}
-	return s.q.InsertNotification(ctx, notificationdbgen.InsertNotificationParams{
+	return s.q.InsertNotification(ctx, dbgen.InsertNotificationParams{
 		UserID:      userID,
 		TenantID:    tid,
 		Kind:        kind,
@@ -63,7 +63,7 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID, limit int) ([]Noti
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	genRows, err := s.q.ListNotifications(ctx, notificationdbgen.ListNotificationsParams{
+	genRows, err := s.q.ListNotifications(ctx, dbgen.ListNotificationsParams{
 		UserID:   userID,
 		RowLimit: int32(limit),
 	})

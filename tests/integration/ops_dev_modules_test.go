@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	principal "github.com/qeetgroup/qeet-id-server/internal/developer/service-accounts"
+	principal "github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 )
 

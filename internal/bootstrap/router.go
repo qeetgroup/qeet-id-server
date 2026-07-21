@@ -28,7 +28,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/service-accounts"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
@@ -36,11 +36,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/domains"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/activity"
@@ -48,9 +48,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/compliance"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
@@ -79,7 +79,7 @@ type Deps struct {
 	Retention     *retention.Handler
 	Invite        *invite.Handler
 	Branding      *branding.Handler
-	EmailTemplate *emailtemplate.Handler
+	EmailTemplate *email.Handler
 	APIKey        *apikey.Handler
 	APIKeyService *apikey.Service
 	Principal     *principal.Handler
