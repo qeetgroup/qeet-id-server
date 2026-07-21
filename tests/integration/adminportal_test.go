@@ -13,11 +13,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/qeetgroup/qeet-id-server/domains/federation/adminportal"
-	"github.com/qeetgroup/qeet-id-server/domains/federation/saml"
-	"github.com/qeetgroup/qeet-id-server/domains/federation/scim"
-	"github.com/qeetgroup/qeet-id-server/domains/identity/organizations/branding"
-	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations/branding"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // TestAdminPortalLinkGenerateAndRedeem drives the whole self-serve Admin

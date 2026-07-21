@@ -8,7 +8,7 @@
 > **Method:** 7 parallel code/doc audits, then direct build/boot/verify against a live local stack.
 > **Sources of truth:** `Product_Requirement_Document.md` (v4.1, 43 modules), `Technical_Architecture_Document.md`
 > (v2.1), `ROADMAP.md` (the designated shipped-vs-pending ledger — Qeet ID has **no** `AS-BUILT-NOTES.md`), and a
-> direct read of the source tree (`domains/`, `platform/`, `cmd/`, `apps/`, `qeet-sdks/qeet-id-*`).
+> direct read of the source tree (`internal/` — contexts + `internal/platform/`, `cmd/`, `apps/`, `qeet-sdks/qeet-id-*`).
 >
 > **Legend:** ✅ shipped/verified · 🟡 partial / polish · ⏳ external-ops (not code) · 🔭 future / post-GA.
 
@@ -68,7 +68,7 @@ A real end-to-end local bring-up, not just a compile:
 | Step | Result |
 |---|---|
 | Postgres (`:5001`) via `docker compose` | ✅ healthy |
-| `make dev` → `go run ./cmd/server` | ✅ boots in ~2s, listens `:4001` |
+| `make dev` → `go run ./cmd/api` | ✅ boots in ~2s, listens `:4001` |
 | Auto-migrations on boot (embedded) | ✅ applied — **89 tables** created, no errors |
 | `/healthz`, `/readyz`, `/metrics` | ✅ 200 (Prometheus `build_info` present) |
 | `/.well-known/openid-configuration` | ✅ 200 — full discovery (`actor_types` user/service/agent, PKCE S256, device-auth, CIBA) |
@@ -224,9 +224,9 @@ Full build/vet/unit (54 pkgs) + integration suites green after all changes.
 ### ✅ B-2 — Real NATS event broker for the outbox
 - **Finding:** durable outbox + dispatcher + DLQ existed, but the only wired `Publisher` was `LogPublisher` — no
   cross-product event fan-out.
-- **Fix (opt-in):** `NATSPublisher` + `NewPublisher(natsURL)` factory (`platform/events/outbox/nats.go`, official
+- **Fix (opt-in):** `NATSPublisher` + `NewPublisher(natsURL)` factory (`internal/platform/events/outbox/nats.go`, official
   `nats.go`). Subject = event topic, payload = event JSON, type in a `Qeet-Event-Type` header; `Publish` flushes
-  synchronously so failures return to the dispatcher (retry + DLQ own durability). Wired into `cmd/server` +
+  synchronously so failures return to the dispatcher (retry + DLQ own durability). Wired into `cmd/api` +
   `cmd/worker` via `NATS_URL`; blank = log-only path (unchanged).
 - **Verified live:** unit test (publish→subscribe with header) + end-to-end — created a group via the API →
   dispatcher published → an independent subscriber received `group.events` / `Qeet-Event-Type: group.created`.

@@ -80,9 +80,9 @@ flowchart TB
         login["Hosted Login<br/>Next.js · :3003"]
     end
 
-    subgraph api["Go API · chi v5 · cmd/server · :4001"]
+    subgraph api["Go API · chi v5 · cmd/api · :4001"]
         mw["Middleware: RequestID → RealIP → Recoverer → SecurityHeaders<br/>→ AccessLog → Tracing → Metrics → CSRF → CORS → authz"]
-        subgraph domains["domains/ — five bounded contexts"]
+        subgraph domains["internal/ — five bounded contexts"]
             direction LR
             identity["identity<br/>users · orgs<br/>groups · invitations"]
             access["access<br/>auth · mfa<br/>rbac · rebac"]
@@ -90,7 +90,7 @@ flowchart TB
             developer["developer<br/>api-keys<br/>agents · vc"]
             operations["operations<br/>audit · billing<br/>siem · analytics"]
         end
-        platform["platform/ — api · database · security · cache · events<br/>observability · messaging · config"]
+        platform["internal/platform/ — http · database · crypto · cache · events<br/>observability · messaging · config · jobs"]
         mw --> domains --> platform
     end
 
@@ -105,7 +105,7 @@ flowchart TB
 
 **Engineering invariants** — the things that make it enterprise-grade:
 
-- 🧱 **Modular-monolith boundaries** — `platform/*` never imports `domains/*` (arch test rules R1/R2 fail CI)
+- 🧱 **Modular-monolith boundaries** — `internal/platform/*` never imports a bounded context; only `internal/bootstrap` wires everything (arch test rules R1/R2 fail CI)
 - 📘 **100% API documentation** — `chi.Walk` coverage gate; an undocumented route fails CI
 - 🏘️ **Multi-tenant isolation** — every table carries `tenant_id`; 6 schemas, no cross-schema joins
 - 📤 **Reliable eventing** — transactional outbox (business + audit + event in one tx) + DLQ
