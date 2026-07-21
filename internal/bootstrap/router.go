@@ -79,7 +79,7 @@ type Deps struct {
 	Retention     *retention.Handler
 	Invite        *invite.Handler
 	Branding      *branding.Handler
-	EmailTemplate *emailtemplate.Handler
+	EmailTemplate *email.Handler
 	APIKey        *apikey.Handler
 	APIKeyService *apikey.Service
 	Principal     *principal.Handler

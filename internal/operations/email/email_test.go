@@ -1,4 +1,4 @@
-package emailtemplate
+package email
 
 import "testing"
 

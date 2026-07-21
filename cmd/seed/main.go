@@ -150,7 +150,7 @@ func main() {
 	authhookSvc := authhook.NewService(pool)
 	inviteSvc := invite.NewService(pool, notifier.LogSender{}, 14*24*time.Hour, cfg.AppBaseURL)
 	domainSvc := domainverify.NewService(pool)
-	emailTplSvc := emailtemplate.NewService(pool)
+	emailTplSvc := email.NewService(pool)
 	retentionSvc := retention.NewService(pool)
 	siemSvc := siem.NewService(pool)
 	ipallowSvc := ipallow.NewService(pool)

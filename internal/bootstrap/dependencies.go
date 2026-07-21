@@ -59,7 +59,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
-	emailtemplate "github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
@@ -132,7 +132,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Warn("billing seed", "err", err)
 	}
 	brandingRepo := branding.NewRepository(pool)
-	emailTemplateService := emailtemplate.NewService(pool)
+	emailTemplateService := email.NewService(pool)
 	policyRepo := policy.NewRepository(pool)
 
 	sender := notifier.New(notifier.Config{
@@ -393,7 +393,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
-		EmailTemplate: &emailtemplate.Handler{Service: emailTemplateService},
+		EmailTemplate: &email.Handler{Service: emailTemplateService},
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
