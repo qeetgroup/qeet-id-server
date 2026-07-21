@@ -12,7 +12,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )

@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"

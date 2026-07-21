@@ -13,7 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/compliance"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 )
 
 func createUserInTenant(t *testing.T, ctx context.Context, tenantID uuid.UUID) uuid.UUID {

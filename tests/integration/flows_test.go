@@ -31,7 +31,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
