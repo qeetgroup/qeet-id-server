@@ -11,7 +11,7 @@ import (
 	"github.com/mattn/go-isatty"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	dbmigrations "github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
@@ -89,7 +89,7 @@ func Run() {
 		migrateURL = cfg.DBURL
 	}
 	slog.Info("running database migrations")
-	if err := dbmigrations.Run(migrateURL); err != nil {
+	if err := migrations.Run(migrateURL); err != nil {
 		slog.Error("migrations failed", "err", err)
 		os.Exit(1)
 	}
