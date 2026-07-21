@@ -168,7 +168,6 @@ If your change affects:
 | Change | Update |
 |---|---|
 | Backend API | [api/openapi/](./api/openapi/) |
-| Architecture / conventions | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) |
 | Security posture | [SECURITY.md](./SECURITY.md) |
 | End-user docs | standalone `qeet-docs` repo (docs.qeet.in) |
 | Breaking API change | [CHANGELOG.md](./CHANGELOG.md) — note under "Unreleased / Breaking" |

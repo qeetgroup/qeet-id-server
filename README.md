@@ -111,8 +111,6 @@ flowchart TB
 - 📤 **Reliable eventing** — transactional outbox (business + audit + event in one tx) + DLQ
 - 🔏 **Asymmetric tokens** — ES256 / ECDSA P-256, JWKS-published, `kid` = RFC 7638 thumbprint
 
-Deep dives: [`docs/architecture/`](./docs/architecture/) · Decision records: [`docs/adr/`](./docs/adr/)
-
 ---
 
 ## 🧩 Features
@@ -253,7 +251,7 @@ CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `g
 
 ## 🛠 Tech stack
 
-- **Backend** — Go 1.25 · chi v5 · pgx v5 (hand-written SQL, no ORM — [ADR-0003](./docs/adr/0003-postgresql-hand-written-sql.md)) · ES256 JWTs + JWKS rotation · Argon2id · AES-256-GCM vault · transactional outbox + DLQ
+- **Backend** — Go 1.25 · chi v5 · pgx v5 (hand-written SQL, no ORM) · ES256 JWTs + JWKS rotation · Argon2id · AES-256-GCM vault · transactional outbox + DLQ
 - **Frontends (separate repos)** — hosted login (`qeet-hosted/qeet-id-login`, Next.js), admin console (`qeet-consoles/qeet-id-console`, Vite + TanStack), marketing site (`qeet-websites/qeet-id-website`, Next.js) · React 19 · Tailwind 4 · shared `@qeetrix/*` design system
 - **Data** — PostgreSQL (`tenant`/`user`/`auth`/`rbac`/`audit`/`platform` schemas), multi-tenant by `tenant_id` · optional Redis for cross-replica rate limiting
 
@@ -263,9 +261,6 @@ CI gates include **architecture fitness (R1/R2)**, **100% OpenAPI coverage**, `g
 
 | Topic | Where |
 |:---|:---|
-| 🏗 Architecture deep-dives + ADRs | [docs/architecture/](./docs/architecture/) · [docs/adr/](./docs/adr/) |
-| 🔒 Security & compliance | [docs/security/](./docs/security/) · [docs/compliance/](./docs/compliance/) |
-| 🚀 Onboarding & dev workflow | [docs/onboarding/](./docs/onboarding/) |
 | 🔌 API spec + Postman | [api/openapi/](./api/openapi/) · [api/postman/](./api/postman/) |
 | 🤖 For AI assistants | [CLAUDE.md](./CLAUDE.md) — layout, commands, gotchas |
 | 📖 End-user docs | [docs.qeet.in](https://docs.qeet.in) |

@@ -9,7 +9,7 @@ cmd/        Go entrypoints: server, worker, scheduler, migrate, seed
 domains/    business logic by bounded context: identity/ access/ federation/ developer/ operations/
 platform/   shared infra: api/rest  database/{postgres,migrations,repositories}  cache/ messaging/ events/ observability/ security/ config/
 api/        contracts: openapi/ (5 split OpenAPI 3.1 specs) · postman/
-tests/ tools/ docs/ bin/   (deploy manifests + CD → qeet-deploy/qeet-id-deploy)
+tests/ tools/ bin/   (deploy manifests + CD → qeet-deploy/qeet-id-deploy)
 ```
 
 ## Commands (run from repo root)
