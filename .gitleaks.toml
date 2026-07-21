@@ -1,0 +1,18 @@
+# gitleaks config for qeet-id-server (Go backend).
+# Extends gitleaks' default ruleset; the allowlists below suppress known
+# false positives so the secret scan gates on REAL secrets in production code
+# rather than dummy values in tests. Scanned in CI via `gitleaks dir`.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures & example values — dummy secrets in tests, not real"
+paths = [
+  '''_test\.go$''',
+  '''^tests/''',
+]
+
+[[allowlists]]
+description = "Package doc-comment prose (generic-api-key false positive), not a secret"
+paths = ['''internal/platform/crypto/encryption/hasher\.go$''']
