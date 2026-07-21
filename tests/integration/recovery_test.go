@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/domains/access/recovery"
-	"github.com/qeetgroup/qeet-id-server/platform/messaging/notifier"
-	password "github.com/qeetgroup/qeet-id-server/platform/security/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 // captureSender records the emails the recovery service "sends" so tests can

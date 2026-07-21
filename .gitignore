@@ -71,7 +71,9 @@ coverage/
 *.crt
 *.p12
 *.pfx
-secrets/
+# Anchored to repo root so it ignores a top-level secrets/ material dir WITHOUT
+# hiding the Go source package internal/developer/credentials/secrets/.
+/secrets/
 
 # Logs
 *.log

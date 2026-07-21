@@ -21,11 +21,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/domains/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/platform/config"
-	"github.com/qeetgroup/qeet-id-server/platform/database/postgres"
-	"github.com/qeetgroup/qeet-id-server/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id-server/platform/observability/logging"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 )
 
 type scheduledJob struct {

@@ -109,17 +109,17 @@ PRs need one approving review from a maintainer and a green CI run before merge.
 
 ## Adding a new backend module
 
-Backend modules live under [domains/](./domains/), grouped by bounded context
+Backend modules live under [internal/](./internal/), grouped by bounded context
 (`identity` / `access` / `federation` / `developer` / `operations`); shared infra
-is under [platform/](./platform/). Each module is a self-contained domain (e.g.
-`domains/access/authentication`, `domains/access/authorization/rbac`,
-`domains/federation/oidc`). Folder names are domain-oriented; the Go package
+is under [internal/platform/](./internal/platform/). Each module is a self-contained domain (e.g.
+`internal/access/authentication`, `internal/access/authorization/rbac`,
+`internal/federation/oidc`). Folder names are domain-oriented; the Go package
 clause keeps its short name (e.g. folder `authentication` → `package auth`).
 
 Convention:
 
 ```
-domains/<context>/<module>/
+internal/<context>/<module>/
 ├── <module>.go         Domain types + service + handler (small modules)
 ├── service.go          Business logic (larger modules)
 ├── http.go             HTTP handlers + route registration
@@ -129,10 +129,10 @@ domains/<context>/<module>/
 
 Steps to add a module:
 
-1. Create the package directory under the right `domains/<context>/`.
-2. Add SQL migrations under `migrations/` with the next number — both `.up.sql` and `.down.sql`.
+1. Create the package directory under the right `internal/<context>/`.
+2. Add SQL migrations under `internal/platform/database/migrations/` with the next number — both `.up.sql` and `.down.sql`.
 3. Add domain types, repository, service, and HTTP handlers.
-4. Mount the routes in [platform/api/rest/router.go](./platform/api/rest/router.go).
+4. Mount the routes in [internal/bootstrap/router.go](./internal/bootstrap/router.go) (the composition root).
 5. Add tests next to the code (`*_test.go`).
 6. Update [api/openapi/](./api/openapi/).
 
@@ -154,7 +154,7 @@ For the marketing site ([apps/website](./apps/website/)) and hosted login ([apps
 
 ## Code style
 
-- **Go:** gofmt-clean. `go vet` clean. Use the existing patterns in `platform/` (errors, logging, HTTP middleware).
+- **Go:** gofmt-clean. `go vet` clean. Use the existing patterns in `internal/platform/` (errors, logging, HTTP middleware).
 - **TypeScript:** Biome-formatted. Biome lint clean. No `any` without a justification comment.
 - **SQL:** lowercase keywords (`select`, not `SELECT`). Migrations are immutable once merged — don't edit them in place; write a new one.
 - **Comments:** the [root README and CLAUDE-style guidance](./README.md) apply — only write a comment when the *why* is non-obvious. Don't restate what the code does.

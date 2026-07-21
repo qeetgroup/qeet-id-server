@@ -10,8 +10,8 @@ rules:
     severity: ERROR
     paths:
       include:
-        - domains/
-        - platform/
+        - internal/
+        - internal/platform/
 
   - id: no-raw-sql-concat
     pattern: |
@@ -22,8 +22,8 @@ rules:
     severity: WARNING
     paths:
       include:
-        - domains/
-        - platform/
+        - internal/
+        - internal/platform/
 
   - id: no-weak-rand
     patterns:
@@ -35,8 +35,8 @@ rules:
     severity: ERROR
     paths:
       include:
-        - domains/
-        - platform/
+        - internal/
+        - internal/platform/
 
   - id: no-md5-sha1
     patterns:
@@ -48,5 +48,5 @@ rules:
     severity: ERROR
     paths:
       include:
-        - domains/
-        - platform/
+        - internal/
+        - internal/platform/

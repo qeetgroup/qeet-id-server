@@ -658,7 +658,7 @@ func findRepoRoot() (string, error) {
 	}
 }
 
-func fatal(err error)   { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
+func fatal(err error) { fmt.Fprintln(os.Stderr, "error:", err); os.Exit(1) }
 func fatalIf(err error) {
 	if err != nil {
 		fatal(err)

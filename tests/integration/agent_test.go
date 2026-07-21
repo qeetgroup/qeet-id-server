@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	agent "github.com/qeetgroup/qeet-id-server/domains/developer/agents"
-	"github.com/qeetgroup/qeet-id-server/platform/api/rest/errs"
+	agent "github.com/qeetgroup/qeet-id-server/internal/developer/agents"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 // addTenantMember grants userID a role in tenantID directly (bypassing the

@@ -24,6 +24,6 @@
   "search.exclude": {
     "**/node_modules": true,
     "**/dist": true,
-    "platform/database/sqlc/*.go": true
+    "internal/platform/database/sqlc/*.go": true
   }
 }
