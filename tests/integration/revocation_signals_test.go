@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authentication"
-	"github.com/qeetgroup/qeet-id/domains/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id/domains/developer/webhooks"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
 // subscribeTo creates a webhook subscription scoped to exactly the given

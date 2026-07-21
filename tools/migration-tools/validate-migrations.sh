@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MIGRATIONS_DIR="${REPO_ROOT}/platform/database/migrations"
+MIGRATIONS_DIR="${REPO_ROOT}/internal/platform/database/migrations"
 
 errors=0
 

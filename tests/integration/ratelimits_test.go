@@ -12,8 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/operations/ratelimits"
-	"github.com/qeetgroup/qeet-id/platform/api/rest/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Rate-limit overrides: GET returns platform defaults when no override exists,

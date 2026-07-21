@@ -12,7 +12,7 @@ if [ -z "$NAME" ]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MIGRATIONS_DIR="${REPO_ROOT}/platform/database/migrations"
+MIGRATIONS_DIR="${REPO_ROOT}/internal/platform/database/migrations"
 
 # Find the next sequence number
 LAST=$(ls "$MIGRATIONS_DIR"/*.up.sql 2>/dev/null | sort | tail -1 | xargs basename | cut -d_ -f1)

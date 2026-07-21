@@ -10,10 +10,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/access/authorization/authzen"
-	"github.com/qeetgroup/qeet-id/domains/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id/domains/access/authorization/rebac"
-	"github.com/qeetgroup/qeet-id/domains/operations/compliance"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/compliance"
 )
 
 func createUserInTenant(t *testing.T, ctx context.Context, tenantID uuid.UUID) uuid.UUID {

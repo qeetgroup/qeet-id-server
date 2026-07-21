@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
-	principal "github.com/qeetgroup/qeet-id/domains/developer/service-accounts"
-	notification "github.com/qeetgroup/qeet-id/domains/operations/notifications"
+	principal "github.com/qeetgroup/qeet-id-server/internal/developer/service-accounts"
+	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 )
 
 // Notifications: the in-app inbox tracks unread count and MarkAllRead clears it.

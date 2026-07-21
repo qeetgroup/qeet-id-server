@@ -1,9 +1,0 @@
-{
-  "title": "Authorize access",
-  "wantsPermission": "wants permission to:",
-  "actions": {
-    "deny": "Deny",
-    "allow": "Allow",
-    "allowing": "…"
-  }
-}

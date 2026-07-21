@@ -5,21 +5,25 @@
 //
 // Enforced today (see docs/ARCHITECTURE.md → "Enforced dependency rules"):
 //
-//	R1  platform/* (EXCEPT the platform/api/rest composition root) must NOT import
-//	    domains/* or cmd/* — platform is infrastructure; it never depends on
-//	    business domains or entrypoints. platform/api/rest is the one wiring
-//	    exception (it mounts every domain handler and is imported only by cmd).
+//	R1  internal/platform/* is pure infrastructure. It must NOT import any of the
+//	    5 bounded contexts (internal/access/, internal/identity/,
+//	    internal/federation/, internal/developer/, internal/operations/), nor
+//	    cmd/*, nor the composition root internal/bootstrap. There is NO wiring
+//	    exception inside platform anymore — the router moved out of platform and
+//	    now lives in internal/bootstrap, the single place allowed to import
+//	    everything.
 //
-//	R2  domains/* must NOT import cmd/* or the platform/api/rest router — domain
-//	    logic sits below wiring and entrypoints. (Importing the platform/api/rest
-//	    sub-packages — middleware, paging, errs, codes — is fine; only the
-//	    platform/api/rest router itself is off-limits.)
+//	R2  the 5 bounded contexts sit below wiring and entrypoints. Any package under
+//	    internal/{access,identity,federation,developer,operations} must NOT import
+//	    cmd/* or the composition root internal/bootstrap. (Importing
+//	    internal/platform/* — including the shared HTTP primitives under
+//	    internal/platform/http/* such as httpx, codes, errs, paging — is fine.)
 //
 // Intentionally NOT enforced yet (would fail on current code — tighten later,
 // e.g. with go-arch-lint once the graph is curated):
 //
-//	- cross-domain imports (domains/* -> other domains/*); today many domains
-//	  legitimately depend on operations/audit, identity/users, etc.
+//   - cross-context imports (one bounded context -> another); today many contexts
+//     legitimately depend on operations/audit, identity/users, etc.
 //
 // NOTE on caching: these tests read the import graph at runtime via `go list`,
 // which Go's test cache cannot see — a plain `go test ./...` may serve a stale
@@ -36,7 +40,7 @@ import (
 	"testing"
 )
 
-const module = "github.com/qeetgroup/qeet-id"
+const module = "github.com/qeetgroup/qeet-id-server"
 
 type goPackage struct {
 	ImportPath string
@@ -79,45 +83,67 @@ func rel(importPath string) string {
 
 func underCmd(p string) bool { return p == "cmd" || strings.HasPrefix(p, "cmd/") }
 
-// underRouter matches only the wiring-root package (platform/api/rest), not its
-// utility sub-packages (middleware, paging, errs, codes) which domains may use freely.
-func underRouter(p string) bool {
-	return p == "platform/api/rest"
+// underBootstrap matches the composition root — the single wiring package that
+// is allowed to import everything. It replaced the old platform/api/rest router.
+func underBootstrap(p string) bool {
+	return p == "internal/bootstrap" || strings.HasPrefix(p, "internal/bootstrap/")
 }
 
-// R1 — platform stays pure infrastructure.
-func TestPlatformDoesNotImportDomainsOrCmd(t *testing.T) {
+// contexts are the 5 bounded contexts. Business logic lives here; it sits below
+// wiring (internal/bootstrap) and entrypoints (cmd/*).
+var contexts = []string{
+	"internal/access",
+	"internal/identity",
+	"internal/federation",
+	"internal/developer",
+	"internal/operations",
+}
+
+// underContext reports whether p is (or lives under) one of the 5 bounded contexts.
+func underContext(p string) bool {
+	for _, c := range contexts {
+		if p == c || strings.HasPrefix(p, c+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// R1 — internal/platform stays pure infrastructure.
+func TestPlatformDoesNotImportContextsOrCmd(t *testing.T) {
 	for _, p := range loadPackages(t) {
 		self := rel(p.ImportPath)
-		if !strings.HasPrefix(self, "platform/") || underRouter(self) {
-			continue // not platform-core (platform/api/rest is the allowed wiring exception)
+		if !strings.HasPrefix(self, "internal/platform/") {
+			continue // only platform infrastructure is constrained by R1
 		}
 		for _, imp := range p.Imports {
 			dep := rel(imp)
 			switch {
-			case strings.HasPrefix(dep, "domains/"):
-				t.Errorf("R1 violation: %s imports %s — platform/* must not depend on domains/* (wiring belongs in platform/api/rest only)", self, dep)
+			case underContext(dep):
+				t.Errorf("R1 violation: %s imports %s — internal/platform/* must not depend on a bounded context (wiring belongs in internal/bootstrap only)", self, dep)
 			case underCmd(dep):
-				t.Errorf("R1 violation: %s imports %s — platform/* must not depend on cmd/*", self, dep)
+				t.Errorf("R1 violation: %s imports %s — internal/platform/* must not depend on cmd/*", self, dep)
+			case underBootstrap(dep):
+				t.Errorf("R1 violation: %s imports %s — internal/platform/* must not depend on the composition root internal/bootstrap", self, dep)
 			}
 		}
 	}
 }
 
-// R2 — domains stay below wiring and entrypoints.
-func TestDomainsDoNotImportCmdOrRouter(t *testing.T) {
+// R2 — bounded contexts stay below wiring and entrypoints.
+func TestContextsDoNotImportCmdOrBootstrap(t *testing.T) {
 	for _, p := range loadPackages(t) {
 		self := rel(p.ImportPath)
-		if !strings.HasPrefix(self, "domains/") {
+		if !underContext(self) {
 			continue
 		}
 		for _, imp := range p.Imports {
 			dep := rel(imp)
 			switch {
 			case underCmd(dep):
-				t.Errorf("R2 violation: %s imports %s — domains/* must not depend on cmd/*", self, dep)
-			case underRouter(dep):
-				t.Errorf("R2 violation: %s imports %s — domains/* must not depend on the platform/api/rest router (use platform/api/rest/middleware utilities instead)", self, dep)
+				t.Errorf("R2 violation: %s imports %s — bounded contexts must not depend on cmd/*", self, dep)
+			case underBootstrap(dep):
+				t.Errorf("R2 violation: %s imports %s — bounded contexts must not depend on the composition root internal/bootstrap (import internal/platform/* utilities instead)", self, dep)
 			}
 		}
 	}

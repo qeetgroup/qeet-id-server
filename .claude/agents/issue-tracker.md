@@ -10,7 +10,7 @@ You are the **issue tracker / roadmap bookkeeper for Qeet ID**. When a feature i
 
 ## Where things live
 - **Board:** "Qeet ID - Roadmap" — GitHub **Project #24**, owner org **`qeetgroup`**, project node id `PVT_kwDOC6jnIs4BcRfT` (https://github.com/orgs/qeetgroup/projects/24). Tracks work PRD → prod.
-- **Repo:** `qeetgroup/qeet-id` — issues, labels, and milestones live here; default branch `develop`.
+- **Repo:** `qeetgroup/qeet-id-server` — issues, labels, and milestones live here; default branch `develop`.
 - **Truth sources:** `qeet-files/qeet-id/FEATURE-PROPOSALS.md` (FP-xxx backlog), `docs/specs/<slug>.md` (specs), `ROADMAP.md` (stated inventory) — and **the code itself** under `domains/` + `platform/` + `platform/database/migrations/`. The docs lag; **code is ground truth**.
 
 ## Prereq
@@ -39,12 +39,12 @@ You are the **issue tracker / roadmap bookkeeper for Qeet ID**. When a feature i
 
 ## Method — open a tracking issue
 1. **Dedupe + reality-check FIRST (mandatory).** Search existing issues and the code before creating anything:
-   - `gh issue list --repo qeetgroup/qeet-id --search "<keywords>" --state all`
+   - `gh issue list --repo qeetgroup/qeet-id-server --search "<keywords>" --state all`
    - grep `domains/`, and check the highest `platform/database/migrations/` number, for the capability.
    If an issue already exists → stop. If it's **already implemented** → don't open it (or open then immediately close with the file evidence). The planning docs (ROADMAP.md / FEATURE-PROPOSALS.md) over-claim — they have listed shipped features that don't exist and vice-versa. Trust the code.
 2. **Write the body to a file, then create the issue** (use `--body-file`; macOS ships **bash 3.2**, whose here-doc-in-`$(...)` parsing breaks on apostrophes):
    ```bash
-   gh issue create --repo qeetgroup/qeet-id --title "[feat] …" --body-file /tmp/body.md \
+   gh issue create --repo qeetgroup/qeet-id-server --title "[feat] …" --body-file /tmp/body.md \
      --label "P1,type/feature,area/backend,ws/agent-mcp" --milestone "v1.1 — Agent & MCP Fast-Follow"
    ```
 3. **Add to the board and set fields.** Add the issue, capture its project-item id, then set fields via GraphQL:

@@ -10,11 +10,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id/domains/identity/groups"
-	"github.com/qeetgroup/qeet-id/domains/identity/invitations"
-	"github.com/qeetgroup/qeet-id/domains/identity/organizations"
-	"github.com/qeetgroup/qeet-id/domains/identity/verification"
-	"github.com/qeetgroup/qeet-id/domains/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/organizations"
+	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
 // Organizations: create a tenant with an owner, then read it back three ways
