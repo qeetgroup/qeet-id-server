@@ -1,4 +1,4 @@
--- One Postgres schema per bounded context. No cross-schema JOINs.
+-- 0001_schemas — one Postgres schema per bounded context (no cross-schema JOINs)
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE SCHEMA IF NOT EXISTS platform;

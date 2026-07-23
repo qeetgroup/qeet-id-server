@@ -1,9 +1,7 @@
 // Package vc issues and verifies W3C Verifiable Credentials in the JWT
-// serialization (JWT-VC). Credentials are ES256-signed by the platform issuer
-// (verifiable via the same JWKS) and tracked in auth.credentials so they can be
-// listed and revoked. Verification checks the signature + issuer + expiry and
-// then the revocation registry. An early, differentiating capability — most
-// IdPs don't ship VC issuance.
+// serialization (JWT-VC): ES256-signed by the platform issuer (verifiable via the
+// same JWKS), tracked in auth.credentials for listing/revocation. Verification
+// checks signature + issuer + expiry, then the revocation registry.
 package vc
 
 import (
@@ -206,8 +204,6 @@ func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID) error {
 	}
 	return nil
 }
-
-// --- handlers ---
 
 type Handler struct {
 	Service *Service

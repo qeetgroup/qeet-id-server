@@ -1,23 +1,8 @@
-// Package anomaly scores the existing hash-chained audit.events log against
-// a per-(tenant, actor) behavioral baseline, flagging deviations — a
-// first-time action type, an unusual hour, a brand-new IP — for admin
-// review. It is the first behavioral-baseline detector in the codebase;
-// domains/access/threat-detection/* score authentication-time signals
-// (failed logins, UA heuristics) against static per-tenant thresholds, not a
-// rolling history, and write to a separate table family (auth.security_events
-// / auth.bot_events) — this package is a distinct, admin-action-focused
-// concern layered directly on audit.events.
-//
-// A background Sweep scores newly-recorded events in small batches (marking
-// each audit.events row's scored_at so it's processed exactly once, mirroring
-// platform.outbox's published_at IS NULL convention) rather than hooking into
-// audit.Record synchronously — that would couple every domain that writes
-// audit events to this package and add latency to writes that don't need it.
-//
-// Deliberately out of scope: events with no human actor (agents/service
-// principals already have their own governance surface — see
-// domains/federation/adminportal and domains/developer/agents) are folded
-// into no baseline and never scored.
+// Package anomaly scores the hash-chained audit.events log against a
+// per-(tenant, actor) behavioral baseline, flagging deviations (first-time
+// action, unusual hour, new IP) for admin review. A background Sweep scores
+// events in batches rather than hooking audit.Record synchronously — which
+// would couple every audit-writing domain to this package and add write latency.
 package anomaly
 
 import (
@@ -361,9 +346,8 @@ func toTimePtr(t pgtype.Timestamptz) *time.Time {
 	return &t.Time
 }
 
-// toAnomalyFromRow maps a ListAnomaliesRow or ListAnomaliesFilteredRow to an
-// Anomaly domain value. The two generated row types have the same fields so
-// this helper is generic over the shared fields via direct access.
+// rowToAnomaly maps a ListAnomalies or ListAnomaliesFiltered row to an Anomaly.
+// The two generated row types share fields, so callers pass them positionally.
 func rowToAnomaly(
 	id, tenantID, eventID uuid.UUID,
 	actorUserID pgtype.UUID,
@@ -493,10 +477,6 @@ func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Set
 	out.TenantID = tenantID
 	return &out, nil
 }
-
-// =====================================================================
-// Handler
-// =====================================================================
 
 type Handler struct {
 	Service *Service

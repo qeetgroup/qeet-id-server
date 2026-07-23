@@ -59,7 +59,7 @@ func (h *Handler) search(w http.ResponseWriter, r *http.Request) {
 
 	// User principals get per-type RBAC checks; API-key and service-principal
 	// callers (p.UserID == nil) skip them — they are already scoped to the
-	// tenant by their credential and the Postgres RLS backstop.
+	// tenant by their credential.
 	p := httpx.PrincipalFromCtx(r.Context())
 	userID := p.UserID // *uuid.UUID; nil for non-user principals
 

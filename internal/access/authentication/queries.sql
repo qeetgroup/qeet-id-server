@@ -74,3 +74,24 @@ UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = @session_id;
 -- Idempotent: no-op on an already-revoked session.
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = @session_id AND revoked_at IS NULL;
+
+-- name: InsertPasswordCredential :exec
+-- Stores the Argon2id hash for a newly created identity (signup / hosted register).
+INSERT INTO auth.password_credentials (user_id, password_hash)
+VALUES (@user_id, @password_hash);
+
+-- name: InsertTenantlessUser :one
+-- Tenant-less signup: creates the identity with tenant_id NULL (a literal, not a
+-- bind — membership lives in rbac.user_roles). display_name is nullable text.
+INSERT INTO "user".users (tenant_id, email, display_name)
+VALUES (NULL, @email, @display_name)
+RETURNING id, created_at, updated_at;
+
+-- name: InsertTenantlessSession :exec
+-- Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
+-- NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
+VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent);
+
+-- name: DeleteMFALoginChallenge :exec
+DELETE FROM auth.mfa_login_challenges WHERE id = @id;

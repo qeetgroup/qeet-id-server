@@ -1,10 +1,5 @@
--- Self-serve Admin Portal: a unique, time-limited, capability-scoped link a
--- tenant admin can hand to their own IT admin (no Qeet ID account, no console
--- credentials) so that person can configure the tenant's SAML connection
--- and/or rotate its SCIM token directly. Possession of the raw token is the
--- sole credential (hashed at rest, like an invite or magic-link token); unlike
--- those, a portal link is not single-use — it's a revisitable session valid
--- until expires_at or an explicit revoke.
+-- 0075_admin_portal_links — capability-scoped, time-limited link a tenant admin hands to their IT admin (no Qeet account) to set up SAML / rotate SCIM.
+-- Possession of the raw token is the sole credential (hashed at rest); unlike invite/magic-link tokens it's not single-use — a revisitable session until expires_at or revoke.
 CREATE TABLE tenant.admin_portal_links (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id    UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

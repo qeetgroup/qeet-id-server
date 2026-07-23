@@ -1,7 +1,4 @@
--- SAML 2.0 IdP side: Qeet ID as an SSO *source*. One row per downstream
--- Service Provider a tenant registers to consume Qeet via SAML. The SSO
--- endpoint matches an inbound AuthnRequest's Issuer to entity_id, then signs an
--- assertion and POSTs it to acs_url.
+-- 0044_saml_idp — SAML 2.0 IdP side (Qeet as SSO source): one row per downstream SP; inbound AuthnRequest Issuer matches entity_id, then a signed assertion is POSTed to acs_url
 
 CREATE TABLE tenant.saml_service_providers (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),

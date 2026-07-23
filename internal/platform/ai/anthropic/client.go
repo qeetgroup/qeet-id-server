@@ -1,7 +1,6 @@
-// Package anthropic is a thin streaming client for the Anthropic Messages API.
-// It holds only transport concerns — base URL, auth header, SSE parsing — and
-// intentionally imports nothing from domains/*. The copilot domain imports
-// this package; the reverse would violate arch rule R1.
+// Package anthropic is a thin streaming client for the Anthropic Messages API
+// (transport only: base URL, auth header, SSE parsing). It imports nothing from
+// domains/* — the copilot domain imports this, not the reverse (arch rule R1).
 package anthropic
 
 import (

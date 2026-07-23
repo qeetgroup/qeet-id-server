@@ -1,7 +1,6 @@
-// Package oidc implements the OpenID Connect provider role for Qeet.
-// Implemented: client_credentials grant (via principal pkg),
-// authorization_code grant skeleton, discovery + JWKS endpoints,
-// userinfo, and the refresh-token grant.
+// Package oidc implements Qeet's OpenID Connect provider role: the OAuth2/OIDC
+// grants (authorization_code+PKCE, refresh, client_credentials, token-exchange,
+// device, CIBA) plus discovery, JWKS, and userinfo endpoints.
 package oidc
 
 import (
@@ -127,12 +126,10 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 }
 
 // ShadowAICandidate is an OIDC client capable of unattended machine access
-// (client_credentials or token-exchange in its grant_types) that hasn't been
-// explicitly reviewed — the same "unmanaged non-human identity" risk the
-// agents/service-accounts registries exist to close, surfaced for a client
-// that picked up a machine grant type sideways rather than through either
-// registry. LiveGrants counts its currently active (unexpired, unrevoked)
-// refresh tokens, as a rough signal of how much this matters right now.
+// (client_credentials or token-exchange) that hasn't been explicitly reviewed —
+// the same "unmanaged non-human identity" risk the agents/service-accounts
+// registries close, for a client that picked up a machine grant sideways.
+// LiveGrants counts its active (unexpired, unrevoked) refresh tokens.
 type ShadowAICandidate struct {
 	ID         uuid.UUID `json:"id"`
 	ClientID   string    `json:"client_id"`

@@ -1,6 +1,4 @@
--- CSRF state + PKCE verifier for the upstream OAuth round-trip. Single-use and
--- short-lived: a row is written on /social/{provider}/start and deleted when the
--- matching /callback consumes it.
+-- 0028_social_oauth — single-use CSRF/PKCE state for the upstream OAuth round-trip (start → callback), plus a one-time login code
 CREATE TABLE auth.social_oauth_states (
     state_hash    TEXT PRIMARY KEY,
     tenant_id     UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,
@@ -11,9 +9,8 @@ CREATE TABLE auth.social_oauth_states (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- One-time application code minted after a successful upstream login. The SPA
--- trades it at /social/exchange for a Qeet token pair, so tokens never travel
--- in a redirect URL.
+-- One-time code minted after upstream login; the SPA trades it at /social/exchange
+-- for a token pair, so tokens never travel in a redirect URL.
 CREATE TABLE auth.social_login_codes (
     code_hash   TEXT PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES "user".users(id)   ON DELETE CASCADE,

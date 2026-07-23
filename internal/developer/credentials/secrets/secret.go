@@ -1,9 +1,7 @@
-// Package secret is a per-tenant secrets vault. Values are encrypted at rest
-// with AES-256-GCM and never returned except via an explicit, audited reveal.
-//
-// The data-encryption key comes from a KeyProvider (see keyprovider.go),
-// unwrapped once at startup — a dedicated key independent of the JWT secret,
-// and swappable for a KMS-backed provider without changing the Service.
+// Package secret is a per-tenant secrets vault. Values are encrypted at rest with
+// AES-256-GCM and never returned except via an explicit, audited reveal. The
+// data-encryption key comes from a KeyProvider (keyprovider.go), unwrapped once at
+// startup — independent of the JWT secret and swappable for a KMS-backed provider.
 package secret
 
 import (
@@ -228,8 +226,6 @@ func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	}
 	return nil
 }
-
-// --- handlers ---
 
 type Handler struct {
 	Service *Service

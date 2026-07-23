@@ -1,11 +1,5 @@
--- OpenID Connect CIBA (Client-Initiated Backchannel Authentication) — poll
--- mode. A client identifies the user via login_hint (no browser redirect);
--- the user gets an async, out-of-band consent prompt (in-app notification)
--- and approves/denies it; the client polls the token endpoint with
--- auth_req_id meanwhile. Structurally the backchannel counterpart of the
--- device grant (auth.oidc_device_codes) — poll/interval/status/consumed_at
--- all mirror that table — except the user is already known up front instead
--- of being resolved via a human-typed code.
+-- 0074_ciba — OIDC CIBA (Client-Initiated Backchannel Auth), poll mode: client names the user via login_hint (no redirect), user approves out-of-band, client polls with auth_req_id.
+-- Backchannel counterpart of the device grant (auth.oidc_device_codes), but the user is known up front rather than via a human-typed code.
 CREATE TABLE auth.oidc_ciba_requests (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     auth_req_id_hash TEXT NOT NULL UNIQUE,

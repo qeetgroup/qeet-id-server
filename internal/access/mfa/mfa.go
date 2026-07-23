@@ -290,9 +290,7 @@ func (s *Service) ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID)
 	return nil
 }
 
-// ============================================================
 // Email / SMS OTP factors
-// ============================================================
 
 // OTPFactor is the account-facing view of a registered OTP channel. The
 // destination is masked so the UI can show which factor without exposing the
@@ -459,9 +457,7 @@ func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, co
 	return true, nil
 }
 
-// ============================================================
 // Step-up MFA
-// ============================================================
 
 // defaultStepUpWindow is how long a successful verification keeps a sensitive
 // action unlocked. Five minutes balances friction against replay risk.

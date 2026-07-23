@@ -1,10 +1,6 @@
-// Package agent provides first-class AI-agent identities: non-human principals
-// that authenticate with a secret and receive SHORT-LIVED, scoped access tokens
-// marked actor_type="agent" (plus an agent_id claim). Tokens are ephemeral by
-// design — an agent re-mints rather than refreshing — and are signed by the
-// same platform issuer, so they verify through the standard JWKS/RequireAuth
-// path while remaining distinguishable from human and service principals
-// (foundational for MCP-server authorization).
+// Package agent provides non-human AI-agent identities: they authenticate with a
+// secret and receive short-lived, scoped tokens (actor_type="agent") that are
+// re-minted rather than refreshed, yet verify on the standard JWKS/RequireAuth path.
 package agent
 
 import (
@@ -93,7 +89,7 @@ func validateTransition(cur, target string) error {
 		return errs.ErrBadRequest.WithDetail("invalid target status")
 	}
 	if cur == target {
-		return nil // idempotent
+		return nil
 	}
 	if cur == "decommissioned" {
 		return errs.ErrConflict.WithDetail("agent is decommissioned (terminal)")
@@ -119,10 +115,9 @@ func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target
 		return cur, verr
 	}
 	if cur == target {
-		return cur, nil // no-op
+		return cur, nil
 	}
-	// Resume sets status=active and clears disabled_at; all other transitions
-	// set the given status and stamp disabled_at=NOW().
+	// Resume clears disabled_at; other transitions stamp disabled_at=NOW().
 	if target == "active" {
 		err = s.q.ResumeAgent(ctx, dbgen.ResumeAgentParams{ID: id, TenantID: tenantID})
 	} else {
@@ -158,10 +153,8 @@ type Agent struct {
 	Status string `json:"status"`
 	// Disabled is retained for back-compat (true when Status != "active").
 	Disabled bool `json:"disabled"`
-	// SponsorUserID is the named human owner accountable for this agent — nil
-	// only for agents created before the sponsor model existed. New agents
-	// require one (see Create). TransferSponsor reassigns it, e.g. when the
-	// sponsor is offboarded.
+	// SponsorUserID is the named human owner accountable for this agent — nil only
+	// for agents created before the sponsor model existed; new agents require one.
 	SponsorUserID *uuid.UUID `json:"sponsor_user_id,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 	// Secret is the plaintext credential, returned only once on create.
@@ -437,8 +430,6 @@ func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*Toke
 		Scope:       scope,
 	}, nil
 }
-
-// --- handlers ---
 
 type Handler struct {
 	Service *Service

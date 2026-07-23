@@ -136,8 +136,8 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 			// No action needed; tool blocks are processed after the loop.
 
 		case ai.EventStop:
-			// StopReason is captured implicitly: we determine the path by
-			// len(toolBlocks) > 0 (same heuristic as the original code).
+			// StopReason is captured implicitly: the path is chosen by
+			// len(toolBlocks) > 0 after the loop.
 
 		case ai.EventProviderError:
 			slog.Error("copilot: provider stream error", "msg", ev.ErrorMessage)

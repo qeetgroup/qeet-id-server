@@ -189,12 +189,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	// AI Copilot: provider unset ⇒ feature disabled (handler still mounts; /status
 	// reports configured=false; .../messages returns 409 copilot_unconfigured).
-	//
-	// COPILOT_PROVIDER selects the inference backend:
-	//   "anthropic" — Anthropic Messages API (wraps anthropic.Client via ai.Provider)
-	//   "openai"    — OpenAI Chat Completions API or any hosted OpenAI-compatible
-	//                 endpoint (Groq, OpenRouter, Gemini, …); set COPILOT_BASE_URL
-	//                 to point at a non-OpenAI compatible endpoint.
+	// COPILOT_PROVIDER selects the backend: "openai" (or any OpenAI-compatible
+	// endpoint via COPILOT_BASE_URL), else "anthropic".
 	copilotService := copilot.NewService(pool)
 	copilotConfigured := cfg.CopilotProvider != "" && cfg.CopilotAPIKey != ""
 	var copilotOrchestrator *copilot.Orchestrator

@@ -1,8 +1,5 @@
--- Pending card-payment checkouts (Stripe / Razorpay). A row is created when an
--- admin starts a paid plan change; the provider's success webhook completes it,
--- activating the subscription. Correlation uses this row's id (passed to the
--- provider as client_reference_id / notes), and the status guards against
--- double-activation on webhook retries.
+-- 0057_billing_checkouts — pending card checkouts (Stripe/Razorpay) completed by the provider's success webhook.
+-- Correlation uses this row's id (client_reference_id/notes); status guards against double-activation on webhook retries.
 CREATE TABLE tenant.billing_checkouts (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id    UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

@@ -97,8 +97,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, erro
 }
 
 // purgeRequestFromRow maps a generated UserPurgeRequest model to the domain
-// Request type. The helper lives here to keep mapping logic co-located with
-// the repository code.
+// Request type.
 func purgeRequestFromRow(r dbgen.UserPurgeRequest) *Request {
 	return &Request{
 		ID:          r.ID,

@@ -1,4 +1,4 @@
--- Password reset tokens.
+-- 0009_recovery — password-reset + magic-link (passwordless) tokens
 CREATE TABLE auth.password_resets (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id      UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,
@@ -9,7 +9,6 @@ CREATE TABLE auth.password_resets (
 );
 CREATE INDEX idx_password_resets_user ON auth.password_resets (user_id);
 
--- Magic link tokens for passwordless login.
 CREATE TABLE auth.magic_links (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id    UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

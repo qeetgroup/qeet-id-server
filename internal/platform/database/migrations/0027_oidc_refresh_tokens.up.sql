@@ -1,7 +1,5 @@
--- Refresh tokens for the OIDC authorization_code flow. Unlike auth.refresh_tokens
--- (session-bound, first-party), these are bound to an OIDC client and carry the
--- granted scopes so a rotated token re-issues an access/ID token that matches the
--- original grant. Rotation + reuse-detection mirrors auth.refresh_tokens.
+-- 0027_oidc_refresh_tokens — refresh tokens for the OIDC auth-code flow: client-bound and scope-carrying
+-- (rotation reissues tokens matching the grant), unlike session-bound auth.refresh_tokens.
 CREATE TABLE auth.oidc_refresh_tokens (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     token_hash  TEXT NOT NULL UNIQUE,

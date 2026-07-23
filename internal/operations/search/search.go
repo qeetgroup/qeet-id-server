@@ -1,23 +1,8 @@
-// Package search is the universal cross-resource search service for the
-// Qeet ID admin console. It fans out read-only ILIKE queries across the
-// supported resource types (user, organization, group, role, oidc_client,
-// audit_event), merges the rows in-memory, scores them by match quality, and
-// returns a cursor-paginated result set.
-//
-// Tenant isolation: the tenant_id is always taken from the authenticated
-// principal and stamped onto every query parameter — never read from the
-// URL or body (QID-18). Postgres RLS adds a defence-in-depth backstop on
-// the qid_app connection role.
-//
-// RBAC gating: user principals are checked per-type against their read
-// permission (user.read, group.read, role.read, …) before the corresponding
-// query runs. Types the caller cannot read are silently excluded from results.
-// API-key / service-principal callers are tenant-scoped by their credential
-// and skip per-type RBAC (their scopes already limit what they can access).
-//
-// Fuzzy matching: pg_trgm is not enabled in this deployment; matching uses
-// ILIKE '%q%' (parameterised, never string-concatenated into the query).
-// Exact / prefix / substring scoring is computed in Go after the fetch.
+// Package search is the universal cross-resource search for the admin console.
+// It fans out read-only ILIKE queries across the supported resource types (user,
+// organization, group, role, oidc_client, audit_event), merges and scores rows in
+// Go, and returns a cursor-paginated set. Tenant isolation (from the principal,
+// never the URL/body — QID-18) and per-type RBAC gating are enforced in Search.
 package search
 
 import (
@@ -114,7 +99,8 @@ func NewService(pool *pgxpool.Pool, checker permissionChecker) *Service {
 //
 //   - tenantID is derived from the principal; never from the request body.
 //   - userID, when non-nil, triggers per-type RBAC checks; nil skips them
-//     (API-key / service-principal callers are already tenant-scoped by RLS).
+//     (API-key / service-principal callers are already tenant-scoped by their
+//     credential).
 //   - types is an optional filter list; empty means all permitted types.
 //   - cursor is an opaque base64url token from a previous response.
 func (s *Service) Search(
@@ -147,9 +133,9 @@ func (s *Service) Search(
 
 	// Per-type RBAC gate. User principals are checked against their role
 	// assignments; non-user callers (API keys, service accounts) skip the
-	// check — they are already scoped to the tenant by their credential and
-	// RLS. A checker error is surfaced as a hard failure so the caller never
-	// silently receives an over-broad result set.
+	// check — they are already scoped to the tenant by their credential. A
+	// checker error is surfaced as a hard failure so the caller never silently
+	// receives an over-broad result set.
 	var all []Result
 	for _, t := range candidates {
 		if userID != nil {

@@ -1,14 +1,11 @@
 package billing
 
 // Card-payment providers (Stripe, Razorpay) for paid plan changes, implemented
-// against each provider's REST API (no SDK dependency). The model is one-time
-// payment per billing period: a hosted checkout returns a redirect URL, and the
-// provider's success webhook completes the checkout (activating the plan). Each
-// provider is optional — disabled until its keys are configured — so dev/CI and
-// invoice-only deployments are unaffected.
-//
-// Webhook signatures are verified with the provider's shared secret. Replay is
-// harmless because CompleteCheckout is idempotent (a checkout activates once).
+// against each provider's REST API (no SDK dependency). A hosted checkout returns
+// a redirect URL; the provider's success webhook completes the checkout. Each
+// provider is optional (disabled until its keys are configured). Webhook
+// signatures are verified with the shared secret; replay is harmless because
+// CompleteCheckout is idempotent.
 
 import (
 	"bytes"

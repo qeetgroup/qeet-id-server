@@ -1,10 +1,6 @@
-// Benchmark JWT signing throughput.
-// Measures how many ES256 access tokens the signing key can mint per second.
+// Benchmark JWT signing throughput — ES256 access tokens minted per second.
 //
 //	go run ./tools/benchmarks/jwt_signing
-//
-// Note: platform/security/jwt declares `package tokens` (folder name ≠ package
-// clause is intentional across the platform tree).
 package main
 
 import (

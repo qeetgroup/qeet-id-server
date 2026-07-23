@@ -23,7 +23,7 @@ type toolManifest struct {
 // neutral ai.ToolDef values. Both the Anthropic and OpenAI provider wrappers
 // accept this format and convert to their own wire representation.
 // The server NEVER provides a run() implementation — tools execute client-side
-// under the user's own token (RBAC/RLS/audit inherited, never bypassed).
+// under the user's own token (RBAC/audit inherited, never bypassed).
 func loadToolDefs() ([]ai.ToolDef, error) {
 	var m toolManifest
 	if err := json.Unmarshal(copilotmanifest.ToolsManifestJSON, &m); err != nil {

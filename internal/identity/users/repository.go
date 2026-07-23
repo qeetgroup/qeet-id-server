@@ -86,7 +86,6 @@ func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte(*p), Valid: true}
 }
 
-// userFromInsertRow maps an InsertUserRow to the domain User model.
 func userFromInsertRow(row dbgen.InsertUserRow) *User {
 	u := &User{
 		ID:              row.ID,
@@ -106,7 +105,6 @@ func userFromInsertRow(row dbgen.InsertUserRow) *User {
 	return u
 }
 
-// userFromGetRow maps a GetUserByIDRow (includes avatar_url) to the domain User model.
 func userFromGetRow(row dbgen.GetUserByIDRow) *User {
 	u := &User{
 		ID:              row.ID,
@@ -127,9 +125,8 @@ func userFromGetRow(row dbgen.GetUserByIDRow) *User {
 	return u
 }
 
-// userFromEmailRow maps a GetUserByEmailRow (or GetUserByEmailGlobalRow — identical
-// shape) to the domain User model. The avatar_url column is intentionally
-// excluded from these queries (the comment in the original code explains why).
+// userFromEmailRow maps a GetUserByEmailRow, or the identically-shaped
+// GetUserByEmailGlobalRow, to the domain User (avatar_url intentionally excluded).
 func userFromEmailRow(
 	id uuid.UUID,
 	tenantID pgtype.UUID,
@@ -186,9 +183,8 @@ func scanUser(row pgx.Row) (*User, error) {
 	return &u, nil
 }
 
-// CreateWithCredential inserts the user and (optionally) their password
-// credential inside one tx. Returns the new user along with a flag the
-// caller can use to know whether a password was set.
+// CreateWithCredential inserts the user and (optionally, when passwordHash is
+// non-empty) their password credential inside one tx.
 func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, passwordHash string) (*User, error) {
 	meta := in.Metadata
 	if meta == nil {
@@ -215,10 +211,11 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 	}
 	defer tx.Rollback(ctx)
 
-	// The sqlc-generated InsertUser and the raw cross-context password INSERT
-	// below all run on the same pgx.Tx — sqlc queries and hand-written SQL
-	// compose in one transaction.
-	row, err := r.q.WithTx(tx).InsertUser(ctx, dbgen.InsertUserParams{
+	// InsertUser and the cross-context password credential are both static SQL, so
+	// they run as sqlc queries on the same pgx.Tx via WithTx — one transaction across
+	// the user and auth bounded contexts.
+	q := r.q.WithTx(tx)
+	row, err := q.InsertUser(ctx, dbgen.InsertUserParams{
 		TenantID:    uuidToPgtype(in.TenantID),
 		Email:       strings.TrimSpace(in.Email),
 		Phone:       phone,
@@ -238,10 +235,10 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 	}
 	u := userFromInsertRow(row)
 	if passwordHash != "" {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO auth.password_credentials (user_id, password_hash)
-			VALUES ($1, $2)
-		`, u.ID, passwordHash); err != nil {
+		if err := q.InsertPasswordCredential(ctx, dbgen.InsertPasswordCredentialParams{
+			UserID:       u.ID,
+			PasswordHash: passwordHash,
+		}); err != nil {
 			return nil, err
 		}
 	}

@@ -1,25 +1,15 @@
 // Command route-audit diffs every backend call-site in the console/login
-// frontends against the authoritative OpenAPI route inventory, catching the
-// bug class where a frontend calls a path the backend never registered
-// (e.g. QID-01: GET /v1/roles/{roleId}/permissions, QID-02: GET
-// /v1/tenants/{tenantId}/users) — something no existing CI check does, since
-// platform/api/rest/openapi_coverage_test.go only diffs the router against
-// the spec, never the frontend against either.
+// frontends against the OpenAPI route inventory, catching the bug class where a
+// frontend calls a path the backend never registered — which no CI check covers
+// (openapi_coverage_test.go only diffs the router against the spec).
 //
 //	go run ./tools/qa/route-audit                 # human-readable report on stdout
 //	go run ./tools/qa/route-audit -md out.md      # markdown table, for qa/TESTING-FINDINGS.md
 //
-// Correctness notes:
-//   - Only scans call sites whose first argument is a literal string or
-//     template literal; a call built from a bare variable/expression has no
-//     statically-known path and is silently skipped (not flagged).
-//   - Path params use different names on each side (frontend `${roleId}` vs.
-//     backend `{roleID}`) — both are normalized to a bare `{param}` token
-//     before comparing, so naming differences never cause a false mismatch.
-//   - The OpenAPI specs are the comparison target, not a live chi.Walk, since
-//     TestOpenAPICoversAllMountedRoutes/TestOpenAPIHasNoPhantomRoutes already
-//     prove (at last green CI) that the specs are in exact lockstep with the
-//     router — reusing them here avoids needing to import the whole server.
+// It compares against the specs, not a live chi.Walk, because the coverage tests
+// already prove the specs are in lockstep with the router — reusing them avoids
+// importing the whole server. (The per-behavior parsing caveats — literal-only
+// call sites, path-param normalization — are documented at their functions.)
 package main
 
 import (

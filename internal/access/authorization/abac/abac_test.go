@@ -34,9 +34,7 @@ func eval(t *testing.T, condJSON string, b AttributeBag) bool {
 	return ok
 }
 
-// ---------------------------------------------------------------------------
 // Empty / no-op conditions.
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_EmptyIsTrue(t *testing.T) {
 	if !eval(t, `{}`, AttributeBag{}) {
@@ -47,9 +45,7 @@ func TestEvaluateCondition_EmptyIsTrue(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // eq / ne
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Eq(t *testing.T) {
 	b := subjectBag(map[string]any{"department": "eng"})
@@ -91,9 +87,7 @@ func TestEvaluateCondition_Ne(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // in / nin
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_In(t *testing.T) {
 	b := subjectBag(map[string]any{"role": "editor"})
@@ -115,9 +109,7 @@ func TestEvaluateCondition_Nin(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // contains
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Contains_String(t *testing.T) {
 	b := resourceBag(map[string]any{"path": "/api/v1/users"})
@@ -139,9 +131,7 @@ func TestEvaluateCondition_Contains_Array(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Numeric comparisons: gt, gte, lt, lte
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Gt(t *testing.T) {
 	b := contextBag(map[string]any{"hour": float64(14)})
@@ -186,9 +176,7 @@ func TestEvaluateCondition_Lte(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // exists
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Exists(t *testing.T) {
 	b := subjectBag(map[string]any{"email": "alice@example.com"})
@@ -200,9 +188,7 @@ func TestEvaluateCondition_Exists(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // prefix / suffix
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Prefix(t *testing.T) {
 	b := resourceBag(map[string]any{"name": "prod-api-gateway"})
@@ -224,9 +210,7 @@ func TestEvaluateCondition_Suffix(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // regex
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Regex_Match(t *testing.T) {
 	b := subjectBag(map[string]any{"email": "alice@qeet.in"})
@@ -251,9 +235,7 @@ func TestEvaluateCondition_Regex_BadPattern_FailClosed(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Logical gates: all, any, not
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_All(t *testing.T) {
 	b := subjectBag(map[string]any{"role": "admin", "active": true})
@@ -315,9 +297,7 @@ func TestEvaluateCondition_Not(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Nested conditions
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_Nested(t *testing.T) {
 	// (department == "eng" AND level >= 3) OR role == "admin"
@@ -364,9 +344,7 @@ func TestEvaluateCondition_Nested(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Missing / absent attributes
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_MissingAttr_FailClosed(t *testing.T) {
 	empty := AttributeBag{"subject": {}}
@@ -407,9 +385,7 @@ func TestEvaluateCondition_MissingNamespace(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Multi-segment nested attribute path
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_NestedAttrPath(t *testing.T) {
 	b := AttributeBag{
@@ -424,9 +400,7 @@ func TestEvaluateCondition_NestedAttrPath(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Malformed JSON → error (fail-closed at caller)
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_MalformedJSON(t *testing.T) {
 	_, err := EvaluateCondition(json.RawMessage(`{invalid json`), AttributeBag{})
@@ -450,9 +424,7 @@ func TestEvaluateCondition_UnrecognizedNode(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // validateCondition
-// ---------------------------------------------------------------------------
 
 func TestValidateCondition_Empty(t *testing.T) {
 	if err := validateCondition(json.RawMessage(`{}`)); err != nil {
@@ -492,9 +464,7 @@ func TestValidateCondition_InvalidChild(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Cross-namespace bag
-// ---------------------------------------------------------------------------
 
 func TestEvaluateCondition_CrossNamespace(t *testing.T) {
 	b := AttributeBag{

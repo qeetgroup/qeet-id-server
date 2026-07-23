@@ -1,7 +1,5 @@
--- In-flight WebAuthn ceremony state. A /begin endpoint stores the challenge +
--- marshaled webauthn.SessionData; the matching /finish consumes it. Single-use
--- and short-lived. user_id is NULL for discoverable (usernameless) login, where
--- the user is only known once the authenticator reveals the credential.
+-- 0031_webauthn_sessions — in-flight WebAuthn ceremony state (/begin → /finish, single-use).
+-- user_id is NULL for discoverable (usernameless) login, where the user is known only after the authenticator responds.
 CREATE TABLE auth.webauthn_sessions (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    UUID REFERENCES "user".users(id) ON DELETE CASCADE,

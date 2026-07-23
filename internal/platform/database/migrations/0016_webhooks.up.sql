@@ -1,3 +1,4 @@
+-- 0016_webhooks — webhook subscriptions + delivery attempts
 CREATE TABLE tenant.webhook_subscriptions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

@@ -166,8 +166,6 @@ func (l *TenantLimiter) MiddlewareBy(scopeName string, extract KeyFunc) func(htt
 }
 
 func principalTenantID(r *http.Request) uuid.UUID {
-	// Import-free helper: reads the principal from context the same way PerTenant does.
-	// We re-use the existing PerTenant KeyFunc to get the string, then parse it.
 	s := PerTenant(r)
 	if s == "" {
 		return uuid.Nil

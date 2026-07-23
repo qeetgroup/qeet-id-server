@@ -1,7 +1,4 @@
--- Per-tenant adaptive MFA risk thresholds.
--- medium_threshold: bot score at/above which a step-up MFA challenge is issued.
--- high_threshold: bot score at/above which MFA is forced even on a trusted device.
--- force_mfa_at_level: 'medium' | 'high' — which risk level triggers the force.
+-- 0063_risk_settings — per-tenant adaptive-MFA thresholds: medium = step-up challenge; high = force MFA even on a trusted device; force_mfa_at_level picks which level triggers the force
 CREATE TABLE auth.risk_settings (
     tenant_id         uuid        NOT NULL PRIMARY KEY REFERENCES tenant.tenants (id) ON DELETE CASCADE,
     medium_threshold  float8      NOT NULL DEFAULT 0.50 CHECK (medium_threshold BETWEEN 0.1 AND 1.0),

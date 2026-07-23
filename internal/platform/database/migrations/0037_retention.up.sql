@@ -1,6 +1,4 @@
--- Per-tenant data-retention policy. Today it governs how long soft-deleted
--- users are kept before being permanently purged. Disabled by default so a
--- tenant must opt in before any automatic deletion happens.
+-- 0037_retention — per-tenant retention policy (soft-deleted users); opt-in, disabled by default so no auto-deletion happens unasked
 
 CREATE TABLE tenant.retention_policy (
     tenant_id             UUID PRIMARY KEY REFERENCES tenant.tenants(id) ON DELETE CASCADE,

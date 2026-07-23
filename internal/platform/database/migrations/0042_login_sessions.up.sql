@@ -1,7 +1,5 @@
--- Hosted-login SSO sessions: proof that a browser is signed in to the Qeet ID
--- identity provider, used to drive the OAuth authorize/consent flow without
--- exposing tokens to JS. Distinct from API access/refresh tokens; the cookie
--- value is stored only as a hash, like refresh tokens.
+-- 0042_login_sessions — hosted-login SSO sessions (browser signed in to the IdP) that drive OAuth authorize/consent without exposing tokens to JS.
+-- Distinct from API access/refresh tokens; the cookie value is stored only as a hash.
 CREATE TABLE auth.login_sessions (
     token_hash  TEXT PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

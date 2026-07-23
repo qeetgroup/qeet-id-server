@@ -1,17 +1,9 @@
-// Package scim implements SCIM 2.0 (RFC 7643/7644) user provisioning so
-// IdPs like Okta, Microsoft Entra ID and Google Workspace can push and
-// deprovision users automatically.
-//
-// Two surfaces live here:
-//   - Admin (under /v1, normal user-JWT auth): manage the per-tenant bearer
-//     token the IdP authenticates with — rotate, revoke, read status.
-//   - SCIM protocol (mounted at /scim/v2, its own bearer-token auth): the
-//     /Users CRUD an IdP drives. Writes reuse user.Repository so SCIM users
-//     are ordinary tenant users, tagged provisioned_via='scim'.
-//
-// Scope (slice 1): /Users (list+filter, create, get, replace, patch-active,
-// delete) and discovery (ServiceProviderConfig/ResourceTypes/Schemas).
-// /Groups → role mapping is a deliberate follow-up.
+// Package scim implements SCIM 2.0 (RFC 7643/7644) user + group provisioning so
+// IdPs like Okta, Entra ID and Google Workspace can push and deprovision users
+// automatically. Two surfaces: an admin API (under /v1, user-JWT) to manage the
+// per-tenant bearer token the IdP authenticates with, and the SCIM protocol
+// itself (at /scim/v2, bearer-token auth). SCIM writes reuse user.Repository, so
+// provisioned users are ordinary tenant users tagged provisioned_via='scim'.
 package scim
 
 import (
@@ -142,8 +134,7 @@ func (s *Service) resolveToken(ctx context.Context, raw string) (uuid.UUID, erro
 	return tid, nil
 }
 
-// --- SCIM user row (read side; includes external_id which user.User omits) ---
-
+// userRow is the SCIM read side (includes external_id, which user.User omits).
 type userRow struct {
 	ID          uuid.UUID
 	Email       string
@@ -221,10 +212,6 @@ func (s *Service) tagProvisioned(ctx context.Context, id uuid.UUID, externalID s
 		ID:         id,
 	})
 }
-
-// =====================================================================
-// Handler
-// =====================================================================
 
 type Handler struct {
 	Service *Service

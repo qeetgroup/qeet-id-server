@@ -1,6 +1,4 @@
--- WebAuthn / passkeys credentials. The crypto handshake (attestation,
--- assertion) is intentionally not implemented yet — these columns capture
--- the fields a future go-webauthn integration needs.
+-- 0011_passkeys — WebAuthn credential + challenge tables; columns capture the fields a future go-webauthn integration needs (crypto handshake not implemented yet)
 CREATE TABLE auth.passkey_credentials (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id           UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

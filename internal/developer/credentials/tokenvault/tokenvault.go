@@ -1,13 +1,8 @@
-// Package tokenvault is a per-tenant encrypted store for third-party OAuth
-// tokens (Slack, GitHub, Google, or any custom OAuth2 provider an admin
-// registers). A user connects their account once via a standard
-// authorization-code ceremony; from then on, a caller (typically an AI agent
-// or backend integration acting on that user's behalf) asks for a live
-// access token via GetAccessToken and never sees — or needs to handle — the
-// underlying refresh token. Encryption reuses the same KeyProvider (KMS or
-// static key) as the sibling secrets vault (see
-// domains/developer/credentials/secrets), so both vaults are backed by the
-// same key-management story.
+// Package tokenvault is a per-tenant encrypted store for third-party OAuth tokens
+// (Slack, GitHub, Google, or any registered OAuth2 provider). A user connects once
+// via an authorization-code ceremony; callers then fetch a live access token via
+// GetAccessToken and never see the refresh token. Encryption reuses the secrets
+// vault's KeyProvider (KMS or static key).
 package tokenvault
 
 import (

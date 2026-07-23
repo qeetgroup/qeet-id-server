@@ -1,7 +1,5 @@
--- Per-account brute-force throttling. Tracks consecutive failed logins keyed by
--- (lowercased) email and locks the account for a cooldown once a threshold is
--- crossed. DB-backed so the limit holds across all API replicas — unlike the
--- in-memory per-IP rate limiter.
+-- 0041_login_lockout — per-account brute-force throttle keyed by lowercased email.
+-- DB-backed so the limit holds across all API replicas (unlike the in-memory per-IP limiter).
 CREATE TABLE auth.login_attempts (
     email           TEXT PRIMARY KEY,
     failed_count    INT         NOT NULL DEFAULT 0,

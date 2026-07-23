@@ -1,3 +1,4 @@
+-- 0003_tenant — tenants, the root of the multi-tenant model
 CREATE TABLE tenant.tenants (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug            TEXT NOT NULL,

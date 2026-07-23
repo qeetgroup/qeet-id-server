@@ -1,7 +1,4 @@
--- SIEM / log-streaming sinks: a tenant forwards its audit events to an external
--- collector (Splunk HEC, Datadog logs, or a generic HTTP endpoint). A
--- background forwarder streams new audit.events past each sink's cursor. The
--- token is a write-only secret (never returned by the API).
+-- 0058_log_sinks — per-tenant SIEM/log-streaming sinks (Splunk HEC / Datadog / generic HTTP); a forwarder streams new audit.events past each sink's cursor. token is write-only.
 CREATE TABLE tenant.log_sinks (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id          UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

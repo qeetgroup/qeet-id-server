@@ -1,17 +1,7 @@
-// Package activity provides the Live Activity backend: a real-time SSE event
-// stream and a cursor-paginated history endpoint sourced from two places:
-//
-//   - Live: a NATS subscriber that receives every outbox event after it is
-//     published by the transactional dispatcher; events are fan-out to
-//     authenticated SSE connections, filtered by tenant.
-//
-//   - History / replay: the hash-chained audit.events table (read directly
-//     via pgx — same dynamic-SQL pattern as audit.Reader.List, which also
-//     cannot use sqlc because its WHERE clause is fully dynamic).
-//
-// The mapping from raw domain events to ActivityEvent (category, severity,
-// title) is centralised in this file so every consumer (live stream and
-// history) presents a consistent view.
+// Package activity provides the Live Activity backend: a tenant-filtered SSE
+// stream (live, from the NATS outbox) and a cursor-paginated history endpoint
+// (from the hash-chained audit.events table). Raw-event to ActivityEvent mapping
+// is centralised here so live and history present a consistent view.
 package activity
 
 import (
@@ -107,39 +97,10 @@ type ListFilter struct {
 	To       *time.Time // inclusive upper bound on created_at
 }
 
-// ─── Mapping table ────────────────────────────────────────────────────────────
-//
-// categoryOf and severityOf are the AUTHORITATIVE mappings from an audit
-// action string (e.g. "user.created", "auth.login.failed") to the ActivityEvent
-// category and severity. Both the live stream and the history API use the same
-// functions so callers always see a consistent view.
-//
-// Category rules — longest-matching prefix wins (order matters):
-//
-//	auth.* passkey.* recovery.* saml.* social.* ldap.* oidc.* mfa.*
-//	    → authentication
-//	rbac.* abac.* rebac.* role.* policy.* authzen.*
-//	    → authorization
-//	threat.* risk.* anomaly.* bot.* ip_rule.* audit.*
-//	    → security
-//	user.* group.* tenant.* invite.* scim.* domain.*
-//	    → directory
-//	agent.* apikey.* api_key.* webhook.* credentials.* secret.* auth_hook.* vc.*
-//	    → developer
-//	system.* (and anything unmatched)
-//	    → system
-//
-// Severity rules — checked in order:
-//
-//	Payload contains "reuse_detected", "breach", "attack", "token_reuse",
-//	"malicious", or starts with "threat." → critical
-//	Ends with ".failed", ".locked", ".blocked", ".denied", ".rejected",
-//	".deleted", ".purged", ".revoked", ".rotated", ".disabled",
-//	".suspended", ".canceled", ".reset", ".decommissioned" → warning
-//	Ends with ".created", ".updated", ".enabled", ".activated", ".verified",
-//	".accepted", ".login", ".refreshed", ".registered", ".enrolled",
-//	".restored" → success
-//	Everything else → info
+// categoryOf and severityOf are the authoritative action to (category, severity)
+// mappings, used by both the live stream and the history API so callers see a
+// consistent view. Category: first matching prefix wins, so order matters.
+// Severity: critical > warning > success > info (highest applicable wins).
 
 var categoryPrefixes = []struct {
 	prefix   string
@@ -242,23 +203,20 @@ func categoryOf(action string) string {
 // severityOf derives the severity from the audit action string.
 // Critical > warning > success > info (highest applicable wins).
 func severityOf(action string) string {
-	// All threat.* actions are critical — they represent detected security events.
+	// All threat.* actions represent detected security events.
 	if strings.HasPrefix(action, "threat.") {
 		return SeverityCritical
 	}
-	// Critical: security-incident keywords anywhere in the action.
 	for _, s := range severityCriticalInfix {
 		if strings.Contains(action, s) {
 			return SeverityCritical
 		}
 	}
-	// Warning: failures and destructive operations.
 	for _, s := range severityWarningSuffixes {
 		if strings.HasSuffix(action, s) {
 			return SeverityWarning
 		}
 	}
-	// Success: positive transitions.
 	for _, s := range severitySuccessSuffixes {
 		if strings.HasSuffix(action, s) {
 			return SeveritySuccess
@@ -327,8 +285,6 @@ func matchesListFilter(ev ActivityEvent, f ListFilter) bool {
 	return severityMeets(ev.Severity, f.Severity)
 }
 
-// ─── Audit row → ActivityEvent ───────────────────────────────────────────────
-
 // auditRow is the local scan target for the history/replay queries. Columns
 // must match the SELECT list in replayHistory and listHistory exactly.
 type auditRow struct {
@@ -358,7 +314,6 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		IP:       r.IP,
 	}
 
-	// Actor: present when either actor_user_id or actor_type is non-empty.
 	if r.ActorUserID != nil || r.ActorType != "" {
 		t := r.ActorType
 		if t == "" {
@@ -367,7 +322,6 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		ev.Actor = &ActivityActor{ID: r.ActorUserID, Type: t}
 	}
 
-	// Target: present when resource_type is non-empty.
 	if r.ResourceType != "" {
 		ev.Target = &ActivityTarget{
 			Type: r.ResourceType,
@@ -375,7 +329,6 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		}
 	}
 
-	// Unmarshal the stored JSONB metadata into a free-form map.
 	if len(r.Metadata) > 0 && string(r.Metadata) != "null" && string(r.Metadata) != "{}" {
 		var meta map[string]any
 		if err := json.Unmarshal(r.Metadata, &meta); err == nil && len(meta) > 0 {
@@ -383,7 +336,6 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		}
 	}
 
-	// Best-effort browser detection from the user-agent string.
 	if r.UserAgent != nil && *r.UserAgent != "" {
 		ua := parseBrowser(*r.UserAgent)
 		if ua != "" {
@@ -411,8 +363,6 @@ func parseBrowser(ua string) string {
 		return ""
 	}
 }
-
-// ─── Outbox (NATS) → ActivityEvent ──────────────────────────────────────────
 
 // outboxPayload is a best-effort extraction struct for the common fields
 // embedded in domain event JSON payloads. All domain events include tenant_id;

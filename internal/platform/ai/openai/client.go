@@ -1,15 +1,7 @@
-// Package openai is a streaming OpenAI Chat Completions client that implements
-// ai.Provider. It is intentionally transport-only: base URL, auth header, SSE
-// parsing. It imports nothing from domains/*. It also works out-of-the-box with
-// any hosted OpenAI-compatible endpoint:
-//
-//   - OpenAI:      https://api.openai.com/v1  (default when BaseURL is empty)
-//   - Groq:        https://api.groq.com/openai/v1
-//   - OpenRouter:  https://openrouter.ai/api/v1
-//   - Gemini:      https://generativelanguage.googleapis.com/v1beta/openai/
-//
-// Set COPILOT_PROVIDER=openai, COPILOT_API_KEY, and optionally COPILOT_BASE_URL
-// to switch the copilot from the Anthropic backend.
+// Package openai is a streaming OpenAI Chat Completions client implementing
+// ai.Provider. Transport-only (base URL, auth header, SSE parsing); imports
+// nothing from domains/*. Also works with any hosted OpenAI-compatible endpoint
+// (Groq, OpenRouter, Gemini's OpenAI path) via COPILOT_BASE_URL.
 package openai
 
 import (
@@ -128,8 +120,6 @@ func (c *Client) Stream(ctx context.Context, system string, messages []ai.Messag
 	return out, errC
 }
 
-// ─── Wire types ──────────────────────────────────────────────────────────────
-
 // openAIRequest is the body sent to POST /chat/completions.
 type openAIRequest struct {
 	Model     string          `json:"model"`
@@ -192,19 +182,11 @@ type openAICallDelta struct {
 	} `json:"function"`
 }
 
-// ─── Request conversion ───────────────────────────────────────────────────────
-
-// ptr returns a pointer to s. Helper for building *string fields.
+// ptr returns a pointer to s.
 func ptr(s string) *string { return &s }
 
-// buildOpenAIMessages constructs the OpenAI messages array from the system
-// prompt and neutral conversation history.
-//
-//   - system   → role:"system" message at the front (omitted when empty).
-//   - user     → role:"user",      content: concatenated text blocks.
-//   - assistant → role:"assistant", content: text | null, tool_calls: [...].
-//   - tool     → one role:"tool" message per tool_result block (no remapping;
-//     OpenAI uses role:"tool" natively).
+// buildOpenAIMessages builds the OpenAI messages array from the system prompt
+// and neutral history. OpenAI uses role:"tool" natively (no remapping needed).
 func buildOpenAIMessages(system string, msgs []ai.Message) []openAIMessage {
 	out := make([]openAIMessage, 0, len(msgs)+1)
 	if system != "" {
@@ -304,14 +286,9 @@ func buildOpenAITools(tools []ai.ToolDef) []openAITool {
 	return out
 }
 
-// ─── SSE parsing ─────────────────────────────────────────────────────────────
-
-// parseOpenAISSE reads the OpenAI Chat Completions SSE stream and sends
-// normalized ai.Event values to out. It returns when the stream ends
-// (data: [DONE]) or ctx is cancelled.
-//
-// OpenAI SSE format: each event is a single "data: <json>" line (no "event:"
-// prefix). The terminal marker is the literal string "data: [DONE]".
+// parseOpenAISSE reads the OpenAI Chat Completions SSE stream, emitting
+// normalized ai.Event values to out until "data: [DONE]" or ctx cancellation.
+// OpenAI SSE: one "data: <json>" line per event (no "event:" prefix).
 func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error {
 	scanner := bufio.NewScanner(r)
 	// Track which tool indices have been started so we only emit
@@ -345,15 +322,12 @@ func parseOpenAISSE(ctx context.Context, r io.Reader, out chan<- ai.Event) error
 		}
 
 		for _, choice := range chunk.Choices {
-			// Text delta.
 			if choice.Delta.Content != nil && *choice.Delta.Content != "" {
 				out <- ai.Event{Type: ai.EventTextDelta, TextDelta: *choice.Delta.Content}
 			}
 
-			// Tool call deltas.
 			for _, tc := range choice.Delta.ToolCalls {
 				if !startedTools[tc.Index] && tc.ID != "" {
-					// First chunk for this tool index — emit start.
 					startedTools[tc.Index] = true
 					out <- ai.Event{
 						Type:      ai.EventToolCallStart,

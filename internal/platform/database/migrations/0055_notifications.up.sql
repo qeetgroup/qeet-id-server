@@ -1,6 +1,4 @@
--- In-app notification inbox (admin header bell). Per-user, append-only; read_at
--- is set when the user clears them. kind drives the icon/color
--- (info|warning|alert|success); href is an optional in-app deep link.
+-- 0055_notifications — per-user in-app notification inbox (admin header bell); kind drives icon/color, href is an optional deep link
 CREATE TABLE auth.notifications (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

@@ -8,12 +8,8 @@
 // recursively, with a depth cap and a visited-set so cycles can't loop forever.
 // It complements RBAC (coarse roles) and ABAC (policy attributes); per-tenant.
 //
-// The Expand method and /relation-tuples/graph endpoint build on the same
-// recursive traversal to produce a queryable graph (nodes + directed edges) for
-// all subjects reachable from a given object+relation — the "Identity Graph"
-// surface that answers "who/what can reach this resource, and through which
-// chain of relationships?", useful for security-posture visualization and
-// investigation workflows.
+// Expand (and the /relation-tuples/graph endpoint) reuse the same traversal to
+// return the full reachable graph — "who/what can reach this resource?".
 package rebac
 
 import (

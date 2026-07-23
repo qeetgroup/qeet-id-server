@@ -19,15 +19,11 @@ const (
 	pkRPOrigin = "http://localhost:3000"
 )
 
-// TestPasskeyFullCeremony closes the single biggest coverage gap for a
-// passkeys-first product (QID-07): before this, NO automated test anywhere
-// completed a real WebAuthn ceremony — the Go integration tests stopped at the
-// "begin" (challenge issuance) side, explicitly commented as "covered manually
-// in the browser — needs a real authenticator", and no Playwright virtual-
-// authenticator spec existed. This drives the entire begin→create→finish
-// signup ceremony and the begin→assert→finish login ceremony end-to-end
-// against the real passkey service + go-webauthn verifier, using a software
-// (virtual) authenticator that produces genuine attestation/assertion signon.
+// TestPasskeyFullCeremony drives the entire begin→create→finish signup ceremony
+// and begin→assert→finish login ceremony end-to-end against the real passkey
+// service + go-webauthn verifier, using a virtual authenticator that produces
+// genuine attestation/assertion signatures (QID-07: the first test to complete a
+// real WebAuthn ceremony rather than stopping at challenge issuance).
 func TestPasskeyFullCeremony(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
@@ -39,7 +35,7 @@ func TestPasskeyFullCeremony(t *testing.T) {
 
 	email := uniqueSlug("pkfull") + "@example.com"
 
-	// ---- Registration ceremony (tenant-less passkey-first signup) ----
+	// Registration ceremony (tenant-less passkey-first signup)
 	sid, creation, err := svc.BeginSignup(ctx, email, "Ada Lovelace")
 	if err != nil {
 		t.Fatalf("begin signup: %v", err)
@@ -78,7 +74,7 @@ func TestPasskeyFullCeremony(t *testing.T) {
 	// used to sign assertions for the login ceremony.
 	authenticator.AddCredential(cred)
 
-	// ---- Authentication ceremony (log in with the passkey just registered) ----
+	// Authentication ceremony (log in with the passkey just registered)
 	loginSID, assertion, err := svc.BeginLogin(ctx, email)
 	if err != nil {
 		t.Fatalf("begin login: %v", err)

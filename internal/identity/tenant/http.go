@@ -17,8 +17,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the slice of auth.Service this handler needs, declared as an
-// interface so the dependency is mockable and not tied to the concrete type.
+// tokenIssuer is the slice of auth.Service this handler needs (mockable).
 type tokenIssuer interface {
 	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
 }

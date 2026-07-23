@@ -57,7 +57,7 @@ func (s *sseWriter) keepAlive() {
 }
 
 // startKeepAlive launches a goroutine that sends keep-alive pings every d
-// until done is closed. The goroutine terminates when done is closed.
+// until done is closed.
 func (s *sseWriter) startKeepAlive(done <-chan struct{}, d time.Duration) {
 	go func() {
 		t := time.NewTicker(d)

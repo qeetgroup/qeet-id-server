@@ -1,21 +1,11 @@
-// Package adminportal implements a WorkOS-style "Admin Portal": a unique,
-// time-limited, capability-scoped link a tenant admin can hand to their own
-// IT admin — someone with no Qeet ID account and no console credentials at
-// all — so that person can configure the tenant's SAML connection and/or
-// rotate its SCIM provisioning token directly, without ever logging in.
-//
-// A link carries no identity, only a capability set ("saml", "scim") and an
-// expiry; possession of the raw token is the sole credential, hashed at rest
-// exactly like an invite or magic-link token. Unlike those, a portal link is
-// not single-use — the IT admin may revisit it (view config, fix a typo, roll
-// the SCIM token again) any number of times until it expires or is revoked.
-//
-// The public redemption endpoints call straight into saml.Service /
-// scim.Service — the same methods the authed admin console uses — through
-// small local interfaces, bypassing the connection.* RBAC check entirely:
-// the token itself is the authorization. Deliberately out of scope: the SCIM
-// provisioned-users list (PII an anonymous link-holder shouldn't see) and the
-// SAML IdP-side registry (Qeet-Group-configured, not a tenant concern).
+// Package adminportal implements a WorkOS-style Admin Portal: a unique,
+// time-limited, capability-scoped link a tenant admin hands to their (account-less)
+// IT admin to configure the tenant's SAML connection and/or rotate its SCIM token
+// without logging in. The link carries no identity — only a capability set
+// ("saml"/"scim") and an expiry; the raw token (hashed at rest) is the sole
+// credential, so redemption bypasses the connection.* RBAC check. Unlike an invite
+// it is reusable until it expires or is revoked. Out of scope: the SCIM
+// provisioned-users list (PII) and the SAML IdP-side registry.
 package adminportal
 
 import (
@@ -283,10 +273,6 @@ func (s *Service) Context(ctx context.Context, l *Link) (*PortalContext, error) 
 	}
 	return pc, nil
 }
-
-// =====================================================================
-// Handler
-// =====================================================================
 
 // samlService is the slice of saml.Service the portal needs to let an IT
 // admin manage their tenant's SP-side connection(s).

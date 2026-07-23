@@ -87,7 +87,6 @@ func pgtypeToTimePtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// inviteFromInsertRow maps an InsertInviteRow to the domain Invite model.
 func inviteFromInsertRow(row dbgen.InsertInviteRow) Invite {
 	return Invite{
 		ID:         row.ID,
@@ -101,7 +100,6 @@ func inviteFromInsertRow(row dbgen.InsertInviteRow) Invite {
 	}
 }
 
-// inviteFromListRow maps a ListInvitesRow to the domain Invite model.
 func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 	return Invite{
 		ID:         row.ID,

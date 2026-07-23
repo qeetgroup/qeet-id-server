@@ -1,8 +1,5 @@
--- Security/anomaly events surfaced in the admin "Threats → Anomalies" screen.
--- Append-only like the audit log (no hard FKs so a detection write can never be
--- blocked by a racing delete); tenant-scoped, with an optional offending user.
--- type/severity/status are open strings so new detections (new_device, geo
--- anomalies, bot verdicts) can be added without a schema change.
+-- 0052_security_events — append-only anomaly events (admin "Threats → Anomalies").
+-- No hard FKs, so a detection write is never blocked by a racing delete; type/severity/status are open strings so new detections need no schema change.
 CREATE TABLE auth.security_events (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   UUID NOT NULL,

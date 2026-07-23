@@ -1,20 +1,12 @@
 // Command openapi-split decomposes the canonical OpenAPI document into five
-// self-contained, bounded-context specs under api/openapi/ — and merges them
-// back into a single document for tooling (codegen) that wants one file.
+// self-contained, bounded-context specs under api/openapi/, and merges them
+// back into one document for codegen tooling.
 //
 //	go run ./tools/openapi-split split   # api/openapi.yaml -> api/openapi/{5}.yaml
 //	go run ./tools/openapi-split merge   # api/openapi/*.yaml -> one doc on stdout
 //
-// The split is a ONE-TIME migration: after it runs, the five files ARE the
-// source of truth and api/openapi.yaml is removed. The tool is kept in-repo so
-// the bucketing is reproducible and documented, and so `merge` can feed codegen.
-//
-// Correctness notes:
-//   - Operates on a yaml.Node tree to preserve key order in the source files.
-//   - Expands every YAML alias (the monolith defines 7 anchors inside paths) so
-//     no output file dangles, then clears all anchors.
-//   - Each output file carries the transitive $ref closure of the components it
-//     needs (schemas/parameters/responses/…), plus all securitySchemes.
+// split is a one-time migration: afterward the five files are the source of
+// truth and api/openapi.yaml is removed; merge is kept so it can feed codegen.
 package main
 
 import (
@@ -110,7 +102,6 @@ func doSplit(repoRoot string) error {
 		return fmt.Errorf("%s: missing paths or components", src)
 	}
 
-	// Bucket each path into its file.
 	filePaths := map[string][]*yaml.Node{} // file -> flat [key,val,key,val,...]
 	fileTags := map[string]map[string]bool{}
 	var conflicts []string

@@ -1,13 +1,9 @@
-// SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644). This is the surface Okta and
-// Microsoft Entra ID drive to push group definitions and keep membership in
-// sync — membership sync in particular arrives as PatchOp add/remove of
-// `members`, so PATCH support here must be exact.
-//
-// Groups map onto the existing tenant.groups / tenant.group_members tables
-// (the org/team hierarchy from migration 0021) rather than a parallel store.
-// SCIM `displayName` is the group's `name`; `members[].value` are user ids.
-// An optional `externalId` (migration 0045) lets the IdP reconcile on its own
-// key. Everything is scoped by the tenant resolved from the bearer token.
+// SCIM 2.0 Groups (RFC 7643 §4.2, RFC 7644): the surface Okta/Entra ID drive to
+// push groups and sync membership. Membership sync arrives as PatchOp add/remove
+// of `members`, so PATCH support here must be exact. Groups map onto the existing
+// tenant.groups / tenant.group_members tables (not a parallel store): SCIM
+// displayName is the group's name, members[].value are user ids, and an optional
+// externalId lets the IdP reconcile on its own key. Scoped by the bearer token's tenant.
 package scim
 
 import (
@@ -29,8 +25,7 @@ import (
 
 const schemaGroup = "urn:ietf:params:scim:schemas:core:2.0:Group"
 
-// --- SCIM group row (read side; mirrors userRow) ---
-
+// groupRow is the SCIM group read side (mirrors userRow).
 type groupRow struct {
 	ID         uuid.UUID
 	Name       string
@@ -294,10 +289,6 @@ func touchGroupTx(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, name, 
 	}
 	return nil
 }
-
-// =====================================================================
-// SCIM /Groups handlers
-// =====================================================================
 
 // parseDisplayNameFilter extracts the value from a `displayName eq "x"`
 // filter. Anything else is treated as "no filter" (returns all groups),

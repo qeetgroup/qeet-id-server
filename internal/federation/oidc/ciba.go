@@ -17,19 +17,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// =====================================================================
-// OpenID Connect CIBA (Client-Initiated Backchannel Authentication) —
-// poll mode only (no ping/push notification_endpoint).
-//
-// A client that already knows who the user is (login_hint, an email) starts
-// a backchannel auth request instead of redirecting a browser; the user gets
-// an async, out-of-band consent prompt (an in-app notification, when a
-// Notifier is wired) and approves/denies it from within the app; the client
-// polls the token endpoint with auth_req_id in the meantime. Structurally
-// this is the backchannel counterpart of the device grant (device.go) — the
-// poll/interval/status/consumed_at mechanics are identical — except the user
-// is already known up front rather than resolved via a human-typed code.
-// =====================================================================
+// OpenID Connect CIBA (Client-Initiated Backchannel Authentication), poll mode
+// only: a client that already knows the user (login_hint) starts a backchannel
+// request; the user approves/denies out-of-band while the client polls with
+// auth_req_id. The backchannel counterpart of the device grant (device.go) —
+// same mechanics, but the user is known up front rather than via a typed code.
 
 const (
 	grantTypeCIBA = "urn:openid:params:grant-type:ciba"
@@ -316,10 +308,6 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 		Scope:        strings.Join(scopes, " "),
 	}, nil
 }
-
-// =====================================================================
-// HTTP handlers
-// =====================================================================
 
 func (h *Handler) backchannelAuthorize(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {

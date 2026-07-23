@@ -1,7 +1,4 @@
--- Verifiable Credentials (W3C VC, JWT serialization). Qeet ID issues ES256-
--- signed credentials (verifiable via the same JWKS) and tracks them here so
--- they can be listed and revoked. The signed JWT-VC is held by the subject;
--- this table is the issuer-side registry (claims kept for re-issue/audit).
+-- 0062_credentials — issuer-side registry of W3C Verifiable Credentials (ES256 JWT-VC, verifiable via our JWKS); the signed VC is held by the subject, claims kept here for list/revoke/re-issue/audit
 CREATE TABLE auth.credentials (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

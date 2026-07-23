@@ -1,11 +1,8 @@
-// Package audit records actor-visible mutations to audit.events. Every
-// write happens inside the caller's pgx.Tx so the audit row is committed
-// atomically with the business write.
-//
-// Each row carries a SHA-256 hash that chains to the previous row in the
-// same tenant. Tampering with any row (delete, edit, reorder) breaks the
-// chain and is detected by Verifier.Verify. The chain seed for the first
-// row in a tenant is sixty-four zero hex characters.
+// Package audit records actor-visible mutations to audit.events. Each write
+// happens inside the caller's pgx.Tx, so the row commits atomically with the
+// business write. Every row carries a SHA-256 hash chaining to the previous row
+// in the same tenant; tampering (delete, edit, reorder) breaks the chain and is
+// caught by Verifier.Verify.
 package audit
 
 import (

@@ -1,16 +1,9 @@
 // Evidence generation for SOC 2 and ISO 27001 compliance frameworks.
 //
-// EvidenceService runs a catalog of live control checks against a tenant's
-// actual system state — auth policy, audit log, RBAC, retention, SIEM config,
-// secrets vault, etc. — and persists the results as an immutable
-// compliance_evidence_runs row.  Each control maps to one or more framework
-// criteria codes (CC6.1, A.9.4, …) and returns pass / fail / na with a
-// human-readable evidence string describing exactly what was found.
-//
-// The control catalog currently covers:
-//
-//	SOC 2  — 13 controls spanning CC6.1–CC7.2 (logical access, encryption, monitoring)
-//	ISO 27001 — 12 controls spanning A.8–A.18 (access, crypto, ops, compliance)
+// EvidenceService runs a catalog of live control checks against a tenant's actual
+// system state and persists the results as an immutable compliance_evidence_runs
+// row. Each control maps to framework criteria codes (CC6.1, A.9.4, …) and returns
+// pass / fail / na with a human-readable evidence string — never a fabricated pass.
 package gdpr
 
 import (
@@ -123,10 +116,6 @@ func toTimePtr(t pgtype.Timestamptz) *time.Time {
 	}
 	return &t.Time
 }
-
-// --------------------------------------------------------------------------
-// Control catalog — shared check functions
-// --------------------------------------------------------------------------
 
 // checkMFAEnforcement verifies the tenant's MFA enforcement level is not
 // the permissive default ('optional').  Reads tenant.security_policies.
@@ -374,10 +363,6 @@ func checkGDPRProcesses(ctx context.Context, svc *EvidenceService, tenantID uuid
 		purgeCount, exportCount)
 }
 
-// --------------------------------------------------------------------------
-// Control catalogs
-// --------------------------------------------------------------------------
-
 // soc2Controls is the SOC 2 Type II control catalog.  Each entry maps to at
 // least one AICPA Trust Services Criteria code and reads live tenant state.
 // 13 controls covering CC6.1–CC7.2 (logical access, encryption, monitoring).
@@ -527,10 +512,6 @@ func ValidFramework(f string) bool {
 	return ok
 }
 
-// --------------------------------------------------------------------------
-// Service methods
-// --------------------------------------------------------------------------
-
 // Generate runs all controls for the framework against live tenant state,
 // tallies pass/fail/na, persists an evidence run row (inside a transaction
 // with an audit event), and returns the run with full control results.
@@ -540,7 +521,6 @@ func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, fram
 		return nil, errs.ErrBadRequest.WithDetail("framework must be 'soc2' or 'iso27001'")
 	}
 
-	// Run all control checks against live state.
 	results := make([]ControlResult, 0, len(controls))
 	var passCount, failCount, naCount int
 	for _, c := range controls {
@@ -686,10 +666,6 @@ func (s *EvidenceService) GetRun(ctx context.Context, tenantID, id uuid.UUID) (*
 	}
 	return run, nil
 }
-
-// --------------------------------------------------------------------------
-// HTTP handlers (mounted onto the existing gdpr.Handler)
-// --------------------------------------------------------------------------
 
 // requireEvidencePathTenant parses and validates the {tenantID} path param
 // against the caller's auth-token tenant scope (belt-and-suspenders; the

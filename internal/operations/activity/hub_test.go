@@ -37,12 +37,10 @@ func TestHubTenantIsolation(t *testing.T) {
 	evA := newTestEvent("user.created", SeveritySuccess)
 	evB := newTestEvent("user.deleted", SeverityWarning)
 
-	// Dispatch tenantA event only to tenantA's hub slot.
 	h.fanOut(tenantA, evA)
-	// Dispatch tenantB event only to tenantB's hub slot.
 	h.fanOut(tenantB, evB)
 
-	// ── tenantA channel must have exactly evA ──────────────────────────────
+	// tenantA channel must have exactly evA.
 	select {
 	case got := <-chA:
 		if got.ID != evA.ID {
@@ -52,7 +50,7 @@ func TestHubTenantIsolation(t *testing.T) {
 		t.Fatal("tenantA: no event received within 1s")
 	}
 
-	// ── tenantB channel must have exactly evB ──────────────────────────────
+	// tenantB channel must have exactly evB.
 	select {
 	case got := <-chB:
 		if got.ID != evB.ID {
@@ -62,23 +60,20 @@ func TestHubTenantIsolation(t *testing.T) {
 		t.Fatal("tenantB: no event received within 1s")
 	}
 
-	// ── tenantA channel must NOT have received tenantB's event ─────────────
-	// This is the critical isolation assertion.
+	// tenantA must NOT have received tenantB's event — the critical isolation assertion.
 	select {
 	case extra := <-chA:
 		t.Errorf("ISOLATION FAILURE: tenantA received event intended for tenantB: %v (type=%s)",
 			extra.ID, extra.Type)
 	default:
-		// Correct: channel is empty.
 	}
 
-	// ── tenantB channel must NOT have received tenantA's event ─────────────
+	// tenantB must NOT have received tenantA's event.
 	select {
 	case extra := <-chB:
 		t.Errorf("ISOLATION FAILURE: tenantB received event intended for tenantA: %v (type=%s)",
 			extra.ID, extra.Type)
 	default:
-		// Correct: channel is empty.
 	}
 }
 

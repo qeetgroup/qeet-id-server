@@ -1,8 +1,5 @@
--- Compliance evidence runs. Each row is an immutable snapshot of one
--- on-demand compliance check pass for a tenant+framework pair.
--- Controls (per-control check results) are stored as JSONB so the full
--- report is retrievable without a JOIN, and the schema can evolve without
--- a migration for each new control.
+-- 0081_compliance_evidence — immutable snapshot per on-demand compliance run (tenant+framework).
+-- Per-control results stored as JSONB, so the full report needs no JOIN and new controls need no migration.
 
 create table tenant.compliance_evidence_runs (
     id              uuid        primary key default gen_random_uuid(),

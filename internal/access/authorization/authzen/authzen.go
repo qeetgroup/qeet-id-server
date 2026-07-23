@@ -1,12 +1,8 @@
-// Package authzen implements the OpenID AuthZEN standard's core Policy
-// Decision Point API — POST /access/v1/evaluation — as a thin, spec-shaped
-// facade over Qeet ID's existing authorization engines (RBAC and ReBAC). It
-// makes no authorization decisions of its own: every request is translated
-// and forwarded to rbac.Repository or rebac.Service, the same engines the
-// native /check endpoints already use, so a policy-enforcement point (PEP) —
-// including an MCP tool-call gateway, per COAZ (Cloud OAuth AuthoriZation for
-// MCP) conventions — can speak one standard protocol against Qeet ID instead
-// of a bespoke one.
+// Package authzen implements the OpenID AuthZEN standard's core Policy Decision
+// Point API — POST /access/v1/evaluation — as a thin facade over Qeet ID's
+// existing RBAC and ReBAC engines. It makes no authorization decisions of its
+// own: every request is translated and forwarded to rbac.Repository or
+// rebac.Service, the same engines the native /check endpoints already use.
 //
 // Routing between the two engines is by resource.type: "permission" routes
 // to RBAC (action.name is the permission key, resource.id is ignored — RBAC

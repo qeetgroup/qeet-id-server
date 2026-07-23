@@ -1,10 +1,6 @@
--- Fine-grained authorization (ReBAC, Zanzibar-style relationship tuples). Each
--- row asserts: subject is related to object via relation, e.g.
---   document:readme  #editor  user:<uuid>
---   document:readme  #viewer  group:eng#member   (a "userset": everyone who is
---                                                  group:eng#member is a viewer)
--- A Check resolves these recursively (subject_relation != '' = a userset to
--- expand). Complements RBAC/ABAC; per-tenant.
+-- 0060_relation_tuples — ReBAC (Zanzibar-style) tuples: subject is related to object via relation, e.g.
+--   document:readme #viewer group:eng#member  (a "userset": everyone who is group:eng#member is a viewer).
+-- Check resolves recursively (subject_relation != '' = a userset to expand). Complements RBAC/ABAC; per-tenant.
 CREATE TABLE auth.relation_tuples (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id        UUID NOT NULL,

@@ -49,7 +49,6 @@ func (v *Verifier) Verify(ctx context.Context, tenantID *uuid.UUID) (VerifyResul
 		lastID      *uuid.UUID
 	)
 	for _, row := range rows {
-		// Decode nullable UUIDs from pgtype.UUID → *uuid.UUID.
 		tid := toUUIDPtr(row.TenantID)
 		actor := toUUIDPtr(row.ActorUserID)
 		resID := toUUIDPtr(row.ResourceID)
@@ -142,7 +141,5 @@ func normaliseMetadata(raw []byte) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// Silence unused import: time is used in the loop variable row.CreatedAt
-// which is already time.Time; declare here to keep the import if no other
-// usage appears in the file.
+// Keep the time import alive — no other reference to the package remains.
 var _ = time.Time{}

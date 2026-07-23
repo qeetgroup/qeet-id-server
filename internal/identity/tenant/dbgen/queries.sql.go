@@ -12,6 +12,21 @@ import (
 	"github.com/google/uuid"
 )
 
+const adoptHomeTenant = `-- name: AdoptHomeTenant :exec
+UPDATE "user".users SET tenant_id = $1::uuid, updated_at = NOW()
+WHERE id = $2 AND tenant_id IS NULL AND deleted_at IS NULL
+`
+
+type AdoptHomeTenantParams struct {
+	TenantID uuid.UUID
+	ID       uuid.UUID
+}
+
+func (q *Queries) AdoptHomeTenant(ctx context.Context, arg AdoptHomeTenantParams) error {
+	_, err := q.db.Exec(ctx, adoptHomeTenant, arg.TenantID, arg.ID)
+	return err
+}
+
 const getTenant = `-- name: GetTenant :one
 
 SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at FROM tenant.tenants
@@ -60,6 +75,50 @@ func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (TenantTenan
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const grantAllPermissionsToRole = `-- name: GrantAllPermissionsToRole :exec
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT $1, id FROM rbac.permissions
+`
+
+func (q *Queries) GrantAllPermissionsToRole(ctx context.Context, roleID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, grantAllPermissionsToRole, roleID)
+	return err
+}
+
+const grantRoleToUser = `-- name: GrantRoleToUser :exec
+INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
+VALUES ($1, $2, $3, $1)
+`
+
+type GrantRoleToUserParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	RoleID   uuid.UUID
+}
+
+func (q *Queries) GrantRoleToUser(ctx context.Context, arg GrantRoleToUserParams) error {
+	_, err := q.db.Exec(ctx, grantRoleToUser, arg.UserID, arg.TenantID, arg.RoleID)
+	return err
+}
+
+const insertOwnerRole = `-- name: InsertOwnerRole :one
+
+INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
+RETURNING id
+`
+
+// The next four queries are the static, cross-context writes of CreateWithOwner.
+// They target other bounded contexts (rbac.*, "user".users) but are fixed SQL with
+// positional binds, so they compile under the shared migration schema and run on the
+// caller's shared pgx.Tx via r.q.WithTx(tx).X(...).
+func (q *Queries) InsertOwnerRole(ctx context.Context, tenantID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertOwnerRole, tenantID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertTenant = `-- name: InsertTenant :one

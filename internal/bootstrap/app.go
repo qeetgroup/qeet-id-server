@@ -41,10 +41,9 @@ func Run() {
 		os.Exit(1)
 	}
 
-	// Production-safety gate: refuse to start with dev-only escape hatches or
-	// insecure defaults (CSRF off, dev-trust headers, placeholder JWT_SECRET,
-	// missing signing key, wildcard origins, localhost base URL) when not in
-	// dev. Cheaper than discovering it after a bad deploy.
+	// Production-safety gate: refuse to start when not in dev with dev-only escape
+	// hatches or insecure defaults (CSRF off, dev-trust headers, placeholder
+	// JWT_SECRET, missing signing key, wildcard origins, localhost base URL).
 	if err := cfg.Validate(); err != nil {
 		slog.Error("refusing to start: "+err.Error(), "service_env", cfg.ServiceEnv)
 		os.Exit(1)
@@ -79,17 +78,9 @@ func Run() {
 		slog.Info("tracing disabled (no-op): set OTEL_EXPORTER_OTLP_ENDPOINT to enable")
 	}
 
-	// Run migrations first, as the owner role — DB_MIGRATE_URL if set, otherwise
-	// DB_URL. This must precede opening the runtime pool: when DB_URL is a
-	// dedicated least-privilege app role (RLS-subject, no DDL rights), the schema
-	// and that role's grants are created here, by the owner, before the app ever
-	// connects as it.
-	migrateURL := cfg.DBMigrateURL
-	if migrateURL == "" {
-		migrateURL = cfg.DBURL
-	}
+	// Run migrations before opening the runtime pool.
 	slog.Info("running database migrations")
-	if err := migrations.Run(migrateURL); err != nil {
+	if err := migrations.Run(cfg.DBURL); err != nil {
 		slog.Error("migrations failed", "err", err)
 		os.Exit(1)
 	}

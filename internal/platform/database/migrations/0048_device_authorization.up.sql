@@ -1,11 +1,5 @@
--- OAuth 2.0 Device Authorization Grant (RFC 8628). For input-constrained
--- clients (CLI/TV/IoT) that can't open a browser locally: the device polls the
--- token endpoint while the user approves the request on a second device by
--- entering the user_code at the verification_uri. The device_code is the secret
--- the device polls with, so it is stored only as a hash (like authorization
--- codes / refresh tokens); the user_code is the short, human-typed value and is
--- stored in the clear for lookup. Rows are scoped to the client's tenant; the
--- approving user (bound on authorization) must belong to that tenant.
+-- 0048_device_authorization — OAuth Device Authorization Grant (RFC 8628) for input-constrained clients (CLI/TV/IoT).
+-- device_code is the polling secret (stored hashed); user_code is short and human-typed (stored cleartext for lookup). Rows scoped to the client's tenant.
 CREATE TABLE auth.oidc_device_codes (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_code_hash TEXT NOT NULL UNIQUE,

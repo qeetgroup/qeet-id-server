@@ -1,11 +1,7 @@
--- Token Vault: per-tenant encrypted storage for third-party OAuth tokens
--- (Slack/GitHub/Google/any custom provider), so an agent or integration can
--- call out on a user's behalf via GetAccessToken without ever handling the
--- user's refresh token directly. Reuses the same KeyProvider (KMS or static
--- key) as the existing secrets vault (see domains/developer/credentials/secrets).
+-- 0071_token_vault — per-tenant encrypted storage for third-party OAuth tokens (Slack/GitHub/Google/…),
+-- so an agent/integration can call out on a user's behalf via GetAccessToken without handling the refresh token directly. Reuses the secrets-vault KeyProvider (KMS or static key).
 
--- Per-tenant OAuth2 provider registration: the endpoints + client credentials
--- needed to run an authorization-code exchange against one third-party API.
+-- Provider registration: endpoints + client credentials for the auth-code exchange against one third-party API.
 CREATE TABLE tenant.token_vault_providers (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,
@@ -20,8 +16,7 @@ CREATE TABLE tenant.token_vault_providers (
     UNIQUE (tenant_id, provider)
 );
 
--- One connected account per (tenant, user, provider). access_token is always
--- present; refresh_token is nullable since not every provider issues one.
+-- One connected account per (tenant, user, provider); refresh_token is nullable (not every provider issues one).
 CREATE TABLE tenant.token_vault_grants (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id           UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,
@@ -40,10 +35,7 @@ CREATE TABLE tenant.token_vault_grants (
     UNIQUE (tenant_id, user_id, provider)
 );
 
--- Short-lived, single-use OAuth2 `state` for the connect ceremony — same
--- shape as the passkey/MFA challenge tables: a server-side row correlates the
--- provider's redirect callback (which carries no auth header) back to the
--- (tenant, user, provider) that started it.
+-- Single-use OAuth2 state for the connect ceremony: correlates the provider's redirect callback (no auth header) back to the (tenant, user, provider) that started it.
 CREATE TABLE tenant.token_vault_connect_states (
     state       TEXT PRIMARY KEY,
     tenant_id   UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

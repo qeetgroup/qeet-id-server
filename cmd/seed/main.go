@@ -1,19 +1,7 @@
-// Command seed populates the database with a realistic, production-shaped set of
-// workspaces so the admin UI has data to browse. It uses the app's own
-// services/repositories, so passwords are real bcrypt (you can log in), users
-// appear via rbac membership, and audit rows are properly hash-chained.
-//
-//	make seed          # seed on top of whatever exists
-//	make seed-reset    # wipe (dev only) then seed a clean dataset
-//
-// The dataset models Qeet Group dogfooding its own identity platform (the one
-// genuinely-real org — the fully-configured primary workspace on qeet.in)
-// alongside a set of *fictional* customer organizations at production-like
-// scale: believable company/person names on realistic domains, dozens of users,
-// multiple groups, varied plans/regions/currencies, and login history. It is not
-// real customer data — Qeet has no real tenants yet; this is demo data that
-// simply reads like production. The seed's notifier only logs, so no mail is
-// ever sent. Everyone shares the dev password below.
+// Command seed populates the database with realistic, production-shaped demo
+// workspaces (dev-only; fictional customers, not real data). It drives the app's
+// own services, so passwords are real bcrypt, memberships go through rbac, and
+// audit rows hash-chain. The notifier only logs; everyone shares seedPassword.
 package main
 
 import (
@@ -142,8 +130,7 @@ func main() {
 	billingSvc := billing.NewService(pool)
 	must(billingSvc.SeedBuiltins(ctx), "seed billing plans")
 
-	// Services for the full-configuration coverage below. principal/agent/vc
-	// reuse the issuer; ldap reuses authSvc; the secrets vault needs a data key.
+	// Services for the full-configuration coverage below.
 	principalSvc := principal.NewService(pool, issuer)
 	agentSvc := agent.NewService(pool, issuer)
 	vcSvc := vc.NewService(pool, issuer)
@@ -198,12 +185,10 @@ func main() {
 	// session/audit/analytics history at the end.
 	var logins []string
 
-	// ════════════════════════════════════════════════════════════════════════
-	//  Primary workspace — Qeet Group dogfooding Qeet ID (qeet.in, Enterprise).
-	//  The one genuinely-real org. Fully configured: every admin screen has data
-	//  so nothing has to be set up by hand. An identity vendor legitimately wires
-	//  up every connection type (SAML, LDAP, SCIM, social) against test IdPs.
-	// ════════════════════════════════════════════════════════════════════════
+	// Primary workspace — Qeet Group dogfooding Qeet ID (qeet.in, Enterprise), the
+	// one genuinely-real org. Fully configured so every admin screen has data: an
+	// identity vendor legitimately wires up every connection type (SAML, LDAP,
+	// SCIM, social) against test IdPs.
 
 	// Signup creates a tenant-less identity; CreateWithOwner then makes them the
 	// owner of Qeet Group (owner role + membership + home tenant).
@@ -562,12 +547,9 @@ func main() {
 		return e
 	})
 
-	// ════════════════════════════════════════════════════════════════════════
-	//  Customer workspaces — fictional orgs on realistic domains, at scale. Each
-	//  is owned by its own admin (proper tenant isolation), with a generated
-	//  roster, groups, and a plan-appropriate SSO/social connection. Names and
-	//  domains are invented; any resemblance to a real company is coincidental.
-	// ════════════════════════════════════════════════════════════════════════
+	// Customer workspaces — fictional orgs on realistic domains, at scale. Each is
+	// owned by its own admin (proper tenant isolation), with a generated roster,
+	// groups, and a plan-appropriate SSO/social connection.
 
 	type orgInput struct {
 		slug, name, domain, plan, region, currency string
@@ -666,8 +648,7 @@ func main() {
 	fmt.Printf("  • customers     %d workspaces seeded with generated rosters\n", len(customers))
 
 	// ---- Login history (sessions + login audit -> sessions page + analytics) ----
-	// Vary IP (all TEST-NET documentation ranges) and user agent for realistic
-	// analytics. Each sampled account signs in twice.
+	// Vary IP (all TEST-NET documentation ranges) and user agent for realistic analytics.
 	ips := []string{"203.0.113.10", "203.0.113.42", "198.51.100.15", "192.0.2.77", "203.0.113.200"}
 	agents := []string{
 		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",

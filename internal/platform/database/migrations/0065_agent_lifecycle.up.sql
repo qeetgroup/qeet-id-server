@@ -1,8 +1,5 @@
--- Agent lifecycle state machine: active → suspended → decommissioned.
--- Replaces the boolean disabled_at model with an explicit tri-state so
--- operators can suspend (reversible) or decommission (terminal, one-way) an
--- agent. disabled_at is kept in sync (set when leaving active, cleared on
--- resume) for continuity with anything still reading it.
+-- 0065_agent_lifecycle — agent status tri-state (active → suspended → decommissioned) replacing the boolean disabled_at.
+-- Suspend is reversible, decommission is terminal; disabled_at is kept in sync for anything still reading it.
 ALTER TABLE auth.agents
     ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'suspended', 'decommissioned'));

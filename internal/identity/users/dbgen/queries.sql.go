@@ -167,6 +167,23 @@ func (q *Queries) GetUserTenantOf(ctx context.Context, id uuid.UUID) (pgtype.UUI
 	return tenant_id, err
 }
 
+const insertPasswordCredential = `-- name: InsertPasswordCredential :exec
+INSERT INTO auth.password_credentials (user_id, password_hash)
+VALUES ($1, $2)
+`
+
+type InsertPasswordCredentialParams struct {
+	UserID       uuid.UUID
+	PasswordHash string
+}
+
+// InsertPasswordCredential is the password-credential half of CreateWithCredential.
+// It writes into the auth bounded context but is fixed SQL, so it runs on the shared tx.
+func (q *Queries) InsertPasswordCredential(ctx context.Context, arg InsertPasswordCredentialParams) error {
+	_, err := q.db.Exec(ctx, insertPasswordCredential, arg.UserID, arg.PasswordHash)
+	return err
+}
+
 const insertUser = `-- name: InsertUser :one
 
 INSERT INTO "user".users (tenant_id, email, phone, display_name, metadata)
@@ -200,11 +217,10 @@ type InsertUserRow struct {
 // Queries for the users domain.
 // Static queries live here; the partial-UPDATE method (Update) stays hand-written
 // (dbutil.UpdateBuilder builds the SET clause dynamically).
-// CreateWithCredential mixes a user INSERT with a cross-context
-// auth.password_credentials INSERT in one tx; the user INSERT is converted but
-// the password INSERT stays raw on the same pgx.Tx (see repository.go).
-// InsertUser is the user-row half of CreateWithCredential. The cross-context
-// password INSERT stays hand-written on the same tx.
+// CreateWithCredential inserts the user and (optionally) their password credential
+// in one tx; both halves are static and run as sqlc queries on the same pgx.Tx.
+// InsertUser is the user-row half of CreateWithCredential; the cross-context
+// password credential is inserted by InsertPasswordCredential on the same tx.
 func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertUserRow, error) {
 	row := q.db.QueryRow(ctx, insertUser,
 		arg.TenantID,

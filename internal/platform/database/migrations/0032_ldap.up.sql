@@ -1,9 +1,5 @@
--- LDAP / Active Directory connections. Users authenticate with username +
--- password: Qeet ID binds with the service account, searches for the user,
--- then re-binds as that user to verify the password, JIT-provisioning a user.
---
--- bind_password is the service-account secret; it is never returned by the API
--- (write-only) and is required in plaintext to bind, so it is stored as-is.
+-- 0032_ldap — LDAP/AD connections: bind as the service account, find the user, re-bind as them to verify the password (JIT-provision).
+-- bind_password is write-only and stored as-is (plaintext is required to bind).
 
 CREATE TABLE tenant.ldap_connections (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),

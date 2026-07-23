@@ -17,13 +17,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// =====================================================================
-// OIDC client administration (tenant-scoped CRUD + secret rotation)
-//
-// Every query is filtered by tenant_id so an admin can only ever see or
-// mutate clients in their own tenant. Mutations are audited, mirroring the
-// registration audit row in registerClient.
-// =====================================================================
+// OIDC client administration (tenant-scoped CRUD + secret rotation). Every query
+// filters by tenant_id so an admin can only see/mutate clients in their own tenant;
+// mutations are audited, mirroring registerClient.
 
 // ListClients returns every OIDC client owned by the tenant, newest first.
 func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client, error) {
@@ -161,10 +157,6 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 	}
 	return secret, &c, nil
 }
-
-// =====================================================================
-// HTTP handlers
-// =====================================================================
 
 // auditActor resolves the (actorID, actorType) for an audit row from the
 // request principal, mirroring registerClient/revokeGrant.

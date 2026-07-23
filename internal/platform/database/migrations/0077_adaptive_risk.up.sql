@@ -1,18 +1,6 @@
--- Adaptive-MFA depth: two new, independently-togglable-per-tenant signals
--- layered onto the existing bot-score risk engine (auth.risk_settings) —
--- additive checks, not a rewrite. Both read/write a small per-user history
--- table rather than a full device-fingerprint or GeoIP subsystem:
---
---   * impossible_travel_enabled: flags a login from a different country than
---     the user's last-seen one, sooner than min_travel_hours could plausibly
---     allow. Country resolution is opportunistic — sourced from a trusted
---     upstream proxy header (e.g. Cloudflare's CF-IPCountry) if one is
---     configured; with none configured this signal silently never fires
---     (fail-open), the same "interface is in place, live dependency is
---     external ops" pattern as KMS BYOK.
---   * device_reputation_enabled: flags a login from a browser+OS combination
---     never seen before for this user (a coarse device proxy — no
---     fingerprinting library exists or is added by this change).
+-- 0077_adaptive_risk — two per-tenant signals layered onto the bot-score risk engine (auth.risk_settings), additive; both use a small per-user history table, not a fingerprint/GeoIP subsystem:
+--   * impossible_travel_enabled: login from a different country than last-seen, sooner than min_travel_hours. Country is opportunistic (a trusted proxy header like CF-IPCountry); with none configured the signal silently never fires (fail-open) — same "interface in place, live dependency is external ops" pattern as KMS BYOK.
+--   * device_reputation_enabled: login from a browser+OS never seen for this user (a coarse proxy — no fingerprinting library).
 ALTER TABLE auth.risk_settings
     ADD COLUMN impossible_travel_enabled BOOLEAN NOT NULL DEFAULT false,
     ADD COLUMN min_travel_hours DOUBLE PRECISION NOT NULL DEFAULT 3,

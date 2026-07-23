@@ -1,6 +1,5 @@
--- Generated stored tsvector column covering the structured event fields most
--- useful for free-text search. 'simple' dictionary tokenises without stemming,
--- which keeps technical tokens like "user.login" or "saml.provider" intact.
+-- 0079_audit_search_vector — generated tsvector for free-text search over audit events.
+-- 'simple' dictionary (no stemming) keeps technical tokens like "user.login" / "saml.provider" intact.
 ALTER TABLE audit.events
     ADD COLUMN search_vector tsvector
     GENERATED ALWAYS AS (

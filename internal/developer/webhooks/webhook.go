@@ -604,7 +604,4 @@ type EventBus interface {
 	Enqueue(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
 }
 
-// ErrBadRequest is re-exported for callers that don't want the platform
-// dependency. Kept here intentionally to keep webhook a self-contained
-// API boundary.
 var _ EventBus = (*Service)(nil)

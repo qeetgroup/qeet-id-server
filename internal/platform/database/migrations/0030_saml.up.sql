@@ -1,6 +1,4 @@
--- SAML 2.0 SP-initiated SSO. One row per enterprise IdP connection a tenant
--- federates with. The IdP's signing certificate validates assertions at the
--- ACS; attribute names map the assertion onto a Qeet ID user (JIT provisioned).
+-- 0030_saml — SAML 2.0 SP-initiated SSO: one row per tenant↔IdP connection (cert validates assertions at the ACS; attrs map onto a JIT-provisioned user)
 
 CREATE TABLE tenant.saml_connections (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,8 +17,7 @@ CREATE TABLE tenant.saml_connections (
 );
 CREATE INDEX idx_saml_conn_tenant ON tenant.saml_connections (tenant_id);
 
--- One-time codes bridging a validated ACS assertion to a token pair, so the
--- SPA never sees tokens in a URL. Mirrors auth.social_login_codes.
+-- One-time codes bridging a validated ACS assertion to a token pair, so the SPA never sees tokens in a URL.
 CREATE TABLE auth.saml_login_codes (
     code_hash   TEXT PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

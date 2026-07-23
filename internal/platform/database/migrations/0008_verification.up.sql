@@ -1,4 +1,4 @@
--- Verification codes/tokens for email and phone. Only the hash is stored.
+-- 0008_verification — email/phone verification codes (only the hash is stored)
 CREATE TABLE "user".email_verifications (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id      UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

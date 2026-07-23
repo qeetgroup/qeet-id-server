@@ -1,11 +1,6 @@
-// Package email manages per-tenant transactional email templates. The
-// catalog of known templates and their default subject/body lives in code
-// (matching the strings the send-flows use today); tenants store only
-// overrides. Render substitutes {{variable}} placeholders.
-//
-// Render is exported so the verification / recovery / invite / mfa send-flows
-// can resolve a tenant's template at send time; wiring those call sites is the
-// integration step that follows.
+// Package email manages per-tenant transactional email templates. The catalog of
+// known templates and their default subject/body lives in code; tenants store
+// only overrides. Render substitutes {{variable}} placeholders.
 package email
 
 import (

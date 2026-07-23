@@ -1,9 +1,7 @@
-// Package authhook implements synchronous Auth Actions/Hooks: a tenant plugs a
-// policy endpoint into the login flow. After credentials verify, Run POSTs a
-// signed event to the hook URL; the hook returns allow/deny. It is inert until
-// a tenant configures an enabled hook, and is bounded by a short timeout. When
-// the hook errors or times out, fail_open decides the outcome (default: allow,
-// so a hook outage never locks everyone out; strict tenants can set fail-closed).
+// Package authhook implements synchronous Auth Actions/Hooks: after credentials
+// verify, Run POSTs a signed event to a tenant's policy endpoint that returns
+// allow/deny. Inert until a hook is enabled; on error/timeout fail_open decides
+// (default allow, so a hook outage never locks everyone out).
 package authhook
 
 import (
@@ -137,8 +135,6 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 	return "", false, r.Claims
 }
 
-// --- CRUD ---
-
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool) (*Hook, error) {
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
 		return nil, errs.ErrUnprocessable.WithDetail("url must be an absolute http(s) URL")
@@ -207,8 +203,6 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 	}
 	return nil
 }
-
-// --- handlers ---
 
 type Handler struct {
 	Service *Service

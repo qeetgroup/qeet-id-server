@@ -1,9 +1,5 @@
--- Adaptive MFA: trusted ("remembered") devices. When a tenant opts in
--- (auth_policy.remember_device_enabled) an enrolled user can skip the second
--- factor on a device where they previously completed MFA, for a bounded window.
--- A device is identified by an opaque HttpOnly cookie token; only its hash is
--- stored (like refresh tokens / SSO sessions). New/unknown devices still get
--- the MFA step-up.
+-- 0054_trusted_devices — adaptive MFA "remember this device" (opt-in via auth_policy.remember_device_enabled):
+-- skip the 2nd factor on a device that previously completed MFA, for a bounded window. Device = opaque HttpOnly cookie token, stored only as a hash.
 CREATE TABLE auth.trusted_devices (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id      UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

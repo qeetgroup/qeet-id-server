@@ -22,8 +22,8 @@ production-quality, and the console + hosted login + marketing site are built an
 **Everything remaining to launch is external-ops (KMS, DNS, pentest, conformance, billing keys) or i18n/a11y
 polish — not missing features or code bugs.**
 
-**Remediation pass (2026-07-17):** every code-side gap the audit found was fixed and verified the same day — DB-level
-RLS defense-in-depth (B-1), a real NATS event broker (B-2), a public audit-verify endpoint (B-10), two SDK bug
+**Remediation pass (2026-07-17):** every code-side gap the audit found was fixed and verified the same day — a
+real NATS event broker (B-2), a public audit-verify endpoint (B-10), two SDK bug
 fixes (B-4/B-5), Go↔Node SDK parity (B-6), dedicated tests for all 8 previously-untested modules (B-9), the
 agent kill-switch confirmed already-correct + a regression test (B-3), performance benchmarks run and CI-wired,
 and the version/GA + migration-count documentation reconciled. Only two cosmetic items remain open (B-7 import
@@ -51,7 +51,7 @@ product is pre-1.0 with no `1.0.0` tag.
 | Code volume | ~202 Go files, ~37.8k non-test LOC + ~13.3k test LOC. **80 backend test files** (+ new integration + regression tests this pass). |
 | Domains | 5 bounded contexts (`access`, `developer`, `federation`, `identity`, `operations`) → ~40 modules. **No dead/empty packages.** |
 | API surface | ~325 route registrations, **5 split OpenAPI 3.1 specs**, 100% route-coverage enforced by a `chi.Walk` CI test. |
-| Data model | **82 migration pairs**, highest = `0082_rls_tenant_isolation` (was `0081` pre-remediation). Embedded via `//go:embed`, auto-applied on boot. |
+| Data model | **82 migration pairs**, highest = `0083_copilot_conversations`. Embedded via `//go:embed`, auto-applied on boot. |
 | Runtime | Beyond the server: `cmd/worker` (6 background workers), `cmd/scheduler` (3 advisory-locked cron jobs), `cmd/migrate`, `cmd/seed`. |
 | Frontends | `login` (Next.js 16, en-only) on `@qeetrix/ui`. The **`console`** (TanStack Router + Vite, **96 route files**, 8 locales) now lives in `qeet-consoles/qeet-id-console`, and the marketing **`website`** (Next.js 16, 25 marketing pages incl. pricing/compare/legal) in `qeet-websites/qeet-id-website`. |
 | SDKs | `qeet-id-{go,node,react}` — all **v0.1.0, production-quality, zero real stubs**; Go/Node now at resource parity. |
@@ -135,7 +135,7 @@ Grouped by area. Every item is backed by real Go code + routes + (mostly) tests.
 
 ### Platform
 - ✅ **Secure-by-default boot-gate** — refuses to start on weak JWT secret / CSRF-off / dev-trust-headers / missing origins (bypass only via audited `DISABLE_BOOT_GATE`).
-- ✅ **Postgres RLS defense-in-depth** (`0082`, opt-in via a dedicated app role — see B-1) backstopping the app-layer `tenant_id` scoping.
+- ✅ **App-layer tenant isolation** — per-query `WHERE tenant_id = $1` predicates + the router-level `EnforceTenantScope` guard (rejects any `{tenantID}` path that isn't the caller's own tenant).
 - ✅ Redis token-bucket rate limiting (per IP/tenant/user/API-key); transactional **outbox + DLQ + redrive** with a **real NATS publisher** (opt-in via `NATS_URL` — see B-2).
 - ✅ Observability — Prometheus `/metrics`, OTel tracing (OTLP), `/healthz` + `/readyz`, redacting structured logs.
 - ✅ Real **SMTP + Twilio** delivery (log fallback), **AWS KMS** DEK envelope encryption wired for vaults.
@@ -161,7 +161,7 @@ Grouped by area. Every item is backed by real Go code + routes + (mostly) tests.
 | 4 | **RDS PITR / backups + DR drill** | ⏳ ops | Tier 1 (backups), Tier 2 (drill) | Enable PITR; run the DR runbook once (target RTO < 30s / RPO < 5m). |
 | 5 | **External penetration test — zero-critical gate** | ⏳ ops | **Tier 2 (hard gate)** | PRD makes "zero critical findings" a GA prerequisite. Engage a firm ~6 weeks before Tier 2. **The single biggest schedule driver.** |
 | 6 | **Billing go-live** — Stripe + Razorpay production keys | ⏳ ops | Tier 1 (if paid at launch) | Checkout code complete & webhook-verified; needs 5 env keys + one live validation. |
-| 7 | **RLS prod activation** | ⏳ ops | Tier 2 | Code done (B-1). Grant `qid_app` LOGIN+password from a secret and set `DB_URL`/`DB_MIGRATE_URL` per `deploy/README.md` §9. |
+| 7 | _(removed)_ **RLS prod activation** | — | — | Postgres RLS was reverted on 2026-07-23 (never deployed; see B-1). Tenant isolation is app-layer only. |
 | 8 | **i18n completion** | 🟡 polish | Tier 2 | Console `en` fully externalized; **7 other locales ~53%**; `login` app en-only; emails not localized. Needs human translation + retrofit. |
 | 9 | **a11y — WCAG 2.2 AA legacy screens** | 🟡 polish | Tier 2 | Gate wired via Biome `a11y`; new/critical flows compliant; **~70 older console screens** need retrofit. |
 | 10 | **Managed-cloud infra** (multi-region/HA, K8s/Helm/Terraform go-live) | 🟡 ops | Managed offering only | Staged & "structurally validated", not the live path. Self-host single-node is production-viable today. |
@@ -192,7 +192,7 @@ The audit surfaced 10 findings (B-1…B-10). Status after the same-day remediati
 
 | # | Finding | Status |
 |---|---|---|
-| B-1 | Tenant isolation was app-layer only; no Postgres RLS (docs overclaimed) | ✅ **Fixed** — RLS defense-in-depth added + proven at the DB layer |
+| B-1 | Tenant isolation was app-layer only; no Postgres RLS (docs overclaimed) | ↩️ **Reverted (2026-07-23)** — RLS was added on 2026-07-17 but removed; isolation is app-layer only by design (docs corrected to match) |
 | B-2 | Outbox published to logs only; no real broker | ✅ **Fixed** — NATS publisher wired + proven end-to-end |
 | B-3 | (TAD claim) agent kill-switch is TTL-bounded | ✅ **Not a gap** — enforced per-request; verified live + regression test added |
 | B-4 | SDK JWKS unknown-`kid` refetch amplification (Go+Node) | ✅ **Fixed** — 1-min refetch cooldown |
@@ -206,20 +206,18 @@ The audit surfaced 10 findings (B-1…B-10). Status after the same-day remediati
 Plus: **version/GA story** and **migration-count** documentation reconciled; **performance benchmarks** run + CI-wired.
 Full build/vet/unit (54 pkgs) + integration suites green after all changes.
 
-### ✅ B-1 — Postgres RLS defense-in-depth
+### ↩️ B-1 — Postgres RLS defense-in-depth (added 2026-07-17, **reverted 2026-07-23**)
 - **Finding:** 0 RLS policies; isolation was 100% application-layer (223 `WHERE tenant_id` predicates +
-  `EnforceTenantScope`). PRD/TAD + workspace guide claimed DB-level RLS — untrue. The app also ran as the
-  `postgres` **superuser**, which bypasses RLS, so a policies-only migration would be inert.
-- **Fix (opt-in, safe for existing single-role deploys):** migration `0082_rls_tenant_isolation` creates a
-  least-privilege role `qid_app` + grants and `ENABLE`s RLS + a `tenant_isolation` policy on **all 64
-  tenant-scoped tables** (`ENABLE` not `FORCE`, so the owner still runs migrations/backfills while the non-owner
-  app role is enforced). Pool `BeforeAcquire`/`AfterRelease` stamp `app.tenant_id` / `app.bypass_rls` per checkout
-  from the request context (new `rlsctx` package + `EnforceTenantScope`, keyed off the validated `{tenantID}` so
-  cross-tenant-by-design queries run bypassed). New `DB_MIGRATE_URL` (owner) vs `DB_URL` (app role) split; blank
-  `DB_MIGRATE_URL` = unchanged single-role behavior. Runbook: `deploy/README.md` §9, `.env.example`.
-- **Verified live:** boots/serves as `qid_app`; direct DB proof — `bypass=on`→all 463 audit rows, `tenant=A`→68,
-  `=B`→37, bogus→**0**, unscoped→**0 (fail-closed)**; cross-tenant API→403.
-- **Remaining:** prod activation is ops ([§3](#3-what-is-pending-before-launch--the-real-ga-checklist) #7); future migrations adding a tenant-scoped table must enable RLS on it too.
+  `EnforceTenantScope`). PRD/TAD + workspace guide claimed DB-level RLS — untrue.
+- **What was done (2026-07-17):** migration `0082_rls_tenant_isolation` added a least-privilege `qid_app` role +
+  grants and `ENABLE`d RLS + a `tenant_isolation` policy on the tenant-scoped tables, with the pool stamping
+  `app.tenant_id`/`app.bypass_rls` per checkout (a `rlsctx` package) and a `DB_MIGRATE_URL` (owner) vs `DB_URL`
+  (app role) split.
+- **Reverted (2026-07-23):** the product has not been deployed anywhere, and the two-role / two-URL setup was not
+  wanted. Migration `0082` and the `rlsctx` package were deleted, the pool's GUC stamping removed, `0083` stripped
+  of its RLS/role blocks (keeping the copilot tables), and `DB_MIGRATE_URL` collapsed back to a single `DB_URL`.
+  `EnforceTenantScope` (the cross-tenant `{tenantID}` guard, QID-18) was **kept**. Tenant isolation is therefore
+  app-layer only — the per-query `tenant_id` predicates + `EnforceTenantScope` — as it was before this pass.
 
 ### ✅ B-2 — Real NATS event broker for the outbox
 - **Finding:** durable outbox + dispatcher + DLQ existed, but the only wired `Publisher` was `LogPublisher` — no
@@ -313,7 +311,7 @@ Sequenced across the PRD's phases through H1 2028:
 - ✅ **Secure-by-default boot-gate** blocks an insecure prod start.
 - ⏳ **Before prod go-live:** provision the live KMS CMK (#1), email DNS (#3), RDS PITR (#4), billing keys if
   selling (#6), mount `jwt_signing_key.pem` / SAML keys (deploy runbook), and put a WAF/CDN (Cloudflare/AWS Shield)
-  at the edge (also supplies the geo header for adaptive risk). To enforce RLS, flip to the `qid_app` DB role (#7).
+  at the edge (also supplies the geo header for adaptive risk).
 - 🟡 **Rotate the JWT signing key set every 90 days** (self-hoster expectation, `SECURITY.md`).
 - 🟡 **Scaling later:** Helm/K8s/Terraform are staged; validate (`helm lint`, `terraform validate`) before first use.
 - **Performance (measured, dev machine):** OIDC discovery/JWKS **p95 ≈ 3.2 ms** (SLO < 20 ms); RBAC + recursive
@@ -328,7 +326,7 @@ Sequenced across the PRD's phases through H1 2028:
 | **Qeet Group internal** (products delegate to it) | ✅ Yes | Ship. Real NATS fan-out (B-2) wired — set `NATS_URL` when products consume Qeet ID events. |
 | **OSS self-hosters / indie devs** | ✅ after #1,#3,#4 | Fully usable; no feature gaps. |
 | **Startups / SMB (paid)** | ✅ after #1,#3,#4,#6 | Add billing keys; i18n/a11y can trail. |
-| **Mid-market / Enterprise** | 🟡 after Tier-2 gates | Needs pentest zero-critical (#5), conformance (#2), RLS prod activation (#7), i18n/a11y (#8/#9). All code is done. |
+| **Mid-market / Enterprise** | 🟡 after Tier-2 gates | Needs pentest zero-critical (#5), conformance (#2), i18n/a11y (#8/#9). All code is done. |
 | **Regulated (finance/health/gov)** | 🔴 not yet | Needs SOC 2 Type II / ISO 27001 (observation window) → Tier 3. |
 
 ---
@@ -346,7 +344,7 @@ earliest date to launch "without gaps" for real (non-regulated) users.**
 ### 🟠 Tier 2 — Enterprise GA → **Tuesday, 2026-09-29** _(recommended headline "enterprise-ready" launch)_
 ~10.5 weeks out. Critical path = the **external penetration test**: engage a firm by **~2026-08-25** for ~3–4 weeks
 of testing + critical remediation before this date. In parallel: **OIDC/SAML/SCIM conformance certification** (#2),
-**RLS prod activation** (#7), **i18n + a11y** (#8/#9), and a **DR drill** (#4). End-of-Q3 lands before Q4 budget
+**i18n + a11y** (#8/#9), and a **DR drill** (#4). End-of-Q3 lands before Q4 budget
 cycles and clear of the year-end freeze. _If the pentest slips, move to the next Tuesday rather than ship unproven._
 
 ### 🔵 Tier 3 — Regulated / compliance-gated → **~2027-02 (Q1)** _(when you need SOC 2 / ISO)_
@@ -363,7 +361,7 @@ launch). Target a compliance-badged launch **early Q1 2027 (e.g. Tue 2027-02-16)
 ## 10. Pre-launch action checklist
 
 ### ✅ Done in the 2026-07-17 remediation pass
-- [x] RLS defense-in-depth (B-1) · NATS broker (B-2) · public audit-verify (B-10)
+- [x] NATS broker (B-2) · public audit-verify (B-10)  _(RLS B-1 was added then reverted 2026-07-23 — see §5)_
 - [x] SDK fixes: JWKS throttle (B-4), React WebAuthn (B-5), Go↔Node parity (B-6)
 - [x] Agent kill-switch verified + regression test (B-3)
 - [x] Dedicated tests for all 8 modules (B-9) · performance benchmarks run + CI-wired (`perf.yml`, `make bench`)
@@ -379,7 +377,7 @@ launch). Target a compliance-badged launch **early Q1 2027 (e.g. Tue 2027-02-16)
 ### ☐ Before Tier 2 (2026-09-29)
 6. ☐ **Engage a pentest firm by ~2026-08-25; remediate all criticals** (#5).
 7. ☐ Formal OIDC + SAML + SCIM conformance/interop certification (#2).
-8. ☐ RLS prod activation — grant `qid_app` LOGIN+password, set `DB_URL`/`DB_MIGRATE_URL` (#7, `deploy/README.md` §9).
+8. ~~RLS prod activation~~ — removed; Postgres RLS was reverted on 2026-07-23 (tenant isolation is app-layer only).
 9. ☐ Complete i18n (7 locales + login app + emails) and a11y legacy-screen retrofit (#8/#9).
 10. ☐ Run a DR drill; record RTO/RPO (#4).
 11. ☐ Launch the bug-bounty program (#11).
@@ -396,12 +394,12 @@ Compiled from **7 parallel audits** (full PRD read, full TAD read, backend catal
 audit, ROADMAP/CHANGELOG/GAP-ANALYSIS review, SDK exploration), then a same-day **remediation pass** with direct
 verification: `go build`/`go vet` ✅, unit suite (54 packages) ✅, all three SDKs build/typecheck/test ✅, a real
 **local boot + HTTP smoke test** ([§1a](#1a-live-boot--smoke-test-run-2026-07-17-local)), a **login → authed
-tenant-scoped read** flow, a **direct DB-level RLS enforcement proof** (as `qid_app`), an **agent kill-switch
+tenant-scoped read** flow, an **agent kill-switch
 end-to-end proof**, a **NATS publish→subscribe end-to-end proof**, the **full testcontainers integration suite**,
 and **k6 performance benchmarks**.
 
 **Not run:** external load tests at scale, the deployed EC2 stack, and the third-party gates by nature (pentest,
 formal conformance, KMS/DNS/billing go-live). Confidence is **high** on what exists in the code, that it
-boots/serves, that RLS/NATS/agent-revocation work, and on the GA gate list; **medium** on the exact enterprise date
+boots/serves, that NATS/agent-revocation work, and on the GA gate list; **medium** on the exact enterprise date
 (gated by the pentest calendar). Re-verify any "shipped" claim contradicted by `GAP-ANALYSIS.md`/`MERGE-BLUEPRINT.md`
 before external publication — those two docs pre-date the `0077`–`0082` work.

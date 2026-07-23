@@ -1,13 +1,6 @@
-// Package analytics powers the admin dashboard's KPI cards and charts.
-// It exposes one endpoint — GET /v1/tenants/{tenantID}/analytics/overview —
-// that returns everything the dashboard needs in a single payload, so we
-// avoid a thundering-herd of small queries on first render.
-//
-// Every aggregation lives here as its own SQL projection. Where the
-// underlying data isn't recorded yet (e.g. failed-login events, SMS-MFA
-// adoption, passkey method tagging), the projection returns empty
-// buckets and the dashboard renders a "no data yet" sliver — the dial
-// lights up automatically as the platform starts recording the data.
+// Package analytics powers the admin dashboard: one endpoint returns every KPI
+// and chart projection in a single payload. Projections with no data yet return
+// empty buckets so the dashboard degrades gracefully rather than erroring.
 package analytics
 
 import (
@@ -17,18 +10,30 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/analytics/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 type Reader struct {
+	// pool serves the projections whose result types sqlc cannot infer
+	// cleanly (mixed-type CASE, jsonb ->>, bigint+numeric) — see queries.sql.
 	pool *pgxpool.Pool
+	// q serves the static aggregations moved into queries.sql / dbgen.
+	q *dbgen.Queries
 }
 
 func NewReader(pool *pgxpool.Pool) *Reader {
-	return &Reader{pool: pool}
+	return &Reader{pool: pool, q: dbgen.New(pool)}
+}
+
+// pgUUID wraps a non-nil uuid.UUID as the pgtype.UUID the generated dbgen
+// query params expect; the encoded value is identical to passing the bare UUID.
+func pgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 // Overview is the response shape consumed by the admin dashboard. All
@@ -156,32 +161,18 @@ func (r *Reader) Overview(ctx context.Context, tenantID uuid.UUID) (*Overview, e
 func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// MAU = distinct users with a session created in the last 30 days.
 	// Delta = % change vs the prior 30-day window.
-	var mauNow, mauPrev int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days'),
-			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '60 days'
-			                                   AND created_at <  NOW() - INTERVAL '30 days')
-		FROM auth.sessions
-		WHERE tenant_id = $1
-	`, tid).Scan(&mauNow, &mauPrev); err != nil {
+	mau, err := r.q.CountMAUWindows(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
-	out.KPIs.MAU = Metric{Value: float64(mauNow), DeltaPct: pctChange(mauNow, mauPrev)}
+	out.KPIs.MAU = Metric{Value: float64(mau.MauNow), DeltaPct: pctChange(mau.MauNow, mau.MauPrev)}
 
 	// Logins today + delta vs yesterday.
-	var loginsToday, loginsYday int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW())),
-			COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
-			                  AND created_at <  date_trunc('day', NOW()))
-		FROM auth.sessions
-		WHERE tenant_id = $1
-	`, tid).Scan(&loginsToday, &loginsYday); err != nil {
+	logins, err := r.q.CountLoginsTodayWindows(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
-	out.KPIs.LoginsToday = Metric{Value: float64(loginsToday), DeltaPct: pctChange(loginsToday, loginsYday)}
+	out.KPIs.LoginsToday = Metric{Value: float64(logins.LoginsToday), DeltaPct: pctChange(logins.LoginsToday, logins.LoginsYday)}
 
 	// MFA adoption = % of (active, non-deleted) tenant users with a
 	// confirmed TOTP factor. Delta is pp change vs a week ago (the
@@ -226,18 +217,11 @@ func (r *Reader) kpis(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// Failed logins in the last 24h. Audit-event source — only lights
 	// up once §1.10-style failed-login auditing ships. Until then this
 	// stays at 0 and the dashboard reports the same.
-	var failedNow, failedPrev int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours'),
-			COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '48 hours'
-			                  AND created_at <  NOW() - INTERVAL '24 hours')
-		FROM audit.events
-		WHERE tenant_id = $1 AND action = 'auth.login_failed'
-	`, tid).Scan(&failedNow, &failedPrev); err != nil {
+	failed, err := r.q.CountFailedLogins24hWindows(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
-	out.KPIs.FailedLogins24h = Metric{Value: float64(failedNow), DeltaPct: pctChange(failedNow, failedPrev)}
+	out.KPIs.FailedLogins24h = Metric{Value: float64(failed.FailedNow), DeltaPct: pctChange(failed.FailedNow, failed.FailedPrev)}
 	return nil
 }
 
@@ -322,48 +306,21 @@ func (r *Reader) trends14d(ctx context.Context, tid uuid.UUID, out *Overview) er
 }
 
 func (r *Reader) loginActivity14d(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.pool.Query(ctx, `
-		WITH days AS (
-			SELECT date_trunc('day', d)::date AS day
-			FROM generate_series(
-				date_trunc('day', NOW() - INTERVAL '13 days'),
-				date_trunc('day', NOW()),
-				'1 day'::interval
-			) AS d
-		),
-		grouped AS (
-			SELECT date_trunc('day', created_at)::date AS day,
-			       COALESCE(metadata->>'method', 'password') AS method,
-			       COUNT(*) AS n
-			FROM audit.events
-			WHERE tenant_id = $1
-			  AND action = 'auth.login_succeeded'
-			  AND created_at >= NOW() - INTERVAL '14 days'
-			GROUP BY 1, 2
-		)
-		SELECT
-			days.day::text,
-			COALESCE(SUM(n) FILTER (WHERE method = 'password'),     0)::bigint,
-			COALESCE(SUM(n) FILTER (WHERE method = 'passkey'),      0)::bigint,
-			COALESCE(SUM(n) FILTER (WHERE method = 'social'),       0)::bigint,
-			COALESCE(SUM(n) FILTER (WHERE method = 'saml'),         0)::bigint,
-			COALESCE(SUM(n) FILTER (WHERE method = 'oidc'),         0)::bigint
-		FROM days LEFT JOIN grouped ON grouped.day = days.day
-		GROUP BY days.day
-		ORDER BY days.day ASC
-	`, tid)
+	rows, err := r.q.GetLoginActivity14d(ctx, pgUUID(tid))
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p ActivityPoint
-		if err := rows.Scan(&p.Date, &p.Password, &p.Passkey, &p.Social, &p.SAML, &p.OIDC); err != nil {
-			return err
-		}
-		out.LoginActivity14d = append(out.LoginActivity14d, p)
+	for _, row := range rows {
+		out.LoginActivity14d = append(out.LoginActivity14d, ActivityPoint{
+			Date:     row.Day,
+			Password: row.Password,
+			Passkey:  row.Passkey,
+			Social:   row.Social,
+			SAML:     row.Saml,
+			OIDC:     row.Oidc,
+		})
 	}
-	return rows.Err()
+	return nil
 }
 
 func (r *Reader) loginMethodsMix(ctx context.Context, tid uuid.UUID, out *Overview) error {
@@ -413,21 +370,12 @@ func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Ove
 	// Only TOTP + Recovery Codes are first-class today. Other methods
 	// (Passkey-MFA, SMS OTP, Email OTP) will appear once their tables
 	// exist; until then the dashboard renders just the populated bars.
-	var totp, recovery int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(*)
-		FROM auth.mfa_totp t
-		JOIN "user".users u ON u.id = t.user_id
-		WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND t.confirmed_at IS NOT NULL
-	`, tid).Scan(&totp); err != nil {
+	totp, err := r.q.CountMFATotpUsers(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
-	if err := r.pool.QueryRow(ctx, `
-		SELECT COUNT(DISTINCT c.user_id)
-		FROM auth.mfa_recovery_codes c
-		JOIN "user".users u ON u.id = c.user_id
-		WHERE u.tenant_id = $1 AND u.deleted_at IS NULL AND c.used_at IS NULL
-	`, tid).Scan(&recovery); err != nil {
+	recovery, err := r.q.CountMFARecoveryUsers(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
 	if totp > 0 {
@@ -440,39 +388,17 @@ func (r *Reader) mfaMethodsAdoption(ctx context.Context, tid uuid.UUID, out *Ove
 }
 
 func (r *Reader) failedHourly24h(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.pool.Query(ctx, `
-		WITH hours AS (
-			SELECT date_trunc('hour', h) AS hour
-			FROM generate_series(
-				date_trunc('hour', NOW() - INTERVAL '23 hours'),
-				date_trunc('hour', NOW()),
-				'1 hour'::interval
-			) AS h
-		),
-		grouped AS (
-			SELECT date_trunc('hour', created_at) AS hour, COUNT(*) AS n
-			FROM audit.events
-			WHERE tenant_id = $1
-			  AND action = 'auth.login_failed'
-			  AND created_at >= NOW() - INTERVAL '24 hours'
-			GROUP BY 1
-		)
-		SELECT to_char(hours.hour, 'HH24:MI'), COALESCE(grouped.n, 0)
-		FROM hours LEFT JOIN grouped ON grouped.hour = hours.hour
-		ORDER BY hours.hour ASC
-	`, tid)
+	rows, err := r.q.GetFailedLoginsHourly24h(ctx, pgUUID(tid))
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p HourlyPoint
-		if err := rows.Scan(&p.Hour, &p.Attempts); err != nil {
-			return err
-		}
-		out.FailedLoginsHourly24h = append(out.FailedLoginsHourly24h, p)
+	for _, row := range rows {
+		out.FailedLoginsHourly24h = append(out.FailedLoginsHourly24h, HourlyPoint{
+			Hour:     row.Hour,
+			Attempts: row.Attempts,
+		})
 	}
-	return rows.Err()
+	return nil
 }
 
 // extraKPIs populates the analytics-page-specific KPIs that aren't on
@@ -481,31 +407,19 @@ func (r *Reader) failedHourly24h(ctx context.Context, tid uuid.UUID, out *Overvi
 // a slow query in one stat doesn't block the rest of the dashboard.
 func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) error {
 	// DAU = distinct users with a session today vs yesterday.
-	var dauNow, dauPrev int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= date_trunc('day', NOW())),
-			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= date_trunc('day', NOW() - INTERVAL '1 day')
-			                                AND created_at <  date_trunc('day', NOW()))
-		FROM auth.sessions
-		WHERE tenant_id = $1
-	`, tid).Scan(&dauNow, &dauPrev); err != nil {
+	dau, err := r.q.CountDAUWindows(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
+	dauNow, dauPrev := dau.DauNow, dau.DauPrev
 	out.KPIs.DAU = Metric{Value: float64(dauNow), DeltaPct: pctChange(dauNow, dauPrev)}
 
 	// Total users in tenant + delta vs 30 days ago.
-	var usersNow, usersPrev int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE deleted_at IS NULL),
-			COUNT(*) FILTER (WHERE deleted_at IS NULL AND created_at <= NOW() - INTERVAL '30 days')
-		FROM "user".users
-		WHERE tenant_id = $1
-	`, tid).Scan(&usersNow, &usersPrev); err != nil {
+	users, err := r.q.CountTotalUsersWindows(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
-	out.KPIs.TotalUsers = Metric{Value: float64(usersNow), DeltaPct: pctChange(usersNow, usersPrev)}
+	out.KPIs.TotalUsers = Metric{Value: float64(users.UsersNow), DeltaPct: pctChange(users.UsersNow, users.UsersPrev)}
 
 	// Avg sessions per active user, last 30d vs prior 30d.
 	var avgNow, avgPrev float64
@@ -545,18 +459,11 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 		stickNow = 100.0 * float64(dauNow) / mauVal
 	}
 	// For the delta, compare to the same ratio a week ago.
-	var dauPrevWeek, mauPrevWeek int64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT
-			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '8 days'
-			                                  AND created_at <  NOW() - INTERVAL '7 days'),
-			COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '37 days'
-			                                  AND created_at <  NOW() - INTERVAL '7 days')
-		FROM auth.sessions
-		WHERE tenant_id = $1
-	`, tid).Scan(&dauPrevWeek, &mauPrevWeek); err != nil {
+	stick, err := r.q.CountStickinessPriorWeek(ctx, pgUUID(tid))
+	if err != nil {
 		return err
 	}
+	dauPrevWeek, mauPrevWeek := stick.DauPrevWeek, stick.MauPrevWeek
 	stickPrev := 0.0
 	if mauPrevWeek > 0 {
 		stickPrev = 100.0 * float64(dauPrevWeek) / float64(mauPrevWeek)
@@ -569,58 +476,18 @@ func (r *Reader) extraKPIs(ctx context.Context, tid uuid.UUID, out *Overview) er
 // in week). Buckets are always 8 wide — missing weeks return zero —
 // so the chart doesn't compress on a brand-new tenant.
 func (r *Reader) weeklyActivity8w(ctx context.Context, tid uuid.UUID, out *Overview) error {
-	rows, err := r.pool.Query(ctx, `
-		WITH weeks AS (
-			SELECT date_trunc('week', d) AS week_start
-			FROM generate_series(
-				date_trunc('week', NOW() - INTERVAL '7 weeks'),
-				date_trunc('week', NOW()),
-				'1 week'::interval
-			) AS d
-		),
-		w AS (
-			SELECT
-				date_trunc('week', created_at) AS week_start,
-				COUNT(DISTINCT user_id) AS wau
-			FROM auth.sessions
-			WHERE tenant_id = $1 AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
-			GROUP BY 1
-		),
-		d AS (
-			SELECT
-				lat.dw AS week_start,
-				AVG(daily_users)::bigint AS dau_avg
-			FROM (
-				SELECT
-					date_trunc('day', created_at) AS day,
-					COUNT(DISTINCT user_id) AS daily_users
-				FROM auth.sessions
-				WHERE tenant_id = $1 AND created_at >= date_trunc('week', NOW() - INTERVAL '7 weeks')
-				GROUP BY 1
-			) daily, LATERAL (SELECT date_trunc('week', daily.day) AS dw) lat
-			GROUP BY 1
-		)
-		SELECT
-			to_char(weeks.week_start, '"W"IW') AS week,
-			COALESCE(w.wau, 0),
-			COALESCE(d.dau_avg, 0)
-		FROM weeks
-		LEFT JOIN w ON w.week_start = weeks.week_start
-		LEFT JOIN d ON d.week_start = weeks.week_start
-		ORDER BY weeks.week_start ASC
-	`, tid)
+	rows, err := r.q.GetWeeklyActivity8w(ctx, pgUUID(tid))
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var p WeeklyActivityPoint
-		if err := rows.Scan(&p.Week, &p.WAU, &p.DAU); err != nil {
-			return err
-		}
-		out.WeeklyActivity8w = append(out.WeeklyActivity8w, p)
+	for _, row := range rows {
+		out.WeeklyActivity8w = append(out.WeeklyActivity8w, WeeklyActivityPoint{
+			Week: row.Week,
+			WAU:  row.Wau,
+			DAU:  row.Dau,
+		})
 	}
-	return rows.Err()
+	return nil
 }
 
 func pctChange(now, prev int64) float64 {

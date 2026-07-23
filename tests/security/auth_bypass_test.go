@@ -5,17 +5,11 @@ import (
 	"testing"
 )
 
-// protectedEndpoints lists endpoints that must reject unauthenticated requests.
-//
-// QID-20: this list was stale — it used paths that don't match the real router
-// (e.g. /v1/organizations, /v1/roles, /v1/audit/events, /v1/compliance/export,
-// /v1/agents), so unauthenticated probes hit chi's NotFound/MethodNotAllowed
-// (404/405) instead of the auth gate. The test then "passed" only because Go's
-// test cache served a stale result (it can't see the live backend it probes),
-// so this security regression check was vacuously green while verifying nothing.
-// These are now the real authed-group GET routes; the tenant-scoped ones use a
-// zero-UUID placeholder because RequireAuth runs (and 401s) before any tenant
-// match, so the id value is irrelevant to the auth check.
+// protectedEndpoints lists the real authed-group GET routes that must reject
+// unauthenticated requests. They must match the live router exactly (QID-20: a
+// stale list hit chi's 404/405 instead of the auth gate, passing vacuously).
+// Tenant-scoped paths use a zero-UUID placeholder since RequireAuth 401s before
+// any tenant match, so the id value is irrelevant.
 var protectedEndpoints = []string{
 	"/v1/users",
 	"/v1/tenants/00000000-0000-0000-0000-000000000000/roles",
@@ -34,7 +28,6 @@ func TestProtectedEndpointsRequireAuth(t *testing.T) {
 		},
 	}
 
-	// Verify backend is up
 	probe, err := client.Get(baseURL + "/healthz")
 	if err != nil {
 		t.Skipf("backend not reachable: %v", err)

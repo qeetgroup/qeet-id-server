@@ -1,6 +1,4 @@
--- Federated identities — Qeet as an OIDC/OAuth client. Each row binds one
--- of our users to one external provider account. Providers configured per
--- tenant.
+-- 0020_social — social login (Qeet as OAuth/OIDC client): per-tenant provider configs + user↔external-account links
 CREATE TABLE tenant.social_providers (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

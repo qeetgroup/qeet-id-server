@@ -61,7 +61,7 @@ func TestAdminPortalLinkGenerateAndRedeem(t *testing.T) {
 		t.Fatalf("saml link capabilities = %v, want exactly [saml]", samlLink.Capabilities)
 	}
 
-	// --- context: public, no capability required ---
+	// context: public, no capability required
 	ctxResp, err := http.Get(srv.URL + "/v1/admin-portal/" + samlToken + "/context")
 	if err != nil {
 		t.Fatalf("get context: %v", err)
@@ -79,8 +79,8 @@ func TestAdminPortalLinkGenerateAndRedeem(t *testing.T) {
 		t.Errorf("context capabilities = %v, want [saml]", pc.Capabilities)
 	}
 
-	// --- SAML capability: granted, so create + list must work through the
-	// real saml.Service, not a stub ---
+	// SAML capability: granted, so create + list must work through the
+	// real saml.Service, not a stub
 	_, certPEM, err := saml.GenerateIdPKeyPEM("Acme Corp IdP")
 	if err != nil {
 		t.Fatalf("generate test idp cert: %v", err)
@@ -112,7 +112,7 @@ func TestAdminPortalLinkGenerateAndRedeem(t *testing.T) {
 		t.Fatalf("saml.Service.List = %+v, want one connection named acme-idp", conns)
 	}
 
-	// --- SCIM capability: NOT granted on this link, must 403 ---
+	// SCIM capability: NOT granted on this link, must 403
 	scimResp, err := http.Post(srv.URL+"/v1/admin-portal/"+samlToken+"/scim/token", "application/json", nil)
 	if err != nil {
 		t.Fatalf("post scim rotate: %v", err)
@@ -168,7 +168,7 @@ func TestAdminPortalLinkGenerateAndRedeem(t *testing.T) {
 		t.Fatalf("saml list on scim-only link status = %d, want 403", samlOnScim.StatusCode)
 	}
 
-	// --- revocation takes effect immediately ---
+	// revocation takes effect immediately
 	tx3, err := testPool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -188,7 +188,7 @@ func TestAdminPortalLinkGenerateAndRedeem(t *testing.T) {
 		t.Fatalf("context after revoke status = %d, want 401", revokedResp.StatusCode)
 	}
 
-	// --- an invalid token is rejected, not panicked on ---
+	// an invalid token is rejected, not panicked on
 	badResp, err := http.Get(srv.URL + "/v1/admin-portal/not-a-real-token/context")
 	if err != nil {
 		t.Fatalf("get context (bad token): %v", err)

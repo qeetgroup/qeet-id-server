@@ -1,12 +1,6 @@
-// Command worker runs the Qeet ID background worker process.
-//
-// In the default single-binary deployment, these workers run embedded inside
-// cmd/server. Run this binary standalone when you want to scale workers
-// independently — deploy N worker replicas and M API replicas sharing the
-// same Postgres database.
-//
-//	make dev-worker          # run locally against .env
-//	make build-worker        # build bin/qeet-id-worker
+// Command worker runs the Qeet ID background workers standalone. They normally
+// run embedded in cmd/server; run this binary to scale workers independently
+// (N worker replicas + M API replicas sharing one Postgres database).
 package main
 
 import (

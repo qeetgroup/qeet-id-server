@@ -1,6 +1,5 @@
--- Per-tenant IP allow/deny rules (CIDR). Deny rules win over allow rules; if
--- any allow rule exists, an address must match one to pass. Enforcement is
--- gated by an explicit per-tenant flag to avoid accidental lockout.
+-- 0035_ip_rules — per-tenant IP allow/deny CIDR rules.
+-- Deny wins over allow; if any allow exists an address must match one; enforcement is gated by an explicit per-tenant flag to avoid lockout.
 
 CREATE TABLE tenant.ip_rules (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

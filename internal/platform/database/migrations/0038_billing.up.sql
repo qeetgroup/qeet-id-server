@@ -1,8 +1,5 @@
--- Internal billing model (no external payment processor). A platform-managed
--- plan catalogue with per-currency pricing, a per-tenant subscription in a
--- chosen currency, and internally-generated invoices. Amounts are integer
--- minor units (cents/pence/…); the currency's fraction digits are applied at
--- display time, so every ISO-4217 currency is supported.
+-- 0038_billing — internal billing (no external processor): plans + per-currency pricing, subscriptions, invoices.
+-- Amounts are integer minor units (cents/pence/…); fraction digits applied at display time, so any ISO-4217 currency works.
 
 CREATE TABLE platform.billing_plans (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

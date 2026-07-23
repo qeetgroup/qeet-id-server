@@ -29,9 +29,8 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-// toDomain maps a generated persistence row to the domain Tenant model.
-// JSONB metadata ([]byte) is decoded here via the existing dbutil helper, so the
-// domain Tenant type (and its callers) are unchanged.
+// toDomain maps a persistence row to the domain Tenant, decoding JSONB metadata
+// ([]byte) via the dbutil helper.
 func toDomain(row dbgen.TenantTenant) *Tenant {
 	return &Tenant{
 		ID:        row.ID,
@@ -70,9 +69,11 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 	}
 	defer tx.Rollback(ctx)
 
-	// The sqlc-generated query and the raw cross-context statements below all run
-	// on the same pgx.Tx — sqlc queries and hand-written SQL compose in one transaction.
-	row, err := r.q.WithTx(tx).InsertTenant(ctx, dbgen.InsertTenantParams{
+	// InsertTenant and the cross-context writes below are all static SQL, so they run
+	// as sqlc queries on the same pgx.Tx via WithTx — one transaction spanning the
+	// tenant, rbac, and user bounded contexts.
+	q := r.q.WithTx(tx)
+	row, err := q.InsertTenant(ctx, dbgen.InsertTenantParams{
 		Slug:     strings.TrimSpace(in.Slug),
 		Name:     in.Name,
 		Plan:     plan,
@@ -87,33 +88,27 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 	}
 	t := toDomain(row)
 
-	// Owner role for the tenant, granted every platform permission. These write into
-	// other bounded contexts (rbac, user), so they stay hand-written on the shared tx.
-	var roleID uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
-		VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
-		RETURNING id
-	`, t.ID).Scan(&roleID); err != nil {
+	// Owner role for the tenant, granted every platform permission, then assigned to
+	// the owner. These write into other bounded contexts (rbac, user).
+	roleID, err := q.InsertOwnerRole(ctx, t.ID)
+	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO rbac.role_permissions (role_id, permission_id)
-		SELECT $1, id FROM rbac.permissions
-	`, roleID); err != nil {
+	if err := q.GrantAllPermissionsToRole(ctx, roleID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
-		VALUES ($1, $2, $3, $1)
-	`, ownerID, t.ID, roleID); err != nil {
+	if err := q.GrantRoleToUser(ctx, dbgen.GrantRoleToUserParams{
+		UserID:   ownerID,
+		TenantID: t.ID,
+		RoleID:   roleID,
+	}); err != nil {
 		return nil, err
 	}
 	// Adopt as home tenant only if they have none yet.
-	if _, err := tx.Exec(ctx, `
-		UPDATE "user".users SET tenant_id = $1, updated_at = NOW()
-		WHERE id = $2 AND tenant_id IS NULL AND deleted_at IS NULL
-	`, t.ID, ownerID); err != nil {
+	if err := q.AdoptHomeTenant(ctx, dbgen.AdoptHomeTenantParams{
+		TenantID: t.ID,
+		ID:       ownerID,
+	}); err != nil {
 		return nil, err
 	}
 

@@ -1,3 +1,4 @@
+-- 0015_branding — per-tenant branding (logo, colors, email-from, custom domain)
 CREATE TABLE tenant.branding (
     tenant_id           UUID PRIMARY KEY REFERENCES tenant.tenants(id) ON DELETE CASCADE,
     logo_url            TEXT,

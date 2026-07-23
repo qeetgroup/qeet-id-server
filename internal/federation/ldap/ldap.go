@@ -1,12 +1,8 @@
 // Package ldap bridges on-prem Active Directory / LDAPv3 directories. A user
 // authenticates with username + password: Qeet ID binds with the connection's
-// service account, searches for the user under the base DN, then re-binds as
-// that user's DN to verify the password — JIT-provisioning a Qeet ID user and
-// issuing a session on success.
-//
-// Surfaces:
-//   - Admin  (/v1/tenants/{id}/ldap, user-JWT): connection CRUD + test bind.
-//   - Public (/ldap/{id}/authenticate, no JWT): username/password login.
+// service account, searches for the user under the base DN, then re-binds as that
+// user's DN to verify the password — JIT-provisioning a Qeet ID user and issuing a
+// session on success.
 package ldap
 
 import (
@@ -437,10 +433,6 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	_ = s.q.TouchLdapLastLogin(ctx, connID)
 	return s.auth.IssuePair(ctx, userID, c.TenantID, ip, ua, provider)
 }
-
-// =====================================================================
-// Handler
-// =====================================================================
 
 type Handler struct {
 	Service *Service

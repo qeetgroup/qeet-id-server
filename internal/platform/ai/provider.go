@@ -1,13 +1,7 @@
 // Package ai defines the provider-neutral inference abstraction for the AI
-// copilot feature. Concrete implementations live in sub-packages:
-//
-//   - platform/ai/anthropic — Anthropic Messages API (streaming)
-//   - platform/ai/openai   — OpenAI Chat Completions API (streaming);
-//     also works with hosted OpenAI-compatible endpoints (Groq, OpenRouter,
-//     Google Gemini's OpenAI-compatible path, …)
-//
-// The copilot orchestrator depends only on Provider; it never imports a
-// concrete client. Arch rule: platform/* must not import domains/*.
+// copilot. Implementations live in platform/ai/{anthropic,openai}; the copilot
+// orchestrator depends only on Provider. Arch rule: platform/* must not import
+// domains/*.
 package ai
 
 import (

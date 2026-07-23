@@ -1,6 +1,4 @@
--- Per-tenant authentication policy: password complexity rules and which
--- login methods the tenant permits. One row per tenant; absence means defaults.
--- Password complexity is enforced on tenant-scoped password changes.
+-- 0034_auth_policy — per-tenant password rules + enabled login methods (no row = defaults)
 
 CREATE TABLE tenant.auth_policy (
     tenant_id                  UUID PRIMARY KEY REFERENCES tenant.tenants(id) ON DELETE CASCADE,

@@ -1,6 +1,4 @@
--- Per-tenant secrets vault: named integration secrets (3rd-party API keys,
--- signing material, etc.) stored encrypted at rest (AES-256-GCM). The plaintext
--- is never persisted and is only returned via an explicit, audited reveal.
+-- 0039_secrets — per-tenant secrets vault, encrypted at rest (AES-256-GCM); plaintext never persisted, returned only via an explicit audited reveal
 
 CREATE TABLE tenant.secrets (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

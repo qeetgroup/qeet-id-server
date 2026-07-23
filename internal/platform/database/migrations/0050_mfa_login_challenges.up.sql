@@ -1,7 +1,4 @@
--- Pending second-factor login challenges. A row is created when a password
--- login succeeds for an MFA-enrolled user; the client exchanges it (single-use)
--- at POST /v1/auth/mfa for a full token pair once the second-factor code is
--- verified. Short-lived; expired/used rows are removed on use.
+-- 0050_mfa_login_challenges — pending 2nd-factor challenge minted after a password login for MFA-enrolled users; exchanged single-use at POST /v1/auth/mfa for a token pair
 CREATE TABLE auth.mfa_login_challenges (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,

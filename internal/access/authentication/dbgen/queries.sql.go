@@ -49,6 +49,15 @@ func (q *Queries) DeleteLoginSession(ctx context.Context, tokenHash string) erro
 	return err
 }
 
+const deleteMFALoginChallenge = `-- name: DeleteMFALoginChallenge :exec
+DELETE FROM auth.mfa_login_challenges WHERE id = $1
+`
+
+func (q *Queries) DeleteMFALoginChallenge(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteMFALoginChallenge, id)
+	return err
+}
+
 const getLoginAttempt = `-- name: GetLoginAttempt :one
 
 SELECT locked_until FROM auth.login_attempts WHERE email = $1
@@ -110,6 +119,22 @@ func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSession
 	return err
 }
 
+const insertPasswordCredential = `-- name: InsertPasswordCredential :exec
+INSERT INTO auth.password_credentials (user_id, password_hash)
+VALUES ($1, $2)
+`
+
+type InsertPasswordCredentialParams struct {
+	UserID       uuid.UUID
+	PasswordHash string
+}
+
+// Stores the Argon2id hash for a newly created identity (signup / hosted register).
+func (q *Queries) InsertPasswordCredential(ctx context.Context, arg InsertPasswordCredentialParams) error {
+	_, err := q.db.Exec(ctx, insertPasswordCredential, arg.UserID, arg.PasswordHash)
+	return err
+}
+
 const insertRefreshToken = `-- name: InsertRefreshToken :one
 INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
 VALUES ($1, $2, $3)
@@ -127,6 +152,56 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertTenantlessSession = `-- name: InsertTenantlessSession :exec
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
+VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4)
+`
+
+type InsertTenantlessSessionParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Ip        string
+	UserAgent *string
+}
+
+// Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
+// NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
+func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantlessSessionParams) error {
+	_, err := q.db.Exec(ctx, insertTenantlessSession,
+		arg.ID,
+		arg.UserID,
+		arg.Ip,
+		arg.UserAgent,
+	)
+	return err
+}
+
+const insertTenantlessUser = `-- name: InsertTenantlessUser :one
+INSERT INTO "user".users (tenant_id, email, display_name)
+VALUES (NULL, $1, $2)
+RETURNING id, created_at, updated_at
+`
+
+type InsertTenantlessUserParams struct {
+	Email       string
+	DisplayName *string
+}
+
+type InsertTenantlessUserRow struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Tenant-less signup: creates the identity with tenant_id NULL (a literal, not a
+// bind — membership lives in rbac.user_roles). display_name is nullable text.
+func (q *Queries) InsertTenantlessUser(ctx context.Context, arg InsertTenantlessUserParams) (InsertTenantlessUserRow, error) {
+	row := q.db.QueryRow(ctx, insertTenantlessUser, arg.Email, arg.DisplayName)
+	var i InsertTenantlessUserRow
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.UpdatedAt)
+	return i, err
 }
 
 const markRefreshTokenUsed = `-- name: MarkRefreshTokenUsed :exec

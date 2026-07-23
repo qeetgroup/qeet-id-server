@@ -1,3 +1,4 @@
+-- 0007_audit — append-only audit event log
 CREATE TABLE audit.events (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID,

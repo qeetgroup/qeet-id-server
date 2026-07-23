@@ -1,6 +1,4 @@
--- GDPR right-to-erasure: a request enters in 'pending'; a background job
--- purges PII after the grace period; the row is kept as a tombstone for
--- audit.
+-- 0018_gdpr — right-to-erasure purge requests: a job purges PII after the grace period; the row is kept as a tombstone for audit
 CREATE TABLE "user".purge_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

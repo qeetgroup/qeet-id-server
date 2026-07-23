@@ -5,26 +5,9 @@ import (
 	"errors"
 )
 
-// KeyProvider supplies the vault's AES data-encryption key (DEK) at startup.
-// NewService unwraps it once and caches the AEAD cipher.
-//
-// Two implementations ship: StaticKeyProvider (a key supplied via config /
-// secret manager, independent of the JWT secret) and AWSKMSProvider (see
-// kms.go), which holds a KMS-wrapped DEK that DataKey unwraps via kms.Decrypt.
-// A provider drops in without touching the Service — the sketch below matches
-// the real AWSKMSProvider:
-//
-//	type AWSKMSProvider struct {
-//		Client     *kms.Client
-//		WrappedDEK []byte // ciphertext blob from kms.GenerateDataKey
-//	}
-//	func (p AWSKMSProvider) DataKey(ctx context.Context) ([]byte, error) {
-//		out, err := p.Client.Decrypt(ctx, &kms.DecryptInput{CiphertextBlob: p.WrappedDEK})
-//		if err != nil {
-//			return nil, err
-//		}
-//		return out.Plaintext, nil // 16/24/32 bytes
-//	}
+// KeyProvider supplies the vault's AES data-encryption key (DEK) at startup;
+// NewService unwraps it once and caches the AEAD cipher. Two implementations ship:
+// StaticKeyProvider (key from config/secret manager) and AWSKMSProvider (kms.go).
 type KeyProvider interface {
 	DataKey(ctx context.Context) ([]byte, error)
 }

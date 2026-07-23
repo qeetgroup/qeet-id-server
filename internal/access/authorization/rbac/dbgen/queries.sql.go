@@ -13,6 +13,40 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assignRoleToGroup = `-- name: AssignRoleToGroup :one
+WITH ins AS (
+    INSERT INTO rbac.group_roles (tenant_id, group_id, role_id, granted_by)
+    SELECT $3, $1, $2, $4
+    WHERE EXISTS (SELECT 1 FROM tenant.groups g WHERE g.id = $1 AND g.tenant_id = $3)
+      AND EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $2 AND ro.tenant_id = $3)
+    ON CONFLICT DO NOTHING
+    RETURNING 1
+)
+SELECT (
+    EXISTS (SELECT 1 FROM ins)
+    OR EXISTS (SELECT 1 FROM rbac.group_roles existing WHERE existing.group_id = $1 AND existing.role_id = $2 AND existing.tenant_id = $3)
+) AS valid
+`
+
+type AssignRoleToGroupParams struct {
+	GroupID   uuid.UUID
+	RoleID    uuid.UUID
+	TenantID  uuid.UUID
+	GrantedBy pgtype.UUID
+}
+
+func (q *Queries) AssignRoleToGroup(ctx context.Context, arg AssignRoleToGroupParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, assignRoleToGroup,
+		arg.GroupID,
+		arg.RoleID,
+		arg.TenantID,
+		arg.GrantedBy,
+	)
+	var valid *bool
+	err := row.Scan(&valid)
+	return valid, err
+}
+
 const assignUserRole = `-- name: AssignUserRole :exec
 INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
 VALUES ($1, $2, $3, $4)
@@ -96,6 +130,65 @@ func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (RbacRol
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const explainGrants = `-- name: ExplainGrants :many
+SELECT 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
+UNION ALL
+SELECT 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id AS role_id, ro.name AS role_name
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
+JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+JOIN rbac.roles ro ON ro.id = gr.role_id
+JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
+ORDER BY via, group_name NULLS FIRST
+`
+
+type ExplainGrantsParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	PermKey  string
+}
+
+type ExplainGrantsRow struct {
+	Via       string
+	GroupID   pgtype.UUID
+	GroupName *string
+	RoleID    uuid.UUID
+	RoleName  string
+}
+
+func (q *Queries) ExplainGrants(ctx context.Context, arg ExplainGrantsParams) ([]ExplainGrantsRow, error) {
+	rows, err := q.db.Query(ctx, explainGrants, arg.UserID, arg.TenantID, arg.PermKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExplainGrantsRow{}
+	for rows.Next() {
+		var i ExplainGrantsRow
+		if err := rows.Scan(
+			&i.Via,
+			&i.GroupID,
+			&i.GroupName,
+			&i.RoleID,
+			&i.RoleName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getRoleTenant = `-- name: GetRoleTenant :one
@@ -348,10 +441,10 @@ type UpsertPermissionParams struct {
 	Description string
 }
 
-// Queries for the rbac domain.
-// Static queries for permissions, roles, grants, and assignments are converted.
-// AssignRoleToGroup (conditional CTE INSERT) and Explain (UNION with typed
-// NULL columns) are left hand-written in rbac.go — sqlc can't cleanly model them.
+// Queries for the rbac domain. All queries are sqlc-generated, including the two
+// awkward ones: AssignRoleToGroup (a conditional CTE INSERT whose RETURNING is
+// folded into an EXISTS check, returning a single bool) and ExplainGrants (a
+// two-armed UNION ALL with typed NULL columns for the direct arm).
 func (q *Queries) UpsertPermission(ctx context.Context, arg UpsertPermissionParams) (RbacPermission, error) {
 	row := q.db.QueryRow(ctx, upsertPermission, arg.Key, arg.Description)
 	var i RbacPermission

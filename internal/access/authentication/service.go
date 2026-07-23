@@ -272,45 +272,40 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	defer tx.Rollback(ctx)
 
 	// 1) User — tenant-less (tenant_id NULL).
-	var displayName any
-	if in.DisplayName != "" {
-		displayName = in.DisplayName
-	}
 	u := &user.User{Email: strings.TrimSpace(in.Email), Status: "active", Metadata: map[string]any{}}
 	if in.DisplayName != "" {
 		dn := in.DisplayName
 		u.DisplayName = &dn
 	}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO "user".users (tenant_id, email, display_name)
-		VALUES (NULL, $1, $2)
-		RETURNING id, created_at, updated_at
-	`, u.Email, displayName).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {
+	urow, err := s.q.WithTx(tx).InsertTenantlessUser(ctx, dbgen.InsertTenantlessUserParams{
+		Email:       u.Email,
+		DisplayName: u.DisplayName,
+	})
+	if err != nil {
 		if pgxerr.IsUnique(err) {
 			return nil, nil, nil, errs.ErrConflict.WithDetail("email already exists")
 		}
 		return nil, nil, nil, err
 	}
+	u.ID, u.CreatedAt, u.UpdatedAt = urow.ID, urow.CreatedAt, urow.UpdatedAt
 
 	// 2) Password credential.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.password_credentials (user_id, password_hash)
-		VALUES ($1, $2)
-	`, u.ID, hash); err != nil {
+	if err := s.q.WithTx(tx).InsertPasswordCredential(ctx, dbgen.InsertPasswordCredentialParams{
+		UserID:       u.ID,
+		PasswordHash: hash,
+	}); err != nil {
 		return nil, nil, nil, err
 	}
 
 	// 3) Tenant-less session + access + refresh token, all in the same tx so
 	// signup is fully atomic.
 	sessionID := uuid.New()
-	var ipArg any
-	if in.IP != "" {
-		ipArg = in.IP
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
-		VALUES ($1, $2, NULL, NULLIF($3,'')::inet, $4)
-	`, sessionID, u.ID, ipArg, in.UserAgent); err != nil {
+	if err := s.q.WithTx(tx).InsertTenantlessSession(ctx, dbgen.InsertTenantlessSessionParams{
+		ID:        sessionID,
+		UserID:    u.ID,
+		Ip:        in.IP,
+		UserAgent: &in.UserAgent,
+	}); err != nil {
 		return nil, nil, nil, err
 	}
 	access, exp, err := s.tokens.IssueAccess(u.ID, uuid.Nil, sessionID, "")
@@ -498,10 +493,10 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		}
 		return nil, "", err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.password_credentials (user_id, password_hash)
-		VALUES ($1, $2)
-	`, u.ID, hash); err != nil {
+	if err := s.q.WithTx(tx).InsertPasswordCredential(ctx, dbgen.InsertPasswordCredentialParams{
+		UserID:       u.ID,
+		PasswordHash: hash,
+	}); err != nil {
 		return nil, "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -572,7 +567,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if time.Now().After(expiresAt) {
-		_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
+		_ = s.q.DeleteMFALoginChallenge(ctx, id)
 		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge expired")
 	}
 	ok, err := s.mfa.VerifyForLogin(ctx, userID, code)
@@ -583,7 +578,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Invalid verification code.").WithDetail("invalid mfa code")
 	}
 	// Consume the challenge only on success.
-	_, _ = s.pool.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id)
+	_ = s.q.DeleteMFALoginChallenge(ctx, id)
 	var tid uuid.UUID
 	if tenantID != nil {
 		tid = *tenantID

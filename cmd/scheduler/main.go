@@ -1,12 +1,6 @@
-// Command scheduler runs the Qeet ID scheduled maintenance jobs.
-//
-// These are low-frequency, tenant-wide housekeeping tasks that don't belong
-// in the hot path of the API or the high-throughput worker loop. Run one
-// scheduler replica per deployment — it coordinates via Postgres advisory
-// locks so running multiple replicas is safe (only one actually executes each job).
-//
-//	make dev-scheduler         # run locally against .env
-//	make build-scheduler       # build bin/qeet-id-scheduler
+// Command scheduler runs the Qeet ID scheduled maintenance jobs — low-frequency,
+// tenant-wide housekeeping. Replicas coordinate via Postgres advisory locks, so
+// running more than one is safe (only the lock winner executes each job).
 package main
 
 import (
@@ -147,11 +141,9 @@ func main() {
 	slog.Info("scheduler shutdown complete")
 }
 
-// runWithLock executes a job while holding a Postgres session-level advisory
-// lock keyed on the job name. The lock is a cross-process mutex: if more than
-// one scheduler replica is running, only the one that wins the lock executes
-// the job on a given tick; the others skip. The lock only needs to gate the
-// job for its duration — the job's own queries may use any pooled connection.
+// runWithLock executes a job while holding a Postgres session-level advisory lock
+// keyed on the job name — a cross-process mutex, so with multiple scheduler
+// replicas only the lock winner runs the job on a given tick.
 func runWithLock(ctx context.Context, pool *pgxpool.Pool, j scheduledJob) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {

@@ -1,3 +1,4 @@
+-- 0014_invites — tenant invitations (hashed token, status lifecycle)
 CREATE TABLE tenant.invites (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

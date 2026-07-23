@@ -1,7 +1,5 @@
--- Bot-detection telemetry + per-tenant config (admin "Threats → Bots" screen).
--- Verdicts are recorded detect-only: the score/verdict are computed and logged
--- but the auth path is not hard-blocked, so an unusual-but-legitimate client is
--- never locked out by a heuristic. Enforcement can be layered on later.
+-- 0053_bot_detection — bot telemetry + per-tenant config (admin "Threats → Bots").
+-- Detect-only: score/verdict are logged but the auth path is not hard-blocked, so a legit-but-unusual client is never locked out by a heuristic.
 CREATE TABLE auth.bot_events (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   UUID NOT NULL,

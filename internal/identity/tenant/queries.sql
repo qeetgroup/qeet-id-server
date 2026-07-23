@@ -44,3 +44,25 @@ WHERE deleted_at IS NULL
        OR (created_at = @before_created_at AND id < @before_id))
 ORDER BY created_at DESC, id DESC
 LIMIT @row_limit;
+
+-- The next four queries are the static, cross-context writes of CreateWithOwner.
+-- They target other bounded contexts (rbac.*, "user".users) but are fixed SQL with
+-- positional binds, so they compile under the shared migration schema and run on the
+-- caller's shared pgx.Tx via r.q.WithTx(tx).X(...).
+
+-- name: InsertOwnerRole :one
+INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+VALUES ($1, 'owner', 'Tenant owner — full access', TRUE)
+RETURNING id;
+
+-- name: GrantAllPermissionsToRole :exec
+INSERT INTO rbac.role_permissions (role_id, permission_id)
+SELECT $1, id FROM rbac.permissions;
+
+-- name: GrantRoleToUser :exec
+INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
+VALUES ($1, $2, $3, $1);
+
+-- name: AdoptHomeTenant :exec
+UPDATE "user".users SET tenant_id = @tenant_id::uuid, updated_at = NOW()
+WHERE id = @id AND tenant_id IS NULL AND deleted_at IS NULL;

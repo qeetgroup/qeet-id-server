@@ -1,16 +1,9 @@
-// Package saml implements SP-initiated SAML 2.0 single sign-on. A tenant
-// registers an IdP connection (issuer, SSO URL, signing certificate); users
-// are sent to the IdP, the signed assertion returns to the ACS, and a Qeet ID
-// user is JIT-provisioned and issued a session.
-//
-// Assertion signature/condition validation is delegated to gosaml2 +
-// goxmldsig (a vetted implementation) — we never hand-roll XML-DSig. The flow
-// mirrors social login: the ACS hands the SPA a one-time code (never a token
-// in a URL), which it trades at /saml/exchange for a token pair.
-//
-// Surfaces:
-//   - Admin  (/v1/tenants/{id}/saml, user-JWT): connection CRUD.
-//   - Public (/saml/..., no JWT): metadata, login redirect, ACS, exchange.
+// Package saml implements SP-initiated SAML 2.0 single sign-on. A tenant registers
+// an IdP connection (issuer, SSO URL, signing cert); users are sent to the IdP, the
+// signed assertion returns to the ACS, and a Qeet ID user is JIT-provisioned.
+// Signature/condition validation is delegated to gosaml2 + goxmldsig — we never
+// hand-roll XML-DSig. Like social login, the ACS hands the SPA a one-time code
+// (never a token in a URL) to trade at /saml/exchange for a token pair.
 package saml
 
 import (
@@ -423,10 +416,6 @@ func (s *Service) insertLoginCode(ctx context.Context, codeHash string, userID, 
 func (s *Service) touchLastLogin(ctx context.Context, connID uuid.UUID) {
 	_ = s.q.TouchSamlLastLogin(ctx, connID)
 }
-
-// =====================================================================
-// Handler
-// =====================================================================
 
 type Handler struct {
 	Service *Service

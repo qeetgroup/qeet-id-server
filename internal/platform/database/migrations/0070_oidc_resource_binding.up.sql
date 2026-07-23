@@ -1,6 +1,2 @@
--- RFC 8707 resource-indicator binding was only applied on the initial
--- authorization_code exchange; a refreshed access token silently dropped
--- the audience restriction. Persist the bound resource on the refresh token
--- itself so rotation can re-bind the same (or an explicitly overridden)
--- resource on the reissued access token.
+-- 0070_oidc_resource_binding — persist the RFC 8707 resource on the refresh token so rotation re-binds the audience (a refresh previously dropped the resource restriction)
 ALTER TABLE auth.oidc_refresh_tokens ADD COLUMN IF NOT EXISTS resource TEXT;

@@ -1,5 +1,4 @@
--- Optional org/team hierarchy inside a tenant. Memberships bind users to
--- groups; permissions can later be granted at group level.
+-- 0021_org — optional group/team hierarchy within a tenant + memberships
 CREATE TABLE tenant.groups (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

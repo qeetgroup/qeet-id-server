@@ -1,16 +1,6 @@
--- IMPROVEMENTS §6.2: outbox dispatcher needs a bounded retry window
--- with visibility into permanently-failing events. Today a bad event
--- stays in platform.outbox forever, re-tried every dispatcher tick.
---
--- Schema additions:
---   * attempts          — how many times the dispatcher has tried.
---   * last_error        — error message from the most recent attempt.
---   * last_attempt_at   — when the most recent attempt finished.
--- These let us implement exponential backoff between retries.
---
--- platform.outbox_dead_letter is the holding pen: rows that exceed
--- MAX_ATTEMPTS are moved here so the live queue stays clean. Ops can
--- inspect via GET /v1/admin/outbox/dlq and decide to replay or purge.
+-- 0025_outbox_dlq — bounded retry + dead-letter for the outbox dispatcher.
+-- attempts/last_error/last_attempt_at drive exponential backoff; rows past MAX_ATTEMPTS
+-- move to outbox_dead_letter (inspect/replay via /v1/admin/outbox/dlq) so the live queue stays clean.
 
 ALTER TABLE platform.outbox
     ADD COLUMN IF NOT EXISTS attempts        INT NOT NULL DEFAULT 0,

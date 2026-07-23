@@ -1,7 +1,5 @@
--- GDPR data-export requests. Mirrors user.purge_requests' async shape: a
--- request is queued, a background sweeper builds the payload, and the caller
--- polls/downloads once status = 'ready'. The payload is stored inline as JSONB
--- rather than in object storage since no S3-compatible blob store exists yet.
+-- 0066_gdpr_export — async GDPR data-export requests (queue → sweeper builds payload → poll when status='ready').
+-- Payload stored inline as JSONB rather than object storage (no S3-compatible store yet).
 CREATE TABLE "user".export_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id),

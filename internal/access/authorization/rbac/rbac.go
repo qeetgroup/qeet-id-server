@@ -182,29 +182,20 @@ func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenant
 // idempotent. The returned bool reports whether the role/group pair was valid
 // for this tenant (false => the caller should surface a 404), distinguishing a
 // genuine no-op from a cross-tenant or missing-row attempt.
-//
-// Left as raw SQL: the conditional CTE (INSERT … SELECT … WHERE EXISTS) is not
-// cleanly modelled by sqlc — the RETURNING 1 constant expression and the wrapping
-// SELECT EXISTS(FROM ins) OR EXISTS(…) don't map to a standard result type.
 func (r *Repository) AssignRoleToGroup(ctx context.Context, tx pgx.Tx, groupID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) (bool, error) {
-	var valid bool
-	err := tx.QueryRow(ctx, `
-		WITH ins AS (
-			INSERT INTO rbac.group_roles (tenant_id, group_id, role_id, granted_by)
-			SELECT $2, $1, $3, $4
-			WHERE EXISTS (SELECT 1 FROM tenant.groups g WHERE g.id = $1 AND g.tenant_id = $2)
-			  AND EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $3 AND ro.tenant_id = $2)
-			ON CONFLICT DO NOTHING
-			RETURNING 1
-		)
-		SELECT
-			EXISTS (SELECT 1 FROM ins)
-			OR EXISTS (SELECT 1 FROM rbac.group_roles WHERE group_id = $1 AND role_id = $3 AND tenant_id = $2)
-	`, groupID, tenantID, roleID, grantedBy).Scan(&valid)
+	valid, err := r.q.WithTx(tx).AssignRoleToGroup(ctx, dbgen.AssignRoleToGroupParams{
+		GroupID:   groupID,
+		TenantID:  tenantID,
+		RoleID:    roleID,
+		GrantedBy: uuidPtrToPgtype(grantedBy),
+	})
 	if err != nil {
 		return false, err
 	}
-	return valid, nil
+	if valid == nil {
+		return false, nil
+	}
+	return *valid, nil
 }
 
 // RemoveRoleFromGroup revokes a role from a group within a tenant.
@@ -288,62 +279,33 @@ type Explanation struct {
 // evolve. It enumerates every role — direct or group-derived — that grants the
 // permission for this user/tenant. allowed == (len(Paths) > 0). Both arms are
 // scoped by tenant_id, so a path can never name a grant from another tenant.
-//
-// Left as raw SQL: the two-armed UNION ALL uses typed NULL literals
-// ('direct'::text, NULL::uuid, NULL::text) whose nullable-expression types
-// can't be expressed through the sqlc override configuration without additional
-// column-level overrides that would complicate the config.
 func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (*Explanation, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT 'direct'::text AS via, NULL::uuid AS group_id, NULL::text AS group_name, ro.id, ro.name
-		FROM rbac.user_roles ur
-		JOIN rbac.roles ro ON ro.id = ur.role_id
-		JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
-		JOIN rbac.permissions p ON p.id = rp.permission_id
-		WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND p.key = $3
-		UNION ALL
-		SELECT 'group'::text AS via, g.id AS group_id, g.name AS group_name, ro.id, ro.name
-		FROM tenant.group_members gm
-		JOIN tenant.groups g ON g.id = gm.group_id AND g.tenant_id = gm.tenant_id
-		JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
-		JOIN rbac.roles ro ON ro.id = gr.role_id
-		JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
-		JOIN rbac.permissions p ON p.id = rp.permission_id
-		WHERE gm.user_id = $1 AND gm.tenant_id = $2 AND p.key = $3
-		ORDER BY via, group_name NULLS FIRST
-	`, userID, tenantID, permKey)
+	rows, err := r.q.ExplainGrants(ctx, dbgen.ExplainGrantsParams{
+		UserID:   userID,
+		TenantID: tenantID,
+		PermKey:  permKey,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	exp := &Explanation{Paths: []GrantStep{}}
-	for rows.Next() {
-		var (
-			via       string
-			groupID   *uuid.UUID
-			groupName *string
-			roleID    uuid.UUID
-			roleName  string
-		)
-		if err := rows.Scan(&via, &groupID, &groupName, &roleID, &roleName); err != nil {
-			return nil, err
-		}
+	for _, row := range rows {
 		step := GrantStep{
 			Permission: permKey,
-			GrantedBy:  "role:" + roleName,
-			RoleID:     roleID,
+			GrantedBy:  "role:" + row.RoleName,
+			RoleID:     row.RoleID,
 		}
-		if via == "group" && groupName != nil {
-			step.Via = "group:" + *groupName
-			step.GroupID = groupID
+		if row.Via == "group" && row.GroupName != nil {
+			step.Via = "group:" + *row.GroupName
+			if row.GroupID.Valid {
+				gid := uuid.UUID(row.GroupID.Bytes)
+				step.GroupID = &gid
+			}
 		} else {
 			step.Via = "direct"
 		}
 		exp.Paths = append(exp.Paths, step)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 
 	exp.Allowed = len(exp.Paths) > 0

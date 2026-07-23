@@ -1,3 +1,4 @@
+-- 0010_mfa — TOTP secrets + recovery codes; users.mfa_required flag
 CREATE TABLE auth.mfa_totp (
     user_id        UUID PRIMARY KEY REFERENCES "user".users(id) ON DELETE CASCADE,
     secret         TEXT NOT NULL,        -- base32, encrypt-at-rest in prod

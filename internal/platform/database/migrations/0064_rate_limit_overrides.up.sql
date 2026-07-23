@@ -1,6 +1,4 @@
--- Per-tenant rate limit overrides. When a tenant row exists, its values
--- supersede the platform defaults for that limit_key.
--- limit_key values mirror the router limiter names: 'tenant', 'user', 'api_key'.
+-- 0064_rate_limit_overrides — per-tenant overrides that supersede platform defaults; limit_key mirrors the router limiter names ('tenant','user','api_key')
 CREATE TABLE platform.rate_limit_overrides (
     id          uuid        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
     tenant_id   uuid        NOT NULL REFERENCES tenant.tenants (id) ON DELETE CASCADE,

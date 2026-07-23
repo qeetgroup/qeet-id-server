@@ -1,14 +1,9 @@
-// IdP side of SAML 2.0: Qeet ID acting as an identity **provider** (an SSO
-// source) for downstream Service Providers. The inverse of saml.go (which
-// consumes external IdPs). A tenant registers an SP (its EntityID + ACS URL);
-// the SP redirects users to /saml/idp/sso with an AuthnRequest (or we issue an
-// IdP-initiated assertion); we authenticate the user via the same hosted-login
-// SSO cookie the OIDC provider uses, then sign a SAML assertion and POST it to
-// the SP's ACS.
-//
-// Assertions are signed with an RSA key + X.509 cert (RSA-SHA256, exclusive
-// c14n) via goxmldsig — the broadest-compatibility choice for SPs. We never
-// hand-roll XML-DSig.
+// IdP side of SAML 2.0: Qeet ID acting as an identity provider (SSO source) for
+// downstream Service Providers — the inverse of saml.go. A tenant registers an SP
+// (EntityID + ACS URL); the SP sends users to /saml/idp/sso, we authenticate them
+// via the same hosted-login SSO cookie the OIDC provider uses, then sign a SAML
+// assertion and POST it to the SP's ACS. Assertions are signed RSA-SHA256 +
+// exclusive c14n via goxmldsig (broadest SP compatibility) — we never hand-roll XML-DSig.
 package saml
 
 import (

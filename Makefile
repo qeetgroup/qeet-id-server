@@ -7,8 +7,6 @@ endif
 
 # DB_URL comes from .env (included above); this is the fallback when .env is absent.
 DB_URL        ?= postgres://postgres:password@localhost:5001/qeet_id?sslmode=disable
-# DB_MIGRATE_URL uses the superuser role for DDL. Falls back to DB_URL when unset.
-DB_MIGRATE_URL ?= $(DB_URL)
 MIGRATIONS_DIR = internal/platform/database/migrations
 # k6 targets a running server; from the k6 Docker image the host is
 # host.docker.internal. Override for a remote/CI target (e.g. http://localhost:4001).
@@ -53,10 +51,10 @@ db-reset:
 	docker compose up -d
 
 migrate-up:
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_MIGRATE_URL)" up
+	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" up
 
 migrate-down:
-	migrate -path $(MIGRATIONS_DIR) -database "$(DB_MIGRATE_URL)" down 1
+	migrate -path $(MIGRATIONS_DIR) -database "$(DB_URL)" down 1
 
 seed:
 	go run ./cmd/seed

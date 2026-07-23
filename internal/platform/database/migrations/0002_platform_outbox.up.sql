@@ -1,3 +1,4 @@
+-- 0002_platform_outbox — transactional outbox for domain events
 CREATE TABLE platform.outbox (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     aggregate_id    UUID NOT NULL,

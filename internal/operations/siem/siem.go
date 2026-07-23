@@ -1,10 +1,8 @@
-// Package siem streams a tenant's audit events to an external collector
-// (Splunk HEC, Datadog logs, or a generic HTTP endpoint). A background
-// forwarder walks audit.events past each sink's high-watermark cursor and POSTs
-// new events in the collector's expected shape. Sinks start streaming from
-// their creation time (no history backfill); delivery is at-least-once (the
-// cursor only advances on a 2xx). Everything is inert until a tenant configures
-// a sink, so dev/CI/offline are unaffected.
+// Package siem streams a tenant's audit events to an external collector (Splunk
+// HEC, Datadog logs, or a generic HTTP endpoint). A background forwarder walks
+// audit.events past each sink's high-watermark cursor and POSTs new events.
+// Sinks stream from creation time (no history backfill); delivery is
+// at-least-once (the cursor only advances on a 2xx).
 package siem
 
 import (

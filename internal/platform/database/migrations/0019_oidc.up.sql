@@ -1,5 +1,4 @@
--- OIDC clients for *our* Identity Provider role. A "client" is a downstream
--- relying party (web app, mobile, CLI) that authenticates users via Qeet.
+-- 0019_oidc — OIDC IdP role: clients (downstream relying parties) + authorization codes + consents
 CREATE TABLE auth.oidc_clients (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,
@@ -30,8 +29,7 @@ CREATE TABLE auth.oidc_authorization_codes (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Consents the user has granted to a (client, scope) pair so we can skip
--- the consent screen on subsequent authorizations.
+-- Granted (client, scope) consents, so we can skip the consent screen on repeat authorizations.
 CREATE TABLE auth.oidc_consents (
     user_id     UUID NOT NULL REFERENCES "user".users(id) ON DELETE CASCADE,
     client_id   TEXT NOT NULL,

@@ -4,7 +4,7 @@
 //
 // Security invariant: the copilot NEVER executes a domain mutation. Tool calls
 // are emitted as SSE events; the browser executes them under the user's own
-// token so RBAC, RLS, and audit are inherited, never bypassed.
+// token so RBAC and audit are inherited, never bypassed.
 package copilot
 
 import (

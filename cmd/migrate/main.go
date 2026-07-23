@@ -1,22 +1,6 @@
-// Command migrate is a thin wrapper around the golang-migrate CLI that
-// reads the database URL from the environment (same as the server) and
-// provides structured exit codes for use in Kubernetes init containers
-// and Docker Compose one-shots.
-//
-// The migrate CLI binary must be on PATH. Install it with:
-//
-//	brew install golang-migrate   # macOS
-//	go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-//
-// Usage:
-//
-//	qeet-id-migrate              # apply all pending (default: up)
-//	qeet-id-migrate up
-//	qeet-id-migrate down 1
-//	qeet-id-migrate version
-//	qeet-id-migrate force N
-//
-// DB_URL is read from the environment (same as the server).
+// Command migrate wraps the golang-migrate CLI (which must be on PATH), reading
+// DB_URL from the environment and forwarding structured exit codes for use in
+// Kubernetes init containers and Docker Compose one-shots.
 package main
 
 import (
@@ -35,7 +19,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Locate the migrate CLI on PATH.
 	migrateBin, err := exec.LookPath("migrate")
 	if err != nil {
 		slog.Error("migrate CLI not found on PATH",

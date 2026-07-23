@@ -1,5 +1,2 @@
--- Webhook retry currently has no give-up state — a permanently-failing
--- endpoint retries forever at the 1h backoff ceiling. dead_at marks a
--- delivery that exhausted its retry budget (see maxDeliveryAttempts), mirroring
--- the delivered_at/timestamp-presence-as-state pattern already used here.
+-- 0069_webhook_dlq — dead_at marks a webhook delivery that exhausted its retry budget (see maxDeliveryAttempts), so a permanently-failing endpoint stops retrying forever
 ALTER TABLE tenant.webhook_deliveries ADD COLUMN IF NOT EXISTS dead_at TIMESTAMPTZ;

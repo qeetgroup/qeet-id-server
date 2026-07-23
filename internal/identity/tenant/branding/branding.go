@@ -41,7 +41,6 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
-// toDomain maps a GetBrandingRow to the domain Branding model.
 func toDomain(tenantID uuid.UUID, row dbgen.GetBrandingRow) *Branding {
 	return &Branding{
 		TenantID:         row.TenantID,

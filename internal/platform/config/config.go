@@ -29,25 +29,15 @@ type Config struct {
 	DBURL      string `envconfig:"DB_URL" required:"true"`
 	DBMinConns int32  `envconfig:"DB_MIN_CONNS" default:"2"`
 	DBMaxConns int32  `envconfig:"DB_MAX_CONNS" default:"10"`
-	// DBMigrateURL, when set, is used to run migrations (and only migrations)
-	// instead of DB_URL. Point it at an owner/superuser role when DB_URL is a
-	// dedicated least-privilege application role that is subject to Row-Level
-	// Security and cannot run DDL. Empty (default) = run migrations as DB_URL,
-	// preserving the single-role setup.
-	DBMigrateURL string `envconfig:"DB_MIGRATE_URL"`
 
 	JWTSecret   string `envconfig:"JWT_SECRET" required:"true"`
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
 	JWTAudience string `envconfig:"JWT_AUDIENCE" default:"qeet-id"`
-	// AccessTokenTTL bounds how long a revoked-but-not-yet-expired access
-	// token stays usable: access tokens are stateless JWTs, verified by
-	// signature alone on every request (no per-request DB revocation check),
-	// so this TTL is the hard ceiling on that exposure window. 10m — down
-	// from 15m — is a modest, low-risk trim; the real mitigation is the
-	// session.revoked/token.claims_change webhook signals (see
-	// domains/access/authentication and domains/access/authorization/rbac)
-	// that let a relying party react immediately instead of waiting out
-	// whatever this is set to.
+	// AccessTokenTTL bounds how long a revoked-but-not-yet-expired access token
+	// stays usable: access tokens are stateless JWTs verified by signature alone
+	// (no per-request DB revocation check), so this TTL is the hard ceiling on
+	// that exposure window. Real mitigation is the session.revoked /
+	// token.claims_change webhook signals that let a relying party react at once.
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
 
@@ -169,17 +159,10 @@ type Config struct {
 	// feature: /status returns configured=false, conversation CRUD still works,
 	// and .../messages returns 409 copilot_unconfigured.
 	//
-	// CopilotProvider selects the inference backend:
-	//   "anthropic" — Anthropic Messages API (default when set)
-	//   "openai"    — OpenAI Chat Completions API; also works with any hosted
-	//                 OpenAI-compatible endpoint (Groq, OpenRouter, Gemini …)
-	// CopilotAPIKey is held server-side only — never serialized to any response.
-	// CopilotModel is the model id (e.g. claude-sonnet-5, gpt-4o, llama-3.1-70b).
-	// CopilotMaxTokens is the max_tokens ceiling per API call (default 4096).
-	// CopilotBaseURL overrides the provider's default API base URL. Leave empty
-	// to use each provider's own default (Anthropic: https://api.anthropic.com,
-	// OpenAI: https://api.openai.com/v1). Set to a hosted endpoint to use Groq,
-	// OpenRouter, or any other OpenAI-compatible service with provider=openai.
+	// CopilotProvider selects the backend: "anthropic" (default when set) or
+	// "openai" (also any OpenAI-compatible endpoint: Groq, OpenRouter, Gemini …
+	// via CopilotBaseURL). CopilotAPIKey is held server-side only — never
+	// serialized to any response.
 	CopilotProvider  string `envconfig:"COPILOT_PROVIDER" default:""`
 	CopilotAPIKey    string `envconfig:"COPILOT_API_KEY" default:""`
 	CopilotModel     string `envconfig:"COPILOT_MODEL" default:"claude-sonnet-5"`

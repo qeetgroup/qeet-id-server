@@ -41,8 +41,6 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/activity/stream", h.stream)
 }
 
-// ─── SSE stream ───────────────────────────────────────────────────────────────
-
 // stream handles GET /v1/activity/stream.
 //
 // On connect the handler optionally replays recent audit events the client
@@ -59,7 +57,6 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional server-side filters.
 	f := StreamFilter{
 		Types:    splitCSV(r.URL.Query().Get("types")),
 		Severity: r.URL.Query().Get("severity"),
@@ -101,14 +98,12 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 		h.replayHistory(ctx, sse, tenantID, lastID, f)
 	}
 
-	// Subscribe to the hub for live events.
 	evCh, unsub := h.Hub.Subscribe(tenantID)
 	defer unsub()
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Client disconnected.
 			return
 		case ev := <-evCh:
 			// Defense-in-depth: verify the event's own TenantID matches the
@@ -162,8 +157,6 @@ func (h *Handler) replayHistory(ctx context.Context, sse *sseWriter, tenantID uu
 		sse.sendActivity(ev)
 	}
 }
-
-// ─── History ──────────────────────────────────────────────────────────────────
 
 // history handles GET /v1/activity.
 //
@@ -300,8 +293,6 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 	return out, next, nil
 }
 
-// ─── Cursor encoding ──────────────────────────────────────────────────────────
-
 // encodeCursor packs (createdAt, id) into an opaque base64url token. The
 // format is "<RFC3339Nano>:<uuid>" — sufficient precision for a timestamptz
 // cursor and unambiguous when split on the first colon.
@@ -334,8 +325,6 @@ func decodeCursor(cursor string) (time.Time, uuid.UUID, error) {
 	}
 	return ts, id, nil
 }
-
-// ─── Row mapping ──────────────────────────────────────────────────────────────
 
 // listRowToAuditRow converts a sqlc-generated ListActivityHistoryRow into the
 // local auditRow type so that the shared mapAuditRow logic can be reused.
@@ -391,8 +380,6 @@ func replayRowToAuditRow(r dbgen.ReplayActivityHistoryRow) auditRow {
 	return row
 }
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
-
 // requireTenantUser extracts and validates the tenant and user from the JWT
 // principal. Handlers MUST use this; they must NEVER accept tenant/user from
 // the URL or request body (QID-18 multi-tenancy invariant).
@@ -430,13 +417,9 @@ func splitCSV(s string) []string {
 	return out
 }
 
-// ─── SSE writer ───────────────────────────────────────────────────────────────
-//
-// Mirrors the proven pattern in domains/operations/copilot/sse.go.
-// Not imported from copilot — that package is not a shared library; copying the
-// ~30-line writer keeps the inter-package dependency graph clean.
-
 // sseWriter writes SSE frames to an http.ResponseWriter and flushes after each.
+// It mirrors copilot/sse.go — not imported because copilot is not a shared
+// library; copying the ~30-line writer keeps the package dependency graph clean.
 type sseWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher

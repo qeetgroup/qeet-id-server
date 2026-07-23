@@ -1,7 +1,4 @@
--- Email / SMS one-time-passcode MFA factors. A user registers a channel
--- (email or phone), confirms ownership with a code, then receives OTP
--- challenges on that channel as a second factor. Delivery goes through the
--- notifier.Sender abstraction (LogSender in dev, a real provider in prod).
+-- 0033_mfa_otp — email/SMS one-time-passcode MFA factors + codes (delivery via the notifier.Sender abstraction)
 
 CREATE TABLE auth.mfa_otp_factors (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

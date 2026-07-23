@@ -108,7 +108,6 @@ func toAnthropicMessages(msgs []ai.Message) []Message {
 	for _, m := range msgs {
 		role := m.Role
 		if role == "tool" {
-			// Anthropic uses "user" role for tool_result messages.
 			role = "user"
 		}
 		blocks := make([]ContentBlock, 0, len(m.Content))

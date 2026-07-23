@@ -1,3 +1,4 @@
+-- 0004_user — users (per-tenant, soft-deletable)
 CREATE TABLE "user".users (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id           UUID NOT NULL REFERENCES tenant.tenants(id),

@@ -1,17 +1,22 @@
 -- Queries for the users domain.
 -- Static queries live here; the partial-UPDATE method (Update) stays hand-written
 -- (dbutil.UpdateBuilder builds the SET clause dynamically).
--- CreateWithCredential mixes a user INSERT with a cross-context
--- auth.password_credentials INSERT in one tx; the user INSERT is converted but
--- the password INSERT stays raw on the same pgx.Tx (see repository.go).
+-- CreateWithCredential inserts the user and (optionally) their password credential
+-- in one tx; both halves are static and run as sqlc queries on the same pgx.Tx.
 
--- InsertUser is the user-row half of CreateWithCredential. The cross-context
--- password INSERT stays hand-written on the same tx.
+-- InsertUser is the user-row half of CreateWithCredential; the cross-context
+-- password credential is inserted by InsertPasswordCredential on the same tx.
 -- name: InsertUser :one
 INSERT INTO "user".users (tenant_id, email, phone, display_name, metadata)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING id, tenant_id, email, email_verified_at, phone, phone_verified_at,
           display_name, status, metadata, created_at, updated_at;
+
+-- InsertPasswordCredential is the password-credential half of CreateWithCredential.
+-- It writes into the auth bounded context but is fixed SQL, so it runs on the shared tx.
+-- name: InsertPasswordCredential :exec
+INSERT INTO auth.password_credentials (user_id, password_hash)
+VALUES ($1, $2);
 
 -- GetUserByID fetches the full user row including avatar_url (read by the
 -- profile / header paths that want to render the avatar).

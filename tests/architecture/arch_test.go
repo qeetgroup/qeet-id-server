@@ -1,35 +1,13 @@
 // Package architecture_test enforces the repository's dependency-direction
-// invariants as a build-time fitness function. It runs inside the normal
-// `go test ./...` (and the CI backend job) with no extra tooling — it shells
-// out to `go list` and inspects the import graph.
+// invariants (see docs/ARCHITECTURE.md) as a build-time fitness function,
+// shelling out to `go list` to inspect the import graph. R1: internal/platform/*
+// imports no bounded context, cmd/*, or internal/bootstrap. R2: bounded contexts
+// import neither cmd/* nor internal/bootstrap. Cross-context imports are not yet
+// enforced.
 //
-// Enforced today (see docs/ARCHITECTURE.md → "Enforced dependency rules"):
-//
-//	R1  internal/platform/* is pure infrastructure. It must NOT import any of the
-//	    5 bounded contexts (internal/access/, internal/identity/,
-//	    internal/federation/, internal/developer/, internal/operations/), nor
-//	    cmd/*, nor the composition root internal/bootstrap. There is NO wiring
-//	    exception inside platform anymore — the router moved out of platform and
-//	    now lives in internal/bootstrap, the single place allowed to import
-//	    everything.
-//
-//	R2  the 5 bounded contexts sit below wiring and entrypoints. Any package under
-//	    internal/{access,identity,federation,developer,operations} must NOT import
-//	    cmd/* or the composition root internal/bootstrap. (Importing
-//	    internal/platform/* — including the shared HTTP primitives under
-//	    internal/platform/http/* such as httpx, codes, errs, paging — is fine.)
-//
-// Intentionally NOT enforced yet (would fail on current code — tighten later,
-// e.g. with go-arch-lint once the graph is curated):
-//
-//   - cross-context imports (one bounded context -> another); today many contexts
-//     legitimately depend on operations/audit, identity/users, etc.
-//
-// NOTE on caching: these tests read the import graph at runtime via `go list`,
-// which Go's test cache cannot see — a plain `go test ./...` may serve a stale
-// cached pass after you change another package. Run with `-count=1` (or
-// `go clean -testcache`) to force re-evaluation. CI already runs
-// `go test -race -count=1 ./...`, so the guard is always enforced there.
+// Caching gotcha: these tests read the import graph at runtime via `go list`,
+// which the test cache cannot see — run with `-count=1` to force re-evaluation
+// (CI already does `go test -race -count=1 ./...`).
 package architecture_test
 
 import (
@@ -83,8 +61,8 @@ func rel(importPath string) string {
 
 func underCmd(p string) bool { return p == "cmd" || strings.HasPrefix(p, "cmd/") }
 
-// underBootstrap matches the composition root — the single wiring package that
-// is allowed to import everything. It replaced the old platform/api/rest router.
+// underBootstrap matches the composition root — the single wiring package
+// allowed to import everything.
 func underBootstrap(p string) bool {
 	return p == "internal/bootstrap" || strings.HasPrefix(p, "internal/bootstrap/")
 }

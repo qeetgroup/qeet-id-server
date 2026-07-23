@@ -1,10 +1,5 @@
--- ABAC (attribute-based access control) policy store. Each policy is a
--- tenant-scoped rule: effect (allow/deny) + resource/action matchers +
--- a JSON condition tree evaluated at decision time.
---
--- Wildcard values ('*') in resource_type or action match any value so a
--- single policy can cover an entire resource class or action class without
--- enumerating every combination.
+-- 0080_abac_policies — tenant-scoped ABAC rules: effect (allow/deny) + resource/action matchers + a JSON condition tree evaluated at decision time.
+-- '*' in resource_type/action matches any value, so one policy can cover a whole class.
 
 create table auth.abac_policies (
     id              uuid        primary key default gen_random_uuid(),
@@ -22,9 +17,6 @@ create table auth.abac_policies (
     unique (tenant_id, name)
 );
 
--- Point lookup for the evaluate hot path: given a tenant, find all enabled
--- policies matching a resource_type and action (the '*' wildcard rows are
--- caught by an additional OR in the query rather than by this index alone,
--- but the index still reduces the scan by scoping to tenant + common cases).
+-- Evaluate hot path: (tenant, resource_type, action) lookup. Wildcard rows are caught by an extra OR in the query, not this index, but it still scopes the scan to tenant + common cases.
 create index idx_abac_policies_lookup
     on auth.abac_policies (tenant_id, resource_type, action);

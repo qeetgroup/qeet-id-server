@@ -1,5 +1,4 @@
--- Per-tenant security policy: IP allow/deny, session lifetimes, password
--- requirements. CIDRs are stored as inet[] for fast containment checks.
+-- 0017_policy — per-tenant security policy: IP allow/deny, session lifetimes, password rules (CIDRs kept as an array for fast containment checks)
 CREATE TABLE tenant.security_policies (
     tenant_id           UUID PRIMARY KEY REFERENCES tenant.tenants(id) ON DELETE CASCADE,
     ip_allowlist        CIDR[] NOT NULL DEFAULT '{}',
@@ -14,7 +13,5 @@ CREATE TABLE tenant.security_policies (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- NOTE: auth.trusted_devices is created later in 0054_trusted_devices (the
--- adaptive-MFA "remember this device" feature, token_hash-based). An earlier
--- fingerprint-based draft of the table used to live here, but it was unused and
--- collided with 0054 on a clean migrate, so it was removed.
+-- NOTE: auth.trusted_devices is created later in 0054 — an earlier fingerprint-based
+-- draft here was removed (unused, and collided with 0054 on a clean migrate).

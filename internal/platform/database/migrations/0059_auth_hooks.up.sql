@@ -1,8 +1,5 @@
--- Auth Actions/Hooks: a tenant plugs a synchronous policy endpoint into the
--- login flow. After credentials verify, Qeet POSTs a signed event to the hook
--- URL; the hook may allow or deny the sign-in. fail_open (default true) decides
--- what happens when the hook errors/times out — true keeps logins working
--- during a hook outage; false hard-fails (deny) for stricter tenants.
+-- 0059_auth_hooks — synchronous post-login policy webhook (Qeet POSTs a signed event; the hook allows/denies).
+-- fail_open (default true) = logins keep working if the hook errors/times out; false hard-fails (deny) for stricter tenants.
 CREATE TABLE tenant.auth_hooks (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

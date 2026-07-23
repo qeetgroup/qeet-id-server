@@ -21,9 +21,7 @@
 //  4. If ANY matching policy has effect=allow → ALLOW.
 //  5. Default → DENY.
 //
-// Mutating service methods own their pgx transaction and write the audit row
-// in the same tx, so the audit trail commits atomically with the change and
-// HTTP handlers stay thin.
+// Mutating service methods write the audit row in the same tx as the change.
 package abac
 
 import (
@@ -43,6 +41,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -50,9 +49,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// ---------------------------------------------------------------------------
 // Domain types
-// ---------------------------------------------------------------------------
 
 // AttributeBag holds the per-namespace attribute maps for one evaluation.
 // The outer key is the namespace ("subject", "resource", "context");
@@ -127,9 +124,7 @@ type Decision struct {
 	Trace []string `json:"trace,omitempty"`
 }
 
-// ---------------------------------------------------------------------------
 // Condition evaluator — pure functions, no I/O.
-// ---------------------------------------------------------------------------
 
 // reCache holds compiled regexps so each pattern is compiled at most once.
 var reCache sync.Map // map[string]*regexp.Regexp
@@ -526,33 +521,36 @@ func validateCondition(raw json.RawMessage) error {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
 // Service — CRUD + evaluate.
-// ---------------------------------------------------------------------------
 
 type Service struct {
 	pool *pgxpool.Pool
+	q    *dbgen.Queries
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
-const policyCols = `id, tenant_id, name, description, effect, resource_type, action, condition, priority, enabled, created_at, updated_at`
-
-// scanPolicy scans one Policy from a pgx Row or Rows.
-func scanPolicy(scan func(...any) error) (*Policy, error) {
-	var p Policy
-	var cond []byte
-	if err := scan(&p.ID, &p.TenantID, &p.Name, &p.Description, &p.Effect,
-		&p.ResourceType, &p.Action, &cond, &p.Priority, &p.Enabled,
-		&p.CreatedAt, &p.UpdatedAt); err != nil {
-		return nil, err
+// toPolicy maps a generated AuthAbacPolicy row to the domain Policy type.
+func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
+	p := &Policy{
+		ID:           row.ID,
+		TenantID:     row.TenantID,
+		Name:         row.Name,
+		Description:  row.Description,
+		Effect:       row.Effect,
+		ResourceType: row.ResourceType,
+		Action:       row.Action,
+		Priority:     int(row.Priority),
+		Enabled:      row.Enabled,
+		CreatedAt:    row.CreatedAt,
+		UpdatedAt:    row.UpdatedAt,
 	}
-	if len(cond) > 0 {
-		p.Condition = json.RawMessage(cond)
+	if len(row.Condition) > 0 {
+		p.Condition = json.RawMessage(row.Condition)
 	} else {
 		p.Condition = json.RawMessage(`{}`)
 	}
-	return &p, nil
+	return p
 }
 
 // Create inserts a new ABAC policy. The audit row and outbox event are
@@ -584,15 +582,16 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 	}
 	defer tx.Rollback(ctx)
 
-	p, err := scanPolicy(func(dest ...any) error {
-		return tx.QueryRow(ctx, `
-			insert into auth.abac_policies
-				(tenant_id, name, description, effect, resource_type, action, condition, priority, enabled)
-			values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
-			returning `+policyCols,
-			tenantID, in.Name, in.Description, in.Effect,
-			in.ResourceType, in.Action, []byte(cond), in.Priority, in.Enabled,
-		).Scan(dest...)
+	row, err := s.q.WithTx(tx).CreateAbacPolicy(ctx, dbgen.CreateAbacPolicyParams{
+		TenantID:     tenantID,
+		Name:         in.Name,
+		Description:  in.Description,
+		Effect:       in.Effect,
+		ResourceType: in.ResourceType,
+		Action:       in.Action,
+		Condition:    []byte(cond),
+		Priority:     int32(in.Priority),
+		Enabled:      in.Enabled,
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -600,6 +599,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 		}
 		return nil, err
 	}
+	p := toPolicy(row)
 
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.created", "abac_policy", p.ID,
 		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action})); err != nil {
@@ -621,40 +621,27 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 
 // Get returns one policy by id, scoped to tenant.
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Policy, error) {
-	p, err := scanPolicy(func(dest ...any) error {
-		return s.pool.QueryRow(ctx, `
-			select `+policyCols+`
-			from auth.abac_policies
-			where id = $1 and tenant_id = $2
-		`, id, tenantID).Scan(dest...)
-	})
+	row, err := s.q.GetAbacPolicy(ctx, dbgen.GetAbacPolicyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
-	return p, err
+	if err != nil {
+		return nil, err
+	}
+	return toPolicy(row), nil
 }
 
 // List returns all policies for a tenant, ordered by priority desc then name.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Policy, error) {
-	rows, err := s.pool.Query(ctx, `
-		select `+policyCols+`
-		from auth.abac_policies
-		where tenant_id = $1
-		order by priority desc, name
-	`, tenantID)
+	rows, err := s.q.ListAbacPolicies(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Policy, 0)
-	for rows.Next() {
-		p, err := scanPolicy(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *p)
+	out := make([]Policy, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, *toPolicy(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Update replaces all mutable fields of a policy. The audit row and outbox
@@ -686,18 +673,17 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	}
 	defer tx.Rollback(ctx)
 
-	p, err := scanPolicy(func(dest ...any) error {
-		return tx.QueryRow(ctx, `
-			update auth.abac_policies
-			set name = $1, description = $2, effect = $3,
-			    resource_type = $4, action = $5, condition = $6::jsonb,
-			    priority = $7, enabled = $8, updated_at = now()
-			where id = $9 and tenant_id = $10
-			returning `+policyCols,
-			in.Name, in.Description, in.Effect,
-			in.ResourceType, in.Action, []byte(cond),
-			in.Priority, in.Enabled, id, tenantID,
-		).Scan(dest...)
+	row, err := s.q.WithTx(tx).UpdateAbacPolicy(ctx, dbgen.UpdateAbacPolicyParams{
+		Name:         in.Name,
+		Description:  in.Description,
+		Effect:       in.Effect,
+		ResourceType: in.ResourceType,
+		Action:       in.Action,
+		Condition:    []byte(cond),
+		Priority:     int32(in.Priority),
+		Enabled:      in.Enabled,
+		ID:           id,
+		TenantID:     tenantID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
@@ -708,6 +694,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		}
 		return nil, err
 	}
+	p := toPolicy(row)
 
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "abac_policy.updated", "abac_policy", p.ID,
 		map[string]any{"name": p.Name, "effect": p.Effect, "resource_type": p.ResourceType, "action": p.Action})); err != nil {
@@ -732,12 +719,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 	}
 	defer tx.Rollback(ctx)
 
-	var name string
-	err = tx.QueryRow(ctx, `
-		delete from auth.abac_policies
-		where id = $1 and tenant_id = $2
-		returning name
-	`, id, tenantID).Scan(&name)
+	name, err := s.q.WithTx(tx).DeleteAbacPolicy(ctx, dbgen.DeleteAbacPolicyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrNotFound
 	}
@@ -778,30 +760,24 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 		return nil, errs.ErrUnprocessable.WithDetail("action is required")
 	}
 
-	rows, err := s.pool.Query(ctx, `
-		select id, name, effect, condition, priority
-		from auth.abac_policies
-		where tenant_id = $1
-		  and enabled = true
-		  and (resource_type = $2 or resource_type = '*')
-		  and (action = $3 or action = '*')
-		order by priority desc
-	`, tenantID, in.Resource.Type, in.Action)
+	rows, err := s.q.ListEvaluationCandidates(ctx, dbgen.ListEvaluationCandidatesParams{
+		TenantID:     tenantID,
+		ResourceType: in.Resource.Type,
+		Action:       in.Action,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var policies []candidate
-	for rows.Next() {
-		var c candidate
-		if err := rows.Scan(&c.id, &c.name, &c.effect, &c.condition, &c.priority); err != nil {
-			return nil, err
-		}
-		policies = append(policies, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	for _, row := range rows {
+		policies = append(policies, candidate{
+			id:        row.ID,
+			name:      row.Name,
+			effect:    row.Effect,
+			condition: row.Condition,
+			priority:  int(row.Priority),
+		})
 	}
 
 	// Build the attribute bag: merge resource type+id+attrs into one namespace.
@@ -896,9 +872,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in Evaluatio
 	}, nil
 }
 
-// ---------------------------------------------------------------------------
 // HTTP handler
-// ---------------------------------------------------------------------------
 
 type Handler struct {
 	Service *Service

@@ -20,16 +20,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// =====================================================================
-// OAuth 2.0 Device Authorization Grant (RFC 8628)
-//
-// For input-constrained clients (CLI/TV/IoT) that can't open a browser
-// locally. The device asks for a (device_code, user_code) pair, shows the
-// user the user_code + a verification_uri, then polls the token endpoint
-// with the device_code while the user approves the request on a second
-// device (the hosted-login /device page → POST /oauth/device/decision,
-// gated by the SSO cookie like authorize/decision).
-// =====================================================================
+// OAuth 2.0 Device Authorization Grant (RFC 8628), for input-constrained clients
+// (CLI/TV/IoT) that can't open a browser locally. The device asks for a
+// (device_code, user_code) pair, shows the user_code + a verification_uri, then
+// polls the token endpoint with the device_code while the user approves on a
+// second device (hosted-login /device → POST /oauth/device/decision, SSO-gated).
 
 const (
 	// deviceCodeTTL is how long a (device_code, user_code) pair stays valid.
@@ -387,13 +382,9 @@ func normalizeUserCode(in string) string {
 	return strings.ToUpper(strings.TrimSpace(in))
 }
 
-// =====================================================================
-// Admin device-authorization visibility (RFC 8628 rows)
-//
-// Lets a tenant admin see in-flight / recent device authorizations and revoke
-// one. The device_code (and its hash) are NEVER exposed — only the human
-// user_code and metadata. All queries are scoped to the tenant.
-// =====================================================================
+// Admin device-authorization visibility (RFC 8628 rows): lets a tenant admin see
+// in-flight/recent device authorizations and revoke one. The device_code (and its
+// hash) are NEVER exposed — only the human user_code and metadata. Tenant-scoped.
 
 // DeviceAuthorization is the admin-facing view of a device-authorization row.
 // It deliberately omits device_code / device_code_hash.
@@ -508,10 +499,6 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
-// =====================================================================
-// HTTP handlers
-// =====================================================================
 
 // deviceAuthorization is the RFC 8628 §3.1 device-authorization endpoint:
 // POST /oauth/device_authorization. It is client-authenticated like the other

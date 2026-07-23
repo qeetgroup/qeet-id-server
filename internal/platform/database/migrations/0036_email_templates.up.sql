@@ -1,6 +1,4 @@
--- Per-tenant overrides for transactional email templates. The catalog of
--- template keys and their default subject/body lives in code; this table only
--- stores a tenant's customisations, so a missing row means "use the default".
+-- 0036_email_templates — per-tenant overrides for transactional emails (catalog + defaults live in code; missing row = use the default)
 
 CREATE TABLE tenant.email_templates (
     tenant_id    UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

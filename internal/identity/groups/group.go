@@ -1,10 +1,7 @@
-// Package group provides org/team hierarchy inside a tenant. Permissions
-// granted at group level are out of scope for this iteration (RBAC stays
-// user-level); the data model captures the shape ahead of need.
-//
-// Mutating service methods own their transaction and write the audit row in
-// the same tx, so the audit trail commits atomically with the change and
-// handlers stay thin.
+// Package group provides org/team hierarchy inside a tenant. Group-level
+// permission grants are out of scope for now (RBAC stays user-level); the model
+// just captures the shape ahead of need. Mutating methods own their transaction
+// and write the audit row in the same tx, so the trail commits atomically.
 package group
 
 import (
@@ -74,7 +71,6 @@ func pgtypeToUUIDPtr(p pgtype.UUID) *uuid.UUID {
 	return &uid
 }
 
-// groupFromInsertRow maps an InsertGroupRow to the domain Group model.
 func groupFromInsertRow(row dbgen.InsertGroupRow) Group {
 	return Group{
 		ID:          row.ID,
@@ -86,7 +82,6 @@ func groupFromInsertRow(row dbgen.InsertGroupRow) Group {
 	}
 }
 
-// groupFromUpdateRow maps an UpdateGroupRow to the domain Group model.
 func groupFromUpdateRow(row dbgen.UpdateGroupRow) Group {
 	return Group{
 		ID:          row.ID,
@@ -98,7 +93,6 @@ func groupFromUpdateRow(row dbgen.UpdateGroupRow) Group {
 	}
 }
 
-// groupFromListRow maps a ListGroupsRow to the domain Group model.
 func groupFromListRow(row dbgen.ListGroupsRow) Group {
 	return Group{
 		ID:          row.ID,

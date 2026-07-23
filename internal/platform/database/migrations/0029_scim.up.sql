@@ -1,15 +1,10 @@
--- SCIM 2.0 provisioning. Each tenant gets one bearer token its IdP (Okta,
--- Entra ID, Google) presents to the /scim/v2 endpoints. Users created or
--- deprovisioned over SCIM are tagged so they can be listed back distinctly
--- from interactively-created users.
+-- 0029_scim — SCIM 2.0 provisioning: one bearer token per tenant (presented by its IdP) + provisioned-via tagging on users
 
 ALTER TABLE "user".users
     ADD COLUMN IF NOT EXISTS external_id     TEXT,
     ADD COLUMN IF NOT EXISTS provisioned_via TEXT;
 
--- One SCIM token per tenant; rotating replaces the row (upsert on tenant_id).
--- We store only the SHA-256 of the token (same scheme as password-reset /
--- magic-link tokens in platform/codes) plus a display-only prefix.
+-- One token per tenant (rotate = upsert on tenant_id); only the token's SHA-256 is stored, plus a display-only prefix.
 CREATE TABLE tenant.scim_tokens (
     tenant_id     UUID PRIMARY KEY REFERENCES tenant.tenants(id) ON DELETE CASCADE,
     token_hash    TEXT NOT NULL,

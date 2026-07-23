@@ -1,7 +1,6 @@
-// Package domainverify lets a tenant claim and prove ownership of an email
-// domain (B2B SSO onboarding). Ownership is proven by a DNS TXT record, checked
-// on an explicit admin action — no implicit trust. A verified domain can later
-// gate org SSO / JIT provisioning (that enforcement is a separate step).
+// Package domainverify lets a tenant claim and prove ownership of an email domain
+// (B2B SSO onboarding) via a DNS TXT record, checked only on an explicit admin
+// action. A verified domain can later gate org SSO / JIT provisioning.
 package domainverify
 
 import (

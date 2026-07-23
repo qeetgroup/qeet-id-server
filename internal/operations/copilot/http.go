@@ -195,7 +195,6 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse the turn body.
 	var body struct {
 		Message     string            `json:"message"`
 		ToolResults []ToolResultInput `json:"tool_results"`
@@ -216,7 +215,6 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 		if conn, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && conn != nil {
 			_ = conn // addr obtained; deadline set below via ResponseController
 		}
-		// SetWriteDeadline moves the deadline relative to now.
 		if err := rc.SetWriteDeadline(time.Now().Add(10 * time.Minute)); err != nil {
 			// Not fatal — log and continue; worst case the connection times out.
 			slog.Warn("copilot: extend write deadline", "err", err)

@@ -1,3 +1,4 @@
+-- 0013_service_principals — machine clients authenticating with a bcrypt-hashed client_secret
 CREATE TABLE auth.service_principals (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID NOT NULL REFERENCES tenant.tenants(id) ON DELETE CASCADE,

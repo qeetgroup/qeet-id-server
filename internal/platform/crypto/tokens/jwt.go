@@ -432,10 +432,6 @@ func HashRefresh(raw string) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// =====================================================================
-// Key generation & parsing helpers
-// =====================================================================
-
 // GenerateES256KeyPEM mints a fresh ES256 (P-256) private key as a PKCS#8 PEM.
 // Used for dev convenience (ephemeral key when JWT_SIGNING_KEY is unset) and as
 // the building block for the key-rotation runbook.

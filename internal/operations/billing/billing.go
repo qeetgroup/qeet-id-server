@@ -1,11 +1,7 @@
-// Package billing is an internal (no external processor) subscription model:
-// a platform-managed plan catalogue with per-currency pricing, one subscription
-// per tenant in a chosen currency, and internally-generated invoices.
-//
-// Money is stored as integer minor units (cents/pence/sen/…) plus an ISO-4217
-// currency code; the number of fraction digits is applied at display time, so
-// any currency is supported. Plans can be priced in any set of currencies; a
-// tenant may only subscribe in a currency the chosen plan is priced in.
+// Package billing is an internal (no external processor) subscription model: a
+// platform-managed plan catalogue with per-currency pricing, one subscription
+// per tenant, and internally-generated invoices. Money is stored as integer
+// minor units plus an ISO-4217 currency code, so any currency is supported.
 package billing
 
 import (
@@ -85,7 +81,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-// SetPayments wires the card-payment providers. Called from cmd/server/main.go.
+// SetPayments wires the card-payment providers.
 func (s *Service) SetPayments(p *Payments) { s.payments = p }
 
 // CheckoutResult is either an immediately-active subscription (free plan or no

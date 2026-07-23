@@ -1,5 +1,4 @@
--- Permissions are global; roles are per-tenant; assignments bind users to
--- roles. Built-in roles ("owner", "admin", "member") are seeded by the app.
+-- 0006_rbac — permissions (global) + roles (per-tenant) + user assignments; built-in roles seeded by the app
 CREATE TABLE rbac.permissions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     key             TEXT NOT NULL UNIQUE,

@@ -1,13 +1,8 @@
-// IdP migration adapters: teams leaving Auth0, AWS Cognito, or Azure AD B2C
-// can feed that vendor's own user-export file straight into the bulk-import
-// pipeline (runBulkImport in bulk.go) instead of hand-converting it to the
-// generic BulkUserInput shape first. None of these vendors export a portable
-// plaintext password (password hashes use vendor-specific, non-transferable
-// schemes), so every imported row lands with no password credential — the
-// same "no password" path bulkCreate already supports (see
-// Repository.CreateWithCredential, which skips the credential insert
-// entirely when the hash is empty). Imported users authenticate via passkey,
-// magic link, OTP, or an admin-triggered password reset.
+// IdP migration adapters: feed a vendor's own user-export file (Auth0, AWS
+// Cognito, Azure AD B2C) straight into the bulk-import pipeline (runBulkImport)
+// instead of hand-converting to BulkUserInput. No vendor exports a portable
+// password, so every imported row lands with no credential — imported users
+// authenticate via passkey, magic link, OTP, or an admin-triggered reset.
 package user
 
 import (
