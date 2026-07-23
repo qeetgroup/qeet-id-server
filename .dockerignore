@@ -13,7 +13,10 @@ deploy/
 docs/
 graphify-out/
 tests/
-api/
+# api/ holds specs (openapi, postman) AND a Go package (api/copilot, embedded
+# tools manifest imported by the binary) — exclude the specs, keep the code.
+api/openapi/
+api/postman/
 
 # Build artifacts
 bin/
