@@ -1,0 +1,70 @@
+name: deploy
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # assume the AWS deploy role via OIDC
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Fast gate: don't ship code that doesn't build/pass unit tests.
+      - name: Build & unit test
+        run: |
+          go build ./...
+          go test ./...
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        env:
+          REPO: ${{ vars.ECR_REPOSITORY_URL }}
+        run: |
+          docker build -t "$REPO:${{ github.sha }}" -t "$REPO:latest" .
+          docker push "$REPO:${{ github.sha }}"
+          docker push "$REPO:latest"
+
+      - name: Roll the host (SSM)
+        env:
+          INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+        run: |
+          cmd_id=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "deploy ${{ github.sha }}" \
+            --parameters commands='["/opt/qeet-id/redeploy.sh"]' \
+            --query Command.CommandId --output text)
+          echo "SSM command: $cmd_id"
+          aws ssm wait command-executed --command-id "$cmd_id" --instance-id "$INSTANCE_ID" || true
+          status=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query Status --output text)
+          echo "----- stdout -----"
+          aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
+          echo "----- stderr -----"
+          aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text
+          echo "status: $status"
+          [ "$status" = "Success" ]

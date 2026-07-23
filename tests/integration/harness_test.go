@@ -85,7 +85,7 @@ func run(m *testing.M) int {
 // so Postgres' init-script runner applies them in version order.
 func upMigrations() ([]string, error) {
 	_, thisFile, _, _ := runtime.Caller(0)
-	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "platform", "database", "migrations")
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "internal", "platform", "database", "migrations")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err

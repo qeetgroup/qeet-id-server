@@ -80,8 +80,8 @@ func run(m *testing.M) int {
 
 func upMigrations() ([]string, error) {
 	_, thisFile, _, _ := runtime.Caller(0)
-	// scim is three levels deep (domains/federation/scim) → climb to repo root.
-	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "platform", "database", "migrations")
+	// scim is at internal/federation/scim → climb two levels to internal/.
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "platform", "database", "migrations")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
