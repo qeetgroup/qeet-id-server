@@ -2,7 +2,7 @@ name: deploy
 
 on:
   push:
-    tags: ['v*'] # deploy only when YOU publish a release tag (vX.Y.Z)
+    branches: [main] # every merge to main builds, deploys, then tags
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write # push the version tag after a successful deploy
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -23,6 +23,18 @@ jobs:
       url: https://api.id.qeet.in
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history to find latest tag
+
+      - name: Determine next version
+        id: version
+        run: |
+          latest=$(git tag --list 'v*' --sort=-version:refname | head -1)
+          latest=${latest:-v0.0.0}
+          IFS='.' read -r major minor patch <<< "${latest#v}"
+          new_tag="v${major}.${minor}.$((patch + 1))"
+          echo "Latest: $latest  →  new: $new_tag"
+          echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-go@v5
         with:
@@ -47,21 +59,22 @@ jobs:
       - name: Build & push image
         env:
           REPO: ${{ vars.ECR_REPOSITORY_URL }}
-          VERSION: ${{ github.ref_name }} # the release tag, e.g. v0.2.0
+          VERSION: ${{ steps.version.outputs.tag }}
         run: |
-          docker build -t "$REPO:$VERSION" -t "$REPO:${{ github.sha }}" -t "$REPO:latest" .
-          docker push "$REPO:$VERSION"
-          docker push "$REPO:${{ github.sha }}"
-          docker push "$REPO:latest"
+          docker build -t "${REPO}:${VERSION}" -t "${REPO}:${{ github.sha }}" -t "${REPO}:latest" .
+          docker push "${REPO}:${VERSION}"
+          docker push "${REPO}:${{ github.sha }}"
+          docker push "${REPO}:latest"
 
       - name: Roll the host (SSM)
         env:
           INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+          VERSION: ${{ steps.version.outputs.tag }}
         run: |
           cmd_id=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --comment "deploy ${{ github.ref_name }}" \
+            --comment "deploy ${VERSION}" \
             --parameters commands='["/opt/qeet-id/redeploy.sh"]' \
             --query Command.CommandId --output text)
           echo "SSM command: $cmd_id"
@@ -73,3 +86,13 @@ jobs:
           aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text
           echo "status: $status"
           [ "$status" = "Success" ]
+
+      # Tag AFTER a successful deploy so every tag == a live deployed version.
+      - name: Push version tag
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$VERSION"
+          git push origin "$VERSION"
