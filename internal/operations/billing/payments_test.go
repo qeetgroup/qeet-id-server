@@ -1,10 +1,12 @@
 package billing
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +81,84 @@ func TestForCurrencyRouting(t *testing.T) {
 	}
 	if none.forCurrency("USD") != nil {
 		t.Error("no provider should route to nil")
+	}
+}
+
+func TestForCountryRouting(t *testing.T) {
+	both := NewPayments("sk_test", "wh", "rzp_id", "rzp_secret", "rzp_wh").
+		WithRouting("stripe", map[string]string{"IN": "razorpay"})
+
+	if p := both.forCountry("IN"); p == nil || p.Name() != "razorpay" {
+		t.Errorf("IN should route to razorpay, got %v", p)
+	}
+	if p := both.forCountry("in"); p == nil || p.Name() != "razorpay" {
+		t.Errorf("country match should be case-insensitive, got %v", p)
+	}
+	if p := both.forCountry("US"); p == nil || p.Name() != "stripe" {
+		t.Errorf("unlisted country should use the default (stripe), got %v", p)
+	}
+	if p := both.forCountry(""); p == nil || p.Name() != "stripe" {
+		t.Errorf("empty country should use the default (stripe), got %v", p)
+	}
+
+	// A route/default pointing at an unconfigured provider resolves to nil rather
+	// than silently falling through to another provider.
+	razorpayOnly := NewPayments("", "", "rzp_id", "rzp_secret", "rzp_wh").
+		WithRouting("stripe", nil)
+	if p := razorpayOnly.forCountry("US"); p != nil {
+		t.Errorf("default stripe not configured should be nil, got %v", p)
+	}
+
+	noDefault := NewPayments("sk_test", "wh", "", "", "").WithRouting("", nil)
+	if p := noDefault.forCountry("US"); p != nil {
+		t.Errorf("no default provider should be nil, got %v", p)
+	}
+}
+
+func TestParseCountryRoutes(t *testing.T) {
+	routes := ParseCountryRoutes(" in : razorpay , US:stripe , garbage , :x , Y: ")
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 valid routes, got %d: %v", len(routes), routes)
+	}
+	if routes["IN"] != "razorpay" {
+		t.Errorf("IN should normalize to razorpay, got %q", routes["IN"])
+	}
+	if routes["US"] != "stripe" {
+		t.Errorf("US should map to stripe, got %q", routes["US"])
+	}
+	if got := ParseCountryRoutes(""); len(got) != 0 {
+		t.Errorf("empty string should parse to empty map, got %v", got)
+	}
+}
+
+func TestSandboxOverridesRouting(t *testing.T) {
+	p := NewPayments("sk_test", "wh", "rzp_id", "rzp_secret", "rzp_wh").
+		WithRouting("stripe", map[string]string{"IN": "razorpay"}).
+		WithSandbox("http://localhost:4001", "secret")
+
+	if !p.SandboxEnabled() {
+		t.Fatal("sandbox should be enabled")
+	}
+	// Sandbox serves every checkout regardless of country/currency.
+	if pr := p.forCountry("IN"); pr == nil || pr.Name() != "sandbox" {
+		t.Errorf("sandbox should override country routing, got %v", pr)
+	}
+	if pr := p.forCurrency("INR"); pr == nil || pr.Name() != "sandbox" {
+		t.Errorf("sandbox should override currency routing, got %v", pr)
+	}
+
+	// CreateCheckout points at the local mock page and round-trips our ref.
+	got, ref, err := p.forCurrency("USD").CreateCheckout(context.Background(), CheckoutInput{
+		Ref: "abc", PlanName: "Pro", Currency: "USD", AmountMinor: 9900,
+		SuccessURL: "http://localhost:3002/ok", CancelURL: "http://localhost:3002/no",
+	})
+	if err != nil {
+		t.Fatalf("sandbox CreateCheckout: %v", err)
+	}
+	if !strings.Contains(got, "/v1/billing/sandbox/checkout") || !strings.Contains(got, "ref=abc") {
+		t.Errorf("unexpected sandbox url: %s", got)
+	}
+	if ref == "" {
+		t.Error("expected a provider ref")
 	}
 }

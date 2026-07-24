@@ -8,10 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +30,8 @@ import (
 )
 
 var currencyRe = regexp.MustCompile(`^[A-Z]{3}$`)
+
+var countryRe = regexp.MustCompile(`^[A-Za-z]{2}$`)
 
 func normalizeCurrency(c string) (string, bool) {
 	c = strings.ToUpper(strings.TrimSpace(c))
@@ -69,10 +74,14 @@ type Invoice struct {
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
-	// payments is the optional card-payment provider set (Stripe/Razorpay). nil
-	// or empty = invoice-only: a paid plan change activates directly. Set via
-	// SetPayments.
+	// payments is the optional card-payment provider set (Stripe/Razorpay). nil or
+	// empty = no card processing; a paid plan change then needs
+	// allowUnpaidActivation or it is refused. Set via SetPayments.
 	payments *Payments
+	// allowUnpaidActivation enables manual/invoice-only billing: a paid plan with
+	// no usable card provider activates directly instead of being refused. OFF by
+	// default, so a paid plan is never granted without a real payment.
+	allowUnpaidActivation bool
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
@@ -84,8 +93,15 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 // SetPayments wires the card-payment providers.
 func (s *Service) SetPayments(p *Payments) { s.payments = p }
 
-// CheckoutResult is either an immediately-active subscription (free plan or no
-// card provider for the currency) or a hosted-checkout URL to redirect to.
+// SetAllowUnpaidActivation toggles manual/invoice-only billing (see field doc).
+func (s *Service) SetAllowUnpaidActivation(v bool) { s.allowUnpaidActivation = v }
+
+// SandboxEnabled reports whether the dev-only sandbox payment provider is active.
+func (s *Service) SandboxEnabled() bool { return s.payments.SandboxEnabled() }
+
+// CheckoutResult is either an immediately-active subscription (free plan, or a
+// paid plan under manual/invoice-only billing) or a hosted-checkout URL to
+// redirect the payer to.
 type CheckoutResult struct {
 	Status      string `json:"status"` // "active" | "checkout"
 	CheckoutURL string `json:"checkout_url,omitempty"`
@@ -314,11 +330,16 @@ func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 // provider serves, it activates the subscription immediately (invoice-only,
 // the existing behaviour). Otherwise it records a pending checkout and opens a
 // hosted payment, returning the URL to redirect the admin to; the provider's
-// webhook later completes it via CompleteCheckout.
-func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, currency, successURL, cancelURL string) (*CheckoutResult, error) {
+// webhook later completes it via CompleteCheckout. The provider is chosen by
+// billing country (config-driven, see Payments.forCountry); an empty country
+// falls back to currency-based routing.
+func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, currency, country, successURL, cancelURL string) (*CheckoutResult, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
 		return nil, errs.ErrUnprocessable.WithDetail("currency must be a 3-letter ISO-4217 code")
+	}
+	if country != "" && !countryRe.MatchString(country) {
+		return nil, errs.ErrUnprocessable.WithDetail("country must be a 2-letter ISO-3166-1 alpha-2 code")
 	}
 	planID, _, planName, err := s.planByCode(ctx, planCode)
 	if err != nil {
@@ -334,22 +355,28 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 
 	var provider PaymentProvider
 	if s.payments != nil {
-		provider = s.payments.forCurrency(cur)
+		if country != "" {
+			provider = s.payments.forCountry(country)
+		} else {
+			provider = s.payments.forCurrency(cur) // legacy fallback when no country given
+		}
 	}
-	// Free plan, or no card provider for this currency → activate directly.
-	if amt == 0 || provider == nil {
-		tx, err := s.pool.Begin(ctx)
-		if err != nil {
-			return nil, err
+
+	// Free plan → nothing to collect, activate directly.
+	if amt == 0 {
+		return s.activateDirect(ctx, tenantID, planCode, cur)
+	}
+
+	// Paid plan but no usable card provider. Never grant a paid plan for free:
+	// refuse unless the operator has explicitly opted into manual/invoice-only
+	// billing (allowUnpaidActivation).
+	if provider == nil {
+		if !s.allowUnpaidActivation {
+			return nil, errs.ErrUnprocessable.
+				WithMessage("Online payment isn't available for this country or currency yet.").
+				WithDetail("no card payment provider is configured to charge " + cur + " for the selected billing country")
 		}
-		defer tx.Rollback(ctx)
-		if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, cur); err != nil {
-			return nil, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-		return &CheckoutResult{Status: "active"}, nil
+		return s.activateDirect(ctx, tenantID, planCode, cur)
 	}
 
 	// Paid plan with a provider → pending checkout + hosted payment.
@@ -380,6 +407,23 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		ID:          checkoutID,
 	})
 	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
+}
+
+// activateDirect switches the plan in a single transaction without a payment
+// step — used for free plans and, when enabled, manual/invoice-only billing.
+func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCode, currency string) (*CheckoutResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currency); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &CheckoutResult{Status: "active"}, nil
 }
 
 // CompleteCheckout activates the plan behind a paid checkout. It is idempotent:
@@ -482,6 +526,91 @@ func (h *Handler) Mount(r chi.Router) {
 // and are CSRF-exempt (see router.go).
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/billing/webhooks/{provider}", h.webhook)
+	// Dev-only sandbox provider: a mock hosted-checkout page + its pay action.
+	// Both 404 unless the sandbox is enabled (see sandbox handlers).
+	r.Get("/billing/sandbox/checkout", h.sandboxCheckoutPage)
+	r.Post("/billing/sandbox/pay", h.sandboxPay)
+}
+
+// sandboxTmpl renders the dev-only mock hosted-checkout page. It's clearly
+// labelled as a test page and offers Pay / Cancel actions only.
+var sandboxTmpl = template.Must(template.New("sandbox").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sandbox checkout</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0b0b0c;color:#e5e5e5;display:flex;min-height:100vh;margin:0;align-items:center;justify-content:center}
+.card{background:#161618;border:1px solid #2a2a2e;border-radius:14px;padding:32px;width:360px;box-shadow:0 12px 40px rgba(0,0,0,.4)}
+.tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#f26d0e;border:1px solid #f26d0e55;border-radius:999px;padding:3px 10px;margin-bottom:18px}
+h1{font-size:16px;margin:0 0 4px}.muted{color:#8a8a90;font-size:13px;margin:0 0 20px}
+.amount{font-size:34px;font-weight:700;letter-spacing:-.02em;margin:0 0 24px}
+button{width:100%;border:0;border-radius:10px;padding:12px;font-size:14px;font-weight:600;cursor:pointer}
+.pay{background:#f26d0e;color:#fff;margin-bottom:10px}.cancel{background:transparent;color:#8a8a90;border:1px solid #2a2a2e}
+.note{font-size:11px;color:#66666c;margin-top:18px;text-align:center}
+</style></head>
+<body><div class="card">
+<span class="tag">Sandbox · test mode</span>
+<h1>{{.Plan}}</h1>
+<p class="muted">No real payment is taken.</p>
+<p class="amount">{{.Currency}} {{.Amount}}</p>
+<form method="POST" action="/v1/billing/sandbox/pay">
+  <input type="hidden" name="ref" value="{{.Ref}}">
+  <input type="hidden" name="success_url" value="{{.SuccessURL}}">
+  <button class="pay" type="submit">Pay {{.Currency}} {{.Amount}}</button>
+</form>
+<a href="{{.CancelURL}}"><button class="cancel" type="button">Cancel</button></a>
+<p class="note">Simulated Stripe/Razorpay hosted checkout for local development.</p>
+</div></body></html>`))
+
+type sandboxPageData struct {
+	Ref, Plan, Amount, Currency, SuccessURL, CancelURL string
+}
+
+// sandboxCheckoutPage renders the mock hosted-checkout page. Return URLs are
+// validated to avoid an open redirect; 404 when the sandbox is disabled.
+func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
+	if !h.Service.SandboxEnabled() {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	q := r.URL.Query()
+	successURL, cancelURL := q.Get("success_url"), q.Get("cancel_url")
+	if !validReturnURL(successURL) || !validReturnURL(cancelURL) {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid return URLs"))
+		return
+	}
+	amt, _ := strconv.ParseInt(q.Get("amount"), 10, 64)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = sandboxTmpl.Execute(w, sandboxPageData{
+		Ref:        q.Get("ref"),
+		Plan:       q.Get("plan"),
+		Amount:     fmt.Sprintf("%.2f", float64(amt)/100),
+		Currency:   q.Get("currency"),
+		SuccessURL: successURL,
+		CancelURL:  cancelURL,
+	})
+}
+
+// sandboxPay completes the referenced checkout (same path a real webhook takes)
+// and redirects back to the app's success URL. 404 when the sandbox is disabled.
+func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
+	if !h.Service.SandboxEnabled() {
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	successURL := r.PostForm.Get("success_url")
+	if !validReturnURL(successURL) {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid success_url"))
+		return
+	}
+	if err := h.Service.CompleteCheckout(r.Context(), r.PostForm.Get("ref")); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, successURL, http.StatusSeeOther)
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -590,6 +719,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		PlanCode   string `json:"plan_code"`
 		Currency   string `json:"currency"`
+		Country    string `json:"country"`
 		SuccessURL string `json:"success_url"`
 		CancelURL  string `json:"cancel_url"`
 	}
@@ -601,7 +731,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("success_url and cancel_url must be absolute http(s) URLs"))
 		return
 	}
-	res, err := h.Service.Checkout(r.Context(), tenantID, in.PlanCode, in.Currency, in.SuccessURL, in.CancelURL)
+	res, err := h.Service.Checkout(r.Context(), tenantID, in.PlanCode, in.Currency, in.Country, in.SuccessURL, in.CancelURL)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

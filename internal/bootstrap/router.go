@@ -191,6 +191,7 @@ func NewRouter(d Deps) http.Handler {
 				"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
 				"/v1/passkeys/login/", "/v1/social/", "/v1/invites/accept",
 				"/v1/billing/webhooks/",  // provider-signed (Stripe/Razorpay), no cookie session
+				"/v1/billing/sandbox/",   // dev-only mock hosted-checkout page + pay (no cookie session)
 				"/v1/agents/token",       // agent-credential auth (no cookie session)
 				"/v1/credentials/verify", // public JWT-VC verification (no cookie session)
 				"/v1/admin-portal/",      // token-in-path auth (no cookie session) — see adminportal

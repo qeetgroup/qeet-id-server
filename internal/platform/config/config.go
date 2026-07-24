@@ -129,12 +129,34 @@ type Config struct {
 	// Card payments (Stripe / Razorpay) for paid plan changes. Each provider is
 	// OFF until its keys are set; with none configured, billing stays on the
 	// internal invoice-only model (a paid plan change activates directly).
-	// Routing: INR → Razorpay, every other currency → Stripe.
 	StripeSecretKey       string `envconfig:"STRIPE_SECRET_KEY" default:""`
 	StripeWebhookSecret   string `envconfig:"STRIPE_WEBHOOK_SECRET" default:""`
 	RazorpayKeyID         string `envconfig:"RAZORPAY_KEY_ID" default:""`
 	RazorpayKeySecret     string `envconfig:"RAZORPAY_KEY_SECRET" default:""`
 	RazorpayWebhookSecret string `envconfig:"RAZORPAY_WEBHOOK_SECRET" default:""`
+
+	// Provider routing by billing country. PaymentDefaultProvider ("stripe" or
+	// "razorpay") serves any country without an explicit route in
+	// PaymentCountryRoutes, a comma-separated "CC:provider" list (e.g.
+	// "IN:razorpay,US:stripe"). When checkout sends no country, routing falls back
+	// to currency (INR → Razorpay, else the default).
+	PaymentDefaultProvider string `envconfig:"PAYMENT_DEFAULT_PROVIDER" default:"stripe"`
+	PaymentCountryRoutes   string `envconfig:"PAYMENT_COUNTRY_ROUTES" default:"IN:razorpay"`
+
+	// BillingAllowUnpaidActivation enables manual/invoice-only billing: a paid
+	// plan change with no usable card provider activates directly (recording an
+	// invoice) instead of being refused. OFF by default, so a paid plan is never
+	// granted without either a completed card payment or this explicit opt-in.
+	BillingAllowUnpaidActivation bool `envconfig:"BILLING_ALLOW_UNPAID_ACTIVATION" default:"false"`
+
+	// PaymentSandbox enables a dev-only fake provider that serves a local mock
+	// hosted-checkout page and completes payment on click — the full
+	// redirect→success flow with no real Stripe/Razorpay account. When on it
+	// serves every checkout regardless of country/currency. Refused outside dev.
+	PaymentSandbox bool `envconfig:"PAYMENT_SANDBOX" default:"false"`
+	// PaymentSandboxBaseURL is this backend's own public origin, used to build the
+	// sandbox mock-checkout URL the browser is redirected to.
+	PaymentSandboxBaseURL string `envconfig:"PAYMENT_SANDBOX_BASE_URL" default:"http://localhost:4001"`
 
 	// BreachedPasswordCheck enables breached-password detection (Have I Been
 	// Pwned k-anonymity range API) on every password-setting flow. OFF by
@@ -193,6 +215,9 @@ func (c *Config) Validate() error {
 	}
 	if c.AuthDevTrustHeaders {
 		problems = append(problems, "AUTH_DEV_TRUST_HEADERS must not be set outside dev")
+	}
+	if c.PaymentSandbox {
+		problems = append(problems, "PAYMENT_SANDBOX must not be set outside dev (it takes payments without charging)")
 	}
 	if isWeakSecret(c.JWTSecret) {
 		problems = append(problems, "JWT_SECRET is missing, shorter than 32 chars, or a known placeholder")
