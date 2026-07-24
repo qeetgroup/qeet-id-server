@@ -51,11 +51,15 @@ type PaymentProvider interface {
 	SignatureHeader() string
 }
 
-// Payments routes checkouts to a configured provider by currency and looks
-// providers up by name for webhook dispatch.
+// Payments routes checkouts to a configured provider by billing country (with
+// currency as the legacy fallback) and looks providers up by name for webhook
+// dispatch.
 type Payments struct {
-	stripe   *stripeProvider
-	razorpay *razorpayProvider
+	stripe          *stripeProvider
+	razorpay        *razorpayProvider
+	sandbox         *sandboxProvider  // dev-only; when set, serves every checkout
+	defaultProvider string            // provider name for countries without an explicit route
+	countryRoutes   map[string]string // ISO-3166-1 alpha-2 (upper) → provider name
 }
 
 // NewPayments builds the set of configured providers; empty keys leave a
@@ -72,15 +76,91 @@ func NewPayments(stripeKey, stripeWebhookSecret, razorpayKeyID, razorpayKeySecre
 	return p
 }
 
+// WithRouting configures country→provider selection. defaultProvider is used for
+// any billing country without an explicit route; countryRoutes maps ISO-3166-1
+// alpha-2 codes to provider names ("stripe"/"razorpay"). Chainable off NewPayments.
+func (p *Payments) WithRouting(defaultProvider string, countryRoutes map[string]string) *Payments {
+	if p == nil {
+		return nil
+	}
+	p.defaultProvider = strings.ToLower(strings.TrimSpace(defaultProvider))
+	p.countryRoutes = make(map[string]string, len(countryRoutes))
+	for cc, name := range countryRoutes {
+		p.countryRoutes[strings.ToUpper(strings.TrimSpace(cc))] = strings.ToLower(strings.TrimSpace(name))
+	}
+	return p
+}
+
+// ParseCountryRoutes parses a "CC:provider,CC:provider" list (e.g.
+// "IN:razorpay,US:stripe") into a country→provider map. Malformed entries are
+// skipped.
+func ParseCountryRoutes(s string) map[string]string {
+	routes := map[string]string{}
+	for _, part := range strings.Split(s, ",") {
+		kv := strings.SplitN(strings.TrimSpace(part), ":", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		cc := strings.ToUpper(strings.TrimSpace(kv[0]))
+		name := strings.ToLower(strings.TrimSpace(kv[1]))
+		if cc == "" || name == "" {
+			continue
+		}
+		routes[cc] = name
+	}
+	return routes
+}
+
+// WithSandbox enables the dev-only sandbox provider. When set it serves every
+// checkout regardless of country/currency, so the redirect→success flow works
+// with no real Stripe/Razorpay account. Refused outside dev (see config.Validate).
+func (p *Payments) WithSandbox(baseURL, webhookSecret string) *Payments {
+	if p == nil {
+		return nil
+	}
+	p.sandbox = &sandboxProvider{baseURL: baseURL, webhookSecret: webhookSecret}
+	return p
+}
+
 // Enabled reports whether any provider is configured.
-func (p *Payments) Enabled() bool { return p != nil && (p.stripe != nil || p.razorpay != nil) }
+func (p *Payments) Enabled() bool {
+	return p != nil && (p.sandbox != nil || p.stripe != nil || p.razorpay != nil)
+}
+
+// SandboxEnabled reports whether the dev-only sandbox provider is active.
+func (p *Payments) SandboxEnabled() bool { return p != nil && p.sandbox != nil }
+
+// forCountry picks the provider for a billing country using the configured
+// routes, falling back to defaultProvider for unlisted countries. Returns nil
+// when the resolved provider isn't configured or no default is set. The sandbox
+// provider, when enabled, overrides all routing.
+func (p *Payments) forCountry(country string) PaymentProvider {
+	if p == nil {
+		return nil
+	}
+	if p.sandbox != nil {
+		return p.sandbox
+	}
+	name := p.countryRoutes[strings.ToUpper(strings.TrimSpace(country))]
+	if name == "" {
+		name = p.defaultProvider
+	}
+	if name == "" {
+		return nil
+	}
+	return p.byName(name)
+}
 
 // forCurrency picks the provider for a currency: INR → Razorpay, everything
 // else → Stripe, falling back to whichever single provider is configured.
-// Returns nil when none can serve the currency.
+// Returns nil when none can serve the currency. Used when checkout sends no
+// billing country.
 func (p *Payments) forCurrency(currency string) PaymentProvider {
 	if p == nil {
 		return nil
+	}
+	if p.sandbox != nil {
+		return p.sandbox
 	}
 	if strings.EqualFold(currency, "INR") {
 		if p.razorpay != nil {
@@ -104,6 +184,10 @@ func (p *Payments) byName(name string) PaymentProvider {
 	case "razorpay":
 		if p.razorpay != nil {
 			return p.razorpay
+		}
+	case "sandbox":
+		if p.sandbox != nil {
+			return p.sandbox
 		}
 	}
 	return nil
@@ -303,4 +387,46 @@ func verifyRazorpaySignature(secret, signature string, body []byte) bool {
 	}
 	expectedB64 := base64.StdEncoding.EncodeToString(sum)
 	return hmac.Equal([]byte(expectedB64), []byte(signature))
+}
+
+// --- Sandbox (dev-only test provider) ---
+
+// sandboxProvider is a fake card processor for local development: CreateCheckout
+// points at a mock hosted-checkout page served by this backend, which completes
+// the payment on click — so the full redirect→success flow works with no real
+// Stripe/Razorpay account. Never enabled outside SERVICE_ENV=dev.
+type sandboxProvider struct {
+	baseURL       string // this backend's own origin, for the mock checkout page
+	webhookSecret string
+}
+
+func (s *sandboxProvider) Name() string            { return "sandbox" }
+func (s *sandboxProvider) SignatureHeader() string { return "X-Sandbox-Signature" }
+
+func (s *sandboxProvider) CreateCheckout(_ context.Context, in CheckoutInput) (string, string, error) {
+	q := url.Values{}
+	q.Set("ref", in.Ref)
+	q.Set("plan", in.PlanName)
+	q.Set("amount", strconv.FormatInt(in.AmountMinor, 10))
+	q.Set("currency", in.Currency)
+	q.Set("success_url", in.SuccessURL)
+	q.Set("cancel_url", in.CancelURL)
+	return strings.TrimRight(s.baseURL, "/") + "/v1/billing/sandbox/checkout?" + q.Encode(), "sandbox_" + in.Ref, nil
+}
+
+// VerifyAndParse mirrors the real providers (hex HMAC-SHA256 over the raw body)
+// for the webhook path, though the sandbox normally completes server-side when
+// the mock page's Pay button is clicked.
+func (s *sandboxProvider) VerifyAndParse(body []byte, signature string) (string, bool, error) {
+	if !verifyRazorpaySignature(s.webhookSecret, signature, body) {
+		return "", false, errors.New("invalid sandbox signature")
+	}
+	var evt struct {
+		Ref  string `json:"ref"`
+		Paid bool   `json:"paid"`
+	}
+	if err := json.Unmarshal(body, &evt); err != nil {
+		return "", false, err
+	}
+	return evt.Ref, evt.Paid, nil
 }

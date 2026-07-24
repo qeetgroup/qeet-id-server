@@ -472,7 +472,7 @@ paths:
       operationId: post_v1_tenants_ByTenantID_billing_checkout
       summary: Start checkout
       description: >-
-        Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the currency (direct activation). Provider routing: INR → Razorpay, else → Stripe. The provider's webhook later activates the subscription.
+        Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
       tags:
         - Billing
       parameters:
@@ -500,6 +500,9 @@ paths:
                   type: string
                 currency:
                   type: string
+                country:
+                  type: string
+                  description: ISO-3166-1 alpha-2 billing country; selects the payment provider. Omitted → currency-based routing.
                 success_url:
                   type: string
                   format: uri

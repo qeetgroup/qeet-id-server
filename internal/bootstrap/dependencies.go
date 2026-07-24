@@ -124,10 +124,15 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Warn("rbac seed", "err", err)
 	}
 	billingService := billing.NewService(pool)
-	billingService.SetPayments(billing.NewPayments(
+	payments := billing.NewPayments(
 		cfg.StripeSecretKey, cfg.StripeWebhookSecret,
 		cfg.RazorpayKeyID, cfg.RazorpayKeySecret, cfg.RazorpayWebhookSecret,
-	)) // card payments (Stripe/Razorpay); no-op until keys are configured
+	).WithRouting(cfg.PaymentDefaultProvider, billing.ParseCountryRoutes(cfg.PaymentCountryRoutes)) // card payments (Stripe/Razorpay), routed by billing country; no-op until keys are configured
+	if cfg.PaymentSandbox {
+		payments = payments.WithSandbox(cfg.PaymentSandboxBaseURL, "sandbox-dev-secret") // dev-only fake provider; config.Validate refuses it outside dev
+	}
+	billingService.SetPayments(payments)
+	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation) // else a paid plan with no provider is refused, not granted free
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
