@@ -2,7 +2,7 @@ name: deploy
 
 on:
   push:
-    branches: [main]
+    tags: ['v*'] # deploy only when YOU publish a release tag (vX.Y.Z)
   workflow_dispatch:
 
 concurrency:
@@ -10,7 +10,6 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  id-token: write # assume the AWS deploy role via OIDC
   contents: read
 
 env:
@@ -48,8 +47,10 @@ jobs:
       - name: Build & push image
         env:
           REPO: ${{ vars.ECR_REPOSITORY_URL }}
+          VERSION: ${{ github.ref_name }} # the release tag, e.g. v0.2.0
         run: |
-          docker build -t "$REPO:${{ github.sha }}" -t "$REPO:latest" .
+          docker build -t "$REPO:$VERSION" -t "$REPO:${{ github.sha }}" -t "$REPO:latest" .
+          docker push "$REPO:$VERSION"
           docker push "$REPO:${{ github.sha }}"
           docker push "$REPO:latest"
 
@@ -60,7 +61,7 @@ jobs:
           cmd_id=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --comment "deploy ${{ github.sha }}" \
+            --comment "deploy ${{ github.ref_name }}" \
             --parameters commands='["/opt/qeet-id/redeploy.sh"]' \
             --query Command.CommandId --output text)
           echo "SSM command: $cmd_id"
