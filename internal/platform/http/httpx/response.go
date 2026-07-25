@@ -41,7 +41,21 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		if errors.As(err, &domain) {
 			e = domain
 		} else {
-			slog.Error("unhandled error", "err", err, "path", r.URL.Path)
+			attrs := []any{
+				"err", err,
+				"path", r.URL.Path,
+				"req_id", RequestID(r),
+				"client_ip", ClientIP(r),
+			}
+			if p := PrincipalFromCtx(r.Context()); p != nil {
+				if p.TenantID != nil {
+					attrs = append(attrs, "tenant_id", p.TenantID.String())
+				}
+				if p.UserID != nil {
+					attrs = append(attrs, "user_id", p.UserID.String())
+				}
+			}
+			slog.Error("unhandled error", attrs...)
 			e = errs.ErrInternal
 		}
 	}

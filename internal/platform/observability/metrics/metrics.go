@@ -23,9 +23,12 @@ var (
 	}, []string{"method", "route", "status"})
 
 	reqDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "http_request_duration_seconds",
-		Help:    "HTTP request latency, by method and route.",
-		Buckets: prometheus.DefBuckets,
+		Name: "http_request_duration_seconds",
+		Help: "HTTP request latency, by method and route.",
+		// Tuned for an identity API: fast token checks (~1–10ms),
+		// DB-backed auth (~10–100ms), complex flows like OIDC/SAML (~100ms–1s),
+		// and slow webhook/sync outliers (1s–5s).
+		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
 	}, []string{"method", "route"})
 
 	buildInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
