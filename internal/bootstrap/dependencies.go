@@ -141,6 +141,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo := policy.NewRepository(pool)
 
 	sender := notifier.New(notifier.Config{
+		EmailProvider:    cfg.EmailProvider,
+		AWSRegion:        cfg.AWSRegion,
 		SMTPHost:         cfg.SMTPHost,
 		SMTPPort:         cfg.SMTPPort,
 		SMTPUsername:     cfg.SMTPUsername,

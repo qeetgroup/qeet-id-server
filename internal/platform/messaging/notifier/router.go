@@ -36,6 +36,11 @@ func (r Router) Send(ctx context.Context, m Message) error {
 // Config selects the real providers. Empty fields leave a channel on the
 // LogSender fallback.
 type Config struct {
+	// EmailProvider: "ses-api" routes email through the SES v2 API (for regions
+	// with no SMTP endpoint); anything else uses SMTP when SMTPHost is set.
+	EmailProvider string
+	AWSRegion     string
+
 	SMTPHost     string
 	SMTPPort     string
 	SMTPUsername string
@@ -54,7 +59,18 @@ type Config struct {
 func New(c Config) Sender {
 	r := Router{Default: LogSender{}}
 
-	if c.SMTPHost != "" && c.SMTPFrom != "" {
+	switch {
+	case c.EmailProvider == "ses-api" && c.SMTPFrom != "":
+		// SES v2 API — for regions without an SMTP endpoint. Init failure falls
+		// back to log-only rather than blocking boot (secure-by-default posture).
+		s, err := NewSESv2Sender(context.Background(), c.AWSRegion, c.SMTPFrom)
+		if err != nil {
+			slog.Error("notifier: SES API sender init failed — emails will only be logged", "err", err)
+		} else {
+			r.Email = s
+			slog.Info("notifier: email via SES API", "region", c.AWSRegion)
+		}
+	case c.SMTPHost != "" && c.SMTPFrom != "":
 		port := c.SMTPPort
 		if port == "" {
 			port = "587"
@@ -67,7 +83,7 @@ func New(c Config) Sender {
 			From:     c.SMTPFrom,
 		}
 		slog.Info("notifier: email via SMTP", "host", c.SMTPHost)
-	} else {
+	default:
 		slog.Warn("notifier: no email provider configured — emails will only be logged")
 	}
 

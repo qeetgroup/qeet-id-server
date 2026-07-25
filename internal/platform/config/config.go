@@ -108,6 +108,15 @@ type Config struct {
 	// indistinguishable from "unset" (always empty), which is safe (fail-open).
 	GeoCountryHeader string `envconfig:"GEO_COUNTRY_HEADER" default:""`
 
+	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
+	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint
+	// (e.g. ap-south-2). The SES API path uses the AWS credential chain +
+	// AWS_REGION and only needs SMTP_FROM (SMTP host/creds are ignored).
+	EmailProvider string `envconfig:"EMAIL_PROVIDER" default:"smtp"`
+	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
+	// client) so endpoint resolution never fails on a missing region.
+	AWSRegion string `envconfig:"AWS_REGION" default:""`
+
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
 	// Empty SMTPHost leaves email on the log-only fallback (dev).
 	SMTPHost     string `envconfig:"SMTP_HOST" default:""`
