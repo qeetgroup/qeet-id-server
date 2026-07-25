@@ -17,7 +17,7 @@ LIMIT 200;
 
 -- name: RevokeInvite :execrows
 UPDATE tenant.invites SET status = 'revoked'
-WHERE id = $1 AND status = 'pending';
+WHERE id = $1 AND tenant_id = $2 AND status = 'pending';
 
 -- GetInviteForAccept locks the row for update so concurrent Accept calls
 -- don't race on the same token.

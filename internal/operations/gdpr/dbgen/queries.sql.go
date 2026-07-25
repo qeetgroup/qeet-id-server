@@ -16,13 +16,18 @@ import (
 const cancelPurgeRequest = `-- name: CancelPurgeRequest :execrows
 UPDATE "user".purge_requests
 SET status = 'cancelled'
-WHERE id = $1 AND status = 'pending'
+WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
 `
+
+type CancelPurgeRequestParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
 
 // Cancel a pending purge request (e.g. the subject changed their mind).
 // Returns 0 rows affected when the request is already completed or not found.
-func (q *Queries) CancelPurgeRequest(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelPurgeRequest, id)
+func (q *Queries) CancelPurgeRequest(ctx context.Context, arg CancelPurgeRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelPurgeRequest, arg.ID, arg.TenantID)
 	if err != nil {
 		return 0, err
 	}

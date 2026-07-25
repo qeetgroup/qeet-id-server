@@ -9,7 +9,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -167,8 +166,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Key, error) {
 	return out, nil
 }
 
-func (s *Service) Revoke(ctx context.Context, id uuid.UUID) error {
-	n, err := s.q.RevokeAPIKey(ctx, id)
+func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
+	n, err := s.q.RevokeAPIKey(ctx, dbgen.RevokeAPIKeyParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
@@ -255,13 +254,19 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if in.Name == "" || in.TenantID == uuid.Nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("tenant_id and name required"))
+	in.TenantID = tid
+	if in.Name == "" {
+		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("name required"))
 		return
 	}
 	k, raw, err := h.Service.Create(r.Context(), in)
@@ -272,7 +277,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
 		"api_key": k,
 		"secret":  raw,
-		"warning": fmt.Sprintf("This secret is only shown once. Store it now."),
+		"warning": "This secret is only shown once. Store it now.",
 	})
 }
 
@@ -296,7 +301,12 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Revoke(r.Context(), id); err != nil {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.Revoke(r.Context(), tid, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

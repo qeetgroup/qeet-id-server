@@ -152,8 +152,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Invite, error
 	return out, nil
 }
 
-func (s *Service) Revoke(ctx context.Context, id uuid.UUID) error {
-	n, err := s.q.RevokeInvite(ctx, id)
+func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
+	n, err := s.q.RevokeInvite(ctx, dbgen.RevokeInviteParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}

@@ -115,7 +115,7 @@ RETURNING id, tenant_id, user_id, requested_by, reason, status,
 -- Returns 0 rows affected when the request is already completed or not found.
 UPDATE "user".purge_requests
 SET status = 'cancelled'
-WHERE id = @id AND status = 'pending';
+WHERE id = @id AND tenant_id = @tenant_id AND status = 'pending';
 
 -- name: ListPurgeRequests :many
 -- List all purge requests for a tenant, most recent first.
