@@ -15,7 +15,7 @@ FROM auth.service_principals WHERE tenant_id = $1 ORDER BY created_at DESC;
 -- and name so the caller can write the audit row without a second query.
 -- name: DisableServicePrincipal :one
 UPDATE auth.service_principals SET disabled_at = NOW()
-WHERE id = $1 AND disabled_at IS NULL
+WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
 RETURNING tenant_id, name;
 
 -- GetServicePrincipalForAuth fetches the full credential row for the

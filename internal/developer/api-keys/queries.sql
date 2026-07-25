@@ -13,7 +13,7 @@ WHERE tenant_id = $1
 ORDER BY created_at DESC;
 
 -- name: RevokeAPIKey :execrows
-UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL;
+UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL;
 
 -- VerifyAPIKey fetches by prefix for the auth path; includes key_hash for
 -- bcrypt/argon2 comparison. Only non-revoked keys are eligible.

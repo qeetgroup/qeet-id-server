@@ -68,9 +68,11 @@ jobs:
 
       - name: Roll the host (SSM)
         env:
-          INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+          SSM_PREFIX: /qeet-id/prod
           VERSION: ${{ steps.version.outputs.tag }}
         run: |
+          INSTANCE_ID=$(aws ssm get-parameter --name "$SSM_PREFIX/INSTANCE_ID" --query Parameter.Value --output text)
+          echo "Deploying $VERSION to $INSTANCE_ID"
           cmd_id=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \

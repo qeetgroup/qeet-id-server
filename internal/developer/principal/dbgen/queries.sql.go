@@ -62,7 +62,7 @@ func (q *Queries) CreateServicePrincipal(ctx context.Context, arg CreateServiceP
 
 const disableServicePrincipal = `-- name: DisableServicePrincipal :one
 UPDATE auth.service_principals SET disabled_at = NOW()
-WHERE id = $1 AND disabled_at IS NULL
+WHERE id = $1 AND tenant_id = $2 AND disabled_at IS NULL
 RETURNING tenant_id, name
 `
 
@@ -71,10 +71,15 @@ type DisableServicePrincipalRow struct {
 	Name     string
 }
 
+type DisableServicePrincipalParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
 // DisableServicePrincipal marks the principal disabled. RETURNING tenant_id
 // and name so the caller can write the audit row without a second query.
-func (q *Queries) DisableServicePrincipal(ctx context.Context, id uuid.UUID) (DisableServicePrincipalRow, error) {
-	row := q.db.QueryRow(ctx, disableServicePrincipal, id)
+func (q *Queries) DisableServicePrincipal(ctx context.Context, arg DisableServicePrincipalParams) (DisableServicePrincipalRow, error) {
+	row := q.db.QueryRow(ctx, disableServicePrincipal, arg.ID, arg.TenantID)
 	var i DisableServicePrincipalRow
 	err := row.Scan(&i.TenantID, &i.Name)
 	return i, err

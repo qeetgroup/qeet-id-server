@@ -37,11 +37,17 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.TenantID = tid
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
@@ -83,7 +89,12 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Revoke(r.Context(), id); err != nil {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.Revoke(r.Context(), tid, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

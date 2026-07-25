@@ -123,11 +123,16 @@ func (q *Queries) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]ListAP
 }
 
 const revokeAPIKey = `-- name: RevokeAPIKey :execrows
-UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL
+UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL
 `
 
-func (q *Queries) RevokeAPIKey(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAPIKey, id)
+type RevokeAPIKeyParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAPIKey, arg.ID, arg.TenantID)
 	if err != nil {
 		return 0, err
 	}

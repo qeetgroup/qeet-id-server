@@ -167,11 +167,16 @@ func (q *Queries) MarkInviteExpired(ctx context.Context, id uuid.UUID) error {
 
 const revokeInvite = `-- name: RevokeInvite :execrows
 UPDATE tenant.invites SET status = 'revoked'
-WHERE id = $1 AND status = 'pending'
+WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
 `
 
-func (q *Queries) RevokeInvite(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeInvite, id)
+type RevokeInviteParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeInvite, arg.ID, arg.TenantID)
 	if err != nil {
 		return 0, err
 	}

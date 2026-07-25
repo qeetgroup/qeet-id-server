@@ -73,8 +73,8 @@ func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error)
 	return purgeRequestFromRow(row), nil
 }
 
-func (s *Service) Cancel(ctx context.Context, id uuid.UUID) error {
-	ct, err := s.q.CancelPurgeRequest(ctx, id)
+func (s *Service) Cancel(ctx context.Context, tenantID, id uuid.UUID) error {
+	ct, err := s.q.CancelPurgeRequest(ctx, dbgen.CancelPurgeRequestParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
@@ -450,11 +450,17 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.TenantID = tid
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
 		in.By = p.UserID
 	}
@@ -486,7 +492,12 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Cancel(r.Context(), id); err != nil {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.Cancel(r.Context(), tid, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -494,11 +505,17 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createExport(w http.ResponseWriter, r *http.Request) {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in ExportInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.TenantID = tid
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
 		in.By = p.UserID
 	}

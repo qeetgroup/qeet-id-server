@@ -16,6 +16,11 @@ type Config struct {
 	ServiceEnv  string `envconfig:"SERVICE_ENV" default:"dev"`
 	HTTPPort    string `envconfig:"HTTP_PORT" default:"4001"`
 	LogLevel    string `envconfig:"LOG_LEVEL" default:"info"`
+	// LogFormat controls the log output format. "json" forces JSON lines (good
+	// for structured log ingestion and dev with jq). "text" forces the colored
+	// logfmt dev handler. Empty auto-selects: text when stdout is a TTY in
+	// non-prod, json otherwise.
+	LogFormat string `envconfig:"LOG_FORMAT" default:""`
 
 	// OTelEndpoint is the OTLP/HTTP collector endpoint for distributed tracing
 	// (e.g. http://otel-collector:4318). Empty disables tracing entirely — no

@@ -106,8 +106,8 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, er
 
 // Disable marks a service principal disabled. Returns the (tenantID,
 // name) for the audit row so the caller doesn't have to re-query.
-func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id uuid.UUID) (uuid.UUID, string, error) {
-	row, err := s.q.WithTx(tx).DisableServicePrincipal(ctx, id)
+func (s *Service) Disable(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (uuid.UUID, string, error) {
+	row, err := s.q.WithTx(tx).DisableServicePrincipal(ctx, dbgen.DisableServicePrincipalParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", errs.ErrNotFound
 	}
@@ -223,11 +223,17 @@ func auditActor(r *http.Request) (*uuid.UUID, string) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.TenantID = tid
 	ctx := r.Context()
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
@@ -290,6 +296,11 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
+	callerTenant, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	ctx := r.Context()
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
@@ -297,7 +308,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	tenantID, name, err := h.Service.Disable(ctx, tx, id)
+	tenantID, name, err := h.Service.Disable(ctx, tx, callerTenant, id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -51,7 +51,14 @@ func Run() {
 
 	level := parseLogLevel(cfg.LogLevel)
 	var handler slog.Handler
-	if cfg.ServiceEnv != "prod" && isatty.IsTerminal(os.Stdout.Fd()) {
+	useText := cfg.ServiceEnv != "prod" && isatty.IsTerminal(os.Stdout.Fd())
+	switch strings.ToLower(cfg.LogFormat) {
+	case "json":
+		useText = false
+	case "text":
+		useText = true
+	}
+	if useText {
 		handler = logger.NewJSONColorHandler(os.Stdout, &logger.Options{Level: level, TimeFormat: "15:04:05"})
 	} else {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
