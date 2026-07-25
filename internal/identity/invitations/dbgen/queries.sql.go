@@ -182,3 +182,36 @@ func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (int
 	}
 	return result.RowsAffected(), nil
 }
+
+const regenerateInvite = `-- name: RegenerateInvite :one
+UPDATE tenant.invites
+SET token_hash = $3, expires_at = $4, status = 'pending'
+WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'expired')
+RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
+`
+
+type RegenerateInviteParams struct {
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+}
+
+// RegenerateInvite rotates the token + expiry for a resend. Returns the same
+// shape as InsertInvite; 0 rows (pgx.ErrNoRows) when the invite isn't
+// pending/expired for this tenant.
+func (q *Queries) RegenerateInvite(ctx context.Context, arg RegenerateInviteParams) (InsertInviteRow, error) {
+	row := q.db.QueryRow(ctx, regenerateInvite, arg.ID, arg.TenantID, arg.TokenHash, arg.ExpiresAt)
+	var i InsertInviteRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.RoleID,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
