@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -131,12 +132,46 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		return nil, "", err
 	}
 	iv := inviteFromInsertRow(row)
-	_ = s.sender.Send(ctx, notifier.Message{
+	s.sendInviteEmail(ctx, iv.ID, in.Email, raw)
+	return &iv, raw, nil
+}
+
+// sendInviteEmail delivers the accept link. A failure is logged (not swallowed)
+// but does not fail the request — the invite row exists and the admin can
+// resend or copy the returned token. Delivery to unverified recipients fails
+// while Amazon SES is in sandbox mode.
+func (s *Service) sendInviteEmail(ctx context.Context, inviteID uuid.UUID, email, rawToken string) {
+	if err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
-		To:      in.Email,
+		To:      email,
 		Subject: "You've been invited to Qeet",
-		Body:    fmt.Sprintf("Accept the invite: %s/invite/accept?token=%s", s.baseAppURL, raw),
+		Body:    fmt.Sprintf("Accept the invite: %s/invite/accept?token=%s", s.baseAppURL, rawToken),
+	}); err != nil {
+		slog.Warn("invite email send failed", "err", err, "invite_id", inviteID, "email", email)
+	}
+}
+
+// Resend rotates the invite token, extends the expiry, and re-sends the email.
+// Only pending/expired invites for this tenant qualify.
+func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, string, error) {
+	raw, hash, err := codes.URLToken()
+	if err != nil {
+		return nil, "", err
+	}
+	row, err := s.q.RegenerateInvite(ctx, dbgen.RegenerateInviteParams{
+		ID:        id,
+		TenantID:  tenantID,
+		TokenHash: hash,
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
 	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", errs.ErrNotFound.WithDetail("no pending invite to resend")
+		}
+		return nil, "", err
+	}
+	iv := inviteFromInsertRow(row)
+	s.sendInviteEmail(ctx, iv.ID, iv.Email, raw)
 	return &iv, raw, nil
 }
 

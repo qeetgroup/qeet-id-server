@@ -19,6 +19,15 @@ LIMIT 200;
 UPDATE tenant.invites SET status = 'revoked'
 WHERE id = $1 AND tenant_id = $2 AND status = 'pending';
 
+-- RegenerateInvite rotates the token + extends the expiry for a resend (a fresh
+-- link; the old one stops working). Also revives an expired invite back to
+-- pending. Accepted/revoked invites are left untouched (0 rows).
+-- name: RegenerateInvite :one
+UPDATE tenant.invites
+SET token_hash = $3, expires_at = $4, status = 'pending'
+WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'expired')
+RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at;
+
 -- GetInviteForAccept locks the row for update so concurrent Accept calls
 -- don't race on the same token.
 -- name: GetInviteForAccept :one

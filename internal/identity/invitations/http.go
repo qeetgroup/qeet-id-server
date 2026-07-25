@@ -28,6 +28,7 @@ type Handler struct {
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/invites", h.create)
 	r.Get("/tenants/{tenantID}/invites", h.list)
+	r.Post("/invites/{id}/resend", h.resend)
 	r.Delete("/invites/{id}", h.revoke)
 }
 
@@ -64,6 +65,28 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	// Return the raw token to the caller too — admins frequently want to
 	// copy the link directly when email isn't trustworthy yet.
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"invite": iv,
+		"token":  token,
+	})
+}
+
+func (h *Handler) resend(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	tid, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	iv, token, err := h.Service.Resend(r.Context(), tid, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"invite": iv,
 		"token":  token,
 	})
