@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
@@ -133,6 +134,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	billingService.SetPayments(payments)
 	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation) // else a paid plan with no provider is refused, not granted free
+	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo})  // creates the org when a signup checkout is paid
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
@@ -464,6 +466,19 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 // secretsKeyProvider builds the vault data-key provider selected by
 // SECRETS_PROVIDER. "static" decodes SECRETS_KEY (or generates an ephemeral key
 // in dev when unset); "aws-kms" unwraps the DEK from AWS KMS at boot.
+// billingOrgProvisioner adapts the tenant repository to billing.OrgProvisioner,
+// so billing can create an organization once a signup checkout is paid without
+// importing the identity/tenant package (keeping the dependency direction clean).
+type billingOrgProvisioner struct{ tenants *tenant.Repository }
+
+func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error) {
+	t, err := p.tenants.CreateWithOwner(ctx, tenant.CreateInput{Slug: slug, Name: name, Plan: plan, Region: region}, ownerID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return t.ID, nil
+}
+
 func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
 	switch cfg.SecretsProvider {
 	case "aws-kms":

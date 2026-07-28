@@ -82,6 +82,17 @@ type Service struct {
 	// no usable card provider activates directly instead of being refused. OFF by
 	// default, so a paid plan is never granted without a real payment.
 	allowUnpaidActivation bool
+	// orgProvisioner creates the organization behind a *signup* checkout once its
+	// payment completes (see StartSignupCheckout). Injected by the composition
+	// root so billing doesn't import the identity/tenant package. nil until wired.
+	orgProvisioner OrgProvisioner
+}
+
+// OrgProvisioner creates an organization (tenant) owned by ownerID. It backs the
+// signup-checkout flow, where the org must not exist until the plan is paid for.
+// Implemented by identity/tenant and injected via SetOrgProvisioner.
+type OrgProvisioner interface {
+	ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error)
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
@@ -96,6 +107,9 @@ func (s *Service) SetPayments(p *Payments) { s.payments = p }
 // SetAllowUnpaidActivation toggles manual/invoice-only billing (see field doc).
 func (s *Service) SetAllowUnpaidActivation(v bool) { s.allowUnpaidActivation = v }
 
+// SetOrgProvisioner wires the organization creator used to complete signup checkouts.
+func (s *Service) SetOrgProvisioner(p OrgProvisioner) { s.orgProvisioner = p }
+
 // SandboxEnabled reports whether the dev-only sandbox payment provider is active.
 func (s *Service) SandboxEnabled() bool { return s.payments.SandboxEnabled() }
 
@@ -106,6 +120,19 @@ type CheckoutResult struct {
 	Status      string `json:"status"` // "active" | "checkout"
 	CheckoutURL string `json:"checkout_url,omitempty"`
 	Provider    string `json:"provider,omitempty"`
+}
+
+// SignupCheckoutInput is a paid plan chosen during signup, before any org exists.
+// The org is created only when the payment completes.
+type SignupCheckoutInput struct {
+	OrgName    string
+	OrgSlug    string
+	Region     string
+	PlanCode   string
+	Currency   string
+	Country    string
+	SuccessURL string
+	CancelURL  string
 }
 
 // --- seeding ---
@@ -137,6 +164,22 @@ var builtins = []builtinPlan{
 		code: "enterprise", name: "Enterprise", description: "For large orgs with custom needs.", interval: "month", sort: 4,
 		features: []string{"Unlimited MAU", "SSO enforcement & directory sync", "SLA, BYOK & data residency", "Dedicated support & onboarding"},
 		prices:   map[string]int64{"USD": 29900, "EUR": 27900, "GBP": 24900, "INR": 2490000, "JPY": 45000, "AUD": 45000, "CAD": 39900},
+	},
+
+	// Annual variants of the paid self-serve tiers. Same tier + features, billed
+	// once a year at 10× the monthly price (two months free ≈ 17% off). The
+	// console groups a "<tier>" (month) and its "<tier>_year" plan under one card
+	// with a Monthly/Yearly toggle. Free needs no annual plan; Enterprise is
+	// contact-sales, so neither has a "_year" variant.
+	{
+		code: "starter_year", name: "Starter", description: "For growing teams. Billed yearly.", interval: "year", sort: 5,
+		features: []string{"Up to 10,000 MAU", "SAML, SCIM & LDAP", "Audit logs & webhooks", "Email support"},
+		prices:   map[string]int64{"USD": 29000, "EUR": 27000, "GBP": 24000, "INR": 2400000, "JPY": 45000, "AUD": 45000, "CAD": 39000},
+	},
+	{
+		code: "pro_year", name: "Pro", description: "For scale and compliance. Billed yearly.", interval: "year", sort: 6,
+		features: []string{"Up to 100,000 MAU", "Advanced threat protection", "Data-retention controls", "Priority support"},
+		prices:   map[string]int64{"USD": 99000, "EUR": 90000, "GBP": 79000, "INR": 8000000, "JPY": 150000, "AUD": 150000, "CAD": 130000},
 	},
 }
 
@@ -441,7 +484,9 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 	defer tx.Rollback(ctx)
 	row, err := s.q.WithTx(tx).CompleteCheckout(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil // already completed, failed, or unknown — idempotent no-op
+		// Not a tenant checkout — it may be a signup (pre-tenant) checkout, whose
+		// organization is created here, on payment. Unknown refs are a no-op.
+		return s.completeSignupCheckout(ctx, id)
 	}
 	if err != nil {
 		return err
@@ -450,6 +495,140 @@ func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// completeSignupCheckout finishes a paid signup checkout: it atomically claims
+// the pending row, creates the organization (via the injected provisioner), and
+// activates its subscription. Idempotent — a webhook retry finds the row already
+// completed and no-ops. If provisioning fails after the claim, the row is
+// reverted to pending so a retry can try again (CreateWithOwner is atomic, so a
+// failure leaves no partial org).
+func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) error {
+	if s.orgProvisioner == nil {
+		return nil
+	}
+	var (
+		userID                                     uuid.UUID
+		name, slug, region, planCode, currencyCode string
+	)
+	err := s.pool.QueryRow(ctx, `
+		UPDATE tenant.signup_checkouts
+		SET status = 'completed', completed_at = NOW()
+		WHERE id = $1 AND status = 'pending'
+		RETURNING user_id, org_name, org_slug, region, plan_code, currency`,
+		id,
+	).Scan(&userID, &name, &slug, &region, &planCode, &currencyCode)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // unknown, already completed, or failed — idempotent no-op
+	}
+	if err != nil {
+		return err
+	}
+
+	// The org's plan column tracks the tier; the subscription keeps the full code
+	// (e.g. "starter_year") so its interval/price are right.
+	tier := strings.TrimSuffix(planCode, "_year")
+	tenantID, err := s.orgProvisioner.ProvisionOrg(ctx, userID, name, slug, region, tier)
+	if err != nil {
+		_, _ = s.pool.Exec(ctx,
+			`UPDATE tenant.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = $1`, id)
+		return err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := s.ChangePlan(ctx, tx, tenantID, planCode, currencyCode); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE tenant.signup_checkouts SET tenant_id = $1 WHERE id = $2`, tenantID, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// StartSignupCheckout opens a hosted payment for a paid plan chosen during
+// signup, before any organization exists. The org spec is staged (not created);
+// the tenant is created only when the payment completes (completeSignupCheckout),
+// so an abandoned payment leaves nothing behind. Free plans must not use this
+// path — they create the org directly, with no payment.
+func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in SignupCheckoutInput) (*CheckoutResult, error) {
+	cur, ok := normalizeCurrency(in.Currency)
+	if !ok {
+		return nil, errs.ErrBillingCurrencyInvalid
+	}
+	if in.Country != "" && !countryRe.MatchString(in.Country) {
+		return nil, errs.ErrBillingCountryInvalid
+	}
+	planID, _, planName, err := s.planByCode(ctx, in.PlanCode)
+	if err != nil {
+		return nil, err
+	}
+	amt, priced, err := s.priceFor(ctx, planID, cur)
+	if err != nil {
+		return nil, err
+	}
+	if !priced {
+		return nil, errs.ErrBillingPlanNotPriced
+	}
+	// A free plan has nothing to charge; it must go through the direct org-create
+	// path, not this one.
+	if amt == 0 {
+		return nil, errs.ErrBadRequest
+	}
+
+	// Fail fast if the slug is already taken, so we never charge for an org we
+	// then can't create. (Still re-checked atomically at creation time.)
+	var slugTaken bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM tenant.tenants WHERE slug = $1)`, in.OrgSlug).Scan(&slugTaken); err != nil {
+		return nil, err
+	}
+	if slugTaken {
+		return nil, errs.ErrOrgSlugTaken
+	}
+
+	var provider PaymentProvider
+	if s.payments != nil {
+		if in.Country != "" {
+			provider = s.payments.forCountry(in.Country)
+		} else {
+			provider = s.payments.forCurrency(cur)
+		}
+	}
+	if provider == nil {
+		return nil, errs.ErrUnprocessable.
+			WithMessage("Online payment isn't available for this country or currency yet.").
+			WithDetail("no card payment provider is configured to charge " + cur + " for the selected billing country")
+	}
+
+	var checkoutID uuid.UUID
+	if err := s.pool.QueryRow(ctx, `
+		INSERT INTO tenant.signup_checkouts
+			(user_id, org_name, org_slug, region, plan_code, currency, country, provider, amount_minor)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id`,
+		ownerID, in.OrgName, in.OrgSlug, in.Region, in.PlanCode, cur, in.Country, provider.Name(), amt,
+	).Scan(&checkoutID); err != nil {
+		return nil, err
+	}
+
+	redirectURL, providerRef, err := provider.CreateCheckout(ctx, CheckoutInput{
+		Ref:         checkoutID.String(),
+		PlanName:    planName,
+		Currency:    cur,
+		AmountMinor: amt,
+		SuccessURL:  in.SuccessURL,
+		CancelURL:   in.CancelURL,
+	})
+	if err != nil {
+		_, _ = s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET status = 'failed' WHERE id = $1`, checkoutID)
+		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
+	}
+	_, _ = s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET provider_ref = $1 WHERE id = $2`, providerRef, checkoutID)
+	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil
 }
 
 // HandleWebhook verifies a provider webhook and completes the referenced
@@ -485,6 +664,25 @@ func (s *Service) WebhookSignatureHeader(providerName string) string {
 	return ""
 }
 
+// CompleteRazorpayCallback verifies a Razorpay payment-link redirect and, on a
+// paid callback, completes the referenced checkout — creating the org behind a
+// signup checkout. Idempotent with the webhook, and the path that actually
+// completes a checkout in local development (where the async webhook can't reach
+// the server).
+func (s *Service) CompleteRazorpayCallback(ctx context.Context, params map[string]string) error {
+	if s.payments == nil || s.payments.razorpay == nil {
+		return errs.ErrNotFound
+	}
+	ref, paid, err := s.payments.razorpay.VerifyCallback(params)
+	if err != nil {
+		return errs.ErrBillingWebhookVerificationFailed
+	}
+	if !paid || ref == "" {
+		return nil
+	}
+	return s.CompleteCheckout(ctx, ref)
+}
+
 func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoice, error) {
 	rows, err := s.q.ListInvoices(ctx, tenantID)
 	if err != nil {
@@ -514,6 +712,9 @@ type Handler struct {
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/billing/plans", h.listPlans)
+	// Pre-tenant paid checkout: a user picks a paid plan at signup and the org is
+	// created only when the payment completes. User-scoped (no tenant yet).
+	r.Post("/signup/checkout", h.signupCheckout)
 	r.Get("/tenants/{tenantID}/billing/subscription", h.getSubscription)
 	r.Put("/tenants/{tenantID}/billing/subscription", h.changePlan)
 	r.Post("/tenants/{tenantID}/billing/subscription/cancel", h.cancel)
@@ -526,6 +727,10 @@ func (h *Handler) Mount(r chi.Router) {
 // and are CSRF-exempt (see router.go).
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/billing/webhooks/{provider}", h.webhook)
+	// Razorpay payment-link redirect verification: the browser posts the signed
+	// callback params here to complete a checkout, since the async webhook can't
+	// reach a local server (idempotent with the webhook). Signature-authenticated.
+	r.Post("/billing/razorpay/verify", h.razorpayVerify)
 	// Dev-only sandbox provider: a mock hosted-checkout page + its pay action.
 	// Both 404 unless the sandbox is enabled (see sandbox handlers).
 	r.Get("/billing/sandbox/checkout", h.sandboxCheckoutPage)
@@ -739,6 +944,54 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
+// signupCheckout starts a paid checkout for a plan chosen at signup, before the
+// user has an organization. The org is created only when the payment completes,
+// so an abandoned payment never leaves a dangling org. User-scoped (no tenant).
+func (h *Handler) signupCheckout(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in struct {
+		OrgName    string `json:"org_name"`
+		OrgSlug    string `json:"org_slug"`
+		Region     string `json:"region"`
+		PlanCode   string `json:"plan_code"`
+		Currency   string `json:"currency"`
+		Country    string `json:"country"`
+		SuccessURL string `json:"success_url"`
+		CancelURL  string `json:"cancel_url"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if strings.TrimSpace(in.OrgName) == "" || strings.TrimSpace(in.OrgSlug) == "" {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
+		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
+		return
+	}
+	res, err := h.Service.StartSignupCheckout(r.Context(), *p.UserID, SignupCheckoutInput{
+		OrgName:    strings.TrimSpace(in.OrgName),
+		OrgSlug:    strings.TrimSpace(in.OrgSlug),
+		Region:     in.Region,
+		PlanCode:   in.PlanCode,
+		Currency:   in.Currency,
+		Country:    in.Country,
+		SuccessURL: in.SuccessURL,
+		CancelURL:  in.CancelURL,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
 // validReturnURL guards the success/cancel URLs handed to the provider: an
 // absolute http(s) URL with a host. (They're the admin app's own origin.)
 func validReturnURL(s string) bool {
@@ -770,6 +1023,37 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// razorpayVerify completes a checkout from a Razorpay payment-link redirect. The
+// browser posts the signed callback params here (the async webhook can't reach a
+// local server); completion is idempotent, so a later webhook in production is a
+// harmless no-op. Authenticated by the Razorpay signature — CSRF-exempt, in the
+// public group.
+func (h *Handler) razorpayVerify(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PaymentID     string `json:"razorpay_payment_id"`
+		PaymentLinkID string `json:"razorpay_payment_link_id"`
+		ReferenceID   string `json:"razorpay_payment_link_reference_id"`
+		Status        string `json:"razorpay_payment_link_status"`
+		Signature     string `json:"razorpay_signature"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	err := h.Service.CompleteRazorpayCallback(r.Context(), map[string]string{
+		"razorpay_payment_id":                in.PaymentID,
+		"razorpay_payment_link_id":           in.PaymentLinkID,
+		"razorpay_payment_link_reference_id": in.ReferenceID,
+		"razorpay_payment_link_status":       in.Status,
+		"razorpay_signature":                 in.Signature,
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {

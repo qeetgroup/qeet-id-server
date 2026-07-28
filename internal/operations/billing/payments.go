@@ -314,6 +314,7 @@ func (r *razorpayProvider) CreateCheckout(ctx context.Context, in CheckoutInput)
 		"description":     in.PlanName,
 		"callback_url":    in.SuccessURL,
 		"callback_method": "get",
+		"reference_id":    in.Ref, // echoed back on the redirect as payment_link_reference_id
 		"notes":           map[string]string{"checkout_ref": in.Ref},
 	}
 	bb, err := json.Marshal(payload)
@@ -369,6 +370,32 @@ func (r *razorpayProvider) VerifyAndParse(body []byte, signature string) (string
 		return evt.Payload.PaymentLink.Entity.Notes["checkout_ref"], true, nil
 	}
 	return "", false, nil
+}
+
+// VerifyCallback authenticates a Razorpay Payment Link *redirect* (the browser
+// returning to callback_url) and reports our checkout ref and whether it was
+// paid. Unlike VerifyAndParse (the async webhook), this needs no publicly
+// reachable server — the browser carries the signed params back — so it's what
+// completes a checkout in local development, and a robust second path in prod
+// (redirect + webhook both complete the same checkout, idempotently). The
+// signature is the hex HMAC-SHA256 of
+// "<payment_link_id>|<reference_id>|<status>|<payment_id>" keyed by the API secret.
+func (r *razorpayProvider) VerifyCallback(p map[string]string) (ref string, paid bool, err error) {
+	linkID := p["razorpay_payment_link_id"]
+	refID := p["razorpay_payment_link_reference_id"]
+	status := p["razorpay_payment_link_status"]
+	payID := p["razorpay_payment_id"]
+	sig := p["razorpay_signature"]
+	if linkID == "" || sig == "" {
+		return "", false, errors.New("razorpay callback: missing params")
+	}
+	mac := hmac.New(sha256.New, []byte(r.keySecret))
+	mac.Write([]byte(linkID + "|" + refID + "|" + status + "|" + payID))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(sig)) {
+		return "", false, errors.New("razorpay callback: invalid signature")
+	}
+	return refID, status == "paid", nil
 }
 
 // verifyRazorpaySignature checks the X-Razorpay-Signature header: the hex
