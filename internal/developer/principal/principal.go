@@ -109,7 +109,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Principal, er
 func (s *Service) Disable(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (uuid.UUID, string, error) {
 	row, err := s.q.WithTx(tx).DisableServicePrincipal(ctx, dbgen.DisableServicePrincipalParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, "", errs.ErrNotFound
+		return uuid.Nil, "", errs.ErrPrincipalNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
@@ -129,20 +129,20 @@ type TokenResponse struct {
 func (s *Service) IssueClientCredentials(ctx context.Context, clientID, clientSecret string) (*TokenResponse, error) {
 	pid, err := uuid.Parse(clientID)
 	if err != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid client_id")
+		return nil, errs.ErrPrincipalInvalidCredentials
 	}
 	row, err := s.q.GetServicePrincipalForAuth(ctx, pid)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("unknown client")
+		return nil, errs.ErrPrincipalInvalidCredentials
 	}
 	if err != nil {
 		return nil, err
 	}
 	if row.DisabledAt.Valid {
-		return nil, errs.ErrUnauthorized.WithDetail("client disabled")
+		return nil, errs.ErrPrincipalDisabled
 	}
 	if !password.Verify(row.SecretHash, clientSecret) {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid client secret")
+		return nil, errs.ErrPrincipalInvalidCredentials
 	}
 	id, tenantID, scopes := row.ID, row.TenantID, row.Scopes
 	now := time.Now().UTC()
@@ -279,7 +279,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrPrincipalInvalidID)
 		return
 	}
 	out, err := h.Service.List(r.Context(), tid)
@@ -293,7 +293,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrPrincipalInvalidID)
 		return
 	}
 	callerTenant, err := httpx.RequireTenant(r)
@@ -346,7 +346,7 @@ func (h *Handler) tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Form.Get("grant_type") != "client_credentials" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("unsupported grant_type"))
+		httpx.WriteError(w, r, errs.ErrPrincipalGrantUnsupported)
 		return
 	}
 	clientID := r.Form.Get("client_id")
@@ -355,7 +355,7 @@ func (h *Handler) tokenEndpoint(w http.ResponseWriter, r *http.Request) {
 		clientID, clientSecret = u, p
 	}
 	if clientID == "" || clientSecret == "" {
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("client credentials required"))
+		httpx.WriteError(w, r, errs.ErrPrincipalInvalidCredentials)
 		return
 	}
 	resp, err := h.Service.IssueClientCredentials(r.Context(), clientID, clientSecret)

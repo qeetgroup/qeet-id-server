@@ -475,7 +475,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrGDPRTenantInvalid)
 		return
 	}
 	out, err := h.Service.List(r.Context(), tid)
@@ -489,7 +489,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrGDPRIDInvalid)
 		return
 	}
 	tid, err := httpx.RequireTenant(r)
@@ -530,7 +530,7 @@ func (h *Handler) createExport(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listExports(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrGDPRTenantInvalid)
 		return
 	}
 	out, err := h.Service.ListExports(r.Context(), tid)
@@ -546,12 +546,12 @@ func (h *Handler) listExports(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getExport(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrGDPRTenantInvalid)
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrGDPRIDInvalid)
 		return
 	}
 	out, err := h.Service.GetExport(r.Context(), tid, id)

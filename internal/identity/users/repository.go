@@ -224,9 +224,7 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, errs.ErrConflict.
-				WithMessage("An account with this email already exists in this workspace.").
-				WithDetail("email already exists for tenant")
+			return nil, errs.ErrAuthEmailExists
 		}
 		if pgxerr.IsForeignKey(err) {
 			return nil, errs.ErrBadRequest.WithDetail("tenant does not exist")

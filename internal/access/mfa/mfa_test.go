@@ -67,14 +67,11 @@ func TestDefaultStepUpWindow(t *testing.T) {
 	}
 }
 
-// TestStepUpRequiredError pins the envelope the gate uses so clients can branch
-// on it: a distinct code and a 403 status.
+// TestStepUpRequiredError pins the stable code the gate uses so clients can
+// branch on it. (The 403 mapping now lives in the HTTP transport layer.)
 func TestStepUpRequiredError(t *testing.T) {
-	if errs.ErrStepUpRequired.Code != "step_up_required" {
+	if errs.ErrStepUpRequired.Code != errs.CodeStepUpRequired {
 		t.Errorf("code = %q, want step_up_required", errs.ErrStepUpRequired.Code)
-	}
-	if errs.ErrStepUpRequired.Status != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", errs.ErrStepUpRequired.Status)
 	}
 }
 

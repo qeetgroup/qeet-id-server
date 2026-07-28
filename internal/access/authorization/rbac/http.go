@@ -291,7 +291,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	}
 	perm := q.Get("permission")
 	if perm == "" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("permission required"))
+		httpx.WriteError(w, r, errs.ErrRBACPermissionRequired)
 		return
 	}
 	if q.Get("explain") == "true" {

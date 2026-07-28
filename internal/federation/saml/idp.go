@@ -598,7 +598,7 @@ func (h *Handler) idpSessionUser(r *http.Request) (uuid.UUID, bool) {
 // import: the signing cert + SSO endpoints.
 func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("saml idp not configured"))
+		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
 	entity := idpEntityID(r)
@@ -627,11 +627,11 @@ func (h *Handler) idpMetadata(w http.ResponseWriter, r *http.Request) {
 // browser is bounced to the hosted login and returns here afterward.
 func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if h.IdP == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("saml idp not configured"))
+		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid request"))
+		httpx.WriteError(w, r, errs.ErrSAMLRequestInvalid)
 		return
 	}
 	relayState := r.FormValue("RelayState")
@@ -645,7 +645,7 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	if samlReq := r.FormValue("SAMLRequest"); samlReq != "" {
 		ar, err := decodeAuthnRequest(samlReq, r.Method)
 		if err != nil {
-			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid SAMLRequest"))
+			httpx.WriteError(w, r, errs.ErrSAMLAuthnRequestInvalid)
 			return
 		}
 		inResponseTo = ar.ID
@@ -654,26 +654,26 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	} else if spKey := strings.TrimSpace(r.FormValue("sp")); spKey != "" {
 		sp, lookupErr = h.IdP.lookupSP(r.Context(), spKey)
 	} else {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("missing SAMLRequest or sp parameter"))
+		httpx.WriteError(w, r, errs.ErrSAMLRequestParamMissing)
 		return
 	}
 	if lookupErr != nil || sp == nil {
 		// lookupErr is errs.ErrNotFound (no rows) or a real DB error → 404/500.
 		err := lookupErr
 		if err == nil {
-			err = errs.ErrNotFound.WithDetail("unknown service provider")
+			err = errs.ErrNotFound
 		}
 		httpx.WriteError(w, r, err)
 		return
 	}
 	if sp.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("service provider disabled"))
+		httpx.WriteError(w, r, errs.ErrSAMLServiceProviderDisabled)
 		return
 	}
 	// A supplied ACS URL must match the registered one (prevents redirecting a
 	// signed assertion to an attacker-chosen endpoint).
 	if acsOverride != "" && acsOverride != sp.ACSURL {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("AssertionConsumerServiceURL does not match registration"))
+		httpx.WriteError(w, r, errs.ErrSAMLACSMismatch)
 		return
 	}
 
@@ -687,18 +687,18 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 	email, name, tenantID, err := h.IdP.loadUser(r.Context(), userID)
 	if err != nil {
 		slog.Error("saml idp sso: user lookup", "err", err, "user", userID)
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	if tenantID != sp.TenantID {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("user is not a member of this service provider's tenant"))
+		httpx.WriteError(w, r, errs.ErrSAMLUserTenantMismatch)
 		return
 	}
 
 	respXML, err := h.IdP.buildSignedResponse(idpEntityID(r), sp, sp.ACSURL, email, name, inResponseTo)
 	if err != nil {
 		slog.Error("saml idp sso: build assertion", "err", err, "sp", sp.ID)
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	if err := h.IdP.recordIssued(r.Context(), r, sp, userID); err != nil {
@@ -741,12 +741,12 @@ func (h *Handler) createSP(w http.ResponseWriter, r *http.Request) {
 	in.EntityID = strings.TrimSpace(in.EntityID)
 	in.ACSURL = strings.TrimSpace(in.ACSURL)
 	if in.Name == "" || in.EntityID == "" || in.ACSURL == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("name, entity_id and acs_url are required"))
+		httpx.WriteError(w, r, errs.ErrSAMLSPFieldsRequired)
 		return
 	}
 	if in.Certificate != "" {
 		if _, err := parseCertificate(in.Certificate); err != nil {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("certificate is not a valid X.509 certificate"))
+			httpx.WriteError(w, r, errs.ErrSAMLCertificateInvalid)
 			return
 		}
 	}
@@ -781,7 +781,7 @@ func (h *Handler) getSP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	sp, err := h.IdP.GetSP(r.Context(), id, tenantID)
@@ -800,7 +800,7 @@ func (h *Handler) updateSP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	var in UpdateSPInput
@@ -809,12 +809,12 @@ func (h *Handler) updateSP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Status != nil && *in.Status != "draft" && *in.Status != "active" && *in.Status != "disabled" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("status must be draft, active or disabled"))
+		httpx.WriteError(w, r, errs.ErrSAMLStatusInvalid)
 		return
 	}
 	if in.Certificate != nil && *in.Certificate != "" {
 		if _, err := parseCertificate(*in.Certificate); err != nil {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("certificate is not a valid X.509 certificate"))
+			httpx.WriteError(w, r, errs.ErrSAMLCertificateInvalid)
 			return
 		}
 	}
@@ -849,7 +849,7 @@ func (h *Handler) delSP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	ctx := r.Context()

@@ -180,7 +180,7 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Gate: provider must be configured to stream; CRUD still works without it.
 	if !h.Configured {
-		httpx.WriteError(w, r, errs.New("copilot_unconfigured", http.StatusConflict,
+		httpx.WriteError(w, r, errs.New("copilot_unconfigured",
 			"AI copilot is not configured — set COPILOT_PROVIDER and COPILOT_API_KEY"))
 		return
 	}

@@ -213,7 +213,7 @@ func (s *Service) ListPlans(ctx context.Context) ([]Plan, error) {
 func (s *Service) planByCode(ctx context.Context, code string) (uuid.UUID, string, string, error) {
 	row, err := s.q.GetBillingPlanByCode(ctx, code)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, "", "", errs.ErrNotFound.WithDetail("unknown plan")
+		return uuid.Nil, "", "", errs.ErrBillingPlanNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", "", err
@@ -271,7 +271,7 @@ func periodEnd(start time.Time, interval string) time.Time {
 func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("currency must be a 3-letter ISO-4217 code")
+		return nil, errs.ErrBillingCurrencyInvalid
 	}
 	planID, interval, planName, err := s.planByCode(ctx, planCode)
 	if err != nil {
@@ -282,7 +282,7 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 		return nil, err
 	}
 	if !priced {
-		return nil, errs.ErrUnprocessable.WithDetail("plan " + planCode + " is not priced in " + cur)
+		return nil, errs.ErrBillingPlanNotPriced
 	}
 
 	start := time.Now().UTC()
@@ -321,7 +321,7 @@ func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 		return err
 	}
 	if ct == 0 {
-		return errs.ErrNotFound.WithDetail("no active subscription")
+		return errs.ErrBillingNoActiveSubscription
 	}
 	return nil
 }
@@ -336,10 +336,10 @@ func (s *Service) Cancel(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) err
 func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, currency, country, successURL, cancelURL string) (*CheckoutResult, error) {
 	cur, ok := normalizeCurrency(currency)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("currency must be a 3-letter ISO-4217 code")
+		return nil, errs.ErrBillingCurrencyInvalid
 	}
 	if country != "" && !countryRe.MatchString(country) {
-		return nil, errs.ErrUnprocessable.WithDetail("country must be a 2-letter ISO-3166-1 alpha-2 code")
+		return nil, errs.ErrBillingCountryInvalid
 	}
 	planID, _, planName, err := s.planByCode(ctx, planCode)
 	if err != nil {
@@ -350,7 +350,7 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 		return nil, err
 	}
 	if !priced {
-		return nil, errs.ErrUnprocessable.WithDetail("plan " + planCode + " is not priced in " + cur)
+		return nil, errs.ErrBillingPlanNotPriced
 	}
 
 	var provider PaymentProvider
@@ -400,7 +400,7 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	})
 	if err != nil {
 		_ = s.q.UpdateCheckoutFailed(ctx, checkoutID)
-		return nil, errs.ErrInternal.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
+		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
 	}
 	_ = s.q.UpdateCheckoutProviderRef(ctx, dbgen.UpdateCheckoutProviderRefParams{
 		ProviderRef: providerRef,
@@ -432,7 +432,7 @@ func (s *Service) activateDirect(ctx context.Context, tenantID uuid.UUID, planCo
 func (s *Service) CompleteCheckout(ctx context.Context, ref string) error {
 	id, err := uuid.Parse(ref)
 	if err != nil {
-		return errs.ErrBadRequest.WithDetail("invalid checkout ref")
+		return errs.ErrBillingCheckoutRefInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -465,7 +465,7 @@ func (s *Service) HandleWebhook(ctx context.Context, providerName string, body [
 	}
 	ref, paid, err := prov.VerifyAndParse(body, signature)
 	if err != nil {
-		return errs.ErrUnauthorized.WithDetail("webhook verification failed")
+		return errs.ErrBillingWebhookVerificationFailed
 	}
 	if !paid || ref == "" {
 		return nil
@@ -575,7 +575,7 @@ func (h *Handler) sandboxCheckoutPage(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	successURL, cancelURL := q.Get("success_url"), q.Get("cancel_url")
 	if !validReturnURL(successURL) || !validReturnURL(cancelURL) {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid return URLs"))
+		httpx.WriteError(w, r, errs.ErrBillingReturnURLInvalid)
 		return
 	}
 	amt, _ := strconv.ParseInt(q.Get("amount"), 10, 64)
@@ -603,7 +603,7 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 	}
 	successURL := r.PostForm.Get("success_url")
 	if !validReturnURL(successURL) {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid success_url"))
+		httpx.WriteError(w, r, errs.ErrBillingReturnURLInvalid)
 		return
 	}
 	if err := h.Service.CompleteCheckout(r.Context(), r.PostForm.Get("ref")); err != nil {
@@ -616,14 +616,14 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrBillingTenantInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrBillingTenantMismatch
 	}
 	return scope, nil
 }
@@ -728,7 +728,7 @@ func (h *Handler) checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validReturnURL(in.SuccessURL) || !validReturnURL(in.CancelURL) {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("success_url and cancel_url must be absolute http(s) URLs"))
+		httpx.WriteError(w, r, errs.ErrBillingCheckoutURLInvalid)
 		return
 	}
 	res, err := h.Service.Checkout(r.Context(), tenantID, in.PlanCode, in.Currency, in.Country, in.SuccessURL, in.CancelURL)
@@ -757,7 +757,7 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	sigHeader := h.Service.WebhookSignatureHeader(provider)
 	if sigHeader == "" {
-		httpx.WriteError(w, r, errs.ErrNotFound.WithDetail("unknown or unconfigured provider"))
+		httpx.WriteError(w, r, errs.ErrBillingProviderUnknown)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

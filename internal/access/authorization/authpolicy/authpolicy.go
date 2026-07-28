@@ -11,7 +11,6 @@ package authpolicy
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"unicode"
@@ -69,16 +68,16 @@ func DefaultPolicy() Policy {
 // is unit-tested without a database.
 func ValidatePassword(p Policy, pw string) error {
 	if len([]rune(pw)) < p.PasswordMinLength {
-		return errs.ErrUnprocessable.WithDetail(fmt.Sprintf("password must be at least %d characters", p.PasswordMinLength))
+		return errs.ErrAuthPolicyPasswordTooShort
 	}
 	if p.PasswordRequireUppercase && !strings.ContainsFunc(pw, unicode.IsUpper) {
-		return errs.ErrUnprocessable.WithDetail("password must contain an uppercase letter")
+		return errs.ErrAuthPolicyPasswordNoUppercase
 	}
 	if p.PasswordRequireNumber && !strings.ContainsFunc(pw, unicode.IsDigit) {
-		return errs.ErrUnprocessable.WithDetail("password must contain a number")
+		return errs.ErrAuthPolicyPasswordNoNumber
 	}
 	if p.PasswordRequireSymbol && !strings.ContainsFunc(pw, isSymbol) {
-		return errs.ErrUnprocessable.WithDetail("password must contain a symbol")
+		return errs.ErrAuthPolicyPasswordNoSymbol
 	}
 	return nil
 }
@@ -182,7 +181,7 @@ func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw 
 	// Breached-password gate. No-op when the checker is nil (feature off) and
 	// fail-open inside PwnedAllowOnError (a HIBP outage allows the password).
 	if s.breach.PwnedAllowOnError(ctx, pw) {
-		return errs.ErrUnprocessable.WithDetail(BreachedPasswordDetail)
+		return errs.ErrAuthPolicyPasswordBreached
 	}
 	return nil
 }

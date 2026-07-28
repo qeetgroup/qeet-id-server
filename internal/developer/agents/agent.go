@@ -62,7 +62,7 @@ func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string
 func (s *Service) AgentStatus(ctx context.Context, agentID uuid.UUID) (string, error) {
 	status, err := s.q.GetAgentStatusByID(ctx, agentID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrNotFound
+		return "", errs.ErrAgentNotFound
 	}
 	return status, err
 }
@@ -86,18 +86,18 @@ var transitionEvent = map[string]string{
 func validateTransition(cur, target string) error {
 	froms, ok := agentTransitions[target]
 	if !ok {
-		return errs.ErrBadRequest.WithDetail("invalid target status")
+		return errs.ErrAgentStatusInvalid
 	}
 	if cur == target {
 		return nil
 	}
 	if cur == "decommissioned" {
-		return errs.ErrConflict.WithDetail("agent is decommissioned (terminal)")
+		return errs.ErrAgentDecommissioned
 	}
 	if slices.Contains(froms, cur) {
 		return nil
 	}
-	return errs.ErrConflict.WithDetail(fmt.Sprintf("cannot move agent from %s to %s", cur, target))
+	return errs.ErrAgentTransitionInvalid
 }
 
 // transition moves an agent to target after enforcing the allowed source
@@ -106,7 +106,7 @@ func validateTransition(cur, target string) error {
 func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target string) (string, error) {
 	cur, err := s.q.GetAgentStatus(ctx, dbgen.GetAgentStatusParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrNotFound
+		return "", errs.ErrAgentNotFound
 	}
 	if err != nil {
 		return "", err
@@ -210,15 +210,15 @@ func (s *Service) sponsorBelongsToTenant(ctx context.Context, tenantID, userID u
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name string, scopes []string, ttl int, sponsorUserID uuid.UUID) (*Agent, error) {
 	if strings.TrimSpace(name) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("name is required")
+		return nil, errs.ErrAgentNameRequired
 	}
 	if sponsorUserID == uuid.Nil {
-		return nil, errs.ErrUnprocessable.WithDetail("sponsor_user_id is required — every agent must have a named human owner")
+		return nil, errs.ErrAgentSponsorRequired
 	}
 	if ok, err := s.sponsorBelongsToTenant(ctx, tenantID, sponsorUserID); err != nil {
 		return nil, err
 	} else if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("sponsor_user_id must be a member of this tenant")
+		return nil, errs.ErrAgentSponsorNotMember
 	}
 	if scopes == nil {
 		scopes = []string{}
@@ -311,12 +311,12 @@ func (s *Service) AgentsSponsoredBy(ctx context.Context, tenantID, userID uuid.U
 // member of the tenant. Returns the number of agents transferred.
 func (s *Service) TransferSponsor(ctx context.Context, tenantID, fromUserID, toUserID uuid.UUID) (int, error) {
 	if toUserID == uuid.Nil {
-		return 0, errs.ErrUnprocessable.WithDetail("to_user_id is required")
+		return 0, errs.ErrAgentSponsorRequired
 	}
 	if ok, err := s.sponsorBelongsToTenant(ctx, tenantID, toUserID); err != nil {
 		return 0, err
 	} else if !ok {
-		return 0, errs.ErrUnprocessable.WithDetail("to_user_id must be a member of this tenant")
+		return 0, errs.ErrAgentSponsorNotMember
 	}
 	n, err := s.q.TransferAgentSponsor(ctx, dbgen.TransferAgentSponsorParams{
 		ToUserID:   pgUUID(toUserID),
@@ -341,7 +341,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrAgentNotFound
 	}
 	return nil
 }
@@ -375,20 +375,20 @@ type TokenResponse struct {
 func (s *Service) IssueToken(ctx context.Context, agentID, secret string) (*TokenResponse, error) {
 	id, err := uuid.Parse(agentID)
 	if err != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid agent_id")
+		return nil, errs.ErrAgentTokenInvalid
 	}
 	row, err := s.q.GetAgentForToken(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("unknown agent")
+		return nil, errs.ErrAgentTokenInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if row.Status != "active" {
-		return nil, errs.ErrUnauthorized.WithDetail("agent " + row.Status)
+		return nil, errs.ErrAgentInactive
 	}
 	if !password.Verify(row.SecretHash, secret) {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid agent secret")
+		return nil, errs.ErrAgentTokenInvalid
 	}
 
 	now := time.Now().UTC()
@@ -485,14 +485,14 @@ func (h *Handler) MountPublic(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrAgentInvalidID
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrAgentTenantMismatch
 	}
 	return scope, nil
 }
@@ -543,7 +543,7 @@ func (h *Handler) sponsoredBy(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := uuid.Parse(chi.URLParam(r, "userID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
+		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
 	out, err := h.Service.AgentsSponsoredBy(r.Context(), tenantID, userID)
@@ -562,7 +562,7 @@ func (h *Handler) transferSponsor(w http.ResponseWriter, r *http.Request) {
 	}
 	fromUserID, err := uuid.Parse(chi.URLParam(r, "userID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid userID"))
+		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
 	var in struct {
@@ -588,7 +588,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
 	if err := h.Service.Delete(r.Context(), id, tenantID); err != nil {
@@ -606,7 +606,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
 	var in struct {
@@ -655,7 +655,7 @@ func (h *Handler) doTransition(w http.ResponseWriter, r *http.Request, target, a
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAgentInvalidID)
 		return
 	}
 	var prev string

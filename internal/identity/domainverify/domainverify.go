@@ -118,7 +118,7 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamp
 func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Domain, error) {
 	domain := normalizeDomain(raw)
 	if !validDomain(domain) {
-		return nil, errs.ErrUnprocessable.WithMessage("Enter a valid domain, e.g. acme.com.")
+		return nil, errs.ErrDomainVerifyInvalidDomain
 	}
 	token, err := newToken()
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Dom
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_tenant_domain") {
-			return nil, errs.ErrConflict.WithDetail("domain already added")
+			return nil, errs.ErrDomainVerifyExists
 		}
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error
 func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, error) {
 	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
+		return nil, errs.ErrDomainVerifyNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -179,14 +179,13 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, 
 		}
 	}
 	if lerr != nil || !found {
-		return nil, errs.ErrUnprocessable.WithMessage(
-			"We couldn't find the verification record yet. DNS changes can take a few minutes to propagate — add the TXT record and try again.")
+		return nil, errs.ErrDomainVerifyDNSRecordMissing
 	}
 
 	updated, err := s.q.MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_verified_domain") {
-			return nil, errs.ErrConflict.WithMessage("This domain is already verified by another organization.")
+			return nil, errs.ErrDomainVerifyClaimedByOther
 		}
 		return nil, err
 	}
@@ -200,7 +199,7 @@ func (s *Service) Remove(ctx context.Context, id, tenantID uuid.UUID) error {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrDomainVerifyNotFound
 	}
 	return nil
 }

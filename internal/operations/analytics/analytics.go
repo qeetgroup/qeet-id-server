@@ -511,13 +511,13 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrAnalyticsTenantInvalid)
 		return
 	}
 	// Cross-tenant guard: the JWT's tenant must match the path param.
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.TenantID == nil || *p.TenantID != tid {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("cross-tenant access denied"))
+		httpx.WriteError(w, r, errs.ErrAnalyticsTenantMismatch)
 		return
 	}
 	out, err := h.Reader.Overview(r.Context(), tid)

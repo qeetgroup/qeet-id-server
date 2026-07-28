@@ -78,7 +78,7 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 	if cursor != "" {
 		cid, err := uuid.Parse(cursor)
 		if err != nil {
-			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
+			return nil, "", errs.ErrAuditCursorInvalid
 		}
 		args = append(args, cid)
 		q += ` AND (created_at, id) < (SELECT created_at, id FROM audit.events WHERE id = $` + strconv.Itoa(len(args)) + `)`
@@ -141,7 +141,7 @@ type publicVerifyResult struct {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrAuditTenantInvalid)
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -151,7 +151,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("actor_user_id"); raw != "" {
 		actorID, err := uuid.Parse(raw)
 		if err != nil {
-			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid actor_user_id"))
+			httpx.WriteError(w, r, errs.ErrAuditActorIDInvalid)
 			return
 		}
 		filter.ActorUserID = actorID
@@ -171,7 +171,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrAuditTenantInvalid)
 		return
 	}
 	res, err := h.Verifier.Verify(r.Context(), &tid)

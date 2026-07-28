@@ -172,19 +172,19 @@ func (s *Service) DecideBackchannel(ctx context.Context, userID, id uuid.UUID, a
 	q := s.q.WithTx(tx)
 	row, err := q.LockCIBARequest(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrNotFound
+		return errs.ErrOIDCCIBARequestNotFound
 	}
 	if err != nil {
 		return err
 	}
 	if row.UserID != userID {
-		return errs.ErrForbidden.WithDetail("not your sign-in request")
+		return errs.ErrOIDCCIBARequestNotOwned
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrBadRequest.WithDetail("request expired")
+		return errs.ErrOIDCCIBARequestExpired
 	}
 	if row.Status != "pending" {
-		return errs.ErrConflict.WithDetail("request already decided")
+		return errs.ErrOIDCCIBARequestAlreadyDecided
 	}
 
 	if !approve {
@@ -311,7 +311,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 
 func (h *Handler) backchannelAuthorize(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
 		return
 	}
 	clientID := r.Form.Get("client_id")

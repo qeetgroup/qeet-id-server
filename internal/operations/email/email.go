@@ -160,7 +160,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, err
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
-		return nil, errs.ErrNotFound.WithDetail("unknown template key")
+		return nil, errs.ErrEmailTemplateNotFound
 	}
 	row, err := s.q.GetEmailTemplateOverride(ctx, dbgen.GetEmailTemplateOverrideParams{
 		TenantID: tenantID, TemplateKey: key,
@@ -179,10 +179,10 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, subject, body string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
-		return nil, errs.ErrNotFound.WithDetail("unknown template key")
+		return nil, errs.ErrEmailTemplateNotFound
 	}
 	if strings.TrimSpace(subject) == "" || strings.TrimSpace(body) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("subject and body are required")
+		return nil, errs.ErrEmailTemplateContentRequired
 	}
 	if err := s.q.WithTx(tx).UpsertEmailTemplate(ctx, dbgen.UpsertEmailTemplateParams{
 		TenantID: tenantID, TemplateKey: key, Subject: subject, Body: body,
@@ -197,7 +197,7 @@ func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key
 func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
-		return nil, errs.ErrNotFound.WithDetail("unknown template key")
+		return nil, errs.ErrEmailTemplateNotFound
 	}
 	if err := s.q.WithTx(tx).DeleteEmailTemplate(ctx, dbgen.DeleteEmailTemplateParams{
 		TenantID: tenantID, TemplateKey: key,
@@ -223,14 +223,14 @@ func (h *Handler) Mount(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrEmailTenantInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrEmailTenantMismatch
 	}
 	return scope, nil
 }

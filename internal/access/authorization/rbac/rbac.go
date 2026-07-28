@@ -105,7 +105,7 @@ func (r *Repository) CreateRole(ctx context.Context, tx pgx.Tx, tenantID uuid.UU
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, errs.ErrConflict.WithDetail("role name exists for tenant")
+			return nil, errs.ErrRBACRoleNameExists
 		}
 		return nil, err
 	}

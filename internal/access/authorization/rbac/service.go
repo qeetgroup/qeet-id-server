@@ -163,7 +163,7 @@ func (s *Service) AssignRoleToGroup(ctx context.Context, groupID, tenantID, role
 		return err
 	}
 	if !valid {
-		return errs.ErrNotFound.WithDetail("group or role not found in tenant")
+		return errs.ErrRBACGroupOrRoleNotFound
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.group_assigned", "group", groupID,
 		map[string]any{"role_id": roleID})); err != nil {

@@ -113,7 +113,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Secret, error
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, value string) (*Secret, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || value == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("name and value are required")
+		return nil, errs.ErrSecretNameValueRequired
 	}
 	ct, nonce, err := s.encrypt(value)
 	if err != nil {
@@ -129,7 +129,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "secrets_tenant_id_name_key") || strings.Contains(err.Error(), "duplicate") {
-			return nil, errs.ErrConflict.WithDetail("a secret with that name already exists")
+			return nil, errs.ErrSecretNameExists
 		}
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateI
 	// Rotate the encrypted value only when a new one is supplied.
 	if in.Value != nil {
 		if *in.Value == "" {
-			return nil, errs.ErrUnprocessable.WithDetail("value cannot be empty")
+			return nil, errs.ErrSecretValueRequired
 		}
 		ct, nonce, err := s.encrypt(*in.Value)
 		if err != nil {
@@ -177,7 +177,7 @@ func scanSecret(row pgx.Row) (*Secret, error) {
 	var sec Secret
 	if err := row.Scan(&sec.ID, &sec.Name, &sec.Scope, &sec.Last4, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrNotFound
+			return nil, errs.ErrSecretNotFound
 		}
 		return nil, err
 	}
@@ -187,14 +187,14 @@ func scanSecret(row pgx.Row) (*Secret, error) {
 func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, string, error) {
 	row, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", errs.ErrNotFound
+		return "", "", errs.ErrSecretNotFound
 	}
 	if err != nil {
 		return "", "", err
 	}
 	val, err := s.decrypt(row.Ciphertext, row.Nonce)
 	if err != nil {
-		return "", "", errs.ErrInternal.WithDetail("decryption failed")
+		return "", "", errs.ErrSecretDecryptFailed.Wrap(err)
 	}
 	return row.Name, val, nil
 }
@@ -204,14 +204,14 @@ func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, s
 func (s *Service) GetByName(ctx context.Context, tenantID uuid.UUID, name string) (uuid.UUID, string, error) {
 	row, err := s.q.GetSecretByName(ctx, dbgen.GetSecretByNameParams{TenantID: tenantID, Name: name})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, "", errs.ErrNotFound
+		return uuid.Nil, "", errs.ErrSecretNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
 	}
 	val, err := s.decrypt(row.Ciphertext, row.Nonce)
 	if err != nil {
-		return uuid.Nil, "", errs.ErrInternal.WithDetail("decryption failed")
+		return uuid.Nil, "", errs.ErrSecretDecryptFailed.Wrap(err)
 	}
 	return row.ID, val, nil
 }
@@ -222,7 +222,7 @@ func (s *Service) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrSecretNotFound
 	}
 	return nil
 }
@@ -413,7 +413,7 @@ func (h *Handler) vaultGet(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 	if !hasVaultScope(p.Scopes, name) {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("missing vault:"+name+" (or vault:read) scope"))
+		httpx.WriteError(w, r, errs.ErrSecretScopeRequired)
 		return
 	}
 	ctx := r.Context()

@@ -53,7 +53,7 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			msg := "could not create user"
 			// errs.*.WithDetail returns a copy (no Unwrap/Is), so match on the
 			// stable code rather than identity.
-			if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
+			if e := errs.As(err); e != nil && e.Code == errs.ErrAuthEmailExists.Code {
 				msg = "a user with this email already exists"
 			}
 			res.Errors = append(res.Errors, BulkImportError{Line: line, Email: row.Email, Message: msg})
@@ -135,7 +135,7 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	}
 	source, ok := ParseImportSource(r.URL.Query().Get("source"))
 	if !ok {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("unknown or missing source query param; "+importSourceHint()))
+		httpx.WriteError(w, r, errs.ErrUserImportSourceInvalid.WithDetail(importSourceHint()))
 		return
 	}
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxImportBytes+1))
@@ -144,17 +144,17 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(raw) > maxImportBytes {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("export file too large"))
+		httpx.WriteError(w, r, errs.ErrUserImportFileTooLarge)
 		return
 	}
 
 	rows, parseErrs := ParseVendorExport(source, raw)
 	if len(rows) == 0 && len(parseErrs) == 0 {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("no user records found in the export"))
+		httpx.WriteError(w, r, errs.ErrUserImportEmpty)
 		return
 	}
 	if len(rows) > maxImportRows {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("import batch too large (max 1000 rows per request)"))
+		httpx.WriteError(w, r, errs.ErrUserImportBatchTooLarge)
 		return
 	}
 

@@ -82,10 +82,10 @@ func validType(t string) bool {
 // time), so enabling a sink never dumps the entire audit history downstream.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string) (*Sink, error) {
 	if !validType(typ) {
-		return nil, errs.ErrUnprocessable.WithDetail("type must be splunk_hec, datadog, or http")
+		return nil, errs.ErrSIEMSinkTypeInvalid
 	}
 	if !strings.HasPrefix(endpoint, "https://") && !strings.HasPrefix(endpoint, "http://") {
-		return nil, errs.ErrUnprocessable.WithDetail("endpoint must be an absolute http(s) URL")
+		return nil, errs.ErrSIEMEndpointInvalid
 	}
 	row, err := s.q.InsertLogSink(ctx, dbgen.InsertLogSinkParams{
 		TenantID: tenantID, Type: typ, Endpoint: endpoint, Token: token,
@@ -381,14 +381,14 @@ func (h *Handler) Mount(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrSIEMTenantInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrSIEMTenantMismatch
 	}
 	return scope, nil
 }
@@ -438,7 +438,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
 	var in struct {
@@ -463,7 +463,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
 	if err := h.Service.Delete(r.Context(), id, tenantID); err != nil {

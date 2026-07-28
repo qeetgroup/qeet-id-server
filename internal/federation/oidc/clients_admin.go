@@ -42,7 +42,7 @@ func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client
 func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Client, error) {
 	r, err := s.q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
+		return nil, errs.ErrOIDCClientNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		TenantID:       tenantID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
+		return nil, errs.ErrOIDCClientNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (s *Service) DeleteClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 	q := s.q.WithTx(tx)
 	clientID, err := q.DeleteOIDCClient(ctx, dbgen.DeleteOIDCClientParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrNotFound
+		return "", errs.ErrOIDCClientNotFound
 	}
 	if err != nil {
 		return "", err
@@ -129,13 +129,13 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 	q := s.q.WithTx(tx)
 	r, err := q.LockOIDCClientForUpdate(ctx, dbgen.LockOIDCClientForUpdateParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, errs.ErrNotFound
+		return "", nil, errs.ErrOIDCClientNotFound
 	}
 	if err != nil {
 		return "", nil, err
 	}
 	if r.Type != "confidential" {
-		return "", nil, errs.ErrUnprocessable.WithDetail("public clients have no secret to rotate")
+		return "", nil, errs.ErrOIDCPublicClientNoSecret
 	}
 	secret, _, err := codes.URLToken()
 	if err != nil {
@@ -177,7 +177,7 @@ func auditActor(r *http.Request) (*uuid.UUID, string) {
 func pathID(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+		return uuid.Nil, errs.ErrOIDCIDInvalid
 	}
 	return id, nil
 }
@@ -499,7 +499,7 @@ func (h *Handler) reviewShadowAI(w http.ResponseWriter, r *http.Request) {
 	}
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("review must be attributed to a human"))
+		httpx.WriteError(w, r, errs.ErrOIDCReviewerRequired)
 		return
 	}
 	if err := h.Service.ReviewShadowAIClient(r.Context(), tenantID, id, *p.UserID); err != nil {

@@ -170,14 +170,14 @@ type providerConfig struct {
 // resolveTenant maps a tenant id (uuid) or slug to a tenant id.
 func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, error) {
 	if ref == "" {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("tenant required")
+		return uuid.Nil, errs.ErrSocialTenantRequired
 	}
 	if id, err := uuid.Parse(ref); err == nil {
 		return id, nil
 	}
 	id, err := s.q.GetTenantIDBySlug(ctx, ref)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrNotFound.WithDetail("unknown tenant")
+		return uuid.Nil, errs.ErrSocialTenantNotFound
 	}
 	if err != nil {
 		return uuid.Nil, err
@@ -193,16 +193,16 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 		Provider: provider,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return pc, errs.ErrNotFound.WithDetail("provider not configured")
+		return pc, errs.ErrSocialProviderNotConfigured
 	}
 	if err != nil {
 		return pc, err
 	}
 	if !r.Enabled {
-		return pc, errs.ErrBadRequest.WithDetail("provider disabled")
+		return pc, errs.ErrSocialProviderDisabled
 	}
 	if r.DiscoveryUrl == nil || *r.DiscoveryUrl == "" {
-		return pc, errs.ErrBadRequest.WithDetail("provider has no discovery_url (OIDC discovery required)")
+		return pc, errs.ErrSocialProviderNoDiscovery
 	}
 	pc.clientID = r.ClientID
 	pc.clientSecret = r.ClientSecret
@@ -223,7 +223,7 @@ func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectU
 	}
 	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 	if err != nil {
-		return "", errs.ErrUnprocessable.WithDetail("provider discovery failed")
+		return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
 	}
 	// PKCE S256: verifier is the raw token, challenge is its SHA-256 (codes.Hash).
 	verifier, challenge, err := codes.URLToken()
@@ -276,23 +276,23 @@ type CallbackResult struct {
 // one-time code the SPA trades for a session.
 func (s *Service) CompleteCallback(ctx context.Context, provider, state, code string) (*CallbackResult, error) {
 	if state == "" || code == "" {
-		return nil, errs.ErrBadRequest.WithDetail("missing state or code")
+		return nil, errs.ErrSocialCallbackParamsMissing
 	}
 	stateHash := codes.Hash(state)
 
 	// Single-use: delete the state row as we read it.
 	st, err := s.q.ConsumeSocialOAuthState(ctx, stateHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBadRequest.WithDetail("invalid or used state")
+		return nil, errs.ErrSocialStateInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if st.Provider != provider {
-		return nil, errs.ErrBadRequest.WithDetail("provider mismatch")
+		return nil, errs.ErrSocialProviderMismatch
 	}
 	if time.Now().After(st.ExpiresAt) {
-		return nil, errs.ErrBadRequest.WithDetail("state expired")
+		return nil, errs.ErrSocialStateExpired
 	}
 
 	pc, err := s.loadProvider(ctx, st.TenantID, provider)
@@ -301,18 +301,18 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	}
 	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 	if err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("provider discovery failed")
+		return nil, errs.ErrSocialDiscoveryFailed.Wrap(err)
 	}
 	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, st.RedirectUri, st.CodeVerifier)
 	if err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("token exchange failed")
+		return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 	}
 	ui, err := s.oauth.userinfo(ctx, doc, accessToken)
 	if err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("userinfo failed")
+		return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 	}
 	if ui.Email == "" {
-		return nil, errs.ErrBadRequest.WithDetail("provider did not return an email")
+		return nil, errs.ErrSocialEmailMissing
 	}
 
 	userID, err := s.findOrCreateUser(ctx, st.TenantID, provider, ui)
@@ -413,7 +413,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 // ExchangeLogin trades a one-time social login code for a Qeet token pair.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
 	if rawCode == "" {
-		return nil, errs.ErrBadRequest.WithDetail("code required")
+		return nil, errs.ErrSocialCodeRequired
 	}
 	codeHash := codes.Hash(rawCode)
 
@@ -427,16 +427,16 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 
 	row, err := q.ConsumeSocialLoginCode(ctx, codeHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid code")
+		return nil, errs.ErrSocialLoginCodeInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if row.UsedAt.Valid {
-		return nil, errs.ErrUnauthorized.WithDetail("code already used")
+		return nil, errs.ErrSocialLoginCodeUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return nil, errs.ErrUnauthorized.WithDetail("code expired")
+		return nil, errs.ErrSocialLoginCodeExpired
 	}
 	if err := q.MarkSocialLoginCodeUsed(ctx, codeHash); err != nil {
 		return nil, err

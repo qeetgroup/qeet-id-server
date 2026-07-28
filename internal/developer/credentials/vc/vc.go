@@ -73,14 +73,14 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 	subject = strings.TrimSpace(subject)
 	credType = strings.TrimSpace(credType)
 	if subject == "" || credType == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("subject and type are required")
+		return nil, errs.ErrVCSubjectTypeRequired
 	}
 	if claims == nil {
 		claims = map[string]any{}
 	}
 	claimsJSON, err := json.Marshal(claims)
 	if err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("claims must be a JSON object")
+		return nil, errs.ErrVCClaimsInvalid
 	}
 	now := time.Now().UTC()
 	var expiresAt *time.Time
@@ -200,7 +200,7 @@ func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID) error {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrVCCredentialNotFound
 	}
 	return nil
 }
@@ -302,7 +302,7 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(in.Credential) == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("credential (JWT) is required"))
+		httpx.WriteError(w, r, errs.ErrVCCredentialRequired)
 		return
 	}
 	res, err := h.Service.Verify(r.Context(), in.Credential)

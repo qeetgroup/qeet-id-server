@@ -82,7 +82,7 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, errs.ErrConflict.WithDetail("slug already exists")
+			return nil, errs.ErrOrgSlugTaken
 		}
 		return nil, err
 	}

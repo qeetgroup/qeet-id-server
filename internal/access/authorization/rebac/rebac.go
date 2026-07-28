@@ -168,14 +168,14 @@ func subjectString(typ, id, rel string) string {
 func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string) (*Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+		return nil, errs.ErrReBACObjectInvalid
 	}
 	subj, ok := parseSubject(subject)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("subject must be \"user:id\" or \"type:id#relation\"")
+		return nil, errs.ErrReBACSubjectInvalid
 	}
 	if strings.TrimSpace(relation) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("relation is required")
+		return nil, errs.ErrReBACRelationRequired
 	}
 	id, err := s.q.InsertRelationTuple(ctx, dbgen.InsertRelationTupleParams{
 		TenantID:        tenantID,
@@ -207,7 +207,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID, object string) ([]Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+		return nil, errs.ErrReBACObjectInvalid
 	}
 	rows, err := s.q.ListRelationTuplesByObject(ctx, dbgen.ListRelationTuplesByObjectParams{
 		TenantID:   tenantID,
@@ -254,7 +254,7 @@ func (s *Service) tupleFetcher(ctx context.Context, tenantID uuid.UUID) fetcher 
 func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (bool, error) {
 	o, ok := parseObject(object)
 	if !ok {
-		return false, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+		return false, errs.ErrReBACObjectInvalid
 	}
 	allowed, _, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]bool{}, 0)
 	return allowed, err
@@ -266,7 +266,7 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, object, relatio
 func (s *Service) CheckExplain(ctx context.Context, tenantID uuid.UUID, object, relation, userID string) (*Explanation, error) {
 	o, ok := parseObject(object)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+		return nil, errs.ErrReBACObjectInvalid
 	}
 	allowed, path, err := resolve(s.tupleFetcher(ctx, tenantID), o.Type, o.ID, relation, userID, map[string]bool{}, 0)
 	if err != nil {
@@ -356,10 +356,10 @@ func expand(fetch fetcher, objType, objID, relation string, depth int, visited m
 func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relation string, depth int) (*Graph, error) {
 	o, ok := parseObject(object)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("object must be \"type:id\"")
+		return nil, errs.ErrReBACObjectInvalid
 	}
 	if strings.TrimSpace(relation) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("relation is required")
+		return nil, errs.ErrReBACRelationRequired
 	}
 	if depth <= 0 || depth > maxExpandDepth {
 		depth = maxExpandDepth
@@ -384,7 +384,7 @@ func (s *Service) Expand(ctx context.Context, tenantID uuid.UUID, object, relati
 func (s *Service) ListBySubject(ctx context.Context, tenantID uuid.UUID, subject string) ([]Tuple, error) {
 	subj, ok := parseSubject(subject)
 	if !ok {
-		return nil, errs.ErrUnprocessable.WithDetail("subject must be \"type:id\" or \"type:id#relation\"")
+		return nil, errs.ErrReBACSubjectInvalid
 	}
 	rows, err := s.q.ListRelationTuplesBySubject(ctx, dbgen.ListRelationTuplesBySubjectParams{
 		TenantID:    tenantID,
@@ -446,7 +446,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	subject := q.Get("subject")
 	switch {
 	case object != "" && subject != "":
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("supply either object or subject, not both"))
+		httpx.WriteError(w, r, errs.ErrReBACObjectSubjectExclusive)
 	case object != "":
 		out, err := h.Service.List(r.Context(), tenantID, object)
 		if err != nil {
@@ -462,7 +462,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 	default:
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("object or subject query param required"))
+		httpx.WriteError(w, r, errs.ErrReBACObjectOrSubjectRequired)
 	}
 }
 
@@ -523,7 +523,7 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.UserID == "" || in.Relation == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("user_id and relation are required"))
+		httpx.WriteError(w, r, errs.ErrReBACUserIDRelationRequired)
 		return
 	}
 	if r.URL.Query().Get("explain") == "true" {
@@ -559,7 +559,7 @@ func (h *Handler) graph(w http.ResponseWriter, r *http.Request) {
 	object := q.Get("object")
 	relation := q.Get("relation")
 	if object == "" || relation == "" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("object and relation query params required"))
+		httpx.WriteError(w, r, errs.ErrReBACObjectRelationRequired)
 		return
 	}
 	depth := maxExpandDepth

@@ -460,10 +460,10 @@ func (s *Service) GetSettings(ctx context.Context, tenantID uuid.UUID) (*Setting
 
 func (s *Service) UpdateSettings(ctx context.Context, tenantID uuid.UUID, in Settings) (*Settings, error) {
 	if in.ScoreThreshold < 0 || in.ScoreThreshold > 1 {
-		return nil, errs.ErrUnprocessable.WithDetail("score_threshold must be between 0 and 1")
+		return nil, errs.ErrAuditScoreThresholdInvalid
 	}
 	if in.MinBaselineEvents < 0 {
-		return nil, errs.ErrUnprocessable.WithDetail("min_baseline_events must be >= 0")
+		return nil, errs.ErrAuditMinBaselineInvalid
 	}
 	if err := s.q.UpsertAnomalySettings(ctx, dbgen.UpsertAnomalySettingsParams{
 		TenantID:          tenantID,
@@ -493,14 +493,14 @@ func (h *Handler) Mount(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrAuditTenantInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrAuditTenantMismatch
 	}
 	return scope, nil
 }
@@ -513,7 +513,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	status := r.URL.Query().Get("status")
 	if status != "" && status != "open" && status != "resolved" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("status must be \"open\" or \"resolved\""))
+		httpx.WriteError(w, r, errs.ErrAuditAnomalyStatusInvalid)
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -547,12 +547,12 @@ func (h *Handler) resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAuditIDInvalid)
 		return
 	}
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("resolve must be attributed to a human"))
+		httpx.WriteError(w, r, errs.ErrAuditResolveActorRequired)
 		return
 	}
 	if err := h.Service.Resolve(r.Context(), tenantID, id, *p.UserID); err != nil {

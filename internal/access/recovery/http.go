@@ -114,7 +114,7 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pair == nil {
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)

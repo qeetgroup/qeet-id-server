@@ -115,15 +115,15 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	row, err := qtx.GetPasswordResetByToken(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrBadRequest.WithDetail("invalid token")
+			return errs.ErrResetLinkInvalid
 		}
 		return err
 	}
 	if row.UsedAt.Valid {
-		return errs.ErrBadRequest.WithDetail("token already used")
+		return errs.ErrRecoveryLinkUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrBadRequest.WithDetail("token expired")
+		return errs.ErrRecoveryLinkExpired
 	}
 	pwHash, err := password.Hash(newPassword)
 	if err != nil {
@@ -202,15 +202,15 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac Audi
 	mlRow, err := qtx.GetMagicLinkByToken(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrBadRequest.WithDetail("invalid token")
+			return nil, errs.ErrMagicLinkInvalid
 		}
 		return nil, err
 	}
 	if mlRow.UsedAt.Valid {
-		return nil, errs.ErrBadRequest.WithDetail("token already used")
+		return nil, errs.ErrRecoveryLinkUsed
 	}
 	if time.Now().After(mlRow.ExpiresAt) {
-		return nil, errs.ErrBadRequest.WithDetail("token expired")
+		return nil, errs.ErrRecoveryLinkExpired
 	}
 	tenantID := mlRow.TenantID
 	email := mlRow.Email
