@@ -99,6 +99,13 @@ type Config struct {
 	// the OAuth authorize flow redirects to for sign-in and consent.
 	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3003"`
 
+	// Platform-level social login for the console's own Qeet ID accounts
+	// (tenant-less — distinct from the per-tenant social providers admins
+	// configure for their end users). Each provider is OFF until its client
+	// id/secret are set. Google only for now.
+	GoogleClientID     string `envconfig:"GOOGLE_CLIENT_ID" default:""`
+	GoogleClientSecret string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
+
 	// GeoCountryHeader is the request header a trusted upstream proxy (e.g.
 	// Cloudflare's CF-IPCountry) sets to the client's resolved country, used
 	// as the sole geo signal for impossible-travel risk assessment. Empty

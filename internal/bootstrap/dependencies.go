@@ -283,6 +283,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	passkeyService := passkey.NewService(pool, wa, authService)
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
+	// Platform-level (tenant-less) social login for the console's own accounts.
+	// Off until credentials are set; Google only for now.
+	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
+		socialService.SetPlatformProvider("google", cfg.GoogleClientID, cfg.GoogleClientSecret,
+			"https://accounts.google.com/.well-known/openid-configuration")
+	}
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
 	// Secrets-vault data key: sourced per SECRETS_PROVIDER (static SECRETS_KEY,

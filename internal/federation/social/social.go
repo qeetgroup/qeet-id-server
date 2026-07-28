@@ -51,6 +51,10 @@ type Service struct {
 	auth       *auth.Service
 	appBaseURL string
 	oauth      *oauthClient
+	// platform holds tenant-less social providers for the console's own Qeet ID
+	// sign-in (env-configured, e.g. Google). Distinct from the per-tenant
+	// social_providers table used for tenants' end users. See platform.go.
+	platform map[string]providerConfig
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
@@ -470,6 +474,14 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/social/{provider}/start", h.start)
 	r.Get("/social/{provider}/callback", h.callback)
 	r.Post("/social/exchange", h.exchange)
+	// Which platform (tenant-less) providers are configured — lets the console
+	// enable only the social buttons that will actually work.
+	r.Get("/social/platform/providers", h.platformProviders)
+}
+
+// platformProviders reports the configured platform-level social providers.
+func (h *Handler) platformProviders(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"providers": h.Service.PlatformProviderNames()})
 }
 
 // callbackURL reconstructs the public callback URL the upstream provider must
@@ -591,6 +603,16 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	if tenantRef == "" {
 		tenantRef = r.URL.Query().Get("tenant_id")
 	}
+	// No tenant → platform (tenant-less) sign-in for the console's own accounts.
+	if tenantRef == "" {
+		authURL, err := h.Service.BeginPlatformLogin(r.Context(), provider, callbackURL(r, provider))
+		if err != nil {
+			h.redirectSocialError(w, r, err)
+			return
+		}
+		http.Redirect(w, r, authURL, http.StatusFound)
+		return
+	}
 	authURL, err := h.Service.BeginLogin(r.Context(), provider, tenantRef, callbackURL(r, provider), r.URL.Query().Get("return_to"))
 	if err != nil {
 		h.redirectSocialError(w, r, err)
@@ -605,7 +627,24 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	q := r.URL.Query()
-	res, err := h.Service.CompleteCallback(r.Context(), provider, q.Get("state"), q.Get("code"))
+	state, code := q.Get("state"), q.Get("code")
+
+	// Platform (tenant-less) console sign-in: complete it and bounce the SPA to
+	// /sign-in with a one-time code to exchange. Fall through to the tenant flow
+	// only when the state isn't a platform state.
+	if h.Service.PlatformProviderEnabled(provider) {
+		rawCode, perr := h.Service.CompletePlatformCallback(r.Context(), provider, state, code)
+		if perr == nil {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_code="+url.QueryEscape(rawCode), http.StatusFound)
+			return
+		}
+		if !errors.Is(perr, errs.ErrSocialStateInvalid) {
+			h.redirectSocialError(w, r, perr)
+			return
+		}
+	}
+
+	res, err := h.Service.CompleteCallback(r.Context(), provider, state, code)
 	if err != nil {
 		h.redirectSocialError(w, r, err)
 		return
@@ -631,6 +670,15 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	var in exchangeInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
+		return
+	}
+	// Platform (tenant-less) code first; fall back to the tenant exchange when
+	// the code isn't a platform one.
+	if pair, perr := h.Service.ExchangePlatformLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent()); perr == nil {
+		httpx.WriteJSON(w, http.StatusOK, pair)
+		return
+	} else if !errors.Is(perr, errs.ErrSocialLoginCodeInvalid) {
+		httpx.WriteError(w, r, perr)
 		return
 	}
 	pair, err := h.Service.ExchangeLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent())
