@@ -38,57 +38,67 @@ type Service struct {
 	q          *dbgen.Queries
 	sender     notifier.Sender
 	ttl        time.Duration
-	baseAppURL string // e.g. "https://app.qeet.com" — used for magic-link login links
-	// loginBaseURL is the hosted-login app origin (qeetid-login). Password-reset
-	// is a pure browser credential flow, so its link lands on the hosted login
-	// app's /reset page rather than the app origin.
-	loginBaseURL string
+	// baseAppURL is the app origin used to build email links (password reset,
+	// magic-link). The link lands back in the app that initiated it, which
+	// completes the flow in-place — reset/magic-link are no longer routed to the
+	// separate hosted-login app.
+	baseAppURL string
 	// breach is the optional breached-password checker (nil = feature off, a
 	// no-op). Set via SetBreachChecker; consulted on ConfirmPasswordReset.
 	breach *hibp.Checker
 }
 
-func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL, loginBaseURL string) *Service {
+func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
 	if ttl <= 0 {
 		ttl = time.Hour
 	}
-	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL, loginBaseURL: loginBaseURL}
+	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL}
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
 // cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
-// StartPasswordReset always succeeds from the caller's perspective so we
-// don't leak whether an email is registered.
-func (s *Service) StartPasswordReset(ctx context.Context, tenantID uuid.UUID, email string) error {
-	userID, err := s.q.GetUserIDByEmailForTenant(ctx, dbgen.GetUserIDByEmailForTenantParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Lower:    email,
-	})
+// StartPasswordReset issues a reset token for the account with this email, if
+// one exists. It always succeeds from the caller's perspective so it never
+// leaks whether an email is registered. Look-up is by email *globally* — email
+// is unique platform-wide and sign-in is tenant-less (migration 0022), so a
+// tenant-scoped lookup would never match a request from the tenant-less sign-in
+// page. Returns the raw token so a dev-mode handler can surface the reset link
+// in local development; the token is empty when no account matched (or on error).
+func (s *Service) StartPasswordReset(ctx context.Context, email string) (string, error) {
+	var userID uuid.UUID
+	err := s.pool.QueryRow(ctx,
+		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
+	).Scan(&userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return "", nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := s.q.InsertPasswordReset(ctx, dbgen.InsertPasswordResetParams{
 		UserID:    userID,
 		TokenHash: hash,
 		ExpiresAt: time.Now().UTC().Add(s.ttl),
 	}); err != nil {
-		return err
+		return "", err
 	}
-	return s.sender.Send(ctx, notifier.Message{
+	// The reset is completed in the console itself (baseAppURL) at
+	// /forgot-password?token=…, not the separate hosted-login app.
+	if err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "Reset your password",
-		Body:    fmt.Sprintf("Click to reset: %s/reset?token=%s", s.loginBaseURL, raw),
-	})
+		Body:    fmt.Sprintf("Click to reset your password: %s/forgot-password?token=%s", s.baseAppURL, raw),
+	}); err != nil {
+		return "", err
+	}
+	return raw, nil
 }
 
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {

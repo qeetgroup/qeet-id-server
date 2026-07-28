@@ -155,7 +155,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioFrom:       cfg.TwilioFrom,
 	})
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
-	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL, cfg.LoginBaseURL)
+	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	retentionService := retention.NewService(pool)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
@@ -394,7 +394,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
 		RBACChecker:   rbacRepo,
 		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService},
+		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.ServiceEnv == "dev"},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},

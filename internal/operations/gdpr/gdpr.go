@@ -157,6 +157,21 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	defer tx.Rollback(ctx)
 
 	qTx := dbgen.New(tx)
+	if err := purgeUserData(ctx, qTx, userID); err != nil {
+		return err
+	}
+	if err := qTx.CompletePurgeRequest(ctx, requestID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// purgeUserData replaces the user's PII with redacted markers and drops all
+// sign-in credentials (password, TOTP, recovery codes) + revokes sessions. The
+// user row is kept as a redacted tombstone and audit rows are left intact, so
+// historical events stay verifiable. Shared by the admin grace-period sweep and
+// self-service deletion.
+func purgeUserData(ctx context.Context, qTx *dbgen.Queries, userID uuid.UUID) error {
 	if err := qTx.PurgeUserPII(ctx, userID); err != nil {
 		return err
 	}
@@ -169,10 +184,19 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
 		return err
 	}
-	if err := qTx.RevokeUserSessions(ctx, userID); err != nil {
+	return qTx.RevokeUserSessions(ctx, userID)
+}
+
+// PurgeSelf immediately erases the current user's own PII and credentials — no
+// grace period. Backs the self-service "delete my account" action; audit
+// references are preserved (redacted), matching the admin erasure guarantees.
+func (s *Service) PurgeSelf(ctx context.Context, userID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	if err := qTx.CompletePurgeRequest(ctx, requestID); err != nil {
+	defer tx.Rollback(ctx)
+	if err := purgeUserData(ctx, dbgen.New(tx), userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -431,12 +455,123 @@ func (s *Service) collectUserData(ctx context.Context, tenantID, userID uuid.UUI
 	}, nil
 }
 
+type exportSelfRole struct {
+	RoleName     string    `json:"role_name"`
+	Organization string    `json:"organization"`
+	GrantedAt    time.Time `json:"granted_at"`
+}
+
+// ExportSelf assembles the GDPR-portable data for the *current* user, across all
+// their organizations and independent of any tenant scope (a self-service user
+// may be tenant-less, so this can't reuse the tenant-filtered admin queries).
+// Credential material — password hashes, TOTP secrets, recovery-code hashes — is
+// deliberately excluded. Returned synchronously so the caller can download it.
+func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]any, error) {
+	var profile exportProfile
+	if err := s.pool.QueryRow(ctx, `
+		SELECT email, phone, display_name, status, email_verified_at, phone_verified_at, created_at
+		FROM "user".users
+		WHERE id = $1`, userID,
+	).Scan(&profile.Email, &profile.Phone, &profile.DisplayName, &profile.Status,
+		&profile.EmailVerifiedAt, &profile.PhoneVerifiedAt, &profile.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, err
+	}
+
+	sessRows, err := s.pool.Query(ctx, `
+		SELECT id, COALESCE(host(ip), '') AS ip, user_agent, created_at, last_seen_at, revoked_at
+		FROM auth.sessions
+		WHERE user_id = $1
+		ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer sessRows.Close()
+	sessions := make([]exportSession, 0)
+	for sessRows.Next() {
+		var e exportSession
+		var ip string
+		if err := sessRows.Scan(&e.ID, &ip, &e.UserAgent, &e.CreatedAt, &e.LastSeenAt, &e.RevokedAt); err != nil {
+			return nil, err
+		}
+		if ip != "" {
+			ipCopy := ip
+			e.IP = &ipCopy
+		}
+		sessions = append(sessions, e)
+	}
+	if err := sessRows.Err(); err != nil {
+		return nil, err
+	}
+
+	pkRows, err := s.q.ListUserPasskeysForExport(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	passkeys := make([]exportPasskey, 0, len(pkRows))
+	for _, r := range pkRows {
+		passkeys = append(passkeys, exportPasskey{
+			ID:         r.ID,
+			Name:       r.Name,
+			Transports: r.Transports,
+			CreatedAt:  r.CreatedAt,
+			LastUsedAt: toTimePtr(r.LastUsedAt),
+		})
+	}
+
+	roleRows, err := s.pool.Query(ctx, `
+		SELECT r.name, t.name, ur.granted_at
+		FROM rbac.user_roles ur
+		JOIN rbac.roles r ON r.id = ur.role_id
+		JOIN tenant.tenants t ON t.id = ur.tenant_id
+		WHERE ur.user_id = $1
+		ORDER BY ur.granted_at`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer roleRows.Close()
+	roles := make([]exportSelfRole, 0)
+	for roleRows.Next() {
+		var role exportSelfRole
+		if err := roleRows.Scan(&role.RoleName, &role.Organization, &role.GrantedAt); err != nil {
+			return nil, err
+		}
+		roles = append(roles, role)
+	}
+	if err := roleRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// ErrNoRows means no TOTP row → not enrolled (false zero value is correct).
+	mfaEnabled, err := s.q.GetUserMFAStatus(ctx, userID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	return map[string]any{
+		"profile":          profile,
+		"sessions":         sessions,
+		"passkeys":         passkeys,
+		"roles":            roles,
+		"mfa_totp_enabled": mfaEnabled,
+		"generated_at":     time.Now().UTC(),
+	}, nil
+}
+
 type Handler struct {
 	Service  *Service
 	Evidence *EvidenceService
 }
 
 func (h *Handler) Mount(r chi.Router) {
+	// Self-service (the current user acts on their own account, no tenant
+	// required) — mirrors /v1/me; not in the RBAC permission map, so any authed
+	// user passes through.
+	r.Post("/account/export", h.exportSelf)
+	r.Post("/account/delete", h.deleteSelf)
+
 	r.Post("/gdpr/purge", h.create)
 	r.Get("/tenants/{tenantID}/gdpr/purge", h.list)
 	r.Delete("/gdpr/purge/{id}", h.cancel)
@@ -447,6 +582,39 @@ func (h *Handler) Mount(r chi.Router) {
 
 	// Compliance evidence routes — SOC 2 and ISO 27001 live checks.
 	h.mountEvidence(r)
+}
+
+// exportSelf returns the current user's own portable data as a downloadable
+// JSON document (synchronous — the payload is small). Self-service, no tenant.
+func (h *Handler) exportSelf(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	data, err := h.Service.ExportSelf(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="qeet-id-account-export.json"`)
+	httpx.WriteJSON(w, http.StatusOK, data)
+}
+
+// deleteSelf immediately erases the current user's PII + credentials and revokes
+// their sessions (self-service "delete my account"). No grace period; audit
+// references are kept redacted. The caller is signed out client-side afterwards.
+func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	if err := h.Service.PurgeSelf(r.Context(), *p.UserID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
