@@ -289,6 +289,17 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		socialService.SetPlatformProvider("google", cfg.GoogleClientID, cfg.GoogleClientSecret,
 			"https://accounts.google.com/.well-known/openid-configuration")
 	}
+	if cfg.MicrosoftClientID != "" && cfg.MicrosoftClientSecret != "" {
+		// /common allows both work/school and personal Microsoft accounts.
+		socialService.SetPlatformProvider("microsoft", cfg.MicrosoftClientID, cfg.MicrosoftClientSecret,
+			"https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration")
+	}
+	if cfg.GithubClientID != "" && cfg.GithubClientSecret != "" {
+		socialService.SetPlatformGitHub(cfg.GithubClientID, cfg.GithubClientSecret) // GitHub isn't OIDC — dedicated adapter
+	}
+	if cfg.AppleClientID != "" && cfg.AppleTeamID != "" && cfg.AppleKeyID != "" && cfg.ApplePrivateKey != "" {
+		socialService.SetPlatformApple(cfg.AppleClientID, cfg.AppleTeamID, cfg.AppleKeyID, cfg.ApplePrivateKey)
+	}
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
 	// Secrets-vault data key: sourced per SECRETS_PROVIDER (static SECRETS_KEY,

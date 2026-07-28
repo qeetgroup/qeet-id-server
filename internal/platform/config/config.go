@@ -103,8 +103,19 @@ type Config struct {
 	// (tenant-less — distinct from the per-tenant social providers admins
 	// configure for their end users). Each provider is OFF until its client
 	// id/secret are set. Google only for now.
-	GoogleClientID     string `envconfig:"GOOGLE_CLIENT_ID" default:""`
-	GoogleClientSecret string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
+	GoogleClientID        string `envconfig:"GOOGLE_CLIENT_ID" default:""`
+	GoogleClientSecret    string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
+	MicrosoftClientID     string `envconfig:"MICROSOFT_CLIENT_ID" default:""`
+	MicrosoftClientSecret string `envconfig:"MICROSOFT_CLIENT_SECRET" default:""`
+	GithubClientID        string `envconfig:"GITHUB_CLIENT_ID" default:""`
+	GithubClientSecret    string `envconfig:"GITHUB_CLIENT_SECRET" default:""`
+	// Sign in with Apple: client secret is a signed ES256 JWT derived from these,
+	// so it needs the Services ID + Team ID + Key ID + .p8 private key (not a
+	// static secret). All four required to enable.
+	AppleClientID   string `envconfig:"APPLE_CLIENT_ID" default:""`
+	AppleTeamID     string `envconfig:"APPLE_TEAM_ID" default:""`
+	AppleKeyID      string `envconfig:"APPLE_KEY_ID" default:""`
+	ApplePrivateKey string `envconfig:"APPLE_PRIVATE_KEY" default:""`
 
 	// GeoCountryHeader is the request header a trusted upstream proxy (e.g.
 	// Cloudflare's CF-IPCountry) sets to the client's resolved country, used

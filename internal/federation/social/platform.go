@@ -22,12 +22,32 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// SetPlatformProvider registers a platform-level provider (config from env).
+// SetPlatformProvider registers a discovery-based OIDC provider (Google,
+// Microsoft, …) at platform level (config from env).
 func (s *Service) SetPlatformProvider(name, clientID, clientSecret, discoveryURL string) {
+	s.setPlatform(name, providerConfig{clientID: clientID, clientSecret: clientSecret, discoveryURL: discoveryURL, kind: "oidc"})
+}
+
+// SetPlatformGitHub registers GitHub, which isn't OIDC (no discovery doc), so it
+// uses the dedicated adapter in github.go instead of the generic OIDC ceremony.
+func (s *Service) SetPlatformGitHub(clientID, clientSecret string) {
+	s.setPlatform("github", providerConfig{clientID: clientID, clientSecret: clientSecret, kind: "github"})
+}
+
+// SetPlatformApple registers Sign in with Apple. clientID is the Services ID; the
+// client secret is derived per-request as a signed ES256 JWT from teamID/keyID/
+// privateKey (a .p8 key). See apple.go.
+func (s *Service) SetPlatformApple(servicesID, teamID, keyID, privateKey string) {
+	s.setPlatform("apple", providerConfig{
+		clientID: servicesID, kind: "apple", teamID: teamID, keyID: keyID, privateKey: privateKey,
+	})
+}
+
+func (s *Service) setPlatform(name string, pc providerConfig) {
 	if s.platform == nil {
 		s.platform = map[string]providerConfig{}
 	}
-	s.platform[name] = providerConfig{clientID: clientID, clientSecret: clientSecret, discoveryURL: discoveryURL}
+	s.platform[name] = pc
 }
 
 // PlatformProviderEnabled reports whether a platform provider is configured.
@@ -52,6 +72,12 @@ func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI 
 	pc, ok := s.platform[provider]
 	if !ok {
 		return "", errs.ErrSocialProviderNotConfigured
+	}
+	if pc.kind == "github" {
+		return s.beginGitHubLogin(ctx, provider, pc, redirectURI)
+	}
+	if pc.kind == "apple" {
+		return s.beginAppleLogin(ctx, provider, pc, redirectURI)
 	}
 	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 	if err != nil {
@@ -86,6 +112,56 @@ func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI 
 		sep = "&"
 	}
 	return doc.AuthorizationEndpoint + sep + q.Encode(), nil
+}
+
+// beginGitHubLogin starts GitHub's OAuth authorize flow — no OIDC discovery and
+// no PKCE (GitHub OAuth Apps don't support it), so state is stored with an empty
+// verifier.
+func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string) (string, error) {
+	state, stateHash, err := codes.URLToken()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at)
+		VALUES ($1, $2, '', $3, $4)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL),
+	); err != nil {
+		return "", err
+	}
+	q := url.Values{
+		"client_id":    {pc.clientID},
+		"redirect_uri": {redirectURI},
+		"scope":        {githubScopes},
+		"state":        {state},
+		"allow_signup": {"true"},
+	}
+	return githubAuthorizeURL + "?" + q.Encode(), nil
+}
+
+// beginAppleLogin starts Sign in with Apple. Requesting name/email forces
+// response_mode=form_post, so Apple returns to the callback via POST.
+func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string) (string, error) {
+	state, stateHash, err := codes.URLToken()
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at)
+		VALUES ($1, $2, '', $3, $4)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL),
+	); err != nil {
+		return "", err
+	}
+	q := url.Values{
+		"response_type": {"code"},
+		"response_mode": {"form_post"},
+		"client_id":     {pc.clientID},
+		"redirect_uri":  {redirectURI},
+		"scope":         {appleScopes},
+		"state":         {state},
+	}
+	return appleAuthorizeURL + "?" + q.Encode(), nil
 }
 
 // CompletePlatformCallback consumes the state, exchanges the code, resolves or
@@ -124,17 +200,35 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		return "", errs.ErrSocialStateExpired
 	}
 
-	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
-	if err != nil {
-		return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
-	}
-	accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, redirectURI, verifier)
-	if err != nil {
-		return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
-	}
-	ui, err := s.oauth.userinfo(ctx, doc, accessToken)
-	if err != nil {
-		return "", errs.ErrSocialUserinfoFailed.Wrap(err)
+	var ui userInfo
+	if pc.kind == "github" {
+		accessToken, err := s.oauth.githubExchange(ctx, pc.clientID, pc.clientSecret, code, redirectURI)
+		if err != nil {
+			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+		if ui, err = s.oauth.githubUserinfo(ctx, accessToken); err != nil {
+			return "", errs.ErrSocialUserinfoFailed.Wrap(err)
+		}
+	} else if pc.kind == "apple" {
+		secret, err := appleClientSecret(pc.clientID, pc.teamID, pc.keyID, pc.privateKey)
+		if err != nil {
+			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+		if ui, err = s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI); err != nil {
+			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+	} else {
+		doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
+		if err != nil {
+			return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
+		}
+		accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, redirectURI, verifier)
+		if err != nil {
+			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+		}
+		if ui, err = s.oauth.userinfo(ctx, doc, accessToken); err != nil {
+			return "", errs.ErrSocialUserinfoFailed.Wrap(err)
+		}
 	}
 	if ui.Email == "" {
 		return "", errs.ErrSocialEmailMissing

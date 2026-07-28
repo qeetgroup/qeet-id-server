@@ -164,11 +164,20 @@ const (
 	socialScopes   = "openid email profile"
 )
 
-// providerConfig is a tenant's stored config for one OIDC provider.
+// providerConfig is the stored config for one provider. For discovery-based
+// OIDC providers (google, microsoft, tenant providers) discoveryURL is set and
+// kind is "oidc"/""; GitHub isn't OIDC so kind is "github" and it uses a
+// dedicated adapter (github.go) with hardcoded endpoints instead.
 type providerConfig struct {
 	clientID     string
 	clientSecret string
 	discoveryURL string
+	kind         string
+	// Apple only (kind == "apple"): the client secret is a short-lived ES256 JWT
+	// derived from these, not a static string.
+	teamID     string
+	keyID      string
+	privateKey string
 }
 
 // resolveTenant maps a tenant id (uuid) or slug to a tenant id.
@@ -473,6 +482,7 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/social/{provider}/start", h.start)
 	r.Get("/social/{provider}/callback", h.callback)
+	r.Post("/social/{provider}/callback", h.callback) // Apple response_mode=form_post
 	r.Post("/social/exchange", h.exchange)
 	// Which platform (tenant-less) providers are configured — lets the console
 	// enable only the social buttons that will actually work.
@@ -626,8 +636,9 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 // bounces to the SPA with a one-time code (tokens are never placed in the URL).
 func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	q := r.URL.Query()
-	state, code := q.Get("state"), q.Get("code")
+	// Apple uses response_mode=form_post (params in the POST body); the other
+	// providers use a GET query. r.FormValue reads whichever applies.
+	state, code := r.FormValue("state"), r.FormValue("code")
 
 	// Platform (tenant-less) console sign-in: complete it and bounce the SPA to
 	// /sign-in with a one-time code to exchange. Fall through to the tenant flow
