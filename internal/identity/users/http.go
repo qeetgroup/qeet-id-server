@@ -35,6 +35,14 @@ type Handler struct {
 }
 
 func (h *Handler) Mount(r chi.Router) {
+	// Self-service: the authenticated caller's own account. Resolves the target
+	// from the auth principal, so it needs NO tenant — a tenant-less user (fresh
+	// signup, before they create/join a workspace) can still read/update their
+	// own profile. Deliberately absent from permissionMap so rbac.Enforce lets it
+	// through, and it carries no {tenantID} param so EnforceTenantScope ignores it.
+	r.Get("/me", h.me)
+	r.Patch("/me", h.updateMe)
+
 	r.Get("/users", h.list)
 	r.Get("/users/deleted", h.listDeleted)
 	r.Post("/users", h.create)
@@ -289,6 +297,52 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, u)
+}
+
+// me returns the authenticated caller's own user record. Unlike get, it resolves
+// the id from the auth principal (not the path) and needs no tenant — this is the
+// "My Account" self-service read, usable before a user belongs to any workspace.
+func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	u, err := h.Repo.Get(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, u)
+}
+
+// updateMe patches the caller's own profile. Only self-editable fields are
+// honoured (display name + avatar); privileged fields on UpdateInput (status,
+// phone, metadata) are ignored here, so a user can't change their own standing
+// through the self-service surface.
+func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in UpdateInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Restrict to profile fields regardless of what the body carried.
+	safe := UpdateInput{DisplayName: in.DisplayName, AvatarURL: in.AvatarURL}
+	if err := h.Validate.Struct(safe); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	u, err := h.Repo.Update(r.Context(), *p.UserID, safe)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
