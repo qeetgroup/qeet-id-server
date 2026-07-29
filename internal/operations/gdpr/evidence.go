@@ -518,7 +518,7 @@ func ValidFramework(f string) bool {
 func (s *EvidenceService) Generate(ctx context.Context, tenantID uuid.UUID, framework string, actor *uuid.UUID) (*EvidenceRun, error) {
 	controls, ok := controlsByFramework[framework]
 	if !ok {
-		return nil, errs.ErrBadRequest.WithDetail("framework must be 'soc2' or 'iso27001'")
+		return nil, errs.ErrGDPRFrameworkInvalid
 	}
 
 	results := make([]ControlResult, 0, len(controls))
@@ -673,14 +673,14 @@ func (s *EvidenceService) GetRun(ctx context.Context, tenantID, id uuid.UUID) (*
 func requireEvidencePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrGDPRTenantInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrGDPRTenantMismatch
 	}
 	return scope, nil
 }
@@ -690,7 +690,7 @@ func requireEvidencePathTenant(r *http.Request) (uuid.UUID, error) {
 func validEvidenceFramework(r *http.Request) (string, error) {
 	f := chi.URLParam(r, "framework")
 	if f != "soc2" && f != "iso27001" {
-		return "", errs.ErrBadRequest.WithDetail("framework must be 'soc2' or 'iso27001'")
+		return "", errs.ErrGDPRFrameworkInvalid
 	}
 	return f, nil
 }
@@ -752,7 +752,7 @@ func (h *Handler) getEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrGDPRIDInvalid)
 		return
 	}
 	run, err := h.Evidence.GetRun(r.Context(), tid, id)

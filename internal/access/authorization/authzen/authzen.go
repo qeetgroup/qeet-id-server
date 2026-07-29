@@ -85,17 +85,17 @@ const permissionResourceType = "permission"
 // whichever engine resource.type selects.
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req EvaluationRequest) (*EvaluationResponse, error) {
 	if req.Subject.ID == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("subject.id is required")
+		return nil, errs.ErrAuthZENSubjectIDRequired
 	}
 	if req.Action.Name == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("action.name is required")
+		return nil, errs.ErrAuthZENActionNameRequired
 	}
 	explain, _ := req.Context["explain"].(bool)
 
 	if req.Resource.Type == permissionResourceType {
 		userID, err := uuid.Parse(req.Subject.ID)
 		if err != nil {
-			return nil, errs.ErrUnprocessable.WithDetail("subject.id must be a UUID")
+			return nil, errs.ErrAuthZENSubjectIDInvalid
 		}
 		if explain {
 			exp, err := s.rbac.Explain(ctx, userID, tenantID, req.Action.Name)
@@ -112,7 +112,7 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 	}
 
 	if req.Resource.Type == "" || req.Resource.ID == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("resource.type and resource.id are required (use resource.type=\"permission\" with resource.id omitted for an RBAC check)")
+		return nil, errs.ErrAuthZENResourceRequired
 	}
 	object := req.Resource.Type + ":" + req.Resource.ID
 	if explain {

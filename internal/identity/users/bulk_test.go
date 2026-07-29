@@ -33,7 +33,7 @@ func TestRunBulkImport_PartialSuccess(t *testing.T) {
 			t.Errorf("create got tenant %s, want %s", in.TenantID, tenant)
 		}
 		if in.Email == "dupe@example.com" {
-			return nil, errs.ErrConflict
+			return nil, errs.ErrAuthEmailExists
 		}
 		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
 	}

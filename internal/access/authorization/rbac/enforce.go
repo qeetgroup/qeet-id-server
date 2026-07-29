@@ -91,9 +91,7 @@ func Enforce(c Checker, perms map[string]string) func(http.Handler) http.Handler
 				return
 			}
 			if !allowed {
-				httpx.WriteError(w, r, errs.ErrForbidden.
-					WithMessage("You don't have permission to do that.").
-					WithDetail("missing permission: "+perm))
+				httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
 				return
 			}
 			next.ServeHTTP(w, r)

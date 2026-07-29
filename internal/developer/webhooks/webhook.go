@@ -133,7 +133,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Subscription,
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Subscription, error) {
 	row, err := s.q.GetWebhookSubscription(ctx, dbgen.GetWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
+		return nil, errs.ErrWebhookNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -149,7 +149,7 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Subscriptio
 func (s *Service) Disable(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) (uuid.UUID, string, error) {
 	row, err := s.q.WithTx(tx).DisableWebhookSubscription(ctx, dbgen.DisableWebhookSubscriptionParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, "", errs.ErrNotFound
+		return uuid.Nil, "", errs.ErrWebhookNotFound
 	}
 	if err != nil {
 		return uuid.Nil, "", err
@@ -221,14 +221,14 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 
 // RetryDelivery re-queues a delivery for immediate redelivery by the dispatcher
 // (clears delivered_at + error and sets next_attempt_at to now). Tenant-scoped
-// via the subscription join. ErrNotFound when the delivery isn't the tenant's.
+// via the subscription join. ErrWebhookDeliveryNotFound when the delivery isn't the tenant's.
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
 	n, err := s.q.RetryWebhookDelivery(ctx, dbgen.RetryWebhookDeliveryParams{DeliveryID: deliveryID, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrWebhookDeliveryNotFound
 	}
 	return nil
 }
@@ -384,7 +384,7 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
 	tenantID, err := httpx.RequireTenant(r)
@@ -403,7 +403,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
 	tenantID, err := httpx.RequireTenant(r)
@@ -422,7 +422,7 @@ func (h *Handler) listDeliveries(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) retryDelivery(w http.ResponseWriter, r *http.Request) {
 	deliveryID, err := uuid.Parse(chi.URLParam(r, "deliveryID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid deliveryID"))
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
 	tenantID, err := httpx.RequireTenant(r)
@@ -462,7 +462,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TenantID = tenantID // scope from principal, never the body
 	if in.URL == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("url required"))
+		httpx.WriteError(w, r, errs.ErrWebhookURLRequired)
 		return
 	}
 	ctx := r.Context()
@@ -505,7 +505,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
 	tenantID, err := httpx.RequireTenant(r)
@@ -514,7 +514,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tid != tenantID {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant mismatch"))
+		httpx.WriteError(w, r, errs.ErrWebhookTenantMismatch)
 		return
 	}
 	out, err := h.Service.List(r.Context(), tenantID)
@@ -528,7 +528,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
 	scopeTenant, err := httpx.RequireTenant(r)
@@ -575,7 +575,7 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrWebhookInvalidID)
 		return
 	}
 	tenantID, err := httpx.RequireTenant(r)

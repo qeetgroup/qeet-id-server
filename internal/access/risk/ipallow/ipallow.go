@@ -128,7 +128,7 @@ func (s *Service) SetEnabled(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 
 func (s *Service) AddRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, cidr, label, action string) (*Rule, error) {
 	if _, err := parsePrefix(cidr); err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("invalid CIDR or IP address")
+		return nil, errs.ErrRiskCIDRInvalid
 	}
 	if action != "allow" && action != "deny" {
 		action = "allow"

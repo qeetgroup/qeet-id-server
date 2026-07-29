@@ -6,7 +6,6 @@
 package tokenvault
 
 import (
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -176,7 +175,7 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrTokenVaultProviderNotFound
 	}
 	return nil
 }
@@ -184,7 +183,7 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
 	row, err := s.q.GetProviderConfig(ctx, dbgen.GetProviderConfigParams{TenantID: tenantID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", "", "", "", errs.ErrNotFound.WithDetail("provider not registered for this tenant")
+		return "", "", "", "", "", errs.ErrTokenVaultProviderNotFound
 	}
 	if err != nil {
 		return "", "", "", "", "", err
@@ -220,7 +219,7 @@ func (s *Service) BeginConnect(ctx context.Context, tenantID, userID uuid.UUID, 
 	}
 	u, err := url.Parse(authorizeURL)
 	if err != nil {
-		return "", errs.ErrUnprocessable.WithDetail("provider authorize_url is invalid")
+		return "", errs.ErrTokenVaultProviderAuthorizeInvalid
 	}
 	q := u.Query()
 	q.Set("response_type", "code")
@@ -262,14 +261,14 @@ func (r oauthTokenResponse) expiresInSeconds() int64 {
 func (s *Service) FinishConnect(ctx context.Context, state, code, base string) error {
 	cs, err := s.q.DeleteConnectState(ctx, state)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrBadRequest.WithDetail("invalid or used state")
+		return errs.ErrTokenVaultConnectStateInvalid
 	}
 	if err != nil {
 		return err
 	}
 	tenantID, userID, provider := cs.TenantID, cs.UserID, cs.Provider
 	if time.Now().After(cs.ExpiresAt) {
-		return errs.ErrBadRequest.WithDetail("connect ceremony expired")
+		return errs.ErrTokenVaultConnectExpired
 	}
 
 	clientID, clientSecret, _, tokenURL, _, err := s.providerConfig(ctx, tenantID, provider)
@@ -340,19 +339,19 @@ func (s *Service) exchange(ctx context.Context, tokenURL string, form url.Values
 	req.Header.Set("Accept", "application/json")
 	resp, err := s.http.Do(req)
 	if err != nil {
-		return nil, errs.ErrInternal.WithDetail("token request failed: " + err.Error())
+		return nil, errs.ErrTokenVaultTokenExchangeFailed.Wrap(err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, errs.ErrInternal.WithDetail("token endpoint returned " + strconv.Itoa(resp.StatusCode) + ": " + string(bytes.TrimSpace(body)))
+		return nil, errs.ErrTokenVaultTokenExchangeFailed
 	}
 	var tok oauthTokenResponse
 	if err := json.Unmarshal(body, &tok); err != nil {
-		return nil, errs.ErrInternal.WithDetail("malformed token response")
+		return nil, errs.ErrTokenVaultTokenExchangeFailed.Wrap(err)
 	}
 	if tok.AccessToken == "" {
-		return nil, errs.ErrInternal.WithDetail("token response missing access_token")
+		return nil, errs.ErrTokenVaultTokenExchangeFailed
 	}
 	return &tok, nil
 }
@@ -366,7 +365,7 @@ func (s *Service) exchange(ctx context.Context, tokenURL string, form url.Values
 func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID, provider string) (string, error) {
 	grant, err := s.q.GetTokenGrant(ctx, dbgen.GetTokenGrantParams{TenantID: tenantID, UserID: userID, Provider: provider})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrNotFound.WithDetail("no connected account for this provider")
+		return "", errs.ErrTokenVaultGrantNotFound
 	}
 	if err != nil {
 		return "", err
@@ -380,7 +379,7 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 	}
 	if refreshCT == nil {
 		// Expired with no refresh token on file — the caller must reconnect.
-		return "", errs.ErrUnauthorized.WithDetail("connected account's token expired and cannot be refreshed")
+		return "", errs.ErrTokenVaultTokenExpired
 	}
 	refreshToken, err := s.decrypt(refreshCT, refreshNonce)
 	if err != nil {
@@ -435,7 +434,7 @@ func (s *Service) Disconnect(ctx context.Context, tenantID, userID uuid.UUID, pr
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrTokenVaultGrantNotFound
 	}
 	return nil
 }
@@ -660,7 +659,7 @@ func (h *Handler) getAccessToken(w http.ResponseWriter, r *http.Request) {
 	}
 	provider := chi.URLParam(r, "provider")
 	if !hasVaultScope(p.Scopes, provider) {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("missing vault:"+provider+" (or vault:read) scope"))
+		httpx.WriteError(w, r, errs.ErrTokenVaultScopeRequired)
 		return
 	}
 	token, err := h.Service.GetAccessToken(r.Context(), tenantID, userID, provider)

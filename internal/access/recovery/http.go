@@ -20,6 +20,10 @@ type tokenIssuer interface {
 type Handler struct {
 	Service     *Service
 	AuthService tokenIssuer
+	// DevMode surfaces the reset token in the forgot-password response for local
+	// development (SERVICE_ENV=dev), so the flow is completable without a real
+	// email provider. Never enabled in production.
+	DevMode bool
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -30,8 +34,7 @@ func (h *Handler) Mount(r chi.Router) {
 }
 
 type forgotInput struct {
-	TenantID uuid.UUID `json:"tenant_id"`
-	Email    string    `json:"email"`
+	Email string `json:"email"`
 }
 
 func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
@@ -40,14 +43,21 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.StartPasswordReset(r.Context(), in.TenantID, in.Email); err != nil {
+	raw, err := h.Service.StartPasswordReset(r.Context(), in.Email)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	// Enumeration-safe: identical response whether or not the email exists.
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"message": "If an account exists for that email, we've sent a password reset link.",
-	})
+	}
+	// Dev only: hand back the token so the reset link works without a real email
+	// provider. Guarded by DevMode — never leaks a live token in production.
+	if h.DevMode && raw != "" {
+		resp["dev_reset_token"] = raw
+	}
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 type resetInput struct {
@@ -114,7 +124,7 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if pair == nil {
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)

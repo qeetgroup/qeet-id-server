@@ -155,7 +155,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audi
 
 	name, err := s.q.WithTx(tx).DeleteGroup(ctx, dbgen.DeleteGroupParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrNotFound
+		return errs.ErrGroupNotFound
 	}
 	if err != nil {
 		return err
@@ -185,7 +185,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 		TenantID:    tenantID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound
+		return nil, errs.ErrGroupNotFound
 	}
 	if err != nil {
 		return nil, err
@@ -214,7 +214,7 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 		return err
 	}
 	if !exists {
-		return errs.ErrNotFound
+		return errs.ErrGroupNotFound
 	}
 	if err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
 		GroupID: groupID, UserID: userID, TenantID: tenantID,

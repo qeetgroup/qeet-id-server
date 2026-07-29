@@ -44,8 +44,8 @@ func TestIssue_RequiresSubjectAndType(t *testing.T) {
 			t.Errorf("subject=%q type=%q: expected nil result", c.subject, c.credType)
 		}
 		e := errs.As(err)
-		if e == nil || e.Status != 422 {
-			t.Errorf("subject=%q type=%q: want 422 unprocessable, got %v", c.subject, c.credType, err)
+		if e == nil || e.Code != errs.CodeVCSubjectTypeRequired {
+			t.Errorf("subject=%q type=%q: want vc.subject_type_required, got %v", c.subject, c.credType, err)
 		}
 	}
 }

@@ -101,13 +101,13 @@ func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 func normalizeCapabilities(in []string) ([]string, error) {
 	if len(in) == 0 {
-		return nil, errs.ErrUnprocessable.WithDetail(`capabilities is required ("saml", "scim", or both)`)
+		return nil, errs.ErrAdminPortalCapabilitiesRequired
 	}
 	var out []string
 	for _, c := range in {
 		c = strings.ToLower(strings.TrimSpace(c))
 		if !slices.Contains(validCapabilities, c) {
-			return nil, errs.ErrUnprocessable.WithDetail("unknown capability \"" + c + "\" (must be \"saml\" or \"scim\")")
+			return nil, errs.ErrAdminPortalCapabilityUnknown
 		}
 		if !slices.Contains(out, c) {
 			out = append(out, c)
@@ -199,7 +199,7 @@ func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID)
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrAdminPortalLinkNotFound
 	}
 	return nil
 }
@@ -209,12 +209,12 @@ func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID)
 // calls this first.
 func (s *Service) Resolve(ctx context.Context, rawToken string) (*Link, error) {
 	if rawToken == "" {
-		return nil, errs.ErrUnauthorized.WithDetail("missing admin portal token")
+		return nil, errs.ErrAdminPortalTokenMissing
 	}
 	hash := codes.Hash(rawToken)
 	row, err := s.q.GetAdminPortalLinkByHash(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid admin portal link")
+		return nil, errs.ErrAdminPortalLinkInvalid
 	}
 	if err != nil {
 		return nil, err
@@ -230,10 +230,10 @@ func (s *Service) Resolve(ctx context.Context, rawToken string) (*Link, error) {
 		CreatedAt:    row.CreatedAt,
 	}
 	if l.RevokedAt != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("this admin portal link has been revoked")
+		return nil, errs.ErrAdminPortalLinkRevoked
 	}
 	if time.Now().After(l.ExpiresAt) {
-		return nil, errs.ErrUnauthorized.WithDetail("this admin portal link has expired")
+		return nil, errs.ErrAdminPortalLinkExpired
 	}
 	_ = s.q.TouchAdminPortalLinkUsed(ctx, l.ID)
 	return l, nil
@@ -332,14 +332,14 @@ func (h *Handler) MountPublic(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrAdminPortalTenantIDInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrAdminPortalTenantMismatch
 	}
 	return scope, nil
 }
@@ -382,7 +382,7 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
 	}
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("must be attributed to a human"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalActorRequired)
 		return
 	}
 	var in struct {
@@ -444,7 +444,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
 	ctx := r.Context()
@@ -481,7 +481,7 @@ func (h *Handler) resolve(r *http.Request, capability string) (*Link, error) {
 		return nil, err
 	}
 	if capability != "" && !l.Has(capability) {
-		return nil, errs.ErrForbidden.WithDetail("this admin portal link does not include " + capability + " access")
+		return nil, errs.ErrAdminPortalCapabilityNotGranted
 	}
 	return l, nil
 }
@@ -551,7 +551,7 @@ func (h *Handler) samlCreate(w http.ResponseWriter, r *http.Request) {
 	in.IdpEntityID = strings.TrimSpace(in.IdpEntityID)
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
 	if in.Name == "" || in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("name, idp_entity_id, idp_sso_url and idp_certificate are required"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalSAMLFieldsRequired)
 		return
 	}
 	ctx := r.Context()
@@ -585,7 +585,7 @@ func (h *Handler) samlGet(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
 	conn, err := h.SAML.Get(r.Context(), id, l.TenantID)
@@ -604,7 +604,7 @@ func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
 	var in saml.UpdateInput
@@ -613,7 +613,7 @@ func (h *Handler) samlUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Status != nil && *in.Status != "draft" && *in.Status != "active" && *in.Status != "disabled" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("status must be draft, active or disabled"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalSAMLStatusInvalid)
 		return
 	}
 	ctx := r.Context()
@@ -647,7 +647,7 @@ func (h *Handler) samlTest(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
 	res, err := h.SAML.TestConnection(r.Context(), id, l.TenantID)
@@ -666,7 +666,7 @@ func (h *Handler) samlDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAdminPortalIDInvalid)
 		return
 	}
 	ctx := r.Context()

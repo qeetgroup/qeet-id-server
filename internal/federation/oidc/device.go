@@ -105,7 +105,7 @@ func generateUserCode() (string, error) {
 func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes []string) (rawDeviceCode, userCode string, tenantID uuid.UUID, err error) {
 	info, err := s.q.GetClientTenantAndScopes(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", uuid.Nil, errs.ErrBadRequest.WithDetail("unknown client")
+		return "", "", uuid.Nil, errs.ErrOIDCClientUnknown
 	}
 	if err != nil {
 		return "", "", uuid.Nil, err
@@ -118,7 +118,7 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 	}
 	for _, sc := range scopes {
 		if !contains(dbScopes, sc) {
-			return "", "", uuid.Nil, errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
+			return "", "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
 
@@ -165,16 +165,16 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 	userCode = normalizeUserCode(userCode)
 	row, err := s.q.GetDeviceByUserCode(ctx, userCode)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrNotFound.WithDetail("unknown user_code")
+		return nil, errs.ErrOIDCUserCodeInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return nil, errs.ErrBadRequest.WithDetail("user_code expired")
+		return nil, errs.ErrOIDCUserCodeExpired
 	}
 	if row.Status != "pending" {
-		return nil, errs.ErrConflict.WithDetail("device authorization already decided")
+		return nil, errs.ErrOIDCDeviceAlreadyDecided
 	}
 	name, _, err := s.ClientName(ctx, row.ClientID)
 	if err != nil {
@@ -197,16 +197,16 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	q := s.q.WithTx(tx)
 	row, err := q.LockDeviceByUserCode(ctx, userCode)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrNotFound.WithDetail("unknown user_code")
+		return errs.ErrOIDCUserCodeInvalid
 	}
 	if err != nil {
 		return err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrBadRequest.WithDetail("user_code expired")
+		return errs.ErrOIDCUserCodeExpired
 	}
 	if row.Status != "pending" {
-		return errs.ErrConflict.WithDetail("device authorization already decided")
+		return errs.ErrOIDCDeviceAlreadyDecided
 	}
 
 	if !approve {
@@ -225,7 +225,7 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 		return err
 	}
 	if !ok {
-		return errs.ErrForbidden.WithDetail("user does not belong to the client's tenant")
+		return errs.ErrOIDCUserTenantMismatch
 	}
 
 	// Record consent for the requested scopes so the grant is consistent with
@@ -436,7 +436,7 @@ func (s *Service) RevokeDevice(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 	q := s.q.WithTx(tx)
 	row, err := q.RevokeDevice(ctx, dbgen.RevokeDeviceParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", errs.ErrNotFound
+		return "", "", errs.ErrOIDCDeviceNotFound
 	}
 	if err != nil {
 		return "", "", err
@@ -506,7 +506,7 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 // (device_code, user_code) pair plus the verification URIs.
 func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
 		return
 	}
 	clientID := r.Form.Get("client_id")
@@ -545,7 +545,7 @@ func (h *Handler) deviceContext(w http.ResponseWriter, r *http.Request) {
 	}
 	userCode := r.URL.Query().Get("user_code")
 	if userCode == "" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("user_code required"))
+		httpx.WriteError(w, r, errs.ErrOIDCUserCodeRequired)
 		return
 	}
 	out, err := h.Service.LookupDeviceByUserCode(r.Context(), userCode)
@@ -576,7 +576,7 @@ func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.UserCode == "" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("user_code required"))
+		httpx.WriteError(w, r, errs.ErrOIDCUserCodeRequired)
 		return
 	}
 	if err := h.Service.DecideDevice(r.Context(), userID, in.UserCode, in.Approve); err != nil {

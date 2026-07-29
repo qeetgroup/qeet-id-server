@@ -74,13 +74,13 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	qtx := s.q.WithTx(tx)
 	secret, err := qtx.GetMFATOTPSecret(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBadRequest.WithDetail("enrollment not started")
+		return nil, errs.ErrMFAEnrollNotStarted
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !totp.Verify(secret, code) {
-		return nil, errs.ErrBadRequest.WithDetail("invalid totp code")
+		return nil, errs.ErrMFATOTPCodeInvalid
 	}
 	if err := qtx.ConfirmMFATOTP(ctx, userID); err != nil {
 		return nil, err
@@ -155,13 +155,13 @@ func (s *Service) RecoveryStatus(ctx context.Context, userID uuid.UUID) (*Recove
 func (s *Service) Regenerate(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
 	ts, err := s.q.WithTx(tx).GetMFATOTPConfirmed(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBadRequest.WithDetail("enable MFA before generating recovery codes")
+		return nil, errs.ErrMFANotEnrolled
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !ts.Valid {
-		return nil, errs.ErrBadRequest.WithDetail("confirm MFA enrollment first")
+		return nil, errs.ErrMFANotConfirmed
 	}
 	return s.mintRecoveryCodes(ctx, tx, userID)
 }
@@ -193,13 +193,13 @@ func (s *Service) Verify(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code 
 
 	totpRow, err := qtx.GetMFATOTPFull(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBadRequest.WithDetail("mfa not configured")
+		return nil, errs.ErrMFANotEnrolled
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !totpRow.ConfirmedAt.Valid {
-		return nil, errs.ErrBadRequest.WithDetail("mfa enrollment not confirmed")
+		return nil, errs.ErrMFANotConfirmed
 	}
 	if totp.Verify(totpRow.Secret, code) {
 		return &VerifyResult{}, nil
@@ -217,7 +217,7 @@ func (s *Service) Verify(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code 
 		}
 	}
 	if matchedID == nil {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid mfa code")
+		return nil, errs.ErrMFACodeInvalid
 	}
 	if err := qtx.MarkRecoveryCodeUsed(ctx, *matchedID); err != nil {
 		return nil, err
@@ -346,10 +346,10 @@ func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, channel,
 	channel = strings.ToLower(strings.TrimSpace(channel))
 	destination = strings.TrimSpace(destination)
 	if channel != "email" && channel != "sms" {
-		return uuid.Nil, errs.ErrUnprocessable.WithDetail("channel must be email or sms")
+		return uuid.Nil, errs.ErrMFAChannelInvalid
 	}
 	if destination == "" {
-		return uuid.Nil, errs.ErrUnprocessable.WithDetail("destination required")
+		return uuid.Nil, errs.ErrMFADestinationRequired
 	}
 	factorID, err := s.q.UpsertMFAOTPFactor(ctx, dbgen.UpsertMFAOTPFactorParams{
 		UserID:      userID,
@@ -374,7 +374,7 @@ func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, userID, facto
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrBadRequest.WithDetail("invalid or expired code")
+		return errs.ErrMFAOTPCodeInvalid
 	}
 	if err != nil {
 		return err
@@ -433,7 +433,7 @@ func (s *Service) ChallengeOTP(ctx context.Context, userID, factorID uuid.UUID) 
 		return err
 	}
 	if !row.VerifiedAt.Valid {
-		return errs.ErrBadRequest.WithDetail("factor not confirmed")
+		return errs.ErrMFAFactorNotConfirmed
 	}
 	return s.sendOTP(ctx, factorID, row.Channel, row.Destination)
 }
@@ -515,7 +515,7 @@ func RequireRecentMFA(svc *Service, window time.Duration) func(http.Handler) htt
 				return
 			}
 			if !ok {
-				httpx.WriteError(w, r, errs.ErrStepUpRequired.WithDetail("recent multi-factor verification required"))
+				httpx.WriteError(w, r, errs.ErrStepUpRequired)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -1034,7 +1034,7 @@ func (h *Handler) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("invalid code"))
+		httpx.WriteError(w, r, errs.ErrMFACodeInvalid)
 		return
 	}
 	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, "otp"); err != nil {
@@ -1057,7 +1057,7 @@ func (h *Handler) webauthnChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.WebAuthn == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("webauthn factor not enabled"))
+		httpx.WriteError(w, r, errs.ErrMFAWebAuthnUnavailable)
 		return
 	}
 	sessionID, options, err := h.WebAuthn.BeginMFA(r.Context(), *p.UserID)
@@ -1083,7 +1083,7 @@ func (h *Handler) webauthnVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.WebAuthn == nil {
-		httpx.WriteError(w, r, errs.ErrNotImplemented.WithDetail("webauthn factor not enabled"))
+		httpx.WriteError(w, r, errs.ErrMFAWebAuthnUnavailable)
 		return
 	}
 	var in webauthnVerifyInput

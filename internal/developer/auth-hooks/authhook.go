@@ -48,7 +48,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), client: &http.Client{Timeout: hookTimeout}}
 }
 
-// Run implements auth.LoginHook. It returns a non-nil (ErrForbidden) error to
+// Run implements auth.LoginHook. It returns a non-nil (ErrAuthHookDenied) error to
 // DENY the sign-in, or nil to allow — in which case the returned map (possibly
 // nil) carries any custom claims the hook asked to be injected into the
 // issued access token. A missing/disabled hook allows with no claims. Safe by
@@ -73,7 +73,7 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 	body, callErr := s.call(ctx, row.Url, row.Secret, payload)
 	msg, denied, claims := decide(row.FailOpen, callErr, body)
 	if denied {
-		return nil, errs.ErrForbidden.WithMessage(msg).WithDetail("blocked by auth hook")
+		return nil, errs.ErrAuthHookDenied.WithMessage(msg)
 	}
 	return claims, nil
 }
@@ -137,7 +137,7 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool) (*Hook, error) {
 	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
-		return nil, errs.ErrUnprocessable.WithDetail("url must be an absolute http(s) URL")
+		return nil, errs.ErrAuthHookURLInvalid
 	}
 	row, err := s.q.CreateHook(ctx, dbgen.CreateHookParams{
 		TenantID: tenantID,
@@ -188,7 +188,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, f
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrAuthHookNotFound
 	}
 	return nil
 }
@@ -199,7 +199,7 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrAuthHookNotFound
 	}
 	return nil
 }
@@ -218,14 +218,14 @@ func (h *Handler) Mount(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrAuthHookInvalidID
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrAuthHookTenantMismatch
 	}
 	return scope, nil
 }
@@ -279,7 +279,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
 	var in struct {
@@ -305,7 +305,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
 	if err := h.Service.Delete(r.Context(), id, tenantID); err != nil {

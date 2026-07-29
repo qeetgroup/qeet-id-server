@@ -41,14 +41,14 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 		addr, err := s.q.GetUserEmail(ctx, userID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return errs.ErrNotFound.WithDetail("user not found")
+				return errs.ErrVerifyUserNotFound
 			}
 			return err
 		}
 		email = addr
 	}
 	if strings.TrimSpace(email) == "" {
-		return errs.ErrUnprocessable.WithMessage("This account has no email address to verify.")
+		return errs.ErrVerifyNoEmail
 	}
 	code, err := codes.Numeric(6)
 	if err != nil {
@@ -83,15 +83,15 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrBadRequest.WithDetail("invalid code")
+			return errs.ErrVerifyCodeInvalid
 		}
 		return err
 	}
 	if row.UsedAt.Valid {
-		return errs.ErrBadRequest.WithDetail("code already used")
+		return errs.ErrVerifyCodeUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrBadRequest.WithDetail("code expired")
+		return errs.ErrVerifyCodeExpired
 	}
 	if err := s.q.WithTx(tx).MarkEmailVerificationUsed(ctx, row.ID); err != nil {
 		return err
@@ -108,12 +108,12 @@ func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string
 		stored, err := s.q.GetUserPhone(ctx, userID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return errs.ErrNotFound.WithDetail("user not found")
+				return errs.ErrVerifyUserNotFound
 			}
 			return err
 		}
 		if stored == nil || strings.TrimSpace(*stored) == "" {
-			return errs.ErrUnprocessable.WithMessage("This account has no phone number to verify. Add one first.")
+			return errs.ErrVerifyNoPhone
 		}
 		phone = *stored
 	}
@@ -149,15 +149,15 @@ func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code strin
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrBadRequest.WithDetail("invalid code")
+			return errs.ErrVerifyCodeInvalid
 		}
 		return err
 	}
 	if row.UsedAt.Valid {
-		return errs.ErrBadRequest.WithDetail("code already used")
+		return errs.ErrVerifyCodeUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrBadRequest.WithDetail("code expired")
+		return errs.ErrVerifyCodeExpired
 	}
 	if err := s.q.WithTx(tx).MarkPhoneVerificationUsed(ctx, row.ID); err != nil {
 		return err

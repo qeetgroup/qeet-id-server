@@ -15,11 +15,14 @@ import (
 
 type errorBody struct {
 	Error struct {
-		Code    string            `json:"code"`
-		Message string            `json:"message"`
-		Detail  string            `json:"detail,omitempty"`
-		Fields  map[string]string `json:"fields,omitempty"`
-		ReqID   string            `json:"request_id,omitempty"`
+		Code           string            `json:"code"`
+		Message        string            `json:"message"`
+		Detail         string            `json:"detail,omitempty"`
+		TranslationKey string            `json:"translation_key,omitempty"`
+		Retryable      bool              `json:"retryable,omitempty"`
+		Fields         []errs.FieldError `json:"fields,omitempty"`
+		Metadata       map[string]any    `json:"metadata,omitempty"`
+		ReqID          string            `json:"request_id,omitempty"`
 	} `json:"error"`
 }
 
@@ -56,16 +59,19 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 				}
 			}
 			slog.Error("unhandled error", attrs...)
-			e = errs.ErrInternal
+			e = errs.ErrInternalServer
 		}
 	}
 	body := errorBody{}
 	body.Error.Code = e.Code
 	body.Error.Message = e.Message
 	body.Error.Detail = e.Detail
+	body.Error.TranslationKey = e.TranslationKey
+	body.Error.Retryable = e.Retryable
 	body.Error.Fields = e.Fields
+	body.Error.Metadata = e.Metadata
 	body.Error.ReqID = RequestID(r)
-	WriteJSON(w, e.Status, body)
+	WriteJSON(w, statusForCode(e.Code), body)
 }
 
 // ValidationError converts a go-playground/validator error into a clean,
@@ -76,13 +82,42 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 func ValidationError(err error) error {
 	var ve validator.ValidationErrors
 	if errors.As(err, &ve) && len(ve) > 0 {
-		fields := make(map[string]string, len(ve))
+		fields := make([]errs.FieldError, 0, len(ve))
 		for _, fe := range ve {
-			fields[fe.Field()] = validationMessage(fe)
+			fields = append(fields, errs.FieldError{
+				Field:   fe.Field(),
+				Code:    validationCode(fe),
+				Message: validationMessage(fe),
+			})
 		}
-		return errs.ErrValidation.WithFields(fields)
+		return errs.ErrValidationFailed.WithFields(fields)
 	}
 	return errs.ErrUnprocessable
+}
+
+// validationCode returns a stable, machine-readable reason for a field error so
+// clients can localize/react without parsing the human message.
+func validationCode(fe validator.FieldError) string {
+	switch fe.Tag() {
+	case "required":
+		return "required"
+	case "email":
+		return "invalid_email"
+	case "min":
+		return "too_short"
+	case "max":
+		return "too_long"
+	case "uuid", "uuid4":
+		return "invalid_uuid"
+	case "url", "uri":
+		return "invalid_url"
+	case "oneof":
+		return "not_allowed"
+	case "e164":
+		return "invalid_phone"
+	default:
+		return "invalid"
+	}
 }
 
 // validationMessage renders a human-readable message for a single field error.

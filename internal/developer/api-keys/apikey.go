@@ -172,7 +172,7 @@ func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrAPIKeyNotFound
 	}
 	return nil
 }
@@ -182,24 +182,24 @@ func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 func (s *Service) Verify(ctx context.Context, raw string) (*Key, error) {
 	parts := strings.SplitN(raw, ".", 2)
 	if len(parts) != 2 {
-		return nil, errs.ErrUnauthorized.WithDetail("malformed api key")
+		return nil, errs.ErrAPIKeyInvalid
 	}
 	prefix, secret := parts[0], parts[1]
 
 	row, err := s.q.VerifyAPIKey(ctx, prefix)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("unknown api key")
+		return nil, errs.ErrAPIKeyInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !password.Verify(row.KeyHash, secret) {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid api key")
+		return nil, errs.ErrAPIKeyInvalid
 	}
 	k := rowToKey(row.ID, row.TenantID, row.UserID, row.Name, row.Prefix,
 		row.Scopes, row.ExpiresAt, row.LastUsedAt, row.RevokedAt, row.CreatedAt)
 	if k.ExpiresAt != nil && time.Now().After(*k.ExpiresAt) {
-		return nil, errs.ErrUnauthorized.WithDetail("api key expired")
+		return nil, errs.ErrAPIKeyExpired
 	}
 	// Best-effort, detached from the request but time-bounded so it can't leak.
 	go func(id uuid.UUID) {
@@ -266,7 +266,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	in.TenantID = tid
 	if in.Name == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("name required"))
+		httpx.WriteError(w, r, errs.ErrAPIKeyNameRequired)
 		return
 	}
 	k, raw, err := h.Service.Create(r.Context(), in)
@@ -284,7 +284,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
+		httpx.WriteError(w, r, errs.ErrAPIKeyInvalidID)
 		return
 	}
 	out, err := h.Service.List(r.Context(), tid)
@@ -298,7 +298,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrAPIKeyInvalidID)
 		return
 	}
 	tid, err := httpx.RequireTenant(r)

@@ -99,6 +99,24 @@ type Config struct {
 	// the OAuth authorize flow redirects to for sign-in and consent.
 	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3003"`
 
+	// Platform-level social login for the console's own Qeet ID accounts
+	// (tenant-less — distinct from the per-tenant social providers admins
+	// configure for their end users). Each provider is OFF until its client
+	// id/secret are set. Google only for now.
+	GoogleClientID        string `envconfig:"GOOGLE_CLIENT_ID" default:""`
+	GoogleClientSecret    string `envconfig:"GOOGLE_CLIENT_SECRET" default:""`
+	MicrosoftClientID     string `envconfig:"MICROSOFT_CLIENT_ID" default:""`
+	MicrosoftClientSecret string `envconfig:"MICROSOFT_CLIENT_SECRET" default:""`
+	GithubClientID        string `envconfig:"GITHUB_CLIENT_ID" default:""`
+	GithubClientSecret    string `envconfig:"GITHUB_CLIENT_SECRET" default:""`
+	// Sign in with Apple: client secret is a signed ES256 JWT derived from these,
+	// so it needs the Services ID + Team ID + Key ID + .p8 private key (not a
+	// static secret). All four required to enable.
+	AppleClientID   string `envconfig:"APPLE_CLIENT_ID" default:""`
+	AppleTeamID     string `envconfig:"APPLE_TEAM_ID" default:""`
+	AppleKeyID      string `envconfig:"APPLE_KEY_ID" default:""`
+	ApplePrivateKey string `envconfig:"APPLE_PRIVATE_KEY" default:""`
+
 	// GeoCountryHeader is the request header a trusted upstream proxy (e.g.
 	// Cloudflare's CF-IPCountry) sets to the client's resolved country, used
 	// as the sole geo signal for impossible-travel risk assessment. Empty
@@ -107,6 +125,15 @@ type Config struct {
 	// behind a proxy that sets it; an unrecognized header name is
 	// indistinguishable from "unset" (always empty), which is safe (fail-open).
 	GeoCountryHeader string `envconfig:"GEO_COUNTRY_HEADER" default:""`
+
+	// EmailProvider selects the email transport: "smtp" (default) or "ses-api".
+	// Use "ses-api" in regions that offer the SES API but no SMTP endpoint
+	// (e.g. ap-south-2). The SES API path uses the AWS credential chain +
+	// AWS_REGION and only needs SMTP_FROM (SMTP host/creds are ignored).
+	EmailProvider string `envconfig:"EMAIL_PROVIDER" default:"smtp"`
+	// AWSRegion is used by the SES-API email provider (and any other AWS SDK
+	// client) so endpoint resolution never fails on a missing region.
+	AWSRegion string `envconfig:"AWS_REGION" default:""`
 
 	// Email (SMTP) — provider-agnostic (Amazon SES, SendGrid, Mailgun, Postmark).
 	// Empty SMTPHost leaves email on the log-only fallback (dev).

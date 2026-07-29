@@ -110,7 +110,7 @@ func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential {
 func (s *Service) loadUser(ctx context.Context, userID uuid.UUID) (*webauthnUser, uuid.UUID, error) {
 	row, err := s.q.GetUserForWebAuthn(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, uuid.Nil, errs.ErrNotFound.WithDetail("user not found")
+		return nil, uuid.Nil, errs.ErrPasskeyUserNotFound
 	}
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -133,7 +133,7 @@ func (s *Service) loadUser(ctx context.Context, userID uuid.UUID) (*webauthnUser
 func (s *Service) loadUserByEmail(ctx context.Context, email string) (*webauthnUser, uuid.UUID, error) {
 	id, err := s.q.GetUserIDByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, uuid.Nil, errs.ErrNotFound.WithDetail("user not found")
+		return nil, uuid.Nil, errs.ErrPasskeyUserNotFound
 	}
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -184,13 +184,13 @@ func (s *Service) storeSession(ctx context.Context, userID *uuid.UUID, kind stri
 func (s *Service) takeSession(ctx context.Context, id uuid.UUID) (kind string, userID *uuid.UUID, data *webauthn.SessionData, err error) {
 	row, err := s.q.TakeWebAuthnSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, nil, errs.ErrBadRequest.WithDetail("invalid or used session")
+		return "", nil, nil, errs.ErrAuthSessionExpired
 	}
 	if err != nil {
 		return "", nil, nil, err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return "", nil, nil, errs.ErrBadRequest.WithDetail("session expired")
+		return "", nil, nil, errs.ErrAuthSessionExpired
 	}
 	var uid *uuid.UUID
 	if row.UserID.Valid {
@@ -222,7 +222,7 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 		}),
 	)
 	if err != nil {
-		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+		return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 	}
 	id, err := s.storeSession(ctx, &userID, "register", sessionData)
 	if err != nil {
@@ -238,7 +238,7 @@ func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUI
 		return err
 	}
 	if kind != "register" || sessUser == nil || *sessUser != userID {
-		return errs.ErrBadRequest.WithDetail("session mismatch")
+		return errs.ErrPasskeySessionMismatch
 	}
 	u, _, err := s.loadUser(ctx, userID)
 	if err != nil {
@@ -246,11 +246,11 @@ func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUI
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(credential))
 	if err != nil {
-		return errs.ErrBadRequest.WithDetail("invalid attestation")
+		return errs.ErrPasskeyAttestationInvalid
 	}
 	cred, err := s.wa.CreateCredential(u, *sessionData, parsed)
 	if err != nil {
-		return errs.ErrBadRequest.WithDetail(err.Error())
+		return errs.ErrPasskeyAttestationInvalid.Wrap(err)
 	}
 	return s.insertCredential(ctx, userID, cred, name)
 }
@@ -281,7 +281,7 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return errs.ErrConflict.WithDetail("passkey already registered")
+			return errs.ErrPasskeyExists
 		}
 		return err
 	}
@@ -336,16 +336,16 @@ func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, e
 func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupSession, error) {
 	row, err := s.q.TakeSignupWebAuthnSession(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBadRequest.WithDetail("invalid or used session")
+		return nil, errs.ErrAuthSessionExpired
 	}
 	if err != nil {
 		return nil, err
 	}
 	if row.Kind != "signup" || !row.SubjectID.Valid || row.PendingEmail == nil {
-		return nil, errs.ErrBadRequest.WithDetail("not a signup session")
+		return nil, errs.ErrPasskeySessionInvalid
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return nil, errs.ErrBadRequest.WithDetail("session expired")
+		return nil, errs.ErrAuthSessionExpired
 	}
 	var sd webauthn.SessionData
 	if err := json.Unmarshal(row.Data, &sd); err != nil {
@@ -380,9 +380,7 @@ func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, ema
 		return uuid.Nil, nil, err
 	}
 	if !enabled {
-		return uuid.Nil, nil, errs.ErrForbidden.
-			WithMessage("Self-registration is not enabled for this application.").
-			WithDetail("self-registration disabled")
+		return uuid.Nil, nil, errs.ErrAuthSelfRegistrationDisabled
 	}
 	return s.beginSignup(ctx, tenantID, email, displayName)
 }
@@ -390,7 +388,7 @@ func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, ema
 func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
-		return uuid.Nil, nil, errs.ErrUnprocessable.WithDetail("email is required")
+		return uuid.Nil, nil, errs.ErrAuthEmailRequired
 	}
 	// Conflict if the email is already taken by a real user, OR if a passkey
 	// signup is already in flight for it (a non-expired pending session). The
@@ -413,7 +411,7 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 		return uuid.Nil, nil, err
 	}
 	if existsPtr != nil && *existsPtr {
-		return uuid.Nil, nil, errs.ErrConflict.WithDetail("email already exists")
+		return uuid.Nil, nil, errs.ErrAuthEmailExists
 	}
 
 	// subjectID only correlates this ceremony's challenge with its attestation
@@ -433,7 +431,7 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 		}),
 	)
 	if err != nil {
-		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+		return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 	}
 	id, err := s.storeSignupSession(ctx, subjectID, email, displayName, tenantID, sessionData)
 	if err != nil {
@@ -470,7 +468,7 @@ func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, c
 		return uuid.Nil, "", err
 	}
 	if sess.tenantID == uuid.Nil {
-		return uuid.Nil, "", errs.ErrBadRequest.WithDetail("not a tenant signup session")
+		return uuid.Nil, "", errs.ErrPasskeySessionInvalid
 	}
 	userID, err := s.createUserFromSignup(ctx, sess, cred, name)
 	if err != nil {
@@ -497,11 +495,11 @@ func (s *Service) verifySignupAttestation(ctx context.Context, sessionID uuid.UU
 	u := &webauthnUser{id: sess.subjectID, name: sess.email, displayName: dn}
 	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(credential))
 	if err != nil {
-		return nil, nil, errs.ErrBadRequest.WithDetail("invalid attestation")
+		return nil, nil, errs.ErrPasskeyAttestationInvalid
 	}
 	cred, err := s.wa.CreateCredential(u, *sess.data, parsed)
 	if err != nil {
-		return nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+		return nil, nil, errs.ErrPasskeyAttestationInvalid.Wrap(err)
 	}
 	return sess, cred, nil
 }
@@ -532,7 +530,7 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return uuid.Nil, errs.ErrConflict.WithDetail("email already exists")
+			return uuid.Nil, errs.ErrAuthEmailExists
 		}
 		return uuid.Nil, err
 	}
@@ -561,7 +559,7 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 		Name:         namePtr,
 	}); err != nil {
 		if pgxerr.IsUnique(err) {
-			return uuid.Nil, errs.ErrConflict.WithDetail("passkey already registered")
+			return uuid.Nil, errs.ErrPasskeyExists
 		}
 		return uuid.Nil, err
 	}
@@ -578,7 +576,7 @@ func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *pro
 	if email == "" {
 		options, sessionData, err := s.wa.BeginDiscoverableLogin()
 		if err != nil {
-			return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+			return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 		}
 		id, err := s.storeSession(ctx, nil, "login_discoverable", sessionData)
 		if err != nil {
@@ -591,11 +589,11 @@ func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *pro
 		return uuid.Nil, nil, err
 	}
 	if len(u.creds) == 0 {
-		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail("no passkeys for user")
+		return uuid.Nil, nil, errs.ErrPasskeyNoCredentials
 	}
 	options, sessionData, err := s.wa.BeginLogin(u)
 	if err != nil {
-		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+		return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 	}
 	uid := u.id
 	id, err := s.storeSession(ctx, &uid, "login", sessionData)
@@ -614,7 +612,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBody(bytes.NewReader(credential))
 	if err != nil {
-		return nil, errs.ErrBadRequest.WithDetail("invalid assertion")
+		return nil, errs.ErrPasskeyAssertionInvalid
 	}
 
 	var loginUserID, tenantID uuid.UUID
@@ -622,7 +620,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	switch kind {
 	case "login":
 		if sessUser == nil {
-			return nil, errs.ErrBadRequest.WithDetail("session mismatch")
+			return nil, errs.ErrPasskeySessionMismatch
 		}
 		u, tid, err := s.loadUser(ctx, *sessUser)
 		if err != nil {
@@ -630,7 +628,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		}
 		cred, err = s.wa.ValidateLogin(u, *sessionData, parsed)
 		if err != nil {
-			return nil, errs.ErrUnauthorized.WithDetail("login verification failed")
+			return nil, errs.ErrPasskeyLoginFailed
 		}
 		loginUserID, tenantID = u.id, tid
 	case "login_discoverable":
@@ -650,11 +648,11 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		}
 		cred, err = s.wa.ValidateDiscoverableLogin(handler, *sessionData, parsed)
 		if err != nil || resolved == nil {
-			return nil, errs.ErrUnauthorized.WithDetail("login verification failed")
+			return nil, errs.ErrPasskeyLoginFailed
 		}
 		loginUserID, tenantID = resolved.id, resolvedTenant
 	default:
-		return nil, errs.ErrBadRequest.WithDetail("not a login session")
+		return nil, errs.ErrPasskeySessionInvalid
 	}
 
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
@@ -691,11 +689,11 @@ func (s *Service) BeginMFA(ctx context.Context, userID uuid.UUID) (uuid.UUID, *p
 		return uuid.Nil, nil, err
 	}
 	if len(u.creds) == 0 {
-		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail("no passkeys for user")
+		return uuid.Nil, nil, errs.ErrPasskeyNoCredentials
 	}
 	options, sessionData, err := s.wa.BeginLogin(u)
 	if err != nil {
-		return uuid.Nil, nil, errs.ErrBadRequest.WithDetail(err.Error())
+		return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 	}
 	id, err := s.storeSession(ctx, &userID, "mfa", sessionData)
 	if err != nil {
@@ -714,7 +712,7 @@ func (s *Service) FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cr
 		return err
 	}
 	if kind != "mfa" || sessUser == nil || *sessUser != userID {
-		return errs.ErrBadRequest.WithDetail("session mismatch")
+		return errs.ErrPasskeySessionMismatch
 	}
 	u, _, err := s.loadUser(ctx, userID)
 	if err != nil {
@@ -722,11 +720,11 @@ func (s *Service) FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cr
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBody(bytes.NewReader(credential))
 	if err != nil {
-		return errs.ErrBadRequest.WithDetail("invalid assertion")
+		return errs.ErrPasskeyAssertionInvalid
 	}
 	cred, err := s.wa.ValidateLogin(u, *sessionData, parsed)
 	if err != nil {
-		return errs.ErrUnauthorized.WithDetail("mfa verification failed")
+		return errs.ErrPasskeyMFAFailed
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),

@@ -177,7 +177,7 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 		return err
 	}
 	if n == 0 {
-		return errs.ErrNotFound
+		return errs.ErrOIDCClientNotFound
 	}
 	return nil
 }
@@ -189,17 +189,17 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("unknown client")
+		return "", uuid.Nil, errs.ErrOIDCClientUnknown
 	}
 	if err != nil {
 		return "", uuid.Nil, err
 	}
 	if !contains(info.RedirectUris, redirectURI) {
-		return "", uuid.Nil, errs.ErrBadRequest.WithDetail("redirect_uri not registered")
+		return "", uuid.Nil, errs.ErrOIDCRedirectURIInvalid
 	}
 	for _, sc := range scopes {
 		if !contains(info.Scopes, sc) {
-			return "", uuid.Nil, errs.ErrBadRequest.WithDetail("scope not permitted: " + sc)
+			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
 	raw, hash, err := codes.URLToken()
@@ -229,7 +229,7 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 func (s *Service) ClientName(ctx context.Context, clientID string) (name string, tenantID uuid.UUID, err error) {
 	row, err := s.q.GetClientName(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", uuid.Nil, errs.ErrNotFound
+		return "", uuid.Nil, errs.ErrOIDCClientNotFound
 	}
 	if err != nil {
 		return "", uuid.Nil, err
@@ -295,14 +295,14 @@ const (
 func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) ([]string, error) {
 	row, err := s.q.GetClientForAuth(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("unknown client")
+		return nil, errs.ErrOIDCClientAuthFailed
 	}
 	if err != nil {
 		return nil, err
 	}
 	if row.Type == "confidential" {
 		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
-			return nil, errs.ErrUnauthorized.WithDetail("invalid client secret")
+			return nil, errs.ErrOIDCClientAuthFailed
 		}
 	}
 	return row.GrantTypes, nil
@@ -321,29 +321,29 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		return nil, err
 	}
 	if !containsAny(grantTypes, "token_exchange", grantTypeTokenExchange) {
-		return nil, errs.ErrForbidden.WithDetail("client is not permitted the token-exchange grant")
+		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	if subjectToken == "" {
-		return nil, errs.ErrBadRequest.WithDetail("subject_token is required")
+		return nil, errs.ErrOIDCSubjectTokenRequired
 	}
 	if subjectTokenType != "" && subjectTokenType != tokenTypeAccessToken {
-		return nil, errs.ErrBadRequest.WithDetail("only access_token subject_token_type is supported")
+		return nil, errs.ErrOIDCSubjectTokenTypeUnsupported
 	}
 	if requestedTokenType != "" && requestedTokenType != tokenTypeAccessToken {
-		return nil, errs.ErrBadRequest.WithDetail("only access_token requested_token_type is supported")
+		return nil, errs.ErrOIDCRequestedTokenTypeUnsupported
 	}
 	claims, err := s.issuer.VerifyAccess(subjectToken)
 	if err != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid or expired subject_token")
+		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("subject_token has no user subject")
+		return nil, errs.ErrOIDCSubjectTokenNoSubject
 	}
 	// Downscope: the result is at most the subject's scopes (never escalate).
 	granted, ok := downscope(strings.Fields(claims.Scope), scope)
 	if !ok {
-		return nil, errs.ErrForbidden.WithDetail("requested scope exceeds the subject token's scope")
+		return nil, errs.ErrOIDCScopeExceedsSubject
 	}
 	// Delegation (RFC 8693): an actor_token names the party acting on the
 	// subject's behalf (e.g. an AI agent exercising a user's authority). The
@@ -351,11 +351,11 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	var actorSubject string
 	if actorToken != "" {
 		if actorTokenType != "" && actorTokenType != tokenTypeAccessToken {
-			return nil, errs.ErrBadRequest.WithDetail("only access_token actor_token_type is supported")
+			return nil, errs.ErrOIDCActorTokenTypeUnsupported
 		}
 		actorClaims, aerr := s.issuer.VerifyAccess(actorToken)
 		if aerr != nil {
-			return nil, errs.ErrUnauthorized.WithDetail("invalid or expired actor_token")
+			return nil, errs.ErrOIDCActorTokenInvalid
 		}
 		actorSubject = actorClaims.Subject
 	}
@@ -433,7 +433,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	q := s.q.WithTx(tx)
 	ac, err := q.ConsumeAuthorizationCode(ctx, dbgen.ConsumeAuthorizationCodeParams{CodeHash: hash, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrBadRequest.WithDetail("invalid code")
+		return nil, errs.ErrOIDCAuthCodeInvalid
 	}
 	if err != nil {
 		return nil, err
@@ -445,24 +445,24 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	challenge := ac.CodeChallenge
 	method := ac.CodeChallengeMethod
 	if ac.UsedAt.Valid {
-		return nil, errs.ErrBadRequest.WithDetail("code already used")
+		return nil, errs.ErrOIDCAuthCodeUsed
 	}
 	if time.Now().After(ac.ExpiresAt) {
-		return nil, errs.ErrBadRequest.WithDetail("code expired")
+		return nil, errs.ErrOIDCAuthCodeExpired
 	}
 	if ac.RedirectUri != redirectURI {
-		return nil, errs.ErrBadRequest.WithDetail("redirect_uri mismatch")
+		return nil, errs.ErrOIDCRedirectURIMismatch
 	}
 	if challenge != nil && *challenge != "" {
 		if codeVerifier == "" {
-			return nil, errs.ErrBadRequest.WithDetail("code_verifier required")
+			return nil, errs.ErrOIDCCodeVerifierRequired
 		}
 		// We support S256 only (the recommended PKCE method).
 		if method == nil || *method != "S256" {
-			return nil, errs.ErrBadRequest.WithDetail("unsupported code_challenge_method")
+			return nil, errs.ErrOIDCCodeChallengeMethodUnsupported
 		}
 		if codes.Hash(codeVerifier) != *challenge {
-			return nil, errs.ErrBadRequest.WithDetail("invalid code_verifier")
+			return nil, errs.ErrOIDCCodeVerifierInvalid
 		}
 	}
 	if err := q.MarkAuthorizationCodeUsed(ctx, hash); err != nil {
@@ -537,7 +537,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		return nil, err
 	}
 	if rawRefresh == "" {
-		return nil, errs.ErrBadRequest.WithDetail("refresh_token required")
+		return nil, errs.ErrOIDCRefreshTokenRequired
 	}
 	hash := tokens.HashRefresh(rawRefresh)
 
@@ -550,17 +550,17 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	q := s.q.WithTx(tx)
 	rt, err := q.LockRefreshToken(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("unknown refresh token")
+		return nil, errs.ErrOIDCRefreshTokenInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	// A refresh token may only be redeemed by the client it was issued to.
 	if rt.ClientID != clientID {
-		return nil, errs.ErrUnauthorized.WithDetail("client mismatch")
+		return nil, errs.ErrOIDCRefreshTokenClientMismatch
 	}
 	if rt.RevokedAt.Valid {
-		return nil, errs.ErrUnauthorized.WithDetail("refresh token revoked")
+		return nil, errs.ErrOIDCRefreshTokenRevoked
 	}
 	if rt.UsedAt.Valid {
 		// Reuse — assume theft: revoke every live token for this (client, user) and audit it.
@@ -570,10 +570,10 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		return nil, errs.ErrUnauthorized.WithDetail("refresh token reuse — tokens revoked")
+		return nil, errs.ErrOIDCRefreshTokenReuse
 	}
 	if time.Now().After(rt.ExpiresAt) {
-		return nil, errs.ErrUnauthorized.WithDetail("refresh token expired")
+		return nil, errs.ErrOIDCRefreshTokenExpired
 	}
 	if resource == "" && rt.Resource != nil {
 		resource = *rt.Resource
@@ -1094,7 +1094,7 @@ func appendQuery(base string, kv ...string) string {
 
 func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
 		return
 	}
 	// RFC 8707 §2 — validate the optional resource indicator if present.
@@ -1162,7 +1162,7 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, resp)
 		return
 	default:
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("unsupported grant_type"))
+		httpx.WriteError(w, r, errs.ErrOIDCGrantTypeUnsupported)
 		return
 	}
 	if err != nil {
@@ -1191,7 +1191,7 @@ func (h *Handler) clientCreds(r *http.Request) (id, secret string, ok bool) {
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 	clientID, clientSecret, ok := h.clientCreds(r)
 	if !ok {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
 		return
 	}
 	if err := h.Service.RevokeToken(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint")); err != nil {
@@ -1205,7 +1205,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
 	clientID, clientSecret, ok := h.clientCreds(r)
 	if !ok {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
 		return
 	}
 	resp, err := h.Service.Introspect(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint"))
@@ -1428,7 +1428,7 @@ func (s *Service) RevokeGrant(ctx context.Context, tx pgx.Tx, tenantID, id uuid.
 	q := s.q.WithTx(tx)
 	row, err := q.GetGrantForRevoke(ctx, dbgen.GetGrantForRevokeParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", uuid.Nil, errs.ErrNotFound
+		return "", uuid.Nil, errs.ErrOIDCGrantNotFound
 	}
 	if err != nil {
 		return "", uuid.Nil, err
@@ -1444,14 +1444,14 @@ func (s *Service) RevokeGrant(ctx context.Context, tx pgx.Tx, tenantID, id uuid.
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrOIDCTenantIDInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrOIDCTenantMismatch
 	}
 	return scope, nil
 }
@@ -1478,7 +1478,7 @@ func (h *Handler) revokeGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrOIDCIDInvalid)
 		return
 	}
 	ctx := r.Context()

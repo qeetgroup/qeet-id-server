@@ -88,8 +88,8 @@ func TestVerify_MalformedKey(t *testing.T) {
 			if e == nil {
 				t.Fatalf("expected an *errs.Error, got %T: %v", err, err)
 			}
-			if e.Status != http.StatusUnauthorized || e.Code != "unauthorized" {
-				t.Errorf("got status=%d code=%q; want 401/unauthorized", e.Status, e.Code)
+			if e.Code != errs.CodeAPIKeyInvalid {
+				t.Errorf("got code=%q; want %q", e.Code, errs.CodeAPIKeyInvalid)
 			}
 		})
 	}

@@ -296,11 +296,11 @@ func (c *connFull) dial() (*goldap.Conn, error) {
 func (s *Service) TestBind(c *connFull) error {
 	conn, err := c.dial()
 	if err != nil {
-		return errs.ErrUnprocessable.WithDetail("dial failed: " + err.Error())
+		return errs.ErrLDAPDialFailed.Wrap(err)
 	}
 	defer conn.Close()
 	if err := conn.Bind(c.BindDN, c.BindPassword); err != nil {
-		return errs.ErrUnprocessable.WithDetail("service-account bind failed")
+		return errs.ErrLDAPServiceBindFailed.Wrap(err)
 	}
 	return nil
 }
@@ -315,16 +315,16 @@ type ldapUser struct {
 // password by binding as the user's DN. Returns the resolved directory user.
 func (s *Service) authenticate(c *connFull, username, password string) (*ldapUser, error) {
 	if username == "" || password == "" {
-		return nil, errs.ErrBadRequest.WithDetail("username and password required")
+		return nil, errs.ErrLDAPCredentialsRequired
 	}
 	conn, err := c.dial()
 	if err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("directory unreachable")
+		return nil, errs.ErrLDAPDirectoryUnreachable.Wrap(err)
 	}
 	defer conn.Close()
 
 	if err := conn.Bind(c.BindDN, c.BindPassword); err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("service-account bind failed")
+		return nil, errs.ErrLDAPServiceBindFailed.Wrap(err)
 	}
 
 	filter := strings.ReplaceAll(c.UserFilter, "%s", goldap.EscapeFilter(username))
@@ -334,11 +334,11 @@ func (s *Service) authenticate(c *connFull, username, password string) (*ldapUse
 	)
 	res, err := conn.Search(req)
 	if err != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
+		return nil, errs.ErrLDAPInvalidCredentials.Wrap(err)
 	}
 	if len(res.Entries) != 1 {
 		// Zero or ambiguous match — don't reveal which.
-		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
+		return nil, errs.ErrLDAPInvalidCredentials
 	}
 	entry := res.Entries[0]
 
@@ -346,16 +346,16 @@ func (s *Service) authenticate(c *connFull, username, password string) (*ldapUse
 	// service-account binding intact and side-steps connection-state quirks.
 	userConn, err := c.dial()
 	if err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("directory unreachable")
+		return nil, errs.ErrLDAPDirectoryUnreachable.Wrap(err)
 	}
 	defer userConn.Close()
 	if err := userConn.Bind(entry.DN, password); err != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid credentials")
+		return nil, errs.ErrLDAPInvalidCredentials.Wrap(err)
 	}
 
 	email := strings.ToLower(strings.TrimSpace(entry.GetAttributeValue(c.EmailAttribute)))
 	if email == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("directory entry has no email attribute")
+		return nil, errs.ErrLDAPEmailAttributeMissing
 	}
 	return &ldapUser{DN: entry.DN, Email: email, Name: entry.GetAttributeValue(c.NameAttribute)}, nil
 }
@@ -420,7 +420,7 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 		return nil, err
 	}
 	if c.Status == "disabled" {
-		return nil, errs.ErrForbidden.WithDetail("connection disabled")
+		return nil, errs.ErrLDAPConnectionDisabled
 	}
 	du, err := s.authenticate(c, username, password)
 	if err != nil {
@@ -525,11 +525,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	in.ServerURL = strings.TrimSpace(in.ServerURL)
 	if in.Name == "" || in.ServerURL == "" || strings.TrimSpace(in.BindDN) == "" ||
 		in.BindPassword == "" || strings.TrimSpace(in.BaseDN) == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("name, server_url, bind_dn, bind_password and base_dn are required"))
+		httpx.WriteError(w, r, errs.ErrLDAPConnectionFieldsRequired)
 		return
 	}
 	if !strings.HasPrefix(strings.ToLower(in.ServerURL), "ldap://") && !strings.HasPrefix(strings.ToLower(in.ServerURL), "ldaps://") {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("server_url must start with ldap:// or ldaps://"))
+		httpx.WriteError(w, r, errs.ErrLDAPServerURLInvalid)
 		return
 	}
 	ctx := r.Context()
@@ -591,7 +591,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Status != nil && *in.Status != "draft" && *in.Status != "active" && *in.Status != "disabled" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("status must be draft, active or disabled"))
+		httpx.WriteError(w, r, errs.ErrLDAPStatusInvalid)
 		return
 	}
 	ctx := r.Context()

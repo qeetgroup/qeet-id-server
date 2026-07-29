@@ -368,7 +368,7 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 // ExchangeLogin trades a one-time SAML login code for a Qeet token pair.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
 	if rawCode == "" {
-		return nil, errs.ErrBadRequest.WithDetail("code required")
+		return nil, errs.ErrSAMLLoginCodeRequired
 	}
 	codeHash := codes.Hash(rawCode)
 
@@ -381,16 +381,16 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 
 	row, err := q.ConsumeSamlLoginCode(ctx, codeHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrUnauthorized.WithDetail("invalid code")
+		return nil, errs.ErrSAMLLoginCodeInvalid
 	}
 	if err != nil {
 		return nil, err
 	}
 	if row.UsedAt.Valid {
-		return nil, errs.ErrUnauthorized.WithDetail("code already used")
+		return nil, errs.ErrSAMLLoginCodeUsed
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return nil, errs.ErrUnauthorized.WithDetail("code expired")
+		return nil, errs.ErrSAMLLoginCodeExpired
 	}
 	if err := q.MarkSamlLoginCodeUsed(ctx, codeHash); err != nil {
 		return nil, err
@@ -463,14 +463,14 @@ func (h *Handler) MountPublic(r chi.Router) {
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
 	pathTenant, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		return uuid.Nil, errs.ErrBadRequest.WithDetail("invalid tenantID")
+		return uuid.Nil, errs.ErrSAMLTenantIDInvalid
 	}
 	scope, err := httpx.RequireTenant(r)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	if pathTenant != scope {
-		return uuid.Nil, errs.ErrForbidden.WithDetail("tenant mismatch")
+		return uuid.Nil, errs.ErrSAMLTenantMismatch
 	}
 	return scope, nil
 }
@@ -536,11 +536,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	in.IdpEntityID = strings.TrimSpace(in.IdpEntityID)
 	in.IdpSSOURL = strings.TrimSpace(in.IdpSSOURL)
 	if in.Name == "" || in.IdpEntityID == "" || in.IdpSSOURL == "" || strings.TrimSpace(in.IdpCertificate) == "" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("name, idp_entity_id, idp_sso_url and idp_certificate are required"))
+		httpx.WriteError(w, r, errs.ErrSAMLConnectionFieldsRequired)
 		return
 	}
 	if _, err := parseCertificate(in.IdpCertificate); err != nil {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("idp_certificate is not a valid X.509 certificate"))
+		httpx.WriteError(w, r, errs.ErrSAMLCertificateInvalid)
 		return
 	}
 	ctx := r.Context()
@@ -574,7 +574,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	conn, err := h.Service.Get(r.Context(), id, tenantID)
@@ -595,7 +595,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	res, err := h.Service.TestConnection(r.Context(), id, tenantID)
@@ -614,7 +614,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	var in UpdateInput
@@ -623,12 +623,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Status != nil && *in.Status != "draft" && *in.Status != "active" && *in.Status != "disabled" {
-		httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("status must be draft, active or disabled"))
+		httpx.WriteError(w, r, errs.ErrSAMLStatusInvalid)
 		return
 	}
 	if in.IdpCertificate != nil {
 		if _, err := parseCertificate(*in.IdpCertificate); err != nil {
-			httpx.WriteError(w, r, errs.ErrUnprocessable.WithDetail("idp_certificate is not a valid X.509 certificate"))
+			httpx.WriteError(w, r, errs.ErrSAMLCertificateInvalid)
 			return
 		}
 	}
@@ -663,7 +663,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	ctx := r.Context()
@@ -698,7 +698,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	if _, err := h.Service.getByID(r.Context(), id); err != nil {
@@ -720,7 +720,7 @@ func (h *Handler) metadata(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	conn, err := h.Service.getByID(r.Context(), id)
@@ -729,19 +729,19 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if conn.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("connection disabled"))
+		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
 		return
 	}
 	sp, err := h.Service.buildSP(r, conn)
 	if err != nil {
 		slog.Error("saml login: build SP", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrInternal.WithDetail("connection misconfigured"))
+		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
 	authURL, err := sp.BuildAuthURL(r.URL.Query().Get("relay"))
 	if err != nil {
 		slog.Error("saml login: build auth url", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	http.Redirect(w, r, authURL, http.StatusFound)
@@ -750,7 +750,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrSAMLIDInvalid)
 		return
 	}
 	conn, err := h.Service.getByID(r.Context(), id)
@@ -759,34 +759,34 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if conn.Status == "disabled" {
-		httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("connection disabled"))
+		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+		httpx.WriteError(w, r, errs.ErrSAMLRequestInvalid)
 		return
 	}
 	encoded := r.PostFormValue("SAMLResponse")
 	if encoded == "" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("missing SAMLResponse"))
+		httpx.WriteError(w, r, errs.ErrSAMLResponseMissing)
 		return
 	}
 	sp, err := h.Service.buildSP(r, conn)
 	if err != nil {
 		slog.Error("saml acs: build SP", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrInternal.WithDetail("connection misconfigured"))
+		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
 	info, err := sp.RetrieveAssertionInfo(encoded)
 	if err != nil {
 		slog.Warn("saml acs: assertion validation failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("assertion validation failed"))
+		httpx.WriteError(w, r, errs.ErrSAMLAssertionInvalid)
 		return
 	}
 	if info.WarningInfo != nil && (info.WarningInfo.InvalidTime || info.WarningInfo.NotInAudience) {
 		slog.Warn("saml acs: assertion conditions not met", "connection", conn.ID,
 			"invalid_time", info.WarningInfo.InvalidTime, "not_in_audience", info.WarningInfo.NotInAudience)
-		httpx.WriteError(w, r, errs.ErrUnauthorized.WithDetail("assertion conditions not met"))
+		httpx.WriteError(w, r, errs.ErrSAMLAssertionConditions)
 		return
 	}
 
@@ -798,7 +798,7 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("assertion did not yield an email"))
+		httpx.WriteError(w, r, errs.ErrSAMLAssertionNoEmail)
 		return
 	}
 	name := ""
@@ -810,19 +810,19 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	userID, err := h.Service.findOrCreateUser(ctx, conn.TenantID, info.NameID, email, name)
 	if err != nil {
 		slog.Error("saml acs: provisioning failed", "err", err, "connection", conn.ID)
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
 		slog.Error("saml acs: generate login code", "err", err)
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	if err := h.Service.insertLoginCode(ctx, codeHash, userID, conn.TenantID, time.Now().UTC().Add(loginCodeTTL)); err != nil {
 		slog.Error("saml acs: persist login code", "err", err)
-		httpx.WriteError(w, r, errs.ErrInternal)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
 	h.Service.touchLastLogin(ctx, conn.ID)

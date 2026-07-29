@@ -252,13 +252,13 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	// Password strength gate. The offline baseline (common-password denylist,
 	// equals-email, uniform/sequential) always runs — no network, works in dev.
 	if reason := password.WeakReason(in.Password, in.Email); reason != "" {
-		return nil, nil, nil, errs.ErrUnprocessable.WithMessage(reason)
+		return nil, nil, nil, errs.ErrAuthPasswordWeak.WithMessage(reason)
 	}
 	// Breached-password gate. Tenant-less, so there's no per-tenant policy to
 	// consult here — just the global HIBP signal. No-op when disabled (nil
 	// checker) and fail-open inside PwnedAllowOnError.
 	if s.breach.PwnedAllowOnError(ctx, in.Password) {
-		return nil, nil, nil, errs.ErrUnprocessable.WithMessage("This password has appeared in known data breaches. Choose a different one.")
+		return nil, nil, nil, errs.ErrAuthPasswordBreached
 	}
 	hash, err := password.Hash(in.Password)
 	if err != nil {
@@ -283,7 +283,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, nil, nil, errs.ErrConflict.WithDetail("email already exists")
+			return nil, nil, nil, errs.ErrAuthEmailExists
 		}
 		return nil, nil, nil, err
 	}
@@ -349,7 +349,7 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 		return nil, err
 	}
 	if !member {
-		return nil, errs.ErrForbidden.WithDetail("not a member of this tenant")
+		return nil, errs.ErrAuthNotTenantMember
 	}
 	return s.IssuePair(ctx, userID, tenantID, ip, ua, "tenant_switch")
 }
@@ -453,14 +453,12 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		return nil, "", err
 	}
 	if !enabled {
-		return nil, "", errs.ErrForbidden.
-			WithMessage("Self-registration is not enabled for this application.").
-			WithDetail("self-registration disabled")
+		return nil, "", errs.ErrAuthSelfRegistrationDisabled
 	}
 	// Offline strength baseline (denylist, equals-email, sequential), then the
 	// tenant policy (length/complexity) and the breach gate inside ValidateForTenant.
 	if reason := password.WeakReason(plain, email); reason != "" {
-		return nil, "", errs.ErrUnprocessable.WithMessage(reason)
+		return nil, "", errs.ErrAuthPasswordWeak.WithMessage(reason)
 	}
 	if err := s.regPolicy.ValidateForTenant(ctx, tenantID, plain); err != nil {
 		return nil, "", err
@@ -489,7 +487,7 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		RETURNING id, created_at, updated_at
 	`, tenantID, u.Email, dnArg).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, "", errs.ErrConflict.WithDetail("email already exists")
+			return nil, "", errs.ErrAuthEmailExists
 		}
 		return nil, "", err
 	}
@@ -551,7 +549,7 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 	}
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrBadRequest.WithDetail("invalid mfa_token")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthSessionInvalid
 	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
@@ -561,21 +559,21 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 		SELECT user_id, tenant_id, expires_at, claims FROM auth.mfa_login_challenges WHERE id = $1
 	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge not found")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
 	}
 	if err != nil {
 		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if time.Now().After(expiresAt) {
 		_ = s.q.DeleteMFALoginChallenge(ctx, id)
-		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Your sign-in session expired. Please sign in again.").WithDetail("mfa challenge expired")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
 	}
 	ok, err := s.mfa.VerifyForLogin(ctx, userID, code)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if !ok {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrUnauthorized.WithMessage("Invalid verification code.").WithDetail("invalid mfa code")
+		return uuid.Nil, uuid.Nil, nil, errs.ErrMFACodeInvalid
 	}
 	// Consume the challenge only on success.
 	_ = s.q.DeleteMFALoginChallenge(ctx, id)
@@ -629,9 +627,7 @@ func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, i
 func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*user.User, map[string]any, error) {
 	email := strings.ToLower(strings.TrimSpace(rawEmail))
 	if _, locked := s.loginLockedUntil(ctx, email); locked {
-		return nil, nil, errs.ErrTooManyRequests.
-			WithMessage("Too many failed attempts. Your account is temporarily locked — please try again later.").
-			WithDetail("account temporarily locked")
+		return nil, nil, errs.ErrAuthAccountLocked
 	}
 	u, err := s.users.GetByEmailGlobal(ctx, rawEmail)
 	if err != nil {
@@ -639,12 +635,12 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 			// Throttle unknown emails identically so probing can't distinguish
 			// "no such account" from "wrong password" by behaviour.
 			s.recordFailedLogin(ctx, email)
-			return nil, nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
+			return nil, nil, errs.ErrAuthInvalidCredentials
 		}
 		return nil, nil, err
 	}
 	if u.Status != "active" && u.Status != "invited" {
-		return nil, nil, errs.ErrForbidden.WithDetail("account " + u.Status)
+		return nil, nil, errs.ErrAuthAccountInactive
 	}
 	hash, err := s.users.PasswordHash(ctx, u.ID)
 	if err != nil {
@@ -652,7 +648,7 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 	}
 	if hash == "" || !password.Verify(hash, plain) {
 		s.recordFailedLogin(ctx, email)
-		return nil, nil, errs.ErrUnauthorized.WithMessage("Invalid email or password.").WithDetail("invalid credentials")
+		return nil, nil, errs.ErrAuthInvalidCredentials
 	}
 	s.clearLoginAttempts(ctx, email)
 	// Transparently upgrade legacy bcrypt / weak-param hashes to current
@@ -803,12 +799,12 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	`, hash)
 	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrUnauthorized.WithDetail("unknown refresh token")
+			return nil, errs.ErrAuthRefreshTokenInvalid
 		}
 		return nil, err
 	}
 	if sessionRev != nil {
-		return nil, errs.ErrUnauthorized.WithDetail("session revoked")
+		return nil, errs.ErrAuthSessionRevoked
 	}
 	// A session can outlive the account it belongs to: a plain status
 	// change (PATCH /users/{id}) or a soft-delete doesn't touch
@@ -816,10 +812,10 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	// user's still-valid refresh token would keep minting fresh access
 	// tokens indefinitely.
 	if userDeleted != nil || userStatus == "suspended" {
-		return nil, errs.ErrUnauthorized.WithDetail("account suspended or deleted")
+		return nil, errs.ErrAuthAccountSuspended
 	}
 	if time.Now().After(expiresAt) {
-		return nil, errs.ErrUnauthorized.WithDetail("refresh token expired")
+		return nil, errs.ErrAuthRefreshTokenInvalid
 	}
 	// uuid.Nil = tenant-less session; preserved across refresh.
 	var tenantID uuid.UUID
@@ -847,7 +843,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			"reason":     "reuse_detected",
 			"revoked_at": time.Now().UTC(),
 		})
-		return nil, errs.ErrUnauthorized.WithDetail("refresh token reuse — session revoked")
+		return nil, errs.ErrAuthSessionRevoked
 	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()

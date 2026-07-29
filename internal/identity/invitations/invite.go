@@ -213,7 +213,7 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 	// Breached-password gate before any DB work. No-op when disabled (nil
 	// checker) and fail-open inside PwnedAllowOnError.
 	if s.breach.PwnedAllowOnError(ctx, in.Password) {
-		return nil, errs.ErrUnprocessable.WithDetail("This password has appeared in known data breaches — choose a different one.")
+		return nil, errs.ErrAuthPasswordBreached
 	}
 	hash := codes.Hash(in.Token)
 	tx, err := s.pool.Begin(ctx)
@@ -225,17 +225,17 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 	inv, err := s.q.WithTx(tx).GetInviteForAccept(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrBadRequest.WithDetail("invalid token")
+			return nil, errs.ErrInviteLinkInvalid
 		}
 		return nil, err
 	}
 	if inv.Status != "pending" {
-		return nil, errs.ErrBadRequest.WithDetail("invite " + inv.Status)
+		return nil, errs.ErrInviteInvalid
 	}
 	if time.Now().After(inv.ExpiresAt) {
 		_ = s.q.WithTx(tx).MarkInviteExpired(ctx, inv.ID)
 		_ = tx.Commit(ctx)
-		return nil, errs.ErrBadRequest.WithDetail("invite expired")
+		return nil, errs.ErrInviteExpired
 	}
 
 	pwHash, err := password.Hash(in.Password)

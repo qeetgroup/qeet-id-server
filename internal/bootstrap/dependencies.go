@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
@@ -133,6 +134,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	billingService.SetPayments(payments)
 	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation) // else a paid plan with no provider is refused, not granted free
+	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo})  // creates the org when a signup checkout is paid
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
@@ -141,6 +143,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo := policy.NewRepository(pool)
 
 	sender := notifier.New(notifier.Config{
+		EmailProvider:    cfg.EmailProvider,
+		AWSRegion:        cfg.AWSRegion,
 		SMTPHost:         cfg.SMTPHost,
 		SMTPPort:         cfg.SMTPPort,
 		SMTPUsername:     cfg.SMTPUsername,
@@ -151,7 +155,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioFrom:       cfg.TwilioFrom,
 	})
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
-	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL, cfg.LoginBaseURL)
+	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	retentionService := retention.NewService(pool)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
@@ -279,6 +283,23 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	passkeyService := passkey.NewService(pool, wa, authService)
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
+	// Platform-level (tenant-less) social login for the console's own accounts.
+	// Off until credentials are set; Google only for now.
+	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
+		socialService.SetPlatformProvider("google", cfg.GoogleClientID, cfg.GoogleClientSecret,
+			"https://accounts.google.com/.well-known/openid-configuration")
+	}
+	if cfg.MicrosoftClientID != "" && cfg.MicrosoftClientSecret != "" {
+		// /common allows both work/school and personal Microsoft accounts.
+		socialService.SetPlatformProvider("microsoft", cfg.MicrosoftClientID, cfg.MicrosoftClientSecret,
+			"https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration")
+	}
+	if cfg.GithubClientID != "" && cfg.GithubClientSecret != "" {
+		socialService.SetPlatformGitHub(cfg.GithubClientID, cfg.GithubClientSecret) // GitHub isn't OIDC — dedicated adapter
+	}
+	if cfg.AppleClientID != "" && cfg.AppleTeamID != "" && cfg.AppleKeyID != "" && cfg.ApplePrivateKey != "" {
+		socialService.SetPlatformApple(cfg.AppleClientID, cfg.AppleTeamID, cfg.AppleKeyID, cfg.ApplePrivateKey)
+	}
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
 	// Secrets-vault data key: sourced per SECRETS_PROVIDER (static SECRETS_KEY,
@@ -390,7 +411,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
 		RBACChecker:   rbacRepo,
 		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService},
+		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.ServiceEnv == "dev"},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
@@ -462,6 +483,19 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 // secretsKeyProvider builds the vault data-key provider selected by
 // SECRETS_PROVIDER. "static" decodes SECRETS_KEY (or generates an ephemeral key
 // in dev when unset); "aws-kms" unwraps the DEK from AWS KMS at boot.
+// billingOrgProvisioner adapts the tenant repository to billing.OrgProvisioner,
+// so billing can create an organization once a signup checkout is paid without
+// importing the identity/tenant package (keeping the dependency direction clean).
+type billingOrgProvisioner struct{ tenants *tenant.Repository }
+
+func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UUID, name, slug, region, plan string) (uuid.UUID, error) {
+	t, err := p.tenants.CreateWithOwner(ctx, tenant.CreateInput{Slug: slug, Name: name, Plan: plan, Region: region}, ownerID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return t.ID, nil
+}
+
 func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
 	switch cfg.SecretsProvider {
 	case "aws-kms":

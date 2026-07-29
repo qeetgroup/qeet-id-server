@@ -557,23 +557,23 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 // committed atomically in the same transaction.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput, actor audit.Actor) (*Policy, error) {
 	if strings.TrimSpace(in.Name) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("name is required")
+		return nil, errs.ErrABACNameRequired
 	}
 	if in.Effect != "allow" && in.Effect != "deny" {
-		return nil, errs.ErrUnprocessable.WithDetail("effect must be 'allow' or 'deny'")
+		return nil, errs.ErrABACEffectInvalid
 	}
 	if strings.TrimSpace(in.ResourceType) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("resource_type is required")
+		return nil, errs.ErrABACResourceTypeRequired
 	}
 	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("action is required")
+		return nil, errs.ErrABACActionRequired
 	}
 	cond := in.Condition
 	if len(cond) == 0 {
 		cond = json.RawMessage(`{}`)
 	}
 	if err := validateCondition(cond); err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("condition: " + err.Error())
+		return nil, errs.ErrABACConditionInvalid
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -595,7 +595,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, errs.ErrConflict.WithDetail("a policy with that name already exists in this tenant")
+			return nil, errs.ErrABACPolicyNameExists
 		}
 		return nil, err
 	}
@@ -648,23 +648,23 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Policy, error
 // event are committed atomically in the same transaction.
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateInput, actor audit.Actor) (*Policy, error) {
 	if strings.TrimSpace(in.Name) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("name is required")
+		return nil, errs.ErrABACNameRequired
 	}
 	if in.Effect != "allow" && in.Effect != "deny" {
-		return nil, errs.ErrUnprocessable.WithDetail("effect must be 'allow' or 'deny'")
+		return nil, errs.ErrABACEffectInvalid
 	}
 	if strings.TrimSpace(in.ResourceType) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("resource_type is required")
+		return nil, errs.ErrABACResourceTypeRequired
 	}
 	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("action is required")
+		return nil, errs.ErrABACActionRequired
 	}
 	cond := in.Condition
 	if len(cond) == 0 {
 		cond = json.RawMessage(`{}`)
 	}
 	if err := validateCondition(cond); err != nil {
-		return nil, errs.ErrUnprocessable.WithDetail("condition: " + err.Error())
+		return nil, errs.ErrABACConditionInvalid
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -690,7 +690,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	}
 	if err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, errs.ErrConflict.WithDetail("a policy with that name already exists in this tenant")
+			return nil, errs.ErrABACPolicyNameExists
 		}
 		return nil, err
 	}
@@ -757,7 +757,7 @@ type candidate struct {
 // populated only when at least one policy was evaluated (or on default deny).
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, in EvaluationInput) (*Decision, error) {
 	if strings.TrimSpace(in.Action) == "" {
-		return nil, errs.ErrUnprocessable.WithDetail("action is required")
+		return nil, errs.ErrABACActionRequired
 	}
 
 	rows, err := s.q.ListEvaluationCandidates(ctx, dbgen.ListEvaluationCandidatesParams{
