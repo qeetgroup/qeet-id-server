@@ -146,23 +146,23 @@ type builtinPlan struct {
 
 var builtins = []builtinPlan{
 	{
-		code: "free", name: "Free", description: "For trying things out.", interval: "month", sort: 1,
-		features: []string{"Up to 1,000 monthly active users", "Passkeys, social & password login", "Community support"},
+		code: "free", name: "Free", description: "For prototypes and early projects.", interval: "month", sort: 1,
+		features: []string{"Up to 10,000 monthly active users", "Passkeys, social & password login", "Email magic links & TOTP MFA", "1 organization · RBAC (3 roles)", "7-day audit log", "Community support"},
 		prices:   map[string]int64{"USD": 0, "EUR": 0, "GBP": 0, "INR": 0, "JPY": 0, "AUD": 0, "CAD": 0},
 	},
 	{
-		code: "starter", name: "Starter", description: "For growing teams.", interval: "month", sort: 2,
-		features: []string{"Up to 10,000 MAU", "SAML, SCIM & LDAP", "Audit logs & webhooks", "Email support"},
+		code: "starter", name: "Starter", description: "For teams shipping to production.", interval: "month", sort: 2,
+		features: []string{"Up to 25,000 MAU", "All MFA methods (SMS, email, passkey)", "Custom branding & domain", "Webhooks & 30-day audit log", "Email support · 99.9% uptime"},
 		prices:   map[string]int64{"USD": 2900, "EUR": 2700, "GBP": 2400, "INR": 240000, "JPY": 4500, "AUD": 4500, "CAD": 3900},
 	},
 	{
-		code: "pro", name: "Pro", description: "For scale and compliance.", interval: "month", sort: 3,
-		features: []string{"Up to 100,000 MAU", "Advanced threat protection", "Data-retention controls", "Priority support"},
+		code: "pro", name: "Pro", description: "For scaling B2B/B2C — no SSO tax.", interval: "month", sort: 3,
+		features: []string{"Up to 100,000 MAU (then metered)", "Enterprise SSO — SAML & OIDC included", "RBAC + ABAC & advanced threat protection", "Audit export (90-day) & AI Copilot", "Priority + chat support · 99.95% uptime"},
 		prices:   map[string]int64{"USD": 9900, "EUR": 9000, "GBP": 7900, "INR": 800000, "JPY": 15000, "AUD": 15000, "CAD": 13000},
 	},
 	{
-		code: "enterprise", name: "Enterprise", description: "For large orgs with custom needs.", interval: "month", sort: 4,
-		features: []string{"Unlimited MAU", "SSO enforcement & directory sync", "SLA, BYOK & data residency", "Dedicated support & onboarding"},
+		code: "enterprise", name: "Enterprise", description: "Governance, compliance & control for large orgs.", interval: "month", sort: 4,
+		features: []string{"Unlimited MAU & organizations", "SCIM & LDAP directory sync + SSO enforcement", "Conditional access, BYOK & data residency", "Dedicated tenant · SOC 2 / ISO 27001 / HIPAA", "99.99% SLA · named CSM & professional services"},
 		prices:   map[string]int64{"USD": 29900, "EUR": 27900, "GBP": 24900, "INR": 2490000, "JPY": 45000, "AUD": 45000, "CAD": 39900},
 	},
 
@@ -172,13 +172,13 @@ var builtins = []builtinPlan{
 	// with a Monthly/Yearly toggle. Free needs no annual plan; Enterprise is
 	// contact-sales, so neither has a "_year" variant.
 	{
-		code: "starter_year", name: "Starter", description: "For growing teams. Billed yearly.", interval: "year", sort: 5,
-		features: []string{"Up to 10,000 MAU", "SAML, SCIM & LDAP", "Audit logs & webhooks", "Email support"},
+		code: "starter_year", name: "Starter", description: "For teams shipping to production. Billed yearly.", interval: "year", sort: 5,
+		features: []string{"Up to 25,000 MAU", "All MFA methods (SMS, email, passkey)", "Custom branding & domain", "Webhooks & 30-day audit log", "Email support · 99.9% uptime"},
 		prices:   map[string]int64{"USD": 29000, "EUR": 27000, "GBP": 24000, "INR": 2400000, "JPY": 45000, "AUD": 45000, "CAD": 39000},
 	},
 	{
-		code: "pro_year", name: "Pro", description: "For scale and compliance. Billed yearly.", interval: "year", sort: 6,
-		features: []string{"Up to 100,000 MAU", "Advanced threat protection", "Data-retention controls", "Priority support"},
+		code: "pro_year", name: "Pro", description: "For scaling B2B/B2C — no SSO tax. Billed yearly.", interval: "year", sort: 6,
+		features: []string{"Up to 100,000 MAU (then metered)", "Enterprise SSO — SAML & OIDC included", "RBAC + ABAC & advanced threat protection", "Audit export (90-day) & AI Copilot", "Priority + chat support · 99.95% uptime"},
 		prices:   map[string]int64{"USD": 99000, "EUR": 90000, "GBP": 79000, "INR": 8000000, "JPY": 150000, "AUD": 150000, "CAD": 130000},
 	},
 }
