@@ -317,8 +317,8 @@ func TestLoginLockout(t *testing.T) {
 	if err == nil {
 		t.Fatal("account should be locked after repeated failures")
 	}
-	if e := errs.As(err); e == nil || e.Status != 429 {
-		t.Errorf("locked login should be 429, got %v", err)
+	if e := errs.As(err); e == nil || e.Code != errs.ErrAuthAccountLocked.Code {
+		t.Errorf("locked login should be an account-locked error, got %v", err)
 	}
 }
 
@@ -1254,16 +1254,16 @@ func TestPasskeySignupBegin(t *testing.T) {
 
 	// A second signup for the same (tenant-less) email must conflict.
 	_, _, err = svc.BeginSignup(ctx, email, "")
-	if e := errs.As(err); e == nil || e.Code != errs.ErrConflict.Code {
-		t.Fatalf("begin signup (dup email): err = %v, want ErrConflict", err)
+	if e := errs.As(err); e == nil || e.Code != errs.ErrAuthEmailExists.Code {
+		t.Fatalf("begin signup (dup email): err = %v, want ErrAuthEmailExists", err)
 	}
 
 	// Tenant-scoped signup with no self-registration policy wired must be
 	// forbidden — same gate as auth.Service.RegisterInTenant.
 	tenantID := createTenant(t, ctx, uniqueSlug("pksignup"))
 	_, _, err = svc.BeginTenantSignup(ctx, tenantID, uniqueSlug("pksignup")+"@example.com", "")
-	if e := errs.As(err); e == nil || e.Code != errs.ErrForbidden.Code {
-		t.Fatalf("begin tenant signup (no policy): err = %v, want ErrForbidden", err)
+	if e := errs.As(err); e == nil || e.Code != errs.ErrAuthSelfRegistrationDisabled.Code {
+		t.Fatalf("begin tenant signup (no policy): err = %v, want ErrAuthSelfRegistrationDisabled", err)
 	}
 }
 
@@ -1453,7 +1453,7 @@ func TestWebhookTenantIsolation(t *testing.T) {
 	if _, err := svc.Get(ctx, sub.ID, tenantA); err != nil {
 		t.Fatalf("owner tenant should read its subscription: %v", err)
 	}
-	if _, err := svc.Get(ctx, sub.ID, tenantB); !errors.Is(err, errs.ErrNotFound) {
+	if _, err := svc.Get(ctx, sub.ID, tenantB); !errors.Is(err, errs.ErrWebhookNotFound) {
 		t.Fatalf("foreign tenant Get should be NotFound, got %v", err)
 	}
 }
@@ -1561,7 +1561,7 @@ func TestGroupServiceAuditedFlow(t *testing.T) {
 	if err := svc.Delete(ctx, g.ID, tenantID, actor); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if err := svc.Delete(ctx, g.ID, tenantID, actor); !errors.Is(err, errs.ErrNotFound) {
+	if err := svc.Delete(ctx, g.ID, tenantID, actor); !errors.Is(err, errs.ErrGroupNotFound) {
 		t.Fatalf("second delete should be NotFound, got %v", err)
 	}
 }

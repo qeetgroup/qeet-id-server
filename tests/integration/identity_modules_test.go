@@ -145,7 +145,7 @@ func TestInviteService_AcceptProvisionsUser_RevokeBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create (2): %v", err)
 	}
-	if err := svc.Revoke(ctx, inv2.ID); err != nil {
+	if err := svc.Revoke(ctx, tid, inv2.ID); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 	if _, err := svc.Accept(ctx, invite.AcceptInput{Token: raw2, Password: "Kx7mQ2vLp9Wz"}); err == nil {

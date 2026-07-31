@@ -69,7 +69,7 @@ func createTenantUser(t *testing.T, ctx context.Context, tenantID uuid.UUID, ema
 }
 
 func newRecovery(sender notifier.Sender) *recovery.Service {
-	return recovery.NewService(testPool, sender, time.Hour, "http://app.test", "http://login.test")
+	return recovery.NewService(testPool, sender, time.Hour, "http://app.test")
 }
 
 // Full password-reset round-trip: a reset email is emitted, the emailed token
@@ -85,7 +85,7 @@ func TestPasswordReset_RoundTripAndSingleUse(t *testing.T) {
 	sender := &captureSender{}
 	svc := newRecovery(sender)
 
-	if err := svc.StartPasswordReset(ctx, tid, email); err != nil {
+	if _, err := svc.StartPasswordReset(ctx, email); err != nil {
 		t.Fatalf("StartPasswordReset: %v", err)
 	}
 	msg, ok := sender.last()
@@ -140,7 +140,7 @@ func TestPasswordReset_ExpiredToken(t *testing.T) {
 
 	sender := &captureSender{}
 	svc := newRecovery(sender)
-	if err := svc.StartPasswordReset(ctx, tid, email); err != nil {
+	if _, err := svc.StartPasswordReset(ctx, email); err != nil {
 		t.Fatalf("StartPasswordReset: %v", err)
 	}
 	msg, _ := sender.last()
@@ -161,12 +161,12 @@ func TestPasswordReset_ExpiredToken(t *testing.T) {
 func TestPasswordReset_EnumerationSafe(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
-	tid := createTenant(t, ctx, uniqueSlug("recov"))
+	createTenant(t, ctx, uniqueSlug("recov"))
 	sender := &captureSender{}
 	svc := newRecovery(sender)
 
 	unknown := uniqueSlug("ghost") + "@example.com"
-	if err := svc.StartPasswordReset(ctx, tid, unknown); err != nil {
+	if _, err := svc.StartPasswordReset(ctx, unknown); err != nil {
 		t.Fatalf("StartPasswordReset for unknown user should be a silent no-op, got: %v", err)
 	}
 	if n := sender.count(); n != 0 {

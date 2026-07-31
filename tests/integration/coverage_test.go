@@ -373,8 +373,8 @@ func TestPasskeyFinishRegisterSessionMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatal("finishing another user's registration session must fail")
 	}
-	if e := errs.As(err); e == nil || e.Status != 400 {
-		t.Errorf("want 400 session mismatch, got %v", err)
+	if e := errs.As(err); e == nil || e.Code != errs.ErrPasskeySessionMismatch.Code {
+		t.Errorf("want passkey session mismatch, got %v", err)
 	}
 }
 
@@ -399,8 +399,8 @@ func TestPasskeyFinishRegisterExpiredSession(t *testing.T) {
 	if err == nil {
 		t.Fatal("an expired ceremony session must be refused")
 	}
-	if e := errs.As(err); e == nil || e.Status != 400 {
-		t.Errorf("want 400 expired session, got %v", err)
+	if e := errs.As(err); e == nil || e.Code != errs.ErrAuthSessionExpired.Code {
+		t.Errorf("want expired session, got %v", err)
 	}
 }
 
@@ -466,8 +466,8 @@ func TestPasskeyBeginLoginEdgeCases(t *testing.T) {
 	if err == nil {
 		t.Fatal("begin login for a user with no passkeys must fail")
 	}
-	if e := errs.As(err); e == nil || e.Status != 400 {
-		t.Errorf("no-passkeys should be 400, got %v", err)
+	if e := errs.As(err); e == nil || e.Code != errs.ErrPasskeyNoCredentials.Code {
+		t.Errorf("want no-credentials error, got %v", err)
 	}
 }
 
@@ -699,8 +699,8 @@ func TestMFAWebAuthnBeginNoCredentials(t *testing.T) {
 	svc := newPasskeySvc(t)
 	if _, _, err := svc.BeginMFA(ctx, userID); err == nil {
 		t.Fatal("BeginMFA for a user with no passkeys must fail")
-	} else if e := errs.As(err); e == nil || e.Status != 400 {
-		t.Errorf("no-passkeys should be 400, got %v", err)
+	} else if e := errs.As(err); e == nil || e.Code != errs.ErrPasskeyNoCredentials.Code {
+		t.Errorf("want no-credentials error, got %v", err)
 	}
 }
 
@@ -731,8 +731,8 @@ func TestMFAWebAuthnFinishRejectsMismatch(t *testing.T) {
 	// Another user presenting the owner's mfa session is rejected (user binding).
 	if err := svc.FinishMFA(ctx, attacker, sid, []byte(`{}`)); err == nil {
 		t.Fatal("finishing another user's mfa session must fail")
-	} else if e := errs.As(err); e == nil || e.Status != 400 {
-		t.Errorf("want 400 session mismatch, got %v", err)
+	} else if e := errs.As(err); e == nil || e.Code != errs.ErrPasskeySessionMismatch.Code {
+		t.Errorf("want passkey session mismatch, got %v", err)
 	}
 
 	// A non-mfa ("login") session can't be used to finish an mfa ceremony, even
@@ -746,8 +746,8 @@ func TestMFAWebAuthnFinishRejectsMismatch(t *testing.T) {
 	}
 	if err := svc.FinishMFA(ctx, owner, loginSID, []byte(`{}`)); err == nil {
 		t.Fatal("a login-kind session must not satisfy an mfa finish")
-	} else if e := errs.As(err); e == nil || e.Status != 400 {
-		t.Errorf("want 400 session mismatch (wrong kind), got %v", err)
+	} else if e := errs.As(err); e == nil || e.Code != errs.ErrPasskeySessionMismatch.Code {
+		t.Errorf("want passkey session mismatch (wrong kind), got %v", err)
 	}
 }
 
@@ -1049,11 +1049,11 @@ func TestRecoveryPasswordResetLifecycle(t *testing.T) {
 	}
 
 	rec := &recordSender{}
-	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com", "https://login.qeet.com")
+	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
 
 	// Anti-enumeration: an unknown email succeeds without sending mail or writing a row.
 	rec.last = notifier.Message{}
-	if err := svc.StartPasswordReset(ctx, tenantID, "ghost-"+uniqueSlug("x")+"@example.com"); err != nil {
+	if _, err := svc.StartPasswordReset(ctx, "ghost-"+uniqueSlug("x")+"@example.com"); err != nil {
 		t.Fatalf("start reset for unknown email should succeed silently: %v", err)
 	}
 	if rec.last.To != "" {
@@ -1061,7 +1061,7 @@ func TestRecoveryPasswordResetLifecycle(t *testing.T) {
 	}
 
 	// A real reset issues a token via email.
-	if err := svc.StartPasswordReset(ctx, tenantID, email); err != nil {
+	if _, err := svc.StartPasswordReset(ctx, email); err != nil {
 		t.Fatalf("start reset: %v", err)
 	}
 	token := extractToken(t, rec.last.Body)
@@ -1123,8 +1123,8 @@ func TestRecoveryResetTokenExpiry(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	rec := &recordSender{}
-	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com", "https://login.qeet.com")
-	if err := svc.StartPasswordReset(ctx, tenantID, email); err != nil {
+	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	if _, err := svc.StartPasswordReset(ctx, email); err != nil {
 		t.Fatalf("start reset: %v", err)
 	}
 	token := extractToken(t, rec.last.Body)
@@ -1151,7 +1151,7 @@ func TestRecoveryMagicLink(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 	rec := &recordSender{}
-	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com", "https://login.qeet.com")
+	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
 
 	if err := svc.StartMagicLink(ctx, tenantID, email); err != nil {
 		t.Fatalf("start magic link: %v", err)
