@@ -227,7 +227,7 @@ func TestAdminPortalLinkExpiry(t *testing.T) {
 
 	if _, err := portalSvc.Resolve(ctx, raw); err == nil {
 		t.Fatal("resolve of an expired link succeeded, want error")
-	} else if e := errs.As(err); e == nil || e.Code != "unauthorized" {
-		t.Errorf("resolve error = %v, want unauthorized", err)
+	} else if e := errs.As(err); e == nil || e.Code != errs.ErrAdminPortalLinkExpired.Code {
+		t.Errorf("resolve error = %v, want link expired", err)
 	}
 }

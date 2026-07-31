@@ -1,0 +1,35 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck     # unchecked error returns — the most common silent failure in Go
+    - govet        # go vet: printf mismatches, unreachable code, shadow, etc.
+    - staticcheck  # comprehensive static analysis (replaces megacheck/gosimple/unused)
+    - misspell     # typos in comments and string literals
+  settings:
+    errcheck:
+      # These error returns are idiomatic to ignore:
+      #   - Close() on read paths (nothing actionable on failure)
+      #   - tx.Rollback() deferred after a Commit (a no-op once committed; the
+      #     real error is the one Commit/the operation returns)
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+  exclusions:
+    # Generated sqlc code (dbgen packages) is not hand-authored.
+    paths:
+      - internal/.*/dbgen
+    rules:
+      # Test helpers routinely discard errors intentionally.
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt      # enforces gofmt formatting
+    - goimports  # flags unused/ungrouped imports (standard std-vs-third-party grouping)
