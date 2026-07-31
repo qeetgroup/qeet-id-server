@@ -10,7 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # push the version tag after a successful deploy
+  contents: write  # push the version tag after a successful deploy
+  id-token: write  # required for GitHub OIDC → AWS role assumption
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -49,8 +50,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR

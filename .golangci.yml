@@ -1,0 +1,30 @@
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck     # unchecked error returns — the most common silent failure in Go
+    - govet        # go vet: printf mismatches, unreachable code, shadow, etc.
+    - staticcheck  # comprehensive static analysis (replaces megacheck/gosimple/unused)
+    - misspell     # typos in comments and string literals
+    - gofmt        # enforces gofmt formatting
+    - goimports    # enforces import grouping and ordering
+
+linters-settings:
+  errcheck:
+    # Don't flag ignored errors on Close() calls — idiomatic Go.
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+  goimports:
+    local-prefixes: github.com/qeetgroup/qeet-id-server
+
+issues:
+  # Don't report issues in generated files (sqlc dbgen packages).
+  exclude-dirs:
+    - internal/.*/dbgen
+  # Standard exclusions for test code.
+  exclude-rules:
+    - path: _test\.go
+      linters: [errcheck]
