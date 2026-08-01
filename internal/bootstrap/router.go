@@ -253,6 +253,7 @@ func NewRouter(d Deps) http.Handler {
 			d.AdminPortal.MountPublic(r) // /admin-portal/{token}/...: token-gated SAML/SCIM self-serve config
 			d.OIDC.MountBrowser(r)       // /oauth/authorize (SSO cookie) + decision + token-code
 			d.TokenVault.MountPublic(r)  // /vault/tokens/callback: 3rd-party OAuth2 redirect target
+			d.MFA.MountPublic(r)         // /mfa/push/challenges/{id}: poll + respond (no session needed)
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.

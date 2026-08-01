@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuthMfaPushDevice struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Name       string
+	Platform   string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+}
+
+type AuthMfaPushChallenge struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Action    string
+	Context   []byte // JSONB
+	Status    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
 type AuthMfaOtpFactor struct {
 	ID          uuid.UUID
 	UserID      uuid.UUID

@@ -96,6 +96,50 @@ FROM auth.mfa_otp_factors WHERE id = $1 AND user_id = $2;
 
 -- GetOTPCodeForVerify finds a pending OTP code for any verified factor of the user.
 
+-- ── Push MFA ──────────────────────────────────────────────────────────────────
+
+-- name: UpsertPushDevice :one
+INSERT INTO auth.mfa_push_devices (user_id, name, push_token, platform, device_token)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (user_id, push_token) DO UPDATE
+    SET name         = EXCLUDED.name,
+        platform     = EXCLUDED.platform,
+        device_token = EXCLUDED.device_token,
+        last_seen_at = NOW()
+RETURNING id, user_id, name, platform, created_at, last_seen_at;
+
+-- name: ListPushDevices :many
+SELECT id, user_id, name, platform, created_at, last_seen_at
+FROM auth.mfa_push_devices WHERE user_id = $1 ORDER BY created_at;
+
+-- name: DeletePushDevice :execrows
+DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2;
+
+-- name: ListPushTokensByUser :many
+SELECT push_token FROM auth.mfa_push_devices WHERE user_id = $1;
+
+-- name: InsertPushChallenge :one
+INSERT INTO auth.mfa_push_challenges (user_id, action, context)
+VALUES ($1, $2, $3)
+RETURNING id, user_id, action, context, status, expires_at, created_at;
+
+-- name: GetPushChallenge :one
+SELECT id, user_id, action, context, status, expires_at, created_at
+FROM auth.mfa_push_challenges WHERE id = $1;
+
+-- name: GetPushChallengeForUpdate :one
+SELECT id, user_id, status, expires_at
+FROM auth.mfa_push_challenges WHERE id = $1
+FOR UPDATE;
+
+-- name: VerifyDeviceToken :one
+SELECT id FROM auth.mfa_push_devices WHERE user_id = $1 AND device_token = $2;
+
+-- name: UpdatePushChallengeStatus :exec
+UPDATE auth.mfa_push_challenges
+SET status = $2, responded_at = NOW()
+WHERE id = $1;
+
 -- name: GetOTPCodeForVerify :one
 SELECT c.id
 FROM auth.mfa_otp_codes c

@@ -209,6 +209,10 @@ type Config struct {
 	WebAuthnRPDisplayName string `envconfig:"WEBAUTHN_RP_DISPLAY_NAME" default:""`
 	WebAuthnRPOriginsRaw  string `envconfig:"WEBAUTHN_RP_ORIGINS" default:""`
 
+	// ExpoPushURL is the Expo push notification API endpoint. Defaults to the
+	// public Expo push service. Override for self-hosted / proxied deployments.
+	ExpoPushURL string `envconfig:"EXPO_PUSH_URL" default:"https://exp.host/--/api/v2/push/send"`
+
 	// AI Copilot (enterprise feature). Empty CopilotProvider disables the
 	// feature: /status returns configured=false, conversation CRUD still works,
 	// and .../messages returns 409 copilot_unconfigured.

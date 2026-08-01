@@ -32,14 +32,15 @@ import (
 )
 
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	issuer string // "qeet-id" — shown in the authenticator app
-	sender notifier.Sender
+	pool    *pgxpool.Pool
+	q       *dbgen.Queries
+	issuer  string // "qeet-id" — shown in the authenticator app
+	sender  notifier.Sender
+	pushURL string // Expo push API endpoint
 }
 
-func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, sender: sender}
+func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender, pushURL string) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, sender: sender, pushURL: pushURL}
 }
 
 const otpTTL = 10 * time.Minute
@@ -555,6 +556,11 @@ func (h *Handler) Mount(r chi.Router) {
 	// WebAuthn as a second factor: assert the user's existing passkeys.
 	r.Post("/mfa/webauthn/challenge", h.webauthnChallenge)
 	r.Post("/mfa/webauthn/verify", h.webauthnVerify)
+
+	// Push authenticator device management (authenticated user).
+	r.Get("/mfa/push/devices", h.listPushDevices)
+	r.Post("/mfa/push/devices", h.registerPushDevice)
+	r.Delete("/mfa/push/devices/{id}", h.revokePushDevice)
 
 	// Step-up status — lets a client decide whether to prompt before a
 	// sensitive action.
