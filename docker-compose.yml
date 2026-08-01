@@ -33,5 +33,14 @@ services:
       timeout: 5s
       retries: 10
 
+  mailpit:
+    image: axllent/mailpit:latest
+    # Local email catcher. SMTP on :1025 (matches SMTP_HOST/SMTP_PORT in .env),
+    # web UI at http://localhost:8025 to read every message the app "sends".
+    # No auth/TLS needed — the app only STARTTLSes/auths when advertised/configured.
+    ports:
+      - "1025:1025"  # SMTP  (app → Mailpit)
+      - "8025:8025"  # web UI (read caught mail)
+
 volumes:
   pgdata:
