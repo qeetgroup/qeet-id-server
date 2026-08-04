@@ -28,5 +28,6 @@ func init() {
 		errs.CodeSocialLoginCodeInvalid:      http.StatusUnauthorized,
 		errs.CodeSocialLoginCodeUsed:         http.StatusUnauthorized,
 		errs.CodeSocialLoginCodeExpired:      http.StatusUnauthorized,
+		errs.CodeSocialAlreadyLinked:         http.StatusConflict,
 	})
 }

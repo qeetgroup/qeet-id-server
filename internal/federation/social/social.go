@@ -158,11 +158,12 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID) error {
 	return nil
 }
 
-// ListIdentitiesForUser is the self-service variant of ListIdentities: scoped to
-// the caller's own account across tenants, so an org-less user can review their
-// linked social logins.
+// ListIdentitiesForUser returns the caller's connected social accounts. Console
+// accounts are tenant-less, so this reads the platform identities table (which
+// platform sign-in and the link flow populate) rather than the tenant-scoped
+// "user".external_identities.
 func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ExternalIdentity, error) {
-	rows, err := s.q.ListExternalIdentitiesForUser(ctx, userID)
+	rows, err := s.q.ListPlatformSocialIdentitiesForUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +172,6 @@ func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) (
 		out[i] = ExternalIdentity{
 			ID:       r.ID,
 			UserID:   r.UserID,
-			TenantID: r.TenantID,
 			Provider: r.Provider,
 			Subject:  r.Subject,
 			Email:    r.Email,
@@ -181,9 +181,9 @@ func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) (
 	return out, nil
 }
 
-// UnlinkForUser unlinks a social identity scoped to its owner (not a tenant).
+// UnlinkForUser removes one of the caller's connected platform social accounts.
 func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID) error {
-	n, err := s.q.DeleteExternalIdentityForUser(ctx, dbgen.DeleteExternalIdentityForUserParams{
+	n, err := s.q.DeletePlatformSocialIdentityForUser(ctx, dbgen.DeletePlatformSocialIdentityForUserParams{
 		ID:     id,
 		UserID: userID,
 	})
@@ -518,6 +518,10 @@ func (h *Handler) Mount(r chi.Router) {
 	// account, so a user who signed up via Google can see/unlink it pre-org.
 	r.Get("/me/social/identities", h.listMyIdentities)
 	r.Delete("/me/social/identities/{id}", h.unlinkMine)
+	// Authenticated "connect this provider to my account" — returns the provider
+	// authorize URL for the browser to navigate to. The callback links the
+	// identity to the caller (never creates/switches accounts).
+	r.Post("/social/{provider}/link/start", h.linkStart)
 }
 
 // MountPublic mounts the browser-facing OAuth ceremony, which carries no JWT.
@@ -641,6 +645,29 @@ func (h *Handler) listMyIdentities(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
+// linkStart begins an authenticated link ceremony: it stashes the caller in the
+// OAuth state and returns the provider's authorize URL for the browser to
+// navigate to. Unlike /social/{provider}/start (public login), the callback for
+// this ceremony attaches the identity to the caller instead of logging in.
+func (h *Handler) linkStart(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	provider := chi.URLParam(r, "provider")
+	if !h.Service.PlatformProviderEnabled(provider) {
+		httpx.WriteError(w, r, errs.ErrSocialProviderNotConfigured)
+		return
+	}
+	authURL, err := h.Service.BeginPlatformLink(r.Context(), provider, callbackURL(r, provider), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"authorize_url": authURL})
+}
+
 // unlinkMine removes a social login from the caller's own account.
 func (h *Handler) unlinkMine(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
@@ -720,9 +747,21 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	// /sign-in with a one-time code to exchange. Fall through to the tenant flow
 	// only when the state isn't a platform state.
 	if h.Service.PlatformProviderEnabled(provider) {
-		rawCode, perr := h.Service.CompletePlatformCallback(r.Context(), provider, state, code)
+		res, perr := h.Service.CompletePlatformCallback(r.Context(), provider, state, code)
 		if perr == nil {
-			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_code="+url.QueryEscape(rawCode), http.StatusFound)
+			if res.Linked {
+				// Authenticated link ceremony: no session issued — return to the
+				// account page where the newly-connected provider now shows.
+				http.Redirect(w, r, h.Service.appBaseURL+"/account/security?linked="+url.QueryEscape(res.Provider), http.StatusFound)
+			} else {
+				http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_code="+url.QueryEscape(res.LoginCode), http.StatusFound)
+			}
+			return
+		}
+		// A link that collided with another account: send the user back to the
+		// account page with a clear error rather than the login app.
+		if errors.Is(perr, errs.ErrSocialAlreadyLinked) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/account/security?link_error=already_linked", http.StatusFound)
 			return
 		}
 		if !errors.Is(perr, errs.ErrSocialStateInvalid) {

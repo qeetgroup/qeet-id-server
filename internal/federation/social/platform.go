@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -66,18 +67,38 @@ func (s *Service) PlatformProviderNames() []string {
 	return out
 }
 
+// linkArg maps a link user id to a nullable bind: uuid.Nil (an ordinary
+// login/signup ceremony) becomes SQL NULL.
+func linkArg(id uuid.UUID) *uuid.UUID {
+	if id == uuid.Nil {
+		return nil
+	}
+	return &id
+}
+
 // BeginPlatformLogin persists PKCE state and returns the provider authorization
 // URL for a tenant-less console sign-in.
 func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI string) (string, error) {
+	return s.beginPlatform(ctx, provider, redirectURI, uuid.Nil)
+}
+
+// BeginPlatformLink starts an authenticated "connect this provider to my
+// account" ceremony. The callback attaches the resulting identity to userID
+// instead of logging in / creating an account — the account-page link flow.
+func (s *Service) BeginPlatformLink(ctx context.Context, provider, redirectURI string, userID uuid.UUID) (string, error) {
+	return s.beginPlatform(ctx, provider, redirectURI, userID)
+}
+
+func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI string, linkUserID uuid.UUID) (string, error) {
 	pc, ok := s.platform[provider]
 	if !ok {
 		return "", errs.ErrSocialProviderNotConfigured
 	}
 	if pc.kind == "github" {
-		return s.beginGitHubLogin(ctx, provider, pc, redirectURI)
+		return s.beginGitHubLogin(ctx, provider, pc, redirectURI, linkUserID)
 	}
 	if pc.kind == "apple" {
-		return s.beginAppleLogin(ctx, provider, pc, redirectURI)
+		return s.beginAppleLogin(ctx, provider, pc, redirectURI, linkUserID)
 	}
 	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 	if err != nil {
@@ -92,9 +113,9 @@ func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI 
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at)
-		VALUES ($1, $2, $3, $4, $5)`,
-		stateHash, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL),
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		stateHash, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID),
 	); err != nil {
 		return "", err
 	}
@@ -117,15 +138,15 @@ func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI 
 // beginGitHubLogin starts GitHub's OAuth authorize flow — no OIDC discovery and
 // no PKCE (GitHub OAuth Apps don't support it), so state is stored with an empty
 // verifier.
-func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string) (string, error) {
+func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID) (string, error) {
 	state, stateHash, err := codes.URLToken()
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at)
-		VALUES ($1, $2, '', $3, $4)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL),
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
+		VALUES ($1, $2, '', $3, $4, $5)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID),
 	); err != nil {
 		return "", err
 	}
@@ -141,15 +162,15 @@ func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc prov
 
 // beginAppleLogin starts Sign in with Apple. Requesting name/email forces
 // response_mode=form_post, so Apple returns to the callback via POST.
-func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string) (string, error) {
+func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID) (string, error) {
 	state, stateHash, err := codes.URLToken()
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at)
-		VALUES ($1, $2, '', $3, $4)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL),
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
+		VALUES ($1, $2, '', $3, $4, $5)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID),
 	); err != nil {
 		return "", err
 	}
@@ -164,17 +185,36 @@ func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc provi
 	return appleAuthorizeURL + "?" + q.Encode(), nil
 }
 
-// CompletePlatformCallback consumes the state, exchanges the code, resolves or
-// creates the tenant-less user by global email, and mints a one-time login code
-// the SPA trades for a session. Returns ErrSocialStateInvalid when the state
-// isn't a platform state, so the caller can fall back to the tenant flow.
-func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state, code string) (string, error) {
+// PlatformCallbackResult is the outcome of a platform OAuth callback: a login
+// ceremony yields a one-time LoginCode the SPA trades for a session; an
+// authenticated link ceremony sets Linked (no session is issued).
+type PlatformCallbackResult struct {
+	LoginCode string
+	Linked    bool
+	Provider  string
+}
+
+func emailPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// CompletePlatformCallback consumes the state and exchanges the code. For a
+// login ceremony it resolves/creates the tenant-less user by global email,
+// records the connected identity, and mints a one-time login code. For a link
+// ceremony (state carried a link_user_id) it attaches the identity to *that*
+// user without creating or switching accounts — refusing an identity already
+// linked to someone else. Returns ErrSocialStateInvalid when the state isn't a
+// platform state, so the caller can fall back to the tenant flow.
+func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state, code string) (*PlatformCallbackResult, error) {
 	if state == "" || code == "" {
-		return "", errs.ErrSocialCallbackParamsMissing
+		return nil, errs.ErrSocialCallbackParamsMissing
 	}
 	pc, ok := s.platform[provider]
 	if !ok {
-		return "", errs.ErrSocialProviderNotConfigured
+		return nil, errs.ErrSocialProviderNotConfigured
 	}
 	stateHash := codes.Hash(state)
 
@@ -182,75 +222,111 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 	var (
 		gotProvider, verifier, redirectURI string
 		expiresAt                          time.Time
+		linkUserID                         *uuid.UUID
 	)
 	err := s.pool.QueryRow(ctx, `
 		DELETE FROM auth.platform_social_states WHERE state_hash = $1
-		RETURNING provider, code_verifier, redirect_uri, expires_at`, stateHash,
-	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt)
+		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id`, stateHash,
+	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", errs.ErrSocialStateInvalid
+		return nil, errs.ErrSocialStateInvalid
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if gotProvider != provider {
-		return "", errs.ErrSocialProviderMismatch
+		return nil, errs.ErrSocialProviderMismatch
 	}
 	if time.Now().After(expiresAt) {
-		return "", errs.ErrSocialStateExpired
+		return nil, errs.ErrSocialStateExpired
 	}
 
 	var ui userInfo
 	if pc.kind == "github" {
 		accessToken, err := s.oauth.githubExchange(ctx, pc.clientID, pc.clientSecret, code, redirectURI)
 		if err != nil {
-			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
 		if ui, err = s.oauth.githubUserinfo(ctx, accessToken); err != nil {
-			return "", errs.ErrSocialUserinfoFailed.Wrap(err)
+			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 		}
 	} else if pc.kind == "apple" {
 		secret, err := appleClientSecret(pc.clientID, pc.teamID, pc.keyID, pc.privateKey)
 		if err != nil {
-			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
 		if ui, err = s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI); err != nil {
-			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
 	} else {
 		doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 		if err != nil {
-			return "", errs.ErrSocialDiscoveryFailed.Wrap(err)
+			return nil, errs.ErrSocialDiscoveryFailed.Wrap(err)
 		}
 		accessToken, err := s.oauth.exchange(ctx, doc, pc.clientID, pc.clientSecret, code, redirectURI, verifier)
 		if err != nil {
-			return "", errs.ErrSocialTokenExchangeFailed.Wrap(err)
+			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
 		if ui, err = s.oauth.userinfo(ctx, doc, accessToken); err != nil {
-			return "", errs.ErrSocialUserinfoFailed.Wrap(err)
+			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 		}
 	}
 	if ui.Email == "" {
-		return "", errs.ErrSocialEmailMissing
+		return nil, errs.ErrSocialEmailMissing
 	}
 
+	// Link ceremony: attach the identity to the initiating user. Never create or
+	// switch accounts; refuse an identity already linked to a different user.
+	if linkUserID != nil {
+		owner, oerr := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
+			Provider: provider,
+			Subject:  ui.Subject,
+		})
+		if oerr != nil && !errors.Is(oerr, pgx.ErrNoRows) {
+			return nil, oerr
+		}
+		if oerr == nil && owner != *linkUserID {
+			return nil, errs.ErrSocialAlreadyLinked
+		}
+		if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
+			UserID:   *linkUserID,
+			Provider: provider,
+			Subject:  ui.Subject,
+			Email:    emailPtr(ui.Email),
+		}); err != nil {
+			return nil, err
+		}
+		return &PlatformCallbackResult{Linked: true, Provider: provider}, nil
+	}
+
+	// Login / signup ceremony.
 	userID, err := s.findOrCreatePlatformUser(ctx, ui)
 	if err != nil {
-		return "", err
+		return nil, err
+	}
+	// Record the identity so the account shows this provider as connected — and
+	// so a provider the user already signs in with can't be "linked" again.
+	if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
+		UserID:   userID,
+		Provider: provider,
+		Subject:  ui.Subject,
+		Email:    emailPtr(ui.Email),
+	}); err != nil {
+		return nil, err
 	}
 
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if _, err := s.pool.Exec(ctx, `
 		INSERT INTO auth.platform_social_codes (code_hash, user_id, expires_at)
 		VALUES ($1, $2, $3)`,
 		codeHash, userID, time.Now().UTC().Add(socialCodeTTL),
 	); err != nil {
-		return "", err
+		return nil, err
 	}
-	return rawCode, nil
+	return &PlatformCallbackResult{LoginCode: rawCode, Provider: provider}, nil
 }
 
 // findOrCreatePlatformUser resolves a tenant-less Qeet ID user by globally-unique

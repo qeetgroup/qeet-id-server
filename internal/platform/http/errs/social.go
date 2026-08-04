@@ -22,6 +22,7 @@ const (
 	CodeSocialLoginCodeInvalid      = "social.login_code_invalid"
 	CodeSocialLoginCodeUsed         = "social.login_code_used"
 	CodeSocialLoginCodeExpired      = "social.login_code_expired"
+	CodeSocialAlreadyLinked         = "social.already_linked"
 )
 
 // Social-login errors. The Message is what the end user sees. Transient upstream
@@ -45,4 +46,5 @@ var (
 	ErrSocialLoginCodeInvalid      = New(CodeSocialLoginCodeInvalid, "That sign-in code is invalid. Please start again.").AsRetryable()
 	ErrSocialLoginCodeUsed         = New(CodeSocialLoginCodeUsed, "That sign-in code has already been used. Please start again.")
 	ErrSocialLoginCodeExpired      = New(CodeSocialLoginCodeExpired, "That sign-in code has expired. Please start again.").AsRetryable()
+	ErrSocialAlreadyLinked         = New(CodeSocialAlreadyLinked, "That account is already linked to a different Qeet ID.")
 )
