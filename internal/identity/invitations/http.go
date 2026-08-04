@@ -24,12 +24,19 @@ type Handler struct {
 	Validate    *validator.Validate
 }
 
-// MountAuthed mounts the admin-side CRUD that requires authentication.
+// MountAuthed mounts the admin-side CRUD that requires authentication, plus the
+// invitee-facing self-service accept for a user who is already signed in.
 func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/invites", h.create)
 	r.Get("/tenants/{tenantID}/invites", h.list)
 	r.Post("/invites/{id}/resend", h.resend)
 	r.Delete("/invites/{id}", h.revoke)
+	// Self-service (possibly org-less): discover pending invites addressed to
+	// my email, and accept one — by token (email link) or by id (from the
+	// inbox) — joining with my existing account.
+	r.Get("/me/invites", h.listMine)
+	r.Post("/me/invites/accept", h.acceptAuthenticated)
+	r.Post("/me/invites/{id}/accept", h.acceptMineByID)
 }
 
 // MountPublic mounts the invitee-facing accept endpoint.
@@ -135,6 +142,80 @@ func (h *Handler) accept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.Service.Accept(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pair, err := h.AuthService.IssuePair(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(), "invite_accept")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+// listMine returns pending invitations addressed to the signed-in user's email.
+func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	items, err := h.Service.ListForUser(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// acceptMineByID accepts a pending invite chosen from the caller's inbox.
+func (h *Handler) acceptMineByID(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	res, err := h.Service.AcceptAuthenticatedByID(r.Context(), *p.UserID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	pair, err := h.AuthService.IssuePair(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(), "invite_accept")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+type acceptAuthedInput struct {
+	Token string `json:"token" validate:"required"`
+}
+
+// acceptAuthenticated joins the caller's existing account to the invited tenant
+// and returns a tenant-scoped token pair so the client can switch straight in.
+func (h *Handler) acceptAuthenticated(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in acceptAuthedInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	res, err := h.Service.AcceptAuthenticated(r.Context(), *p.UserID, in.Token)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

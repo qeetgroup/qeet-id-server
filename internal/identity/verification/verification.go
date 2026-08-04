@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -100,6 +101,90 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// StartEmailChange sends a verification code to a *new* address the user wants
+// to move to. It pre-checks that no other account already owns that address
+// (email is globally unique) and sends the code to the new address, since that's
+// the one whose control we're proving.
+func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEmail string) error {
+	newEmail = strings.TrimSpace(newEmail)
+	if newEmail == "" {
+		return errs.ErrVerifyNoEmail
+	}
+	taken, err := s.q.EmailTakenByOther(ctx, dbgen.EmailTakenByOtherParams{
+		Email:  newEmail,
+		UserID: userID,
+	})
+	if err != nil {
+		return err
+	}
+	if taken {
+		return errs.ErrEmailTaken
+	}
+	code, err := codes.Numeric(6)
+	if err != nil {
+		return err
+	}
+	if err := s.q.InsertEmailVerification(ctx, dbgen.InsertEmailVerificationParams{
+		UserID:    userID,
+		Email:     newEmail,
+		CodeHash:  codes.Hash(code),
+		ExpiresAt: time.Now().UTC().Add(s.ttl),
+	}); err != nil {
+		return err
+	}
+	return s.sender.Send(ctx, notifier.Message{
+		Channel: "email",
+		To:      newEmail,
+		Subject: "Confirm your new email",
+		Body:    fmt.Sprintf("Your email-change code is %s. It expires in %s.", code, s.ttl),
+	})
+}
+
+// ConfirmEmailChange verifies the code sent to the new address and swaps it onto
+// the user (marking it verified). Returns the new email on success. A unique
+// violation (address claimed between start and confirm) maps to ErrEmailTaken.
+func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code string) (string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+
+	row, err := qtx.GetLatestEmailChange(ctx, dbgen.GetLatestEmailChangeParams{
+		UserID:   userID,
+		CodeHash: codes.Hash(code),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errs.ErrVerifyCodeInvalid
+		}
+		return "", err
+	}
+	if row.UsedAt.Valid {
+		return "", errs.ErrVerifyCodeUsed
+	}
+	if time.Now().After(row.ExpiresAt) {
+		return "", errs.ErrVerifyCodeExpired
+	}
+	if err := qtx.MarkEmailVerificationUsed(ctx, row.ID); err != nil {
+		return "", err
+	}
+	if _, err := qtx.UpdateUserEmail(ctx, dbgen.UpdateUserEmailParams{
+		Email:  row.Email,
+		UserID: userID,
+	}); err != nil {
+		if pgxerr.IsUnique(err) {
+			return "", errs.ErrEmailTaken
+		}
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return row.Email, nil
 }
 
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {

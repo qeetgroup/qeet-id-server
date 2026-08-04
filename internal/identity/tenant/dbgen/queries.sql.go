@@ -159,6 +159,19 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (Ten
 	return i, err
 }
 
+const isEmailVerified = `-- name: IsEmailVerified :one
+SELECT (email_verified_at IS NOT NULL)::boolean FROM "user".users WHERE id = $1
+`
+
+// IsEmailVerified reports whether the given user has a verified email — the
+// gate for self-serve org creation.
+func (q *Queries) IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isEmailVerified, userID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listTenantsForUser = `-- name: ListTenantsForUser :many
 
 SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at FROM tenant.tenants

@@ -13,6 +13,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const findUserIDByEmail = `-- name: FindUserIDByEmail :one
+SELECT id FROM "user".users WHERE email = $1
+`
+
+// FindUserIDByEmail resolves an existing account by its (globally-unique) email;
+// pgx.ErrNoRows means no account exists yet. Used by Accept to branch between
+// creating a new user and attaching a membership to an existing one.
+func (q *Queries) FindUserIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, findUserIDByEmail, email)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const getInviteByIDForAccept = `-- name: GetInviteByIDForAccept :one
+SELECT id, tenant_id, email, role_id, status, expires_at
+FROM tenant.invites
+WHERE id = $1
+FOR UPDATE
+`
+
+type GetInviteByIDForAcceptRow struct {
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	Email     string
+	RoleID    pgtype.UUID
+	Status    string
+	ExpiresAt time.Time
+}
+
+// GetInviteByIDForAccept is the by-id counterpart used by the in-app "accept
+// from my inbox" flow (the caller never sees the raw token).
+func (q *Queries) GetInviteByIDForAccept(ctx context.Context, id uuid.UUID) (GetInviteByIDForAcceptRow, error) {
+	row := q.db.QueryRow(ctx, getInviteByIDForAccept, id)
+	var i GetInviteByIDForAcceptRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.RoleID,
+		&i.Status,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const getInviteForAccept = `-- name: GetInviteForAccept :one
 SELECT id, tenant_id, email, role_id, status, expires_at
 FROM tenant.invites
@@ -45,6 +91,38 @@ func (q *Queries) GetInviteForAccept(ctx context.Context, tokenHash string) (Get
 	return i, err
 }
 
+const getUserEmailByID = `-- name: GetUserEmailByID :one
+SELECT email FROM "user".users WHERE id = $1
+`
+
+// GetUserEmailByID returns the caller's email so an authenticated accept can
+// confirm the invite was addressed to them.
+func (q *Queries) GetUserEmailByID(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getUserEmailByID, userID)
+	var email string
+	err := row.Scan(&email)
+	return email, err
+}
+
+const grantUserRole = `-- name: GrantUserRole :exec
+INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING
+`
+
+type GrantUserRoleParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	RoleID   uuid.UUID
+}
+
+// GrantUserRole attaches a tenant membership idempotently: re-accepting or a
+// duplicate role grant is a no-op rather than a PK violation.
+func (q *Queries) GrantUserRole(ctx context.Context, arg GrantUserRoleParams) error {
+	_, err := q.db.Exec(ctx, grantUserRole, arg.UserID, arg.TenantID, arg.RoleID)
+	return err
+}
+
 const insertInvite = `-- name: InsertInvite :one
 
 INSERT INTO tenant.invites (tenant_id, email, role_id, invited_by, token_hash, expires_at)
@@ -74,8 +152,8 @@ type InsertInviteRow struct {
 
 // Queries for the invitations domain.
 // Static queries against tenant.invites live here and are compiled by sqlc into ./dbgen.
-// Cross-context writes inside Accept (user.users, auth.password_credentials,
-// rbac.user_roles) intentionally remain hand-written on the same pgx.Tx.
+// The cross-context writes inside Accept (user.users, auth.password_credentials,
+// rbac.user_roles) also go through sqlc — run on the same pgx.Tx via q.WithTx(tx).
 func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (InsertInviteRow, error) {
 	row := q.db.QueryRow(ctx, insertInvite,
 		arg.TenantID,
@@ -97,6 +175,41 @@ func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) (Ins
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const insertInviteCredential = `-- name: InsertInviteCredential :exec
+INSERT INTO auth.password_credentials (user_id, password_hash) VALUES ($1, $2)
+`
+
+type InsertInviteCredentialParams struct {
+	UserID       uuid.UUID
+	PasswordHash string
+}
+
+func (q *Queries) InsertInviteCredential(ctx context.Context, arg InsertInviteCredentialParams) error {
+	_, err := q.db.Exec(ctx, insertInviteCredential, arg.UserID, arg.PasswordHash)
+	return err
+}
+
+const insertInvitedUser = `-- name: InsertInvitedUser :one
+INSERT INTO "user".users (tenant_id, email, display_name, status, email_verified_at)
+VALUES ($1, $2, NULLIF($3, ''), 'active', NOW())
+RETURNING id
+`
+
+type InsertInvitedUserParams struct {
+	TenantID    pgtype.UUID
+	Email       string
+	DisplayName interface{}
+}
+
+// InsertInvitedUser creates a brand-new invited account (no prior user). The
+// invited email is pre-verified (they proved control by receiving the link).
+func (q *Queries) InsertInvitedUser(ctx context.Context, arg InsertInvitedUserParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertInvitedUser, arg.TenantID, arg.Email, arg.DisplayName)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const listInvites = `-- name: ListInvites :many
@@ -147,6 +260,59 @@ func (q *Queries) ListInvites(ctx context.Context, tenantID uuid.UUID) ([]ListIn
 	return items, nil
 }
 
+const listInvitesForEmail = `-- name: ListInvitesForEmail :many
+SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
+       t.name AS tenant_name, t.slug AS tenant_slug
+FROM tenant.invites i
+JOIN tenant.tenants t ON t.id = i.tenant_id
+WHERE i.email = $1 AND i.status = 'pending' AND i.expires_at > NOW()
+ORDER BY i.created_at DESC
+LIMIT 50
+`
+
+type ListInvitesForEmailRow struct {
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	Email      string
+	RoleID     pgtype.UUID
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
+	TenantName string
+	TenantSlug string
+}
+
+// ListInvitesForEmail returns the pending, unexpired invites addressed to a
+// signed-in user's email, with the inviting org's display name — the "pending
+// invitations" inbox for a user who may not belong to any org yet.
+func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]ListInvitesForEmailRow, error) {
+	rows, err := q.db.Query(ctx, listInvitesForEmail, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListInvitesForEmailRow{}
+	for rows.Next() {
+		var i ListInvitesForEmailRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Email,
+			&i.RoleID,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.TenantName,
+			&i.TenantSlug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markInviteAccepted = `-- name: MarkInviteAccepted :exec
 UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
 `
@@ -165,6 +331,55 @@ func (q *Queries) MarkInviteExpired(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const regenerateInvite = `-- name: RegenerateInvite :one
+UPDATE tenant.invites
+SET token_hash = $3, expires_at = $4, status = 'pending'
+WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'expired')
+RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
+`
+
+type RegenerateInviteParams struct {
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	TokenHash string
+	ExpiresAt time.Time
+}
+
+type RegenerateInviteRow struct {
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	Email      string
+	RoleID     pgtype.UUID
+	Status     string
+	ExpiresAt  time.Time
+	AcceptedAt pgtype.Timestamptz
+	CreatedAt  time.Time
+}
+
+// RegenerateInvite rotates the token + extends the expiry for a resend (a fresh
+// link; the old one stops working). Also revives an expired invite back to
+// pending. Accepted/revoked invites are left untouched (0 rows).
+func (q *Queries) RegenerateInvite(ctx context.Context, arg RegenerateInviteParams) (RegenerateInviteRow, error) {
+	row := q.db.QueryRow(ctx, regenerateInvite,
+		arg.ID,
+		arg.TenantID,
+		arg.TokenHash,
+		arg.ExpiresAt,
+	)
+	var i RegenerateInviteRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.RoleID,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.AcceptedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const revokeInvite = `-- name: RevokeInvite :execrows
 UPDATE tenant.invites SET status = 'revoked'
 WHERE id = $1 AND tenant_id = $2 AND status = 'pending'
@@ -181,37 +396,4 @@ func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const regenerateInvite = `-- name: RegenerateInvite :one
-UPDATE tenant.invites
-SET token_hash = $3, expires_at = $4, status = 'pending'
-WHERE id = $1 AND tenant_id = $2 AND status IN ('pending', 'expired')
-RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
-`
-
-type RegenerateInviteParams struct {
-	ID        uuid.UUID
-	TenantID  uuid.UUID
-	TokenHash string
-	ExpiresAt time.Time
-}
-
-// RegenerateInvite rotates the token + expiry for a resend. Returns the same
-// shape as InsertInvite; 0 rows (pgx.ErrNoRows) when the invite isn't
-// pending/expired for this tenant.
-func (q *Queries) RegenerateInvite(ctx context.Context, arg RegenerateInviteParams) (InsertInviteRow, error) {
-	row := q.db.QueryRow(ctx, regenerateInvite, arg.ID, arg.TenantID, arg.TokenHash, arg.ExpiresAt)
-	var i InsertInviteRow
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Email,
-		&i.RoleID,
-		&i.Status,
-		&i.ExpiresAt,
-		&i.AcceptedAt,
-		&i.CreatedAt,
-	)
-	return i, err
 }

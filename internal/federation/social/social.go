@@ -158,6 +158,44 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID) error {
 	return nil
 }
 
+// ListIdentitiesForUser is the self-service variant of ListIdentities: scoped to
+// the caller's own account across tenants, so an org-less user can review their
+// linked social logins.
+func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ExternalIdentity, error) {
+	rows, err := s.q.ListExternalIdentitiesForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ExternalIdentity, len(rows))
+	for i, r := range rows {
+		out[i] = ExternalIdentity{
+			ID:       r.ID,
+			UserID:   r.UserID,
+			TenantID: r.TenantID,
+			Provider: r.Provider,
+			Subject:  r.Subject,
+			Email:    r.Email,
+			LinkedAt: r.LinkedAt,
+		}
+	}
+	return out, nil
+}
+
+// UnlinkForUser unlinks a social identity scoped to its owner (not a tenant).
+func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID) error {
+	n, err := s.q.DeleteExternalIdentityForUser(ctx, dbgen.DeleteExternalIdentityForUserParams{
+		ID:     id,
+		UserID: userID,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrNotFound
+	}
+	return nil
+}
+
 const (
 	socialStateTTL = 10 * time.Minute
 	socialCodeTTL  = 2 * time.Minute
@@ -476,6 +514,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/social/providers", h.listProviders)
 	r.Get("/users/{userID}/social/identities", h.listIdentities)
 	r.Delete("/social/identities/{id}", h.unlink)
+	// Self-service (tenant-independent): manage the social logins on my own
+	// account, so a user who signed up via Google can see/unlink it pre-org.
+	r.Get("/me/social/identities", h.listMyIdentities)
+	r.Delete("/me/social/identities/{id}", h.unlinkMine)
 }
 
 // MountPublic mounts the browser-facing OAuth ceremony, which carries no JWT.
@@ -578,6 +620,40 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Service.Unlink(r.Context(), id, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listMyIdentities lists the social logins on the caller's own account (no tenant).
+func (h *Handler) listMyIdentities(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	out, err := h.Service.ListIdentitiesForUser(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// unlinkMine removes a social login from the caller's own account.
+func (h *Handler) unlinkMine(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	if err := h.Service.UnlinkForUser(r.Context(), id, *p.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

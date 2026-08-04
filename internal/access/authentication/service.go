@@ -964,21 +964,22 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
 // admin/API-driven revoke of another session — same call, same effect).
 // Idempotent: revoking an already-revoked or nonexistent session is a no-op,
 // not an error.
-func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {
-	var userID uuid.UUID
-	var tenantID *uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		UPDATE auth.sessions SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL
-		RETURNING user_id, tenant_id
-	`, sessionID).Scan(&userID, &tenantID)
+// Logout revokes a session, scoped to its owner: a caller can only revoke a
+// session that belongs to them (userID), so passing another user's session id
+// is a no-op rather than a cross-user takedown.
+func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error {
+	tenantID, err := s.q.RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
+		SessionID: sessionID,
+		UserID:    userID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if tenantID != nil {
-		s.emit(ctx, *tenantID, "session.revoked", map[string]any{
+	if tenantID.Valid {
+		s.emit(ctx, tenantID.Bytes, "session.revoked", map[string]any{
 			"user_id":    userID,
 			"session_id": sessionID,
 			"reason":     "logout",
@@ -986,6 +987,33 @@ func (s *Service) Logout(ctx context.Context, sessionID uuid.UUID) error {
 		})
 	}
 	return nil
+}
+
+// ChangePassword swaps a signed-in user's password after re-verifying their
+// current one. Tenant-independent, so an org-less user can rotate their
+// password without the emailed reset flow. Runs the breached-password gate on
+// the new secret (no-op when the checker is disabled).
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error {
+	hash, err := s.users.PasswordHash(ctx, userID)
+	if err != nil {
+		return err
+	}
+	// Empty hash = no password credential (e.g. passkey/social-only account):
+	// the current-password check can't pass, so treat it as a failed re-auth.
+	if hash == "" || !password.Verify(hash, current) {
+		return errs.ErrAuthInvalidCredentials
+	}
+	if s.breach.PwnedAllowOnError(ctx, next) {
+		return errs.ErrAuthPasswordBreached
+	}
+	nh, err := password.Hash(next)
+	if err != nil {
+		return err
+	}
+	return s.q.UpdatePasswordCredentialHash(ctx, dbgen.UpdatePasswordCredentialHashParams{
+		PasswordHash: nh,
+		UserID:       userID,
+	})
 }
 
 type Session struct {

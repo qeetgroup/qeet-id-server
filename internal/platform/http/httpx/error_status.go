@@ -52,11 +52,15 @@ var statusByCode = map[string]int{
 	errs.CodeVerifyCodeInvalid: http.StatusBadRequest,
 	errs.CodeVerifyCodeUsed:    http.StatusBadRequest,
 	errs.CodeVerifyCodeExpired: http.StatusBadRequest,
+	errs.CodeEmailNotVerified:  http.StatusForbidden,
+	errs.CodeEmailTaken:        http.StatusConflict,
 
 	// Invitations.
-	errs.CodeInviteLinkInvalid: http.StatusBadRequest,
-	errs.CodeInviteInvalid:     http.StatusBadRequest,
-	errs.CodeInviteExpired:     http.StatusBadRequest,
+	errs.CodeInviteLinkInvalid:   http.StatusBadRequest,
+	errs.CodeInviteInvalid:       http.StatusBadRequest,
+	errs.CodeInviteExpired:       http.StatusBadRequest,
+	errs.CodeInviteAccountExists: http.StatusConflict,
+	errs.CodeInviteEmailMismatch: http.StatusForbidden,
 
 	// Passkeys.
 	errs.CodePasskeyExists:      http.StatusConflict,

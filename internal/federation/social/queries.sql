@@ -25,6 +25,21 @@ ORDER BY ei.linked_at DESC;
 -- name: DeleteExternalIdentity :execrows
 DELETE FROM "user".external_identities WHERE id = @id AND tenant_id = @tenant_id;
 
+-- ListExternalIdentitiesForUser is the self-service variant: scoped to the
+-- caller's own user id across every tenant, so an org-less user can still see
+-- the social logins linked to their account.
+-- name: ListExternalIdentitiesForUser :many
+SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+FROM "user".external_identities ei
+JOIN "user".users u ON u.id = ei.user_id
+WHERE ei.user_id = @user_id AND u.deleted_at IS NULL
+ORDER BY ei.linked_at DESC;
+
+-- DeleteExternalIdentityForUser unlinks scoped to the owner (not a tenant), so
+-- a user can remove their own social login before joining any org.
+-- name: DeleteExternalIdentityForUser :execrows
+DELETE FROM "user".external_identities WHERE id = @id AND user_id = @user_id;
+
 -- name: GetTenantIDBySlug :one
 SELECT id FROM tenant.tenants WHERE slug = @slug;
 

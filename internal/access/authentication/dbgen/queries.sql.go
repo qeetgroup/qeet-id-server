@@ -229,6 +229,27 @@ func (q *Queries) RevokeSessionById(ctx context.Context, sessionID uuid.UUID) er
 	return err
 }
 
+const revokeSessionForUser = `-- name: RevokeSessionForUser :one
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+RETURNING tenant_id
+`
+
+type RevokeSessionForUserParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// Revokes a session scoped to its owner and returns the (nullable) tenant for
+// event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
+// or was already revoked — a safe no-op, never a cross-user takedown.
+func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
+	var tenant_id pgtype.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
+}
+
 const touchTrustedDevice = `-- name: TouchTrustedDevice :execrows
 UPDATE auth.trusted_devices SET last_used_at = NOW()
 WHERE token_hash = $1 AND user_id = $2 AND expires_at > NOW()

@@ -30,6 +30,31 @@ FOR UPDATE;
 -- name: MarkEmailVerificationUsed :exec
 UPDATE "user".email_verifications SET used_at = NOW() WHERE id = $1;
 
+-- EmailTakenByOther reports whether an email already belongs to a *different*
+-- account (email is globally unique) — the pre-check for an email change.
+-- name: EmailTakenByOther :one
+SELECT EXISTS(
+    SELECT 1 FROM "user".users WHERE email = @email AND id <> @user_id
+)::boolean;
+
+-- GetLatestEmailChange is like GetLatestEmailVerification but also returns the
+-- pending new email so confirm can swap it onto the user.
+-- name: GetLatestEmailChange :one
+SELECT id, email, expires_at, used_at
+FROM "user".email_verifications
+WHERE user_id = @user_id AND code_hash = @code_hash
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE;
+
+-- UpdateUserEmail swaps the user's login email and marks it verified (they just
+-- proved control of the new address). May hit the global-unique index if the
+-- address was taken between start and confirm — caller maps that to email_taken.
+-- name: UpdateUserEmail :execrows
+UPDATE "user".users
+SET email = @email, email_verified_at = NOW(), updated_at = NOW()
+WHERE id = @user_id;
+
 -- name: MarkUserEmailVerified :exec
 UPDATE "user".users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()

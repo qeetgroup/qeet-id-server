@@ -6,6 +6,11 @@
 SELECT * FROM tenant.tenants
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- IsEmailVerified reports whether the given user has a verified email — the
+-- gate for self-serve org creation.
+-- name: IsEmailVerified :one
+SELECT (email_verified_at IS NOT NULL)::boolean FROM "user".users WHERE id = @user_id;
+
 -- name: GetTenantBySlug :one
 SELECT * FROM tenant.tenants
 WHERE LOWER(slug) = LOWER(@slug) AND deleted_at IS NULL;

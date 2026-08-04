@@ -82,6 +82,25 @@ func (q *Queries) DeleteExternalIdentity(ctx context.Context, arg DeleteExternal
 	return result.RowsAffected(), nil
 }
 
+const deleteExternalIdentityForUser = `-- name: DeleteExternalIdentityForUser :execrows
+DELETE FROM "user".external_identities WHERE id = $1 AND user_id = $2
+`
+
+type DeleteExternalIdentityForUserParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// DeleteExternalIdentityForUser unlinks scoped to the owner (not a tenant), so
+// a user can remove their own social login before joining any org.
+func (q *Queries) DeleteExternalIdentityForUser(ctx context.Context, arg DeleteExternalIdentityForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExternalIdentityForUser, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const enabledSocialProviderNames = `-- name: EnabledSocialProviderNames :many
 SELECT provider FROM tenant.social_providers
 WHERE tenant_id = $1 AND enabled ORDER BY provider
@@ -278,6 +297,55 @@ func (q *Queries) ListExternalIdentities(ctx context.Context, arg ListExternalId
 	items := []ListExternalIdentitiesRow{}
 	for rows.Next() {
 		var i ListExternalIdentitiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TenantID,
+			&i.Provider,
+			&i.Subject,
+			&i.Email,
+			&i.LinkedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listExternalIdentitiesForUser = `-- name: ListExternalIdentitiesForUser :many
+SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+FROM "user".external_identities ei
+JOIN "user".users u ON u.id = ei.user_id
+WHERE ei.user_id = $1 AND u.deleted_at IS NULL
+ORDER BY ei.linked_at DESC
+`
+
+type ListExternalIdentitiesForUserRow struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	Provider string
+	Subject  string
+	Email    *string
+	LinkedAt time.Time
+}
+
+// ListExternalIdentitiesForUser is the self-service variant: scoped to the
+// caller's own user id across every tenant, so an org-less user can still see
+// the social logins linked to their account.
+func (q *Queries) ListExternalIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ListExternalIdentitiesForUserRow, error) {
+	rows, err := q.db.Query(ctx, listExternalIdentitiesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExternalIdentitiesForUserRow{}
+	for rows.Next() {
+		var i ListExternalIdentitiesForUserRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,

@@ -253,3 +253,9 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	}
 	return nil
 }
+
+// IsEmailVerified reports whether the user has a verified email — the gate for
+// self-serve org creation.
+func (r *Repository) IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return r.q.IsEmailVerified(ctx, userID)
+}

@@ -528,11 +528,30 @@ func (s *Service) completeSignupCheckout(ctx context.Context, id uuid.UUID) erro
 	// The org's plan column tracks the tier; the subscription keeps the full code
 	// (e.g. "starter_year") so its interval/price are right.
 	tier := strings.TrimSuffix(planCode, "_year")
-	tenantID, err := s.orgProvisioner.ProvisionOrg(ctx, userID, name, slug, region, tier)
-	if err != nil {
+	// The slug can be claimed between staging the checkout and this (post-payment)
+	// provisioning. If so, retry with a uniquified slug rather than reverting to
+	// pending forever — otherwise the customer is charged but the org never
+	// appears (a deterministic failure the webhook would retry endlessly).
+	var tenantID uuid.UUID
+	var provErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		trySlug := slug
+		if attempt > 0 {
+			trySlug = fmt.Sprintf("%s-%s", slug, uuid.NewString()[:6])
+		}
+		tenantID, provErr = s.orgProvisioner.ProvisionOrg(ctx, userID, name, trySlug, region, tier)
+		if provErr == nil {
+			break
+		}
+		if errors.Is(provErr, errs.ErrOrgSlugTaken) {
+			continue // slug collided since staging — try a fresh, unique slug
+		}
+		break // other (likely transient) error: fall through and revert for retry
+	}
+	if provErr != nil {
 		_, _ = s.pool.Exec(ctx,
 			`UPDATE tenant.signup_checkouts SET status = 'pending', completed_at = NULL WHERE id = $1`, id)
-		return err
+		return provErr
 	}
 
 	tx, err := s.pool.Begin(ctx)

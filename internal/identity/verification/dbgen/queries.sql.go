@@ -13,6 +13,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const emailTakenByOther = `-- name: EmailTakenByOther :one
+SELECT EXISTS(
+    SELECT 1 FROM "user".users WHERE email = $1 AND id <> $2
+)::boolean
+`
+
+type EmailTakenByOtherParams struct {
+	Email  string
+	UserID uuid.UUID
+}
+
+// EmailTakenByOther reports whether an email already belongs to a *different*
+// account (email is globally unique) — the pre-check for an email change.
+func (q *Queries) EmailTakenByOther(ctx context.Context, arg EmailTakenByOtherParams) (bool, error) {
+	row := q.db.QueryRow(ctx, emailTakenByOther, arg.Email, arg.UserID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getLatestEmailChange = `-- name: GetLatestEmailChange :one
+SELECT id, email, expires_at, used_at
+FROM "user".email_verifications
+WHERE user_id = $1 AND code_hash = $2
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
+`
+
+type GetLatestEmailChangeParams struct {
+	UserID   uuid.UUID
+	CodeHash string
+}
+
+type GetLatestEmailChangeRow struct {
+	ID        uuid.UUID
+	Email     string
+	ExpiresAt time.Time
+	UsedAt    pgtype.Timestamptz
+}
+
+// GetLatestEmailChange is like GetLatestEmailVerification but also returns the
+// pending new email so confirm can swap it onto the user.
+func (q *Queries) GetLatestEmailChange(ctx context.Context, arg GetLatestEmailChangeParams) (GetLatestEmailChangeRow, error) {
+	row := q.db.QueryRow(ctx, getLatestEmailChange, arg.UserID, arg.CodeHash)
+	var i GetLatestEmailChangeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.ExpiresAt,
+		&i.UsedAt,
+	)
+	return i, err
+}
+
 const getLatestEmailVerification = `-- name: GetLatestEmailVerification :one
 SELECT id, expires_at, used_at
 FROM "user".email_verifications
@@ -182,4 +237,26 @@ WHERE id = $1
 func (q *Queries) MarkUserPhoneVerified(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markUserPhoneVerified, id)
 	return err
+}
+
+const updateUserEmail = `-- name: UpdateUserEmail :execrows
+UPDATE "user".users
+SET email = $1, email_verified_at = NOW(), updated_at = NOW()
+WHERE id = $2
+`
+
+type UpdateUserEmailParams struct {
+	Email  string
+	UserID uuid.UUID
+}
+
+// UpdateUserEmail swaps the user's login email and marks it verified (they just
+// proved control of the new address). May hit the global-unique index if the
+// address was taken between start and confirm — caller maps that to email_taken.
+func (q *Queries) UpdateUserEmail(ctx context.Context, arg UpdateUserEmailParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateUserEmail, arg.Email, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

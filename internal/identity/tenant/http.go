@@ -70,6 +70,23 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	// Only the free plan may be self-provisioned here. Paid plans (starter/pro)
+	// must go through signup checkout so payment is captured before the org
+	// exists; enterprise is contact-sales. This closes the gap where a direct
+	// POST /v1/tenants could mint a paid org without ever paying.
+	if in.Plan != "" && in.Plan != "free" {
+		httpx.WriteError(w, r, errs.ErrBillingCheckoutRequired)
+		return
+	}
+	// Require a verified email before spinning up an org: it becomes the owner's
+	// account of record for billing, recovery, and every downstream notification.
+	if verified, err := h.Repo.IsEmailVerified(r.Context(), *p.UserID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	} else if !verified {
+		httpx.WriteError(w, r, errs.ErrEmailNotVerified)
+		return
+	}
 	// The creator becomes the tenant's owner (role + membership) in one tx.
 	t, err := h.Repo.CreateWithOwner(r.Context(), in, *p.UserID)
 	if err != nil {
