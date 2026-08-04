@@ -133,8 +133,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		payments = payments.WithSandbox(cfg.PaymentSandboxBaseURL, "sandbox-dev-secret") // dev-only fake provider; config.Validate refuses it outside dev
 	}
 	billingService.SetPayments(payments)
-	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation) // else a paid plan with no provider is refused, not granted free
-	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo})  // creates the org when a signup checkout is paid
+	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation)    // else a paid plan with no provider is refused, not granted free
+	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo}) // creates the org when a signup checkout is paid
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
@@ -422,7 +422,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
-		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService},
+		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		AuditAnomaly:  &anomaly.Handler{Service: auditAnomalyService},
 		Billing:       &billing.Handler{Service: billingService},

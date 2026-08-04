@@ -560,9 +560,18 @@ func (s *Service) ExportSelf(ctx context.Context, userID uuid.UUID) (map[string]
 	}, nil
 }
 
+// ReauthChecker re-verifies a caller's password before an irreversible action.
+// Injected from the auth service; nil disables the gate.
+type ReauthChecker interface {
+	ReauthPassword(ctx context.Context, userID uuid.UUID, plain string) (hasPassword, ok bool, err error)
+}
+
 type Handler struct {
 	Service  *Service
 	Evidence *EvidenceService
+	// Reauth gates account deletion behind a password re-prove (when the account
+	// has a password). Nil = gate off.
+	Reauth ReauthChecker
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -604,11 +613,34 @@ func (h *Handler) exportSelf(w http.ResponseWriter, r *http.Request) {
 // deleteSelf immediately erases the current user's PII + credentials and revokes
 // their sessions (self-service "delete my account"). No grace period; audit
 // references are kept redacted. The caller is signed out client-side afterwards.
+type deleteSelfInput struct {
+	Password string `json:"password"`
+}
+
 func (h *Handler) deleteSelf(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
+	}
+	// Re-prove identity before this irreversible purge: a stolen access token
+	// alone must not be enough. When the account has a password we require it;
+	// password-less (social/passkey) accounts are already strongly authenticated,
+	// so they pass on the session alone.
+	if h.Reauth != nil {
+		var in deleteSelfInput
+		_ = httpx.DecodeJSON(r, &in)
+		hasPassword, ok, err := h.Reauth.ReauthPassword(r.Context(), *p.UserID, in.Password)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if hasPassword && !ok {
+			// 400 (not 401) so the client's session-expiry handling doesn't log the
+			// user out on a mistyped confirmation password.
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithMessage("Incorrect password."))
+			return
+		}
 	}
 	if err := h.Service.PurgeSelf(r.Context(), *p.UserID); err != nil {
 		httpx.WriteError(w, r, err)

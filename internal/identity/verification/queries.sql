@@ -65,7 +65,7 @@ INSERT INTO "user".phone_verifications (user_id, phone, code_hash, expires_at)
 VALUES ($1, $2, $3, $4);
 
 -- name: GetLatestPhoneVerification :one
-SELECT id, expires_at, used_at
+SELECT id, phone, expires_at, used_at
 FROM "user".phone_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
@@ -79,3 +79,11 @@ UPDATE "user".phone_verifications SET used_at = NOW() WHERE id = $1;
 UPDATE "user".users
 SET phone_verified_at = COALESCE(phone_verified_at, NOW()), updated_at = NOW()
 WHERE id = $1;
+
+-- SetUserVerifiedPhone persists the just-verified number AND stamps the verified
+-- time. Unlike MarkUserPhoneVerified it writes users.phone and re-stamps the time
+-- (no COALESCE) — the number just changed, so its prior verification is void.
+-- name: SetUserVerifiedPhone :exec
+UPDATE "user".users
+SET phone = @phone, phone_verified_at = NOW(), updated_at = NOW()
+WHERE id = @user_id;

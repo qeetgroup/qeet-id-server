@@ -993,14 +993,15 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 // current one. Tenant-independent, so an org-less user can rotate their
 // password without the emailed reset flow. Runs the breached-password gate on
 // the new secret (no-op when the checker is disabled).
-func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error {
+func (s *Service) ChangePassword(ctx context.Context, userID, keepSessionID uuid.UUID, current, next string) error {
 	hash, err := s.users.PasswordHash(ctx, userID)
 	if err != nil {
 		return err
 	}
-	// Empty hash = no password credential (e.g. passkey/social-only account):
-	// the current-password check can't pass, so treat it as a failed re-auth.
-	if hash == "" || !password.Verify(hash, current) {
+	// If a password is already set, re-verify it. A password-less account
+	// (social / passkey signup) may SET one without a current password — the
+	// caller is already authenticated by their session.
+	if hash != "" && !password.Verify(hash, current) {
 		return errs.ErrAuthInvalidCredentials
 	}
 	if s.breach.PwnedAllowOnError(ctx, next) {
@@ -1010,10 +1011,44 @@ func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current,
 	if err != nil {
 		return err
 	}
-	return s.q.UpdatePasswordCredentialHash(ctx, dbgen.UpdatePasswordCredentialHashParams{
-		PasswordHash: nh,
-		UserID:       userID,
-	})
+	// Upsert so a password-less account gets a credential created.
+	if err := s.users.SetPassword(ctx, userID, nh); err != nil {
+		return err
+	}
+	// Invalidate every other session so a compromised one can't survive the
+	// credential rotation; keep the caller's current session signed in.
+	if _, err := s.q.RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
+		UserID:        userID,
+		KeepSessionID: keepSessionID,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+// HasPassword reports whether the user has a password credential set — lets the
+// account UI show "set a password" vs "change password".
+func (s *Service) HasPassword(ctx context.Context, userID uuid.UUID) (bool, error) {
+	hash, err := s.users.PasswordHash(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return hash != "", nil
+}
+
+// ReauthPassword re-verifies a password for a sensitive action (e.g. account
+// deletion). hasPassword=false means the account is password-less (social /
+// passkey) — the caller decides whether to require some other proof; ok reports
+// whether the supplied password matched when one is set.
+func (s *Service) ReauthPassword(ctx context.Context, userID uuid.UUID, plain string) (hasPassword, ok bool, err error) {
+	hash, herr := s.users.PasswordHash(ctx, userID)
+	if herr != nil {
+		return false, false, herr
+	}
+	if hash == "" {
+		return false, false, nil
+	}
+	return true, plain != "" && password.Verify(hash, plain), nil
 }
 
 type Session struct {

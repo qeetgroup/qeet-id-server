@@ -236,6 +236,14 @@ func NewRouter(d Deps) http.Handler {
 	userLimiter := newLimiter(30, 100)
 	apiKeyLimiter := newLimiter(50, 200)
 
+	// Tight per-user throttle for the endpoints that dispatch an SMS/email to a
+	// caller-supplied address or guess a credential (~6/min sustained, burst 5):
+	// blunts SMS toll-fraud, email-bombing, and online password guessing that the
+	// generous 30 rps/user bucket wouldn't. Applied per-route inside the handlers.
+	sensitiveThrottle := newLimiter(0.1, 5).MiddlewareBy("sensitive", ratelimit.PerUser)
+	d.Auth.Throttle = sensitiveThrottle
+	d.Verification.Throttle = sensitiveThrottle
+
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).
 		r.Group(func(r chi.Router) {

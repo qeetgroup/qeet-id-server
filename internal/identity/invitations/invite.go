@@ -344,6 +344,28 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]Received
 	return out, nil
 }
 
+// DeclineForUser dismisses a pending invitation addressed to the caller's email.
+func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID) error {
+	email, err := s.q.GetUserEmailByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.ErrUnauthorized
+		}
+		return err
+	}
+	n, err := s.q.DeclineInviteForEmail(ctx, dbgen.DeclineInviteForEmailParams{
+		ID:    inviteID,
+		Email: email,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrInviteInvalid
+	}
+	return nil
+}
+
 // pendingInvite is the minimal invite shape the authed-accept helper needs, fed
 // from either the by-token or by-id lookup (sqlc emits a distinct row type per
 // query, but they're field-identical so a direct conversion is legal).

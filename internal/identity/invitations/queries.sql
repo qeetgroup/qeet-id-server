@@ -47,6 +47,12 @@ FOR UPDATE;
 -- ListInvitesForEmail returns the pending, unexpired invites addressed to a
 -- signed-in user's email, with the inviting org's display name — the "pending
 -- invitations" inbox for a user who may not belong to any org yet.
+-- DeclineInviteForEmail lets an invitee dismiss a pending invite addressed to
+-- their own email (scoped by email so one user can't decline another's).
+-- name: DeclineInviteForEmail :execrows
+UPDATE tenant.invites SET status = 'declined'
+WHERE id = @id AND email = @email AND status = 'pending';
+
 -- name: ListInvitesForEmail :many
 SELECT i.id, i.tenant_id, i.email, i.role_id, i.expires_at, i.created_at,
        t.name AS tenant_name, t.slug AS tenant_slug

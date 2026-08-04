@@ -98,7 +98,7 @@ func (q *Queries) GetLatestEmailVerification(ctx context.Context, arg GetLatestE
 }
 
 const getLatestPhoneVerification = `-- name: GetLatestPhoneVerification :one
-SELECT id, expires_at, used_at
+SELECT id, phone, expires_at, used_at
 FROM "user".phone_verifications
 WHERE user_id = $1 AND code_hash = $2
 ORDER BY created_at DESC
@@ -113,6 +113,7 @@ type GetLatestPhoneVerificationParams struct {
 
 type GetLatestPhoneVerificationRow struct {
 	ID        uuid.UUID
+	Phone     string
 	ExpiresAt time.Time
 	UsedAt    pgtype.Timestamptz
 }
@@ -120,7 +121,12 @@ type GetLatestPhoneVerificationRow struct {
 func (q *Queries) GetLatestPhoneVerification(ctx context.Context, arg GetLatestPhoneVerificationParams) (GetLatestPhoneVerificationRow, error) {
 	row := q.db.QueryRow(ctx, getLatestPhoneVerification, arg.UserID, arg.CodeHash)
 	var i GetLatestPhoneVerificationRow
-	err := row.Scan(&i.ID, &i.ExpiresAt, &i.UsedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.Phone,
+		&i.ExpiresAt,
+		&i.UsedAt,
+	)
 	return i, err
 }
 
@@ -236,6 +242,25 @@ WHERE id = $1
 
 func (q *Queries) MarkUserPhoneVerified(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markUserPhoneVerified, id)
+	return err
+}
+
+const setUserVerifiedPhone = `-- name: SetUserVerifiedPhone :exec
+UPDATE "user".users
+SET phone = $1, phone_verified_at = NOW(), updated_at = NOW()
+WHERE id = $2
+`
+
+type SetUserVerifiedPhoneParams struct {
+	Phone  *string
+	UserID uuid.UUID
+}
+
+// SetUserVerifiedPhone persists the just-verified number AND stamps the verified
+// time. Unlike MarkUserPhoneVerified it writes users.phone and re-stamps the time
+// (no COALESCE) — the number just changed, so its prior verification is void.
+func (q *Queries) SetUserVerifiedPhone(ctx context.Context, arg SetUserVerifiedPhoneParams) error {
+	_, err := q.db.Exec(ctx, setUserVerifiedPhone, arg.Phone, arg.UserID)
 	return err
 }
 

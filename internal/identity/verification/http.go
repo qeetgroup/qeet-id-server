@@ -12,15 +12,26 @@ import (
 
 type Handler struct {
 	Service *Service
+	// Throttle wraps the message-sending routes with a tight per-user rate limit
+	// (SMS/email are attacker-controlled destinations — see email/phone start).
+	// Nil = no extra throttle.
+	Throttle func(http.Handler) http.Handler
 }
 
 func (h *Handler) Mount(r chi.Router) {
-	r.Post("/users/{id}/verify/email/start", h.startEmail)
+	// A code-sending route dispatches an SMS/email to a caller-supplied address,
+	// so it's throttled harder than the generic per-user bucket to prevent
+	// toll-fraud / bombing. Confirm routes stay on the default limiter.
+	sending := r
+	if h.Throttle != nil {
+		sending = r.With(h.Throttle)
+	}
+	sending.Post("/users/{id}/verify/email/start", h.startEmail)
 	r.Post("/users/{id}/verify/email/confirm", h.confirmEmail)
-	r.Post("/users/{id}/verify/phone/start", h.startPhone)
+	sending.Post("/users/{id}/verify/phone/start", h.startPhone)
 	r.Post("/users/{id}/verify/phone/confirm", h.confirmPhone)
 	// Self-service email change (send code to the new address, then confirm).
-	r.Post("/me/email/change/start", h.startEmailChange)
+	sending.Post("/me/email/change/start", h.startEmailChange)
 	r.Post("/me/email/change/confirm", h.confirmEmailChange)
 }
 

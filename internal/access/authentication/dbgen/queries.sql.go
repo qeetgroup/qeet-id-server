@@ -218,6 +218,27 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 	return err
 }
 
+const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :execrows
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+`
+
+type RevokeOtherSessionsForUserParams struct {
+	UserID        uuid.UUID
+	KeepSessionID uuid.UUID
+}
+
+// RevokeOtherSessionsForUser revokes all of a user's active sessions except the
+// one they're currently on — used after a password change/set so a compromised
+// session can't survive the credential rotation.
+func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOtherSessionsForUser, arg.UserID, arg.KeepSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSessionById = `-- name: RevokeSessionById :exec
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = $1 AND revoked_at IS NULL

@@ -247,7 +247,13 @@ func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code strin
 	if err := s.q.WithTx(tx).MarkPhoneVerificationUsed(ctx, row.ID); err != nil {
 		return err
 	}
-	if err := s.q.WithTx(tx).MarkUserPhoneVerified(ctx, userID); err != nil {
+	// Persist the verified number itself (not just the timestamp) so downstream
+	// SMS/OTP has a number to use and the account isn't left "verified" with a
+	// NULL phone.
+	if err := s.q.WithTx(tx).SetUserVerifiedPhone(ctx, dbgen.SetUserVerifiedPhoneParams{
+		Phone:  &row.Phone,
+		UserID: userID,
+	}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

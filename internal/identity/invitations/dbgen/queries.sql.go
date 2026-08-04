@@ -13,6 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const declineInviteForEmail = `-- name: DeclineInviteForEmail :execrows
+UPDATE tenant.invites SET status = 'declined'
+WHERE id = $1 AND email = $2 AND status = 'pending'
+`
+
+type DeclineInviteForEmailParams struct {
+	ID    uuid.UUID
+	Email string
+}
+
+// ListInvitesForEmail returns the pending, unexpired invites addressed to a
+// signed-in user's email, with the inviting org's display name — the "pending
+// invitations" inbox for a user who may not belong to any org yet.
+// DeclineInviteForEmail lets an invitee dismiss a pending invite addressed to
+// their own email (scoped by email so one user can't decline another's).
+func (q *Queries) DeclineInviteForEmail(ctx context.Context, arg DeclineInviteForEmailParams) (int64, error) {
+	result, err := q.db.Exec(ctx, declineInviteForEmail, arg.ID, arg.Email)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findUserIDByEmail = `-- name: FindUserIDByEmail :one
 SELECT id FROM "user".users WHERE email = $1
 `
@@ -281,9 +304,6 @@ type ListInvitesForEmailRow struct {
 	TenantSlug string
 }
 
-// ListInvitesForEmail returns the pending, unexpired invites addressed to a
-// signed-in user's email, with the inviting org's display name — the "pending
-// invitations" inbox for a user who may not belong to any org yet.
 func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]ListInvitesForEmailRow, error) {
 	rows, err := q.db.Query(ctx, listInvitesForEmail, email)
 	if err != nil {

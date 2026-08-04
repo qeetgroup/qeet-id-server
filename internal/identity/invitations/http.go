@@ -37,6 +37,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/me/invites", h.listMine)
 	r.Post("/me/invites/accept", h.acceptAuthenticated)
 	r.Post("/me/invites/{id}/accept", h.acceptMineByID)
+	r.Post("/me/invites/{id}/decline", h.declineMine)
 }
 
 // MountPublic mounts the invitee-facing accept endpoint.
@@ -167,6 +168,25 @@ func (h *Handler) listMine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// declineMine dismisses a pending invite from the caller's inbox.
+func (h *Handler) declineMine(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	if err := h.Service.DeclineForUser(r.Context(), *p.UserID, id); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Invitation declined."})
 }
 
 // acceptMineByID accepts a pending invite chosen from the caller's inbox.

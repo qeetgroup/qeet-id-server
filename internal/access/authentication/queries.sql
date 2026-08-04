@@ -59,6 +59,13 @@ SELECT EXISTS (
 UPDATE auth.password_credentials SET password_hash = @password_hash, updated_at = NOW()
 WHERE user_id = @user_id;
 
+-- RevokeOtherSessionsForUser revokes all of a user's active sessions except the
+-- one they're currently on — used after a password change/set so a compromised
+-- session can't survive the credential rotation.
+-- name: RevokeOtherSessionsForUser :execrows
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL;
+
 -- name: InsertRefreshToken :one
 INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
 VALUES (@session_id, @token_hash, @expires_at)

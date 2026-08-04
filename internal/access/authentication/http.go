@@ -35,6 +35,9 @@ type Handler struct {
 	// signal never fires; there is no server-side GeoIP lookup, by design (see
 	// domains/access/threat-detection/risk).
 	GeoCountryHeader string
+	// Throttle wraps sensitive self-service routes (password change/set) with a
+	// tight per-user rate limit to blunt online guessing. Nil = no extra throttle.
+	Throttle func(http.Handler) http.Handler
 }
 
 // evalBot runs the bot scorer for an auth attempt when detection is wired. The
@@ -73,7 +76,12 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/auth/sessions", h.listSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
-	r.Post("/auth/password", h.changePassword)
+	r.Get("/auth/password", h.passwordStatus)
+	if h.Throttle != nil {
+		r.With(h.Throttle).Post("/auth/password", h.changePassword)
+	} else {
+		r.Post("/auth/password", h.changePassword)
+	}
 }
 
 type signupInput struct {
@@ -363,15 +371,35 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 type changePasswordInput struct {
-	CurrentPassword string `json:"current_password" validate:"required,min=1"`
+	// Optional: required only when the account already has a password. A
+	// password-less account (social / passkey signup) omits it to SET one.
+	CurrentPassword string `json:"current_password" validate:"omitempty"`
 	NewPassword     string `json:"new_password" validate:"required,min=8,max=256"`
 }
 
-// changePassword lets a signed-in user rotate their password by re-proving the
-// current one — self-service and tenant-independent (works before any org).
-func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+// passwordStatus reports whether the caller has a password set, so the account
+// UI can offer "set a password" vs "change password".
+func (h *Handler) passwordStatus(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	has, err := h.Service.HasPassword(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"has_password": has})
+}
+
+// changePassword rotates (or sets) a signed-in user's password — self-service
+// and tenant-independent (works before any org). Re-proving the current
+// password is required only when one is already set; either way, other sessions
+// are revoked.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || p.SessionID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
@@ -386,7 +414,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.Service.ChangePassword(r.Context(), *p.UserID, in.CurrentPassword, in.NewPassword); err != nil {
+	if err := h.Service.ChangePassword(r.Context(), *p.UserID, *p.SessionID, in.CurrentPassword, in.NewPassword); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
