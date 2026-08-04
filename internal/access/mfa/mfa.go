@@ -128,6 +128,23 @@ func (s *Service) mintRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.
 	return out, nil
 }
 
+// TOTPStatus reports whether the account has a *confirmed* TOTP factor. The
+// account UI reads this on load to render an "active" state instead of
+// re-offering enrollment — re-running StartEnroll calls UpsertMFATOTP, which
+// rotates the secret and clears confirmed_at, so a stale "begin enrollment"
+// prompt could silently break a working authenticator.
+type TOTPStatus struct {
+	Enrolled bool `json:"enrolled"`
+}
+
+func (s *Service) TOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPStatus, error) {
+	ts, err := s.q.GetMFATOTPConfirmed(ctx, userID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	return &TOTPStatus{Enrolled: err == nil && ts.Valid}, nil
+}
+
 // RecoveryStatus summarises a user's backup codes for the account UI.
 type RecoveryStatus struct {
 	Enrolled  bool `json:"enrolled"` // TOTP confirmed — recovery codes back a real factor
@@ -542,6 +559,7 @@ type Handler struct {
 }
 
 func (h *Handler) Mount(r chi.Router) {
+	r.Get("/mfa/totp", h.totpStatus)
 	r.Post("/mfa/totp/enroll/start", h.startEnroll)
 	r.Post("/mfa/totp/enroll/confirm", h.confirmEnroll)
 	r.Post("/mfa/totp/verify", h.verify)
@@ -802,6 +820,20 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) totpStatus(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	st, err := h.Service.TOTPStatus(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
 func (h *Handler) recoveryStatus(w http.ResponseWriter, r *http.Request) {

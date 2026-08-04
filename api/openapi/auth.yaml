@@ -937,6 +937,37 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/totp:
+    get:
+      operationId: get_v1_mfa_totp
+      summary: TOTP status
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Reports whether the principal has a confirmed TOTP factor, so the account UI can show an active state instead of re-offering enrollment.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrolled:
+                    type: boolean
+                required:
+                  - enrolled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
     delete:
       operationId: delete_v1_mfa_totp
       summary: Disable TOTP
