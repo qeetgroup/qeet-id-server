@@ -62,6 +62,20 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			e = errs.ErrInternalServer
 		}
 	}
+	// A domain error that carries a wrapped cause attached one deliberately for
+	// diagnosis (errs.Wrap) — the cause is never serialized to the client, so log
+	// it here or it's lost. This is how e.g. passkey.attestation_invalid surfaces
+	// the underlying go-webauthn reason (origin/RPID/challenge mismatch) that the
+	// generic client message hides.
+	if cause := e.Unwrap(); cause != nil {
+		slog.Warn("request error",
+			"code", e.Code,
+			"cause", cause,
+			"path", r.URL.Path,
+			"req_id", RequestID(r),
+			"client_ip", ClientIP(r),
+		)
+	}
 	body := errorBody{}
 	body.Error.Code = e.Code
 	body.Error.Message = e.Message
