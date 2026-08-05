@@ -55,6 +55,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
@@ -92,6 +93,7 @@ type Deps struct {
 	AuditAnomaly  *anomaly.Handler
 	Billing       *billing.Handler
 	Entitlement   *entitlements.Handler
+	Sales         *sales.Handler
 	Analytics     *analytics.Handler
 	Outbox        *outbox.Handler
 	OIDC          *oidc.Handler
@@ -308,6 +310,7 @@ func NewRouter(d Deps) http.Handler {
 			d.AuditAnomaly.Mount(r) // /tenants/{id}/audit/anomalies: behavioral-baseline anomaly detection
 			d.Billing.Mount(r)      // /billing/plans + /tenants/{id}/billing/*
 			d.Entitlement.Mount(r)  // /tenants/{id}/entitlements: resolved plan capability set
+			d.Sales.Mount(r)        // /sales/leads: in-app "Contact sales" (Enterprise)
 			d.Analytics.Mount(r)
 			d.Outbox.Mount(r)
 			d.OIDC.Mount(r)

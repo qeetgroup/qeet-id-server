@@ -20,6 +20,7 @@ type Handler struct {
 // so any authenticated member can read their own tenant's entitlements.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/entitlements", h.get)
+	r.Get("/tenants/{tenantID}/entitlements/usage", h.usage)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -36,4 +37,21 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, ent)
+}
+
+// usage returns the tenant's current consumption per resource, for the billing
+// usage-vs-limits display. Kept separate from GET /entitlements (which is read
+// on every page for gating) so the count queries only run when actually needed.
+func (h *Handler) usage(w http.ResponseWriter, r *http.Request) {
+	scope, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	u, err := h.Service.Usage(r.Context(), scope)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"usage": u})
 }

@@ -196,13 +196,35 @@ type PlanResolver interface {
 	EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error)
 }
 
+// UsageResolver returns a tenant's current consumption keyed by the same
+// resource names as Limits (seats, apps, api_keys, custom_roles, …). Implemented
+// by the composition root (which can reach every context's count query), so this
+// package stays decoupled. Optional — used only for the billing usage display.
+type UsageResolver interface {
+	Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error)
+}
+
 // Service resolves and answers entitlement questions for a tenant. It is the
 // concrete type injected (as a small local interface) into every enforcement point.
 type Service struct {
 	resolver PlanResolver
+	usage    UsageResolver
 }
 
 func NewService(r PlanResolver) *Service { return &Service{resolver: r} }
+
+// SetUsageResolver wires the (optional) current-usage provider used by the
+// billing usage endpoint. nil = usage reported as empty.
+func (s *Service) SetUsageResolver(u UsageResolver) { s.usage = u }
+
+// Usage returns the tenant's current consumption per resource (empty when no
+// resolver is wired).
+func (s *Service) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
+	if s.usage == nil {
+		return map[string]int{}, nil
+	}
+	return s.usage.Usage(ctx, tenantID)
+}
 
 // Resolve returns the tenant's full entitlement set. A nil resolver (or a
 // resolver returning an unknown plan) yields the free tier.

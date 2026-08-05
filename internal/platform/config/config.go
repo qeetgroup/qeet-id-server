@@ -99,6 +99,9 @@ type Config struct {
 	// the OAuth authorize flow redirects to for sign-in and consent.
 	LoginBaseURL string `envconfig:"LOGIN_BASE_URL" default:"http://localhost:3003"`
 
+	// SalesEmail receives in-app "Contact sales" lead notifications (Enterprise).
+	SalesEmail string `envconfig:"SALES_EMAIL" default:"sales@qeet.in"`
+
 	// Platform-level social login for the console's own Qeet ID accounts
 	// (tenant-less — distinct from the per-tenant social providers admins
 	// configure for their end users). Each provider is OFF until its client

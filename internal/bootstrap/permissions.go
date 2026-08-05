@@ -187,6 +187,9 @@ func permissionMap() map[string]string {
 		"PUT /v1/tenants/{tenantID}/billing/subscription":         "billing.write",
 		"POST /v1/tenants/{tenantID}/billing/subscription/cancel": "billing.write",
 		"GET /v1/tenants/{tenantID}/billing/invoices":             "billing.read",
+		"GET /v1/tenants/{tenantID}/billing/profile":              "billing.read",
+		"PUT /v1/tenants/{tenantID}/billing/profile":              "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/trial":               "billing.write",
 
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",

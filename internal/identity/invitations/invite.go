@@ -76,6 +76,13 @@ type PlanLimiter interface {
 // SetPlanLimiter wires the seat-limit checker (nil disables the gate).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
+// CountSeats returns the tenant's seats in use (members + pending invites) — the
+// value the plan seat limit is checked against; also surfaced as usage in billing.
+func (s *Service) CountSeats(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	n, err := s.q.CountSeats(ctx, tenantID)
+	return int(n), err
+}
+
 // uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
 func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
 	if p == nil {

@@ -61,6 +61,13 @@ func NewService(pool *pgxpool.Pool) *Service {
 // gate — every create is allowed.
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
+// CountActive returns the tenant's number of non-revoked API keys — the
+// "api_keys" limit value, surfaced as usage in billing.
+func (s *Service) CountActive(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	n, err := s.q.CountActiveAPIKeys(ctx, tenantID)
+	return int(n), err
+}
+
 func generateRaw() (prefix, secret, full string, err error) {
 	pb := make([]byte, 6)
 	sb := make([]byte, 24)

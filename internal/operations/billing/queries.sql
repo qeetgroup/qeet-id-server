@@ -30,12 +30,22 @@ WHERE plan_id = @plan_id AND currency = @currency;
 -- currency-specific price in one round-trip.
 SELECT p.code, p.name, p.interval, s.currency, s.status,
        s.current_period_start, s.current_period_end, s.cancel_at_period_end,
+       s.trial_end,
        COALESCE(pp.amount_minor, 0) AS amount_minor
 FROM tenant.subscriptions s
 JOIN platform.billing_plans p ON p.id = s.plan_id
 LEFT JOIN platform.billing_plan_prices pp
     ON pp.plan_id = s.plan_id AND pp.currency = s.currency
 WHERE s.tenant_id = @tenant_id;
+
+-- name: InsertTrialSubscription :exec
+-- Start a no-card trial: creates a trialing subscription that reverts to free
+-- at trial_end unless it converts to paid. Fails on conflict (one trial/org) —
+-- callers check eligibility first.
+INSERT INTO tenant.subscriptions
+    (tenant_id, plan_id, currency, status,
+     current_period_start, current_period_end, trial_end, cancel_at_period_end)
+VALUES (@tenant_id, @plan_id, @currency, 'trialing', NOW(), @trial_end, @trial_end, FALSE);
 
 -- name: UpsertSubscription :exec
 -- Create or replace the tenant's subscription (one row per tenant).
@@ -57,6 +67,32 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 INSERT INTO tenant.invoices
     (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end)
 VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end);
+
+-- name: GetBillingProfile :one
+-- Fetch a tenant's billing & tax details (returns no rows until first save).
+SELECT tenant_id, legal_name, billing_email, address_line1, address_line2, city,
+       state, postal_code, country, tax_id_type, tax_id, updated_at
+FROM tenant.billing_profiles WHERE tenant_id = @tenant_id;
+
+-- name: UpsertBillingProfile :exec
+-- Create or replace a tenant's billing & tax details (one row per tenant).
+INSERT INTO tenant.billing_profiles
+    (tenant_id, legal_name, billing_email, address_line1, address_line2, city,
+     state, postal_code, country, tax_id_type, tax_id, updated_at)
+VALUES (@tenant_id, @legal_name, @billing_email, @address_line1, @address_line2,
+        @city, @state, @postal_code, @country, @tax_id_type, @tax_id, NOW())
+ON CONFLICT (tenant_id) DO UPDATE SET
+    legal_name    = EXCLUDED.legal_name,
+    billing_email = EXCLUDED.billing_email,
+    address_line1 = EXCLUDED.address_line1,
+    address_line2 = EXCLUDED.address_line2,
+    city          = EXCLUDED.city,
+    state         = EXCLUDED.state,
+    postal_code   = EXCLUDED.postal_code,
+    country       = EXCLUDED.country,
+    tax_id_type   = EXCLUDED.tax_id_type,
+    tax_id        = EXCLUDED.tax_id,
+    updated_at    = NOW();
 
 -- name: SetTenantPlan :exec
 -- Keep the tenant's plan label (tenant.tenants.plan) in sync with its

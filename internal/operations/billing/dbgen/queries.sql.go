@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const cancelSubscription = `-- name: CancelSubscription :execrows
@@ -90,9 +91,37 @@ func (q *Queries) GetBillingPlanPrice(ctx context.Context, arg GetBillingPlanPri
 	return amount_minor, err
 }
 
+const getBillingProfile = `-- name: GetBillingProfile :one
+SELECT tenant_id, legal_name, billing_email, address_line1, address_line2, city,
+       state, postal_code, country, tax_id_type, tax_id, updated_at
+FROM tenant.billing_profiles WHERE tenant_id = $1
+`
+
+// Fetch a tenant's billing & tax details (returns no rows until first save).
+func (q *Queries) GetBillingProfile(ctx context.Context, tenantID uuid.UUID) (TenantBillingProfile, error) {
+	row := q.db.QueryRow(ctx, getBillingProfile, tenantID)
+	var i TenantBillingProfile
+	err := row.Scan(
+		&i.TenantID,
+		&i.LegalName,
+		&i.BillingEmail,
+		&i.AddressLine1,
+		&i.AddressLine2,
+		&i.City,
+		&i.State,
+		&i.PostalCode,
+		&i.Country,
+		&i.TaxIDType,
+		&i.TaxID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getSubscription = `-- name: GetSubscription :one
 SELECT p.code, p.name, p.interval, s.currency, s.status,
        s.current_period_start, s.current_period_end, s.cancel_at_period_end,
+       s.trial_end,
        COALESCE(pp.amount_minor, 0) AS amount_minor
 FROM tenant.subscriptions s
 JOIN platform.billing_plans p ON p.id = s.plan_id
@@ -110,6 +139,7 @@ type GetSubscriptionRow struct {
 	CurrentPeriodStart time.Time
 	CurrentPeriodEnd   time.Time
 	CancelAtPeriodEnd  bool
+	TrialEnd           pgtype.Timestamptz
 	AmountMinor        int64
 }
 
@@ -127,6 +157,7 @@ func (q *Queries) GetSubscription(ctx context.Context, tenantID uuid.UUID) (GetS
 		&i.CurrentPeriodStart,
 		&i.CurrentPeriodEnd,
 		&i.CancelAtPeriodEnd,
+		&i.TrialEnd,
 		&i.AmountMinor,
 	)
 	return i, err
@@ -186,6 +217,33 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) er
 		arg.AmountMinor,
 		arg.PeriodStart,
 		arg.PeriodEnd,
+	)
+	return err
+}
+
+const insertTrialSubscription = `-- name: InsertTrialSubscription :exec
+INSERT INTO tenant.subscriptions
+    (tenant_id, plan_id, currency, status,
+     current_period_start, current_period_end, trial_end, cancel_at_period_end)
+VALUES ($1, $2, $3, 'trialing', NOW(), $4, $4, FALSE)
+`
+
+type InsertTrialSubscriptionParams struct {
+	TenantID uuid.UUID
+	PlanID   uuid.UUID
+	Currency string
+	TrialEnd time.Time
+}
+
+// Start a no-card trial: creates a trialing subscription that reverts to free
+// at trial_end unless it converts to paid. Fails on conflict (one trial/org) —
+// callers check eligibility first.
+func (q *Queries) InsertTrialSubscription(ctx context.Context, arg InsertTrialSubscriptionParams) error {
+	_, err := q.db.Exec(ctx, insertTrialSubscription,
+		arg.TenantID,
+		arg.PlanID,
+		arg.Currency,
+		arg.TrialEnd,
 	)
 	return err
 }
@@ -414,6 +472,58 @@ type UpsertBillingPlanPriceParams struct {
 // Idempotent seed upsert for per-currency plan pricing.
 func (q *Queries) UpsertBillingPlanPrice(ctx context.Context, arg UpsertBillingPlanPriceParams) error {
 	_, err := q.db.Exec(ctx, upsertBillingPlanPrice, arg.PlanID, arg.Currency, arg.AmountMinor)
+	return err
+}
+
+const upsertBillingProfile = `-- name: UpsertBillingProfile :exec
+INSERT INTO tenant.billing_profiles
+    (tenant_id, legal_name, billing_email, address_line1, address_line2, city,
+     state, postal_code, country, tax_id_type, tax_id, updated_at)
+VALUES ($1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10, $11, NOW())
+ON CONFLICT (tenant_id) DO UPDATE SET
+    legal_name    = EXCLUDED.legal_name,
+    billing_email = EXCLUDED.billing_email,
+    address_line1 = EXCLUDED.address_line1,
+    address_line2 = EXCLUDED.address_line2,
+    city          = EXCLUDED.city,
+    state         = EXCLUDED.state,
+    postal_code   = EXCLUDED.postal_code,
+    country       = EXCLUDED.country,
+    tax_id_type   = EXCLUDED.tax_id_type,
+    tax_id        = EXCLUDED.tax_id,
+    updated_at    = NOW()
+`
+
+type UpsertBillingProfileParams struct {
+	TenantID     uuid.UUID
+	LegalName    string
+	BillingEmail string
+	AddressLine1 string
+	AddressLine2 string
+	City         string
+	State        string
+	PostalCode   string
+	Country      string
+	TaxIDType    string
+	TaxID        string
+}
+
+// Create or replace a tenant's billing & tax details (one row per tenant).
+func (q *Queries) UpsertBillingProfile(ctx context.Context, arg UpsertBillingProfileParams) error {
+	_, err := q.db.Exec(ctx, upsertBillingProfile,
+		arg.TenantID,
+		arg.LegalName,
+		arg.BillingEmail,
+		arg.AddressLine1,
+		arg.AddressLine2,
+		arg.City,
+		arg.State,
+		arg.PostalCode,
+		arg.Country,
+		arg.TaxIDType,
+		arg.TaxID,
+	)
 	return err
 }
 

@@ -66,6 +66,7 @@ import (
 	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
@@ -166,6 +167,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	retentionService := retention.NewService(pool)
+	salesService := sales.NewService(pool, sender, cfg.SalesEmail)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
@@ -375,6 +377,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	ldapService.SetPlanGate(entitlementSvc)      // LDAP
 	brandingRepo.SetPlanGate(entitlementSvc)     // custom branding
 	abacService.SetPlanGate(entitlementSvc)      // ABAC
+	// Current-usage provider for the billing usage-vs-limits display.
+	entitlementSvc.SetUsageResolver(entitlementUsageResolver{
+		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,
+	})
 	// custom domain — extracted from its inline handler so the gate can be wired.
 	domainVerifyService := domainverify.NewService(pool)
 	domainVerifyService.SetPlanGate(entitlementSvc)
@@ -455,6 +461,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		AuditAnomaly:  &anomaly.Handler{Service: auditAnomalyService},
 		Billing:       &billing.Handler{Service: billingService},
 		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
+		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
 		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
@@ -539,7 +546,21 @@ type entitlementPlanResolver struct {
 func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error) {
 	if r.billing != nil {
 		if sub, err := r.billing.GetSubscription(ctx, tenantID); err == nil && sub != nil && sub.PlanCode != "" {
-			return sub.PlanCode, nil
+			switch sub.Status {
+			case "active", "past_due":
+				return sub.PlanCode, nil
+			case "trialing":
+				// Trial grants the tier only until it expires; afterwards the
+				// tenant reverts to free (evaluated lazily here — no scheduler).
+				if sub.TrialEnd != nil && sub.TrialEnd.After(time.Now()) {
+					return sub.PlanCode, nil
+				}
+				return "free", nil
+			default:
+				// canceled / unknown: a subscription row exists but isn't granting,
+				// so this is a paid org that lapsed — free, not the stale label.
+				return "free", nil
+			}
 		}
 	}
 	if r.tenants != nil {
@@ -548,6 +569,42 @@ func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uui
 		}
 	}
 	return "free", nil
+}
+
+// entitlementUsageResolver reports a tenant's current consumption for the
+// billing usage-vs-limits display. It reuses the same count queries the plan
+// gates check against. Best-effort per resource: a failed count is omitted
+// rather than failing the whole response.
+type entitlementUsageResolver struct {
+	invites  *invite.Service
+	oidc     *oidc.Service
+	apikeys  *apikey.Service
+	rbacRepo *rbac.Repository
+}
+
+func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
+	out := map[string]int{}
+	if u.invites != nil {
+		if n, err := u.invites.CountSeats(ctx, tenantID); err == nil {
+			out["seats"] = n
+		}
+	}
+	if u.oidc != nil {
+		if n, err := u.oidc.CountClients(ctx, tenantID); err == nil {
+			out["apps"] = n
+		}
+	}
+	if u.apikeys != nil {
+		if n, err := u.apikeys.CountActive(ctx, tenantID); err == nil {
+			out["api_keys"] = n
+		}
+	}
+	if u.rbacRepo != nil {
+		if n, err := u.rbacRepo.CountCustomRoles(ctx, tenantID); err == nil {
+			out["custom_roles"] = int(n)
+		}
+	}
+	return out, nil
 }
 
 func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {

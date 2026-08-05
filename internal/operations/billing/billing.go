@@ -58,6 +58,8 @@ type Subscription struct {
 	CurrentPeriodStart *time.Time `json:"current_period_start"`
 	CurrentPeriodEnd   *time.Time `json:"current_period_end"`
 	CancelAtPeriodEnd  bool       `json:"cancel_at_period_end"`
+	// TrialEnd is set while Status == "trialing"; the trial reverts to free after it.
+	TrialEnd *time.Time `json:"trial_end"`
 }
 
 type Invoice struct {
@@ -69,6 +71,21 @@ type Invoice struct {
 	PeriodStart time.Time `json:"period_start"`
 	PeriodEnd   time.Time `json:"period_end"`
 	IssuedAt    time.Time `json:"issued_at"`
+}
+
+// BillingProfile is a tenant's billing & tax details, carried onto invoices.
+// TaxIDType is one of "none" | "gstin" (India) | "vat" (EU).
+type BillingProfile struct {
+	LegalName    string `json:"legal_name"`
+	BillingEmail string `json:"billing_email"`
+	AddressLine1 string `json:"address_line1"`
+	AddressLine2 string `json:"address_line2"`
+	City         string `json:"city"`
+	State        string `json:"state"`
+	PostalCode   string `json:"postal_code"`
+	Country      string `json:"country"`
+	TaxIDType    string `json:"tax_id_type"`
+	TaxID        string `json:"tax_id"`
 }
 
 type Service struct {
@@ -299,7 +316,131 @@ func (s *Service) GetSubscription(ctx context.Context, tenantID uuid.UUID) (*Sub
 		CurrentPeriodStart: &row.CurrentPeriodStart,
 		CurrentPeriodEnd:   &row.CurrentPeriodEnd,
 	}
+	if row.TrialEnd.Valid {
+		t := row.TrialEnd.Time
+		sub.TrialEnd = &t
+	}
 	return &sub, nil
+}
+
+// trialDuration is the length of a no-card trial.
+const trialDuration = 14 * 24 * time.Hour
+
+// StartTrial begins a no-card trial of a paid tier. Eligible only when the
+// tenant has no subscription yet (one trial per org); the trial grants the
+// tier's entitlements until trial_end, after which it reverts to free unless
+// the tenant converts to paid (via Checkout/ChangePlan). No invoice is issued.
+func (s *Service) StartTrial(ctx context.Context, tenantID uuid.UUID, planCode, currency string) (*Subscription, error) {
+	tier := strings.TrimSuffix(planCode, "_year")
+	if tier != "starter" && tier != "pro" {
+		return nil, errs.ErrBillingTrialNotEligible.WithMessage("Trials are available for the Starter and Pro plans.")
+	}
+	cur, ok := normalizeCurrency(currency)
+	if !ok {
+		cur = "USD"
+	}
+	existing, err := s.GetSubscription(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if existing.Status != "none" {
+		return nil, errs.ErrBillingTrialNotEligible.WithMessage("This organization isn't eligible for a trial.")
+	}
+	planID, interval, planName, err := s.planByCode(ctx, tier)
+	if err != nil {
+		return nil, err
+	}
+	trialEnd := time.Now().UTC().Add(trialDuration)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	qTx := s.q.WithTx(tx)
+	if err := qTx.InsertTrialSubscription(ctx, dbgen.InsertTrialSubscriptionParams{
+		TenantID: tenantID,
+		PlanID:   planID,
+		Currency: cur,
+		TrialEnd: trialEnd,
+	}); err != nil {
+		return nil, err
+	}
+	// Reflect the trial tier on the tenant label (billing is the sole writer).
+	if err := qTx.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{Plan: tier, TenantID: tenantID}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &Subscription{
+		PlanCode: tier, PlanName: planName, Currency: cur, Interval: interval,
+		Status: "trialing", CurrentPeriodEnd: &trialEnd, TrialEnd: &trialEnd,
+	}, nil
+}
+
+// --- billing profile (tax/invoice details) ---
+
+var gstinRe = regexp.MustCompile(`^[0-9A-Z]{15}$`)
+
+// GetBillingProfile returns the tenant's billing/tax details, or an empty
+// profile (tax_id_type "none") when none has been saved yet.
+func (s *Service) GetBillingProfile(ctx context.Context, tenantID uuid.UUID) (*BillingProfile, error) {
+	row, err := s.q.GetBillingProfile(ctx, tenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return &BillingProfile{TaxIDType: "none"}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &BillingProfile{
+		LegalName:    row.LegalName,
+		BillingEmail: row.BillingEmail,
+		AddressLine1: row.AddressLine1,
+		AddressLine2: row.AddressLine2,
+		City:         row.City,
+		State:        row.State,
+		PostalCode:   row.PostalCode,
+		Country:      row.Country,
+		TaxIDType:    row.TaxIDType,
+		TaxID:        row.TaxID,
+	}, nil
+}
+
+// UpsertBillingProfile validates and persists a tenant's billing/tax details.
+func (s *Service) UpsertBillingProfile(ctx context.Context, tenantID uuid.UUID, p BillingProfile) error {
+	if p.TaxIDType == "" {
+		p.TaxIDType = "none"
+	}
+	switch p.TaxIDType {
+	case "none":
+		p.TaxID = ""
+	case "gstin":
+		if !gstinRe.MatchString(strings.ToUpper(strings.TrimSpace(p.TaxID))) {
+			return errs.ErrBillingTaxIDInvalid.WithMessage("Enter a valid 15-character GSTIN.")
+		}
+		p.TaxID = strings.ToUpper(strings.TrimSpace(p.TaxID))
+	case "vat":
+		if strings.TrimSpace(p.TaxID) == "" {
+			return errs.ErrBillingTaxIDInvalid.WithMessage("Enter your VAT number.")
+		}
+		p.TaxID = strings.ToUpper(strings.TrimSpace(p.TaxID))
+	default:
+		return errs.ErrBillingTaxIDInvalid.WithMessage("Unsupported tax ID type.")
+	}
+	return s.q.UpsertBillingProfile(ctx, dbgen.UpsertBillingProfileParams{
+		TenantID:     tenantID,
+		LegalName:    strings.TrimSpace(p.LegalName),
+		BillingEmail: strings.TrimSpace(p.BillingEmail),
+		AddressLine1: strings.TrimSpace(p.AddressLine1),
+		AddressLine2: strings.TrimSpace(p.AddressLine2),
+		City:         strings.TrimSpace(p.City),
+		State:        strings.TrimSpace(p.State),
+		PostalCode:   strings.TrimSpace(p.PostalCode),
+		Country:      strings.ToUpper(strings.TrimSpace(p.Country)),
+		TaxIDType:    p.TaxIDType,
+		TaxID:        p.TaxID,
+	})
 }
 
 func periodEnd(start time.Time, interval string) time.Time {
@@ -745,6 +886,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/signup/checkout", h.signupCheckout)
 	r.Get("/tenants/{tenantID}/billing/subscription", h.getSubscription)
 	r.Put("/tenants/{tenantID}/billing/subscription", h.changePlan)
+	r.Get("/tenants/{tenantID}/billing/profile", h.getBillingProfile)
+	r.Put("/tenants/{tenantID}/billing/profile", h.putBillingProfile)
+	r.Post("/tenants/{tenantID}/billing/trial", h.startTrial)
 	r.Post("/tenants/{tenantID}/billing/subscription/cancel", h.cancel)
 	r.Post("/tenants/{tenantID}/billing/checkout", h.checkout)
 	r.Get("/tenants/{tenantID}/billing/invoices", h.listInvoices)
@@ -894,6 +1038,65 @@ func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, sub)
+}
+
+func (h *Handler) startTrial(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in struct {
+		PlanCode string `json:"plan_code"`
+		Currency string `json:"currency"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	sub, err := h.Service.StartTrial(r.Context(), tenantID, in.PlanCode, in.Currency)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, sub)
+}
+
+func (h *Handler) getBillingProfile(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	p, err := h.Service.GetBillingProfile(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
+}
+
+func (h *Handler) putBillingProfile(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in BillingProfile
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.UpsertBillingProfile(r.Context(), tenantID, in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	p, err := h.Service.GetBillingProfile(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
 func (h *Handler) changePlan(w http.ResponseWriter, r *http.Request) {

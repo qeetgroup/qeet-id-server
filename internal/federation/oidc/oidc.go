@@ -66,6 +66,13 @@ type PlanLimiter interface {
 // SetPlanLimiter wires the plan-limit checker (nil disables the gate).
 func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
+// CountClients returns the tenant's number of registered applications (relying
+// parties) — the "apps" limit value, surfaced as usage in billing.
+func (s *Service) CountClients(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+	return int(n), err
+}
+
 type CreateClientInput struct {
 	TenantID       uuid.UUID `json:"tenant_id"`
 	Name           string    `json:"name"`
