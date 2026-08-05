@@ -13,6 +13,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countSeats = `-- name: CountSeats :one
+SELECT (
+    (SELECT COUNT(DISTINCT user_id) FROM rbac.user_roles WHERE tenant_id = $1::uuid)
+    + (SELECT COUNT(*) FROM tenant.invites
+        WHERE tenant_id = $1::uuid AND status = 'pending' AND expires_at > NOW())
+)::bigint AS seats
+`
+
+// CountSeats returns the tenant's seats in use = distinct members (users holding
+// any role in the tenant) plus still-actionable pending invites. Backs the plan
+// seat limit checked before an invite/user is created.
+func (q *Queries) CountSeats(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countSeats, tenantID)
+	var seats int64
+	err := row.Scan(&seats)
+	return seats, err
+}
+
 const declineInviteForEmail = `-- name: DeclineInviteForEmail :execrows
 UPDATE tenant.invites SET status = 'declined'
 WHERE id = $1 AND email = $2 AND status = 'pending'

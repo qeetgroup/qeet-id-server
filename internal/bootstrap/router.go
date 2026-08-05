@@ -50,6 +50,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
@@ -90,6 +91,7 @@ type Deps struct {
 	Audit         *audit.Handler
 	AuditAnomaly  *anomaly.Handler
 	Billing       *billing.Handler
+	Entitlement   *entitlements.Handler
 	Analytics     *analytics.Handler
 	Outbox        *outbox.Handler
 	OIDC          *oidc.Handler
@@ -305,6 +307,7 @@ func NewRouter(d Deps) http.Handler {
 			d.Audit.Mount(r)
 			d.AuditAnomaly.Mount(r) // /tenants/{id}/audit/anomalies: behavioral-baseline anomaly detection
 			d.Billing.Mount(r)      // /billing/plans + /tenants/{id}/billing/*
+			d.Entitlement.Mount(r)  // /tenants/{id}/entitlements: resolved plan capability set
 			d.Analytics.Mount(r)
 			d.Outbox.Mount(r)
 			d.OIDC.Mount(r)

@@ -27,9 +27,12 @@ type CreateInput struct {
 }
 
 type UpdateInput struct {
-	Name     *string        `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
-	Status   *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
-	Plan     *string        `json:"plan,omitempty" validate:"omitempty,oneof=free starter pro enterprise"`
+	Name   *string `json:"name,omitempty" validate:"omitempty,min=1,max=200"`
+	Status *string `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
+	// Plan is intentionally NOT updatable here. It changes only through billing
+	// (checkout / subscription change), which keeps tenants.plan in sync with what
+	// the tenant actually pays for — otherwise an admin could PATCH themselves onto
+	// a paid tier for free. See operations/billing ChangePlan → SetTenantPlan.
 	Region   *string        `json:"region,omitempty" validate:"omitempty,max=64"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }

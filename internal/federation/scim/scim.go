@@ -45,11 +45,23 @@ type Service struct {
 	pool  *pgxpool.Pool
 	q     *dbgen.Queries
 	users *user.Repository
+	// gate enforces the plan SCIM feature on token provisioning (nil = off).
+	gate PlanGate
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), users: users}
 }
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
@@ -91,6 +103,16 @@ func (s *Service) Config(ctx context.Context, tenantID uuid.UUID) (*ConfigView, 
 // returns the full plaintext exactly once. Stored as SHA-256 + a short
 // display prefix.
 func (s *Service) Rotate(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (full string, err error) {
+	// Plan gate: SCIM directory sync is an Enterprise feature, not on Free/lower.
+	if s.gate != nil {
+		ok, gerr := s.gate.FeatureAllowed(ctx, tenantID, "scim")
+		if gerr != nil {
+			return "", gerr
+		}
+		if !ok {
+			return "", errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "scim"})
+		}
+	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
 		return "", err

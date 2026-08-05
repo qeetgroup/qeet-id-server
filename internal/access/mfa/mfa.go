@@ -556,6 +556,15 @@ type Handler struct {
 	// WebAuthn, when set, exposes the user's registered passkeys as a second
 	// factor (POST /mfa/webauthn/{challenge,verify}). Nil = feature disabled.
 	WebAuthn WebAuthnVerifier
+	// Plan gates SMS OTP enrollment by plan (nil = no gate). SMS MFA is a paid
+	// feature (it also incurs per-message cost); email OTP and TOTP stay free.
+	Plan PlanGate
+}
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -926,6 +935,22 @@ func (h *Handler) enrollOTPStart(w http.ResponseWriter, r *http.Request) {
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	// Plan gate: SMS OTP is a paid factor (email OTP + TOTP stay free). Resolve
+	// against the caller's active tenant; skip when there's no tenant (a pre-org
+	// user has no plan to gate against).
+	if in.Channel == "sms" && h.Plan != nil {
+		if tid, terr := httpx.RequireTenant(r); terr == nil {
+			ok, gerr := h.Plan.FeatureAllowed(r.Context(), tid, "sms_mfa")
+			if gerr != nil {
+				httpx.WriteError(w, r, gerr)
+				return
+			}
+			if !ok {
+				httpx.WriteError(w, r, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "sms_mfa"}))
+				return
+			}
+		}
 	}
 	factorID, err := h.Service.EnrollOTPStart(r.Context(), *p.UserID, in.Channel, in.Destination)
 	if err != nil {

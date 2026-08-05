@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -24,6 +25,26 @@ type Handler struct {
 	Configured   bool
 	Provider     string
 	Model        string
+	// Plan gates the AI copilot by plan (nil = no plan gate). Copilot is a Pro+
+	// feature; when the tenant's plan doesn't include it, streaming is refused and
+	// status reports it unavailable so the console hides the launcher.
+	Plan PlanGate
+}
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// planAllows reports whether the tenant's plan includes the copilot feature.
+// A nil gate (unset) allows it; a resolver error is treated as not allowed.
+func (h *Handler) planAllows(r *http.Request, tenantID uuid.UUID) bool {
+	if h.Plan == nil {
+		return true
+	}
+	ok, err := h.Plan.FeatureAllowed(r.Context(), tenantID, "ai_copilot")
+	return err == nil && ok
 }
 
 // Mount registers all 7 copilot routes on the authenticated router group.
@@ -41,8 +62,17 @@ func (h *Handler) Mount(r chi.Router) {
 //
 //	GET /v1/copilot/status → { configured, provider, model }
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
+	// available folds in the plan gate so the console can hide the copilot
+	// launcher for plans that don't include it, not just when it's unconfigured.
+	available := h.Configured
+	if available {
+		if tid, err := httpx.RequireTenant(r); err == nil {
+			available = h.planAllows(r, tid)
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"configured": h.Configured,
+		"available":  available,
 		"provider":   h.Provider,
 		"model":      h.Model,
 	})
@@ -54,6 +84,10 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createConversation(w http.ResponseWriter, r *http.Request) {
 	tenantID, userID, ok := h.requireTenantUser(w, r)
 	if !ok {
+		return
+	}
+	if !h.planAllows(r, tenantID) {
+		httpx.WriteError(w, r, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ai_copilot"}))
 		return
 	}
 	var in CreateConversationInput
@@ -182,6 +216,11 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	if !h.Configured {
 		httpx.WriteError(w, r, errs.New("copilot_unconfigured",
 			"AI copilot is not configured — set COPILOT_PROVIDER and COPILOT_API_KEY"))
+		return
+	}
+	// Plan gate: the AI copilot is a Pro+ feature.
+	if !h.planAllows(r, tenantID) {
+		httpx.WriteError(w, r, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ai_copilot"}))
 		return
 	}
 

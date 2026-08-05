@@ -51,6 +51,8 @@ type Service struct {
 	// breach is the optional breached-password checker (nil = feature off, a
 	// no-op). Set via SetBreachChecker; consulted on Accept.
 	breach *hibp.Checker
+	// limits gates invite creation by the plan seat limit (nil = off).
+	limits PlanLimiter
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -63,6 +65,16 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 // SetBreachChecker wires the breached-password checker. Called from
 // cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
+
+// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
+// unlimited). Satisfied by operations/entitlements.Service, injected via
+// SetPlanLimiter.
+type PlanLimiter interface {
+	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+}
+
+// SetPlanLimiter wires the seat-limit checker (nil disables the gate).
+func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
 // uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
 func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
@@ -132,6 +144,23 @@ func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
+	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
+	// limit (members + pending invites) is reached.
+	if s.limits != nil {
+		lim, err := s.limits.Limit(ctx, in.TenantID, "seats")
+		if err != nil {
+			return nil, "", err
+		}
+		if lim >= 0 {
+			n, err := s.q.CountSeats(ctx, in.TenantID)
+			if err != nil {
+				return nil, "", err
+			}
+			if int(n) >= lim {
+				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "seats", "limit": lim})
+			}
+		}
+	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
 		return nil, "", err

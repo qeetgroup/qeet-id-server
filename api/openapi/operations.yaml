@@ -21,6 +21,12 @@ tags:
     description: Right-to-erasure purge requests.
   - name: Billing
     description: Subscription plans, subscriptions, and invoices.
+  - name: Entitlements
+    description: >-
+      A tenant's resolved plan capability set — boolean feature flags and numeric
+      limits. Read by the console to gate the UI off the same source of truth the
+      backend enforces on. Gated create endpoints return 402 with a stable code
+      (billing.plan_limit / billing.upgrade_required) when a plan cap is reached.
   - name: Analytics
     description: Per-tenant usage analytics.
   - name: Email Templates
@@ -1110,6 +1116,88 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/entitlements:
+    get:
+      operationId: get_v1_tenants_ByTenantID_entitlements
+      summary: Get plan entitlements
+      tags:
+        - Entitlements
+      description: >-
+        Returns the tenant's resolved entitlements: the effective plan code, the
+        boolean feature flags, and the numeric limits (-1 = unlimited). Resolved
+        from the active subscription (falling back to the tenant's plan label),
+        so an in-app upgrade is reflected immediately. Readable by any
+        authenticated member of the tenant; scoped to the caller's own tenant.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - plan
+                  - features
+                  - limits
+                properties:
+                  plan:
+                    type: string
+                    enum: [free, starter, pro, enterprise]
+                    description: Effective plan tier (annual "_year" variants folded to the base tier).
+                  features:
+                    type: object
+                    description: Boolean feature flags keyed by feature name.
+                    additionalProperties:
+                      type: boolean
+                    example:
+                      passkeys: true
+                      password: true
+                      magic_links: true
+                      social: true
+                      totp: true
+                      email_otp: true
+                      hosted_login: true
+                      sms_mfa: false
+                      custom_branding: false
+                      custom_domain: false
+                      sso: false
+                      scim: false
+                      ldap: false
+                      webhooks: false
+                      audit_export: false
+                      ai_copilot: false
+                      abac: false
+                  limits:
+                    type: object
+                    description: Numeric resource caps keyed by resource name; -1 means unlimited.
+                    additionalProperties:
+                      type: integer
+                    example:
+                      seats: 5
+                      apps: 3
+                      api_keys: 2
+                      custom_roles: 0
+                      webhooks: 0
+                      orgs: 1
+                      mau: 10000
+                      audit_retention_days: 7
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/email-templates:

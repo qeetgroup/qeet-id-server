@@ -39,14 +39,27 @@ type Key struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
+// PlanLimiter returns the numeric cap for a plan-gated resource (a negative
+// value means unlimited). Satisfied by operations/entitlements.Service and
+// injected via SetPlanLimiter, so this context needn't import the billing/plan
+// packages (keeping the dependency direction clean).
+type PlanLimiter interface {
+	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+}
+
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	limits PlanLimiter
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool)}
 }
+
+// SetPlanLimiter wires the plan-limit checker. nil (the default) disables the
+// gate — every create is allowed.
+func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
 func generateRaw() (prefix, secret, full string, err error) {
 	pb := make([]byte, 6)
@@ -123,6 +136,23 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, error) {
+	// Plan gate: refuse once the tenant's plan cap for API keys is reached. The
+	// resource key ("api_keys") matches the entitlements catalog.
+	if s.limits != nil {
+		lim, err := s.limits.Limit(ctx, in.TenantID, "api_keys")
+		if err != nil {
+			return nil, "", err
+		}
+		if lim >= 0 {
+			n, err := s.q.CountActiveAPIKeys(ctx, in.TenantID)
+			if err != nil {
+				return nil, "", err
+			}
+			if int(n) >= lim {
+				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "api_keys", "limit": lim})
+			}
+		}
+	}
 	prefix, secret, full, err := generateRaw()
 	if err != nil {
 		return nil, "", err

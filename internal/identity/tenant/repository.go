@@ -200,9 +200,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 	if in.Status != nil {
 		ub.Set("status", *in.Status)
 	}
-	if in.Plan != nil {
-		ub.Set("plan", *in.Plan)
-	}
+	// plan is deliberately not settable here — it's owned by billing (see UpdateInput).
 	if in.Region != nil {
 		ub.Set("region", *in.Region)
 	}

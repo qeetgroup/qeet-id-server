@@ -8,6 +8,16 @@ INSERT INTO tenant.invites (tenant_id, email, role_id, invited_by, token_hash, e
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at;
 
+-- CountSeats returns the tenant's seats in use = distinct members (users holding
+-- any role in the tenant) plus still-actionable pending invites. Backs the plan
+-- seat limit checked before an invite/user is created.
+-- name: CountSeats :one
+SELECT (
+    (SELECT COUNT(DISTINCT user_id) FROM rbac.user_roles WHERE tenant_id = @tenant_id::uuid)
+    + (SELECT COUNT(*) FROM tenant.invites
+        WHERE tenant_id = @tenant_id::uuid AND status = 'pending' AND expires_at > NOW())
+)::bigint AS seats;
+
 -- name: ListInvites :many
 SELECT id, tenant_id, email, role_id, status, expires_at, accepted_at, created_at
 FROM tenant.invites

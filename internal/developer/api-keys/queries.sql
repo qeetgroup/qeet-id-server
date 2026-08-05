@@ -12,6 +12,11 @@ FROM auth.api_keys
 WHERE tenant_id = $1
 ORDER BY created_at DESC;
 
+-- CountActiveAPIKeys counts a tenant's non-revoked keys — the plan-limit check.
+-- name: CountActiveAPIKeys :one
+SELECT COUNT(*) FROM auth.api_keys
+WHERE tenant_id = $1 AND revoked_at IS NULL;
+
 -- name: RevokeAPIKey :execrows
 UPDATE auth.api_keys SET revoked_at = NOW() WHERE id = $1 AND tenant_id = $2 AND revoked_at IS NULL;
 

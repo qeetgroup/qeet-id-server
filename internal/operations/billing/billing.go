@@ -351,6 +351,15 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}); err != nil {
 		return nil, err
 	}
+	// Keep the tenant's plan label in sync with the subscription tier (strip the
+	// annual "_year" suffix). Billing is the sole writer of tenants.plan now, so
+	// the label stays truthful for anything that reads it (team switcher, admin).
+	if err := qTx.SetTenantPlan(ctx, dbgen.SetTenantPlanParams{
+		Plan:     strings.TrimSuffix(planCode, "_year"),
+		TenantID: tenantID,
+	}); err != nil {
+		return nil, err
+	}
 	return &Subscription{
 		PlanCode: planCode, PlanName: planName, Currency: cur, AmountMinor: amt,
 		Interval: interval, Status: "active",

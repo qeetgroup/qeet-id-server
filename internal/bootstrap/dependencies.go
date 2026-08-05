@@ -61,6 +61,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
@@ -139,6 +140,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
+	// entitlementSvc turns a tenant's plan into a capability set (feature flags +
+	// numeric limits). It's the single source of truth read by the entitlements
+	// endpoint and injected into every plan-enforcement point below.
+	entitlementSvc := entitlements.NewService(entitlementPlanResolver{billing: billingService, tenants: tenantRepo})
 	brandingRepo := branding.NewRepository(pool)
 	emailTemplateService := email.NewService(pool)
 	policyRepo := policy.NewRepository(pool)
@@ -228,6 +233,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Configured:   copilotConfigured,
 		Provider:     cfg.CopilotProvider,
 		Model:        cfg.CopilotModel,
+		Plan:         entitlementSvc, // ai_copilot is a Pro+ feature
 	}
 	// Live Activity hub: subscribes to NATS outbox events (when NATS_URL is set)
 	// and fans them out to authenticated SSE connections filtered by tenant.
@@ -355,6 +361,24 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	ldapService := ldap.NewService(pool, authService)
 	ipAllowService := ipallow.NewService(pool)
 
+	// Plan enforcement: inject the entitlement checker into every gated create
+	// path. Numeric limits (seats/apps/api keys/custom roles) use SetPlanLimiter;
+	// boolean features (webhooks/SSO/SCIM/LDAP) use SetPlanGate. Free-tier caps
+	// bite here; paid tiers resolve to unlimited/enabled, so it's a no-op for them.
+	inviteService.SetPlanLimiter(entitlementSvc) // seats
+	oidcService.SetPlanLimiter(entitlementSvc)   // apps (relying parties)
+	apikeyService.SetPlanLimiter(entitlementSvc) // api_keys
+	rbacService.SetPlanLimiter(entitlementSvc)   // custom_roles
+	webhookService.SetPlanGate(entitlementSvc)   // webhooks (feature)
+	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML)
+	scimService.SetPlanGate(entitlementSvc)      // SCIM
+	ldapService.SetPlanGate(entitlementSvc)      // LDAP
+	brandingRepo.SetPlanGate(entitlementSvc)     // custom branding
+	abacService.SetPlanGate(entitlementSvc)      // ABAC
+	// custom domain — extracted from its inline handler so the gate can be wired.
+	domainVerifyService := domainverify.NewService(pool)
+	domainVerifyService.SetPlanGate(entitlementSvc)
+
 	// Rate-limit store: Redis (shared across replicas) when REDIS_URL is set,
 	// otherwise in-process. Required for correct limits when scaling out.
 	var rlStore ratelimit.Store
@@ -423,13 +447,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
-		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
+		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService, Plan: entitlementSvc},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
 		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		AuditAnomaly:  &anomaly.Handler{Service: auditAnomalyService},
 		Billing:       &billing.Handler{Service: billingService},
+		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
 		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
@@ -448,7 +473,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Risk:          &risk.Handler{Service: riskService},
 		RateLimits:    rateLimitsHandler,
 		Notification:  &notification.Handler{Service: notificationService},
-		DomainVerify:  &domainverify.Handler{Service: domainverify.NewService(pool)},
+		DomainVerify:  &domainverify.Handler{Service: domainVerifyService},
 		SIEM:          &siem.Handler{Service: siemService},
 		AuthHook:      &authhook.Handler{Service: authHookService},
 		ABAC:          &abac.Handler{Service: abacService},
@@ -498,6 +523,31 @@ func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UU
 		return uuid.Nil, err
 	}
 	return t.ID, nil
+}
+
+// entitlementPlanResolver resolves a tenant's effective plan code for the
+// entitlements service. It prefers the billing subscription (the paid source of
+// truth), falls back to the tenant's plan label, and defaults to free — so an
+// in-app upgrade takes effect immediately (subscription) even before/without the
+// label sync, and a plain free org (no subscription row) reads as free.
+// Implemented here because only the composition root may touch both contexts.
+type entitlementPlanResolver struct {
+	billing *billing.Service
+	tenants *tenant.Repository
+}
+
+func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error) {
+	if r.billing != nil {
+		if sub, err := r.billing.GetSubscription(ctx, tenantID); err == nil && sub != nil && sub.PlanCode != "" {
+			return sub.PlanCode, nil
+		}
+	}
+	if r.tenants != nil {
+		if t, err := r.tenants.Get(ctx, tenantID); err == nil && t != nil {
+			return t.Plan, nil
+		}
+	}
+	return "free", nil
 }
 
 func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {

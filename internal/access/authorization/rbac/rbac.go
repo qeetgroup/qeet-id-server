@@ -50,6 +50,12 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 // transactions that wrap an RBAC mutation and its audit row.
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
+// CountCustomRoles returns the number of non-system (custom) roles a tenant has
+// defined — used by the plan-limit check on role creation.
+func (r *Repository) CountCustomRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	return r.q.CountCustomRoles(ctx, tenantID)
+}
+
 // toPermission maps a generated RbacPermission row to the domain Permission type.
 func toPermission(row dbgen.RbacPermission) Permission {
 	return Permission{ID: row.ID, Key: row.Key, Description: row.Description}

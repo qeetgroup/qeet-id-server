@@ -58,6 +58,15 @@ INSERT INTO tenant.invoices
     (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end)
 VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end);
 
+-- name: SetTenantPlan :exec
+-- Keep the tenant's plan label (tenant.tenants.plan) in sync with its
+-- subscription tier. Billing is the only writer of that column now that the
+-- tenant PATCH no longer accepts it, so the label can't drift from what's paid.
+-- Runs on the caller's tx, alongside UpsertSubscription.
+UPDATE tenant.tenants
+SET plan = @plan, updated_at = NOW()
+WHERE id = @tenant_id AND deleted_at IS NULL;
+
 -- name: CancelSubscription :execrows
 -- Mark the subscription to cancel at end of current period.  Returns 0 rows
 -- affected when no active subscription exists.

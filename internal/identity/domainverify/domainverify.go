@@ -34,11 +34,22 @@ type Service struct {
 	resolver interface {
 		LookupTXT(ctx context.Context, name string) ([]string, error)
 	}
+	gate PlanGate
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), resolver: net.DefaultResolver}
 }
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 type Domain struct {
 	ID                uuid.UUID  `json:"id"`
@@ -116,6 +127,16 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamp
 
 // Add registers a domain for a tenant and returns the DNS record to publish.
 func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Domain, error) {
+	// Plan gate: custom (verified) domains are a paid feature.
+	if s.gate != nil {
+		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "custom_domain")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_domain"})
+		}
+	}
 	domain := normalizeDomain(raw)
 	if !validDomain(domain) {
 		return nil, errs.ErrDomainVerifyInvalidDomain

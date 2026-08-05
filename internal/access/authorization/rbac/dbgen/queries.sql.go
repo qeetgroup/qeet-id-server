@@ -100,6 +100,20 @@ func (q *Queries) CheckPermission(ctx context.Context, arg CheckPermissionParams
 	return allowed, err
 }
 
+const countCustomRoles = `-- name: CountCustomRoles :one
+SELECT COUNT(*) FROM rbac.roles
+WHERE tenant_id = $1 AND is_system = FALSE
+`
+
+// CountCustomRoles counts a tenant's non-system (custom) roles — the plan-limit
+// check. Built-in roles (is_system = TRUE) don't count toward the cap.
+func (q *Queries) CountCustomRoles(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countCustomRoles, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRole = `-- name: CreateRole :one
 INSERT INTO rbac.roles (tenant_id, name, description, is_system)
 VALUES ($1, $2, $3, $4)

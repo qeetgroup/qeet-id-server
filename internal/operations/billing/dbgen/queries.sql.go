@@ -312,6 +312,26 @@ func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListI
 	return items, nil
 }
 
+const setTenantPlan = `-- name: SetTenantPlan :exec
+UPDATE tenant.tenants
+SET plan = $1, updated_at = NOW()
+WHERE id = $2 AND deleted_at IS NULL
+`
+
+type SetTenantPlanParams struct {
+	Plan     string
+	TenantID uuid.UUID
+}
+
+// Keep the tenant's plan label (tenant.tenants.plan) in sync with its
+// subscription tier. Billing is the only writer of that column now that the
+// tenant PATCH no longer accepts it, so the label can't drift from what's paid.
+// Runs on the caller's tx, alongside UpsertSubscription.
+func (q *Queries) SetTenantPlan(ctx context.Context, arg SetTenantPlanParams) error {
+	_, err := q.db.Exec(ctx, setTenantPlan, arg.Plan, arg.TenantID)
+	return err
+}
+
 const updateCheckoutFailed = `-- name: UpdateCheckoutFailed :exec
 UPDATE tenant.billing_checkouts
 SET status = 'failed'

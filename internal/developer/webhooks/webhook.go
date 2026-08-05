@@ -40,10 +40,18 @@ type Subscription struct {
 	Secret string `json:"secret,omitempty"`
 }
 
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
 type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	client *http.Client
+	gate   PlanGate
 }
 
 func NewService(pool *pgxpool.Pool) *Service {
@@ -53,6 +61,9 @@ func NewService(pool *pgxpool.Pool) *Service {
 		client: &http.Client{Timeout: 10 * time.Second},
 	}
 }
+
+// SetPlanGate wires the plan-feature gate. nil (default) allows all features.
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
@@ -95,6 +106,16 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
+	// Plan gate: webhooks are a paid feature (not included on Free).
+	if s.gate != nil {
+		ok, err := s.gate.FeatureAllowed(ctx, in.TenantID, "webhooks")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "webhooks"})
+		}
+	}
 	secret, _, err := codes.URLToken()
 	if err != nil {
 		return nil, err
