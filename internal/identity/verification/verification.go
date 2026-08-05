@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -63,11 +64,17 @@ func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string
 	}); err != nil {
 		return err
 	}
+	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
 	return s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "Verify your email",
-		Body:    fmt.Sprintf("Your verification code is %s. It expires in %s.", code, s.ttl),
+		Body:    fmt.Sprintf("Your Qeet ID verification code is %s. It expires in %s.", code, expiry),
+		HTML: emailtmpl.Code(
+			"Verify your email",
+			"Use the code below to verify your email address.",
+			code, expiry,
+		),
 	})
 }
 
@@ -134,11 +141,17 @@ func (s *Service) StartEmailChange(ctx context.Context, userID uuid.UUID, newEma
 	}); err != nil {
 		return err
 	}
+	expiry := fmt.Sprintf("%d minutes", int(s.ttl.Minutes()))
 	return s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      newEmail,
 		Subject: "Confirm your new email",
-		Body:    fmt.Sprintf("Your email-change code is %s. It expires in %s.", code, s.ttl),
+		Body:    fmt.Sprintf("Your Qeet ID email-change code is %s. It expires in %s.", code, expiry),
+		HTML: emailtmpl.Code(
+			"Confirm your new email",
+			"Use the code below to confirm your new email address.",
+			code, expiry,
+		),
 	})
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -157,11 +158,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 // resend or copy the returned token. Delivery to unverified recipients fails
 // while Amazon SES is in sandbox mode.
 func (s *Service) sendInviteEmail(ctx context.Context, inviteID uuid.UUID, email, rawToken string) {
+	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "You've been invited to Qeet",
-		Body:    fmt.Sprintf("Accept the invite: %s/invite/accept?token=%s", s.baseAppURL, rawToken),
+		Body:    fmt.Sprintf("Accept your invitation: %s", inviteURL),
+		HTML: emailtmpl.Action(
+			"You've been invited to Qeet",
+			"You've been invited to join an organization on Qeet ID. Click the button below to accept.",
+			"Accept invitation", inviteURL,
+			"If you weren't expecting this invitation, you can safely ignore this email.",
+		),
 	}); err != nil {
 		slog.Warn("invite email send failed", "err", err, "invite_id", inviteID, "email", email)
 	}

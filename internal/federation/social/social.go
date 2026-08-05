@@ -716,9 +716,12 @@ func (h *Handler) start(w http.ResponseWriter, r *http.Request) {
 	if tenantRef == "" {
 		tenantRef = r.URL.Query().Get("tenant_id")
 	}
-	// No tenant → platform (tenant-less) sign-in for the console's own accounts.
+	// No tenant → platform (tenant-less) console flow. ?intent=signup permits
+	// just-in-time account creation; anything else (sign-in) requires an existing
+	// account, so a "sign in with Google" can't silently create one.
 	if tenantRef == "" {
-		authURL, err := h.Service.BeginPlatformLogin(r.Context(), provider, callbackURL(r, provider))
+		allowCreate := r.URL.Query().Get("intent") == "signup"
+		authURL, err := h.Service.BeginPlatformLogin(r.Context(), provider, callbackURL(r, provider), allowCreate)
 		if err != nil {
 			h.redirectSocialError(w, r, err)
 			return
@@ -762,6 +765,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		// account page with a clear error rather than the login app.
 		if errors.Is(perr, errs.ErrSocialAlreadyLinked) {
 			http.Redirect(w, r, h.Service.appBaseURL+"/account/security?link_error=already_linked", http.StatusFound)
+			return
+		}
+		// Sign-in with a provider that has no account yet: bounce to sign-in with
+		// a clear "sign up first" signal instead of silently creating an account.
+		if errors.Is(perr, errs.ErrSocialNoAccount) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=no_account", http.StatusFound)
 			return
 		}
 		if !errors.Is(perr, errs.ErrSocialStateInvalid) {

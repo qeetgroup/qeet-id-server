@@ -77,28 +77,30 @@ func linkArg(id uuid.UUID) *uuid.UUID {
 }
 
 // BeginPlatformLogin persists PKCE state and returns the provider authorization
-// URL for a tenant-less console sign-in.
-func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI string) (string, error) {
-	return s.beginPlatform(ctx, provider, redirectURI, uuid.Nil)
+// URL for a tenant-less console sign-in / sign-up. allowCreate=true (sign-up)
+// lets the callback provision a new account just-in-time; false (sign-in) makes
+// it require an existing account instead of silently creating one.
+func (s *Service) BeginPlatformLogin(ctx context.Context, provider, redirectURI string, allowCreate bool) (string, error) {
+	return s.beginPlatform(ctx, provider, redirectURI, uuid.Nil, allowCreate)
 }
 
 // BeginPlatformLink starts an authenticated "connect this provider to my
 // account" ceremony. The callback attaches the resulting identity to userID
 // instead of logging in / creating an account — the account-page link flow.
 func (s *Service) BeginPlatformLink(ctx context.Context, provider, redirectURI string, userID uuid.UUID) (string, error) {
-	return s.beginPlatform(ctx, provider, redirectURI, userID)
+	return s.beginPlatform(ctx, provider, redirectURI, userID, false)
 }
 
-func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI string, linkUserID uuid.UUID) (string, error) {
+func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
 	pc, ok := s.platform[provider]
 	if !ok {
 		return "", errs.ErrSocialProviderNotConfigured
 	}
 	if pc.kind == "github" {
-		return s.beginGitHubLogin(ctx, provider, pc, redirectURI, linkUserID)
+		return s.beginGitHubLogin(ctx, provider, pc, redirectURI, linkUserID, allowCreate)
 	}
 	if pc.kind == "apple" {
-		return s.beginAppleLogin(ctx, provider, pc, redirectURI, linkUserID)
+		return s.beginAppleLogin(ctx, provider, pc, redirectURI, linkUserID, allowCreate)
 	}
 	doc, err := s.oauth.discovery(ctx, pc.discoveryURL)
 	if err != nil {
@@ -113,9 +115,9 @@ func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI strin
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
-		VALUES ($1, $2, $3, $4, $5, $6)`,
-		stateHash, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID),
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		stateHash, provider, verifier, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
 	); err != nil {
 		return "", err
 	}
@@ -138,15 +140,15 @@ func (s *Service) beginPlatform(ctx context.Context, provider, redirectURI strin
 // beginGitHubLogin starts GitHub's OAuth authorize flow — no OIDC discovery and
 // no PKCE (GitHub OAuth Apps don't support it), so state is stored with an empty
 // verifier.
-func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID) (string, error) {
+func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
 	state, stateHash, err := codes.URLToken()
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
-		VALUES ($1, $2, '', $3, $4, $5)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID),
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
+		VALUES ($1, $2, '', $3, $4, $5, $6)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
 	); err != nil {
 		return "", err
 	}
@@ -162,15 +164,15 @@ func (s *Service) beginGitHubLogin(ctx context.Context, provider string, pc prov
 
 // beginAppleLogin starts Sign in with Apple. Requesting name/email forces
 // response_mode=form_post, so Apple returns to the callback via POST.
-func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID) (string, error) {
+func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc providerConfig, redirectURI string, linkUserID uuid.UUID, allowCreate bool) (string, error) {
 	state, stateHash, err := codes.URLToken()
 	if err != nil {
 		return "", err
 	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id)
-		VALUES ($1, $2, '', $3, $4, $5)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID),
+		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
+		VALUES ($1, $2, '', $3, $4, $5, $6)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
 	); err != nil {
 		return "", err
 	}
@@ -223,11 +225,12 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		gotProvider, verifier, redirectURI string
 		expiresAt                          time.Time
 		linkUserID                         *uuid.UUID
+		allowCreate                        bool
 	)
 	err := s.pool.QueryRow(ctx, `
 		DELETE FROM auth.platform_social_states WHERE state_hash = $1
-		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id`, stateHash,
-	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID)
+		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create`, stateHash,
+	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID, &allowCreate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrSocialStateInvalid
 	}
@@ -299,8 +302,9 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		return &PlatformCallbackResult{Linked: true, Provider: provider}, nil
 	}
 
-	// Login / signup ceremony.
-	userID, err := s.findOrCreatePlatformUser(ctx, ui)
+	// Login / signup ceremony. allowCreate distinguishes them: sign-up may
+	// provision just-in-time; sign-in requires an existing account.
+	userID, err := s.findOrCreatePlatformUser(ctx, ui, allowCreate)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +336,7 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 // findOrCreatePlatformUser resolves a tenant-less Qeet ID user by globally-unique
 // email, creating a password-less one if none exists (they create their first
 // org from the dashboard, exactly like a normal tenant-less signup).
-func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo) (uuid.UUID, error) {
+func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, allowCreate bool) (uuid.UUID, error) {
 	var userID uuid.UUID
 	err := s.pool.QueryRow(ctx,
 		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
@@ -350,6 +354,11 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo) (uu
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
+	}
+	// No account for this email. Only a sign-up ceremony may provision one — a
+	// sign-in must not silently create an account.
+	if !allowCreate {
+		return uuid.Nil, errs.ErrSocialNoAccount
 	}
 	var displayName, avatar *string
 	if ui.Name != "" {

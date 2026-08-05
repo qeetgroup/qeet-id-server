@@ -20,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -34,10 +35,10 @@ type AuditCtx struct {
 }
 
 type Service struct {
-	pool       *pgxpool.Pool
-	q          *dbgen.Queries
-	sender     notifier.Sender
-	ttl        time.Duration
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	sender notifier.Sender
+	ttl    time.Duration
 	// baseAppURL is the app origin used to build email links (password reset,
 	// magic-link). The link lands back in the app that initiated it, which
 	// completes the flow in-place — reset/magic-link are no longer routed to the
@@ -90,11 +91,18 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (string,
 	}
 	// The reset is completed in the console itself (baseAppURL) at
 	// /forgot-password?token=…, not the separate hosted-login app.
+	resetURL := fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
 	if err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "Reset your password",
-		Body:    fmt.Sprintf("Click to reset your password: %s/forgot-password?token=%s", s.baseAppURL, raw),
+		Body:    fmt.Sprintf("Reset your Qeet ID password: %s", resetURL),
+		HTML: emailtmpl.Action(
+			"Reset your password",
+			"We received a request to reset the password for your Qeet ID account. Click the button below to choose a new one.",
+			"Reset password", resetURL,
+			"If you didn't request a password reset, you can safely ignore this email — your password won't change.",
+		),
 	}); err != nil {
 		return "", err
 	}
@@ -184,11 +192,18 @@ func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email 
 	}); err != nil {
 		return err
 	}
+	magicURL := fmt.Sprintf("%s/magic?token=%s", s.baseAppURL, raw)
 	return s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "Your login link",
-		Body:    fmt.Sprintf("Click to sign in: %s/magic?token=%s", s.baseAppURL, raw),
+		Body:    fmt.Sprintf("Sign in to Qeet ID: %s", magicURL),
+		HTML: emailtmpl.Action(
+			"Sign in to Qeet ID",
+			"Click the button below to sign in. This link is single-use and expires shortly.",
+			"Sign in", magicURL,
+			"If you didn't request this link, you can safely ignore this email.",
+		),
 	})
 }
 

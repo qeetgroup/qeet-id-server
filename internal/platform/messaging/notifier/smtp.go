@@ -77,7 +77,7 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 	if err != nil {
 		return fmt.Errorf("smtp data: %w", err)
 	}
-	if _, err := wc.Write(buildMIME(s.From, m.To, m.Subject, m.Body)); err != nil {
+	if _, err := wc.Write(buildMIME(s.From, m.To, m.Subject, m.Body, m.HTML)); err != nil {
 		return fmt.Errorf("smtp write: %w", err)
 	}
 	if err := wc.Close(); err != nil {
@@ -86,16 +86,34 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 	return c.Quit()
 }
 
-// buildMIME assembles a minimal text/plain RFC 5322 message.
-func buildMIME(from, to, subject, body string) []byte {
+// buildMIME assembles an RFC 5322 message: a plain-text mail, or — when html is
+// non-empty — a multipart/alternative carrying both the text and HTML parts so
+// clients render whichever they support.
+func buildMIME(from, to, subject, body, html string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", to)
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n")
-	b.WriteString("\r\n")
+
+	if html == "" {
+		b.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n")
+		b.WriteString(body)
+		return []byte(b.String())
+	}
+
+	const boundary = "qeet-alt-boundary-9f2a"
+	fmt.Fprintf(&b, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", boundary)
+	// Text part first so clients pick HTML (the last supported part) when able.
+	fmt.Fprintf(&b, "--%s\r\n", boundary)
+	b.WriteString("Content-Type: text/plain; charset=\"UTF-8\"\r\n\r\n")
 	b.WriteString(body)
+	b.WriteString("\r\n")
+	fmt.Fprintf(&b, "--%s\r\n", boundary)
+	b.WriteString("Content-Type: text/html; charset=\"UTF-8\"\r\n\r\n")
+	b.WriteString(html)
+	b.WriteString("\r\n")
+	fmt.Fprintf(&b, "--%s--\r\n", boundary)
 	return []byte(b.String())
 }
 

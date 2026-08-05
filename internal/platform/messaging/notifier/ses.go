@@ -51,15 +51,19 @@ func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
 	if m.To == "" {
 		return fmt.Errorf("ses sender: empty recipient")
 	}
+	body := &types.Body{
+		Text: &types.Content{Data: aws.String(m.Body), Charset: aws.String("UTF-8")},
+	}
+	if m.HTML != "" {
+		body.Html = &types.Content{Data: aws.String(m.HTML), Charset: aws.String("UTF-8")}
+	}
 	_, err := s.client.SendEmail(ctx, &sesv2.SendEmailInput{
 		FromEmailAddress: aws.String(s.from),
 		Destination:      &types.Destination{ToAddresses: []string{m.To}},
 		Content: &types.EmailContent{
 			Simple: &types.Message{
 				Subject: &types.Content{Data: aws.String(m.Subject), Charset: aws.String("UTF-8")},
-				Body: &types.Body{
-					Text: &types.Content{Data: aws.String(m.Body), Charset: aws.String("UTF-8")},
-				},
+				Body:    body,
 			},
 		},
 	})

@@ -77,6 +77,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 )
@@ -154,6 +155,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioAuthToken:  cfg.TwilioAuthToken,
 		TwilioFrom:       cfg.TwilioFrom,
 	})
+	// PNG fallback for the email logo (served at the app root): shown in clients
+	// that strip the inline SVG mark (Gmail/Outlook/Yahoo).
+	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	retentionService := retention.NewService(pool)
