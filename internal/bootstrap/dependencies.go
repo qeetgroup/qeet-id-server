@@ -138,6 +138,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	billingService.SetPayments(payments)
 	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation)    // else a paid plan with no provider is refused, not granted free
 	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo}) // creates the org when a signup checkout is paid
+	billingService.SetTaxConfig(billing.TaxConfig{                               // invoice GST/VAT (off unless configured)
+		Enabled:       cfg.BillingTaxEnabled,
+		SellerCountry: cfg.BillingSellerCountry,
+		SellerState:   cfg.BillingSellerState,
+		GSTRateBps:    cfg.BillingGSTRateBps,
+	})
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}

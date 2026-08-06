@@ -63,14 +63,20 @@ type Subscription struct {
 }
 
 type Invoice struct {
-	ID          uuid.UUID `json:"id"`
-	PlanCode    string    `json:"plan_code"`
-	Currency    string    `json:"currency"`
-	AmountMinor int64     `json:"amount_minor"`
-	Status      string    `json:"status"`
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	IssuedAt    time.Time `json:"issued_at"`
+	ID uuid.UUID `json:"id"`
+	// AmountMinor is the total charged (taxable + tax).
+	PlanCode      string    `json:"plan_code"`
+	Currency      string    `json:"currency"`
+	AmountMinor   int64     `json:"amount_minor"`
+	TaxableMinor  int64     `json:"taxable_amount_minor"`
+	TaxMinor      int64     `json:"tax_amount_minor"`
+	TaxRateBps    int       `json:"tax_rate_bps"`
+	TaxType       string    `json:"tax_type"`
+	PlaceOfSupply string    `json:"place_of_supply"`
+	Status        string    `json:"status"`
+	PeriodStart   time.Time `json:"period_start"`
+	PeriodEnd     time.Time `json:"period_end"`
+	IssuedAt      time.Time `json:"issued_at"`
 }
 
 // BillingProfile is a tenant's billing & tax details, carried onto invoices.
@@ -103,6 +109,9 @@ type Service struct {
 	// payment completes (see StartSignupCheckout). Injected by the composition
 	// root so billing doesn't import the identity/tenant package. nil until wired.
 	orgProvisioner OrgProvisioner
+	// tax is the invoice tax configuration (disabled by default — no tax charged
+	// until an operator configures their jurisdiction). Set via SetTaxConfig.
+	tax TaxConfig
 }
 
 // OrgProvisioner creates an organization (tenant) owned by ownerID. It backs the
@@ -126,6 +135,9 @@ func (s *Service) SetAllowUnpaidActivation(v bool) { s.allowUnpaidActivation = v
 
 // SetOrgProvisioner wires the organization creator used to complete signup checkouts.
 func (s *Service) SetOrgProvisioner(p OrgProvisioner) { s.orgProvisioner = p }
+
+// SetTaxConfig wires invoice tax settings. Zero value (disabled) means no tax.
+func (s *Service) SetTaxConfig(c TaxConfig) { s.tax = c }
 
 // SandboxEnabled reports whether the dev-only sandbox payment provider is active.
 func (s *Service) SandboxEnabled() bool { return s.payments.SandboxEnabled() }
@@ -481,14 +493,23 @@ func (s *Service) ChangePlan(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID,
 	}); err != nil {
 		return nil, err
 	}
+	// Compute tax from the tenant's billing profile (GST/VAT). Disabled by
+	// default, so tr is a zero-tax pass-through until an operator configures a
+	// jurisdiction. The invoice records the breakdown; amount_minor is the total.
+	tr := s.taxFor(ctx, tenantID, amt)
 	// Issue an invoice for the period (zero-amount plans still get a record).
 	if err := qTx.InsertInvoice(ctx, dbgen.InsertInvoiceParams{
-		TenantID:    tenantID,
-		PlanCode:    planCode,
-		Currency:    cur,
-		AmountMinor: amt,
-		PeriodStart: start,
-		PeriodEnd:   end,
+		TenantID:           tenantID,
+		PlanCode:           planCode,
+		Currency:           cur,
+		AmountMinor:        tr.TotalMinor,
+		PeriodStart:        start,
+		PeriodEnd:          end,
+		TaxableAmountMinor: tr.TaxableMinor,
+		TaxAmountMinor:     tr.TaxMinor,
+		TaxRateBps:         int32(tr.RateBps),
+		TaxType:            tr.Type,
+		PlaceOfSupply:      tr.PlaceOfSupply,
 	}); err != nil {
 		return nil, err
 	}
@@ -860,14 +881,19 @@ func (s *Service) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]Invoi
 	out := make([]Invoice, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, Invoice{
-			ID:          r.ID,
-			PlanCode:    r.PlanCode,
-			Currency:    r.Currency,
-			AmountMinor: r.AmountMinor,
-			Status:      r.Status,
-			PeriodStart: r.PeriodStart,
-			PeriodEnd:   r.PeriodEnd,
-			IssuedAt:    r.IssuedAt,
+			ID:            r.ID,
+			PlanCode:      r.PlanCode,
+			Currency:      r.Currency,
+			AmountMinor:   r.AmountMinor,
+			TaxableMinor:  r.TaxableAmountMinor,
+			TaxMinor:      r.TaxAmountMinor,
+			TaxRateBps:    int(r.TaxRateBps),
+			TaxType:       r.TaxType,
+			PlaceOfSupply: r.PlaceOfSupply,
+			Status:        r.Status,
+			PeriodStart:   r.PeriodStart,
+			PeriodEnd:     r.PeriodEnd,
+			IssuedAt:      r.IssuedAt,
 		})
 	}
 	return out, nil

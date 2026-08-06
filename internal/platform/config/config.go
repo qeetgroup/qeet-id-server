@@ -184,6 +184,15 @@ type Config struct {
 	// granted without either a completed card payment or this explicit opt-in.
 	BillingAllowUnpaidActivation bool `envconfig:"BILLING_ALLOW_UNPAID_ACTIVATION" default:"false"`
 
+	// Invoice tax (GST/VAT). OFF by default so no tax is computed until the
+	// operator sets their registered jurisdiction — tax is money-sensitive and
+	// must never be charged on a guess. BillingSellerState (India) drives the
+	// intra-state CGST+SGST vs inter-state IGST split.
+	BillingTaxEnabled    bool   `envconfig:"BILLING_TAX_ENABLED" default:"false"`
+	BillingSellerCountry string `envconfig:"BILLING_SELLER_COUNTRY" default:"IN"`
+	BillingSellerState   string `envconfig:"BILLING_SELLER_STATE" default:""`
+	BillingGSTRateBps    int    `envconfig:"BILLING_GST_RATE_BPS" default:"1800"`
+
 	// PaymentSandbox enables a dev-only fake provider that serves a local mock
 	// hosted-checkout page and completes payment on click — the full
 	// redirect→success flow with no real Stripe/Razorpay account. When on it

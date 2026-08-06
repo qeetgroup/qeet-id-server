@@ -195,20 +195,28 @@ func (q *Queries) InsertBillingCheckout(ctx context.Context, arg InsertBillingCh
 
 const insertInvoice = `-- name: InsertInvoice :exec
 INSERT INTO tenant.invoices
-    (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end)
-VALUES ($1, $2, $3, $4, 'paid', $5, $6)
+    (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES ($1, $2, $3, $4, 'paid', $5, $6,
+        $7, $8, $9, $10, $11)
 `
 
 type InsertInvoiceParams struct {
-	TenantID    uuid.UUID
-	PlanCode    string
-	Currency    string
-	AmountMinor int64
-	PeriodStart time.Time
-	PeriodEnd   time.Time
+	TenantID           uuid.UUID
+	PlanCode           string
+	Currency           string
+	AmountMinor        int64
+	PeriodStart        time.Time
+	PeriodEnd          time.Time
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
 }
 
 // Issue an invoice for one billing period (zero-amount plans still get a record).
+// amount_minor is the total charged (taxable + tax).
 func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) error {
 	_, err := q.db.Exec(ctx, insertInvoice,
 		arg.TenantID,
@@ -217,6 +225,11 @@ func (q *Queries) InsertInvoice(ctx context.Context, arg InsertInvoiceParams) er
 		arg.AmountMinor,
 		arg.PeriodStart,
 		arg.PeriodEnd,
+		arg.TaxableAmountMinor,
+		arg.TaxAmountMinor,
+		arg.TaxRateBps,
+		arg.TaxType,
+		arg.PlaceOfSupply,
 	)
 	return err
 }
@@ -322,7 +335,8 @@ func (q *Queries) ListBillingPlans(ctx context.Context) ([]ListBillingPlansRow, 
 }
 
 const listInvoices = `-- name: ListInvoices :many
-SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at
+SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
 FROM tenant.invoices
 WHERE tenant_id = $1
 ORDER BY issued_at DESC
@@ -330,14 +344,19 @@ LIMIT 100
 `
 
 type ListInvoicesRow struct {
-	ID          uuid.UUID
-	PlanCode    string
-	Currency    string
-	AmountMinor int64
-	Status      string
-	PeriodStart time.Time
-	PeriodEnd   time.Time
-	IssuedAt    time.Time
+	ID                 uuid.UUID
+	PlanCode           string
+	Currency           string
+	AmountMinor        int64
+	Status             string
+	PeriodStart        time.Time
+	PeriodEnd          time.Time
+	IssuedAt           time.Time
+	TaxableAmountMinor int64
+	TaxAmountMinor     int64
+	TaxRateBps         int32
+	TaxType            string
+	PlaceOfSupply      string
 }
 
 // Return the tenant's billing history, most recent first.
@@ -359,6 +378,11 @@ func (q *Queries) ListInvoices(ctx context.Context, tenantID uuid.UUID) ([]ListI
 			&i.PeriodStart,
 			&i.PeriodEnd,
 			&i.IssuedAt,
+			&i.TaxableAmountMinor,
+			&i.TaxAmountMinor,
+			&i.TaxRateBps,
+			&i.TaxType,
+			&i.PlaceOfSupply,
 		); err != nil {
 			return nil, err
 		}

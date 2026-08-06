@@ -64,9 +64,12 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 
 -- name: InsertInvoice :exec
 -- Issue an invoice for one billing period (zero-amount plans still get a record).
+-- amount_minor is the total charged (taxable + tax).
 INSERT INTO tenant.invoices
-    (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end)
-VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end);
+    (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply);
 
 -- name: GetBillingProfile :one
 -- Fetch a tenant's billing & tax details (returns no rows until first save).
@@ -141,7 +144,8 @@ RETURNING tenant_id, plan_code, currency;
 
 -- name: ListInvoices :many
 -- Return the tenant's billing history, most recent first.
-SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at
+SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
 FROM tenant.invoices
 WHERE tenant_id = @tenant_id
 ORDER BY issued_at DESC
