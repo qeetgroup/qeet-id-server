@@ -16,8 +16,8 @@ SELECT * FROM tenant.tenants
 WHERE LOWER(slug) = LOWER(@slug) AND deleted_at IS NULL;
 
 -- name: InsertTenant :one
-INSERT INTO tenant.tenants (slug, name, plan, region, metadata)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO tenant.tenants (slug, name, plan, region, logo_url, metadata)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: SoftDeleteTenant :execrows

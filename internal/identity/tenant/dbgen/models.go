@@ -22,4 +22,5 @@ type TenantTenant struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt pgtype.Timestamptz
+	LogoUrl   string
 }

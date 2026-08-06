@@ -29,7 +29,7 @@ func (q *Queries) AdoptHomeTenant(ctx context.Context, arg AdoptHomeTenantParams
 
 const getTenant = `-- name: GetTenant :one
 
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url FROM tenant.tenants
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -50,12 +50,13 @@ func (q *Queries) GetTenant(ctx context.Context, id uuid.UUID) (TenantTenant, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.LogoUrl,
 	)
 	return i, err
 }
 
 const getTenantBySlug = `-- name: GetTenantBySlug :one
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url FROM tenant.tenants
 WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL
 `
 
@@ -73,6 +74,7 @@ func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (TenantTenan
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.LogoUrl,
 	)
 	return i, err
 }
@@ -122,9 +124,9 @@ func (q *Queries) InsertOwnerRole(ctx context.Context, tenantID uuid.UUID) (uuid
 }
 
 const insertTenant = `-- name: InsertTenant :one
-INSERT INTO tenant.tenants (slug, name, plan, region, metadata)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at
+INSERT INTO tenant.tenants (slug, name, plan, region, logo_url, metadata)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url
 `
 
 type InsertTenantParams struct {
@@ -132,6 +134,7 @@ type InsertTenantParams struct {
 	Name     string
 	Plan     string
 	Region   string
+	LogoUrl  string
 	Metadata []byte
 }
 
@@ -141,6 +144,7 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (Ten
 		arg.Name,
 		arg.Plan,
 		arg.Region,
+		arg.LogoUrl,
 		arg.Metadata,
 	)
 	var i TenantTenant
@@ -155,6 +159,7 @@ func (q *Queries) InsertTenant(ctx context.Context, arg InsertTenantParams) (Ten
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.LogoUrl,
 	)
 	return i, err
 }
@@ -174,7 +179,7 @@ func (q *Queries) IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, 
 
 const listTenantsForUser = `-- name: ListTenantsForUser :many
 
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url FROM tenant.tenants
 WHERE deleted_at IS NULL
   AND EXISTS (
     SELECT 1 FROM rbac.user_roles ur
@@ -211,6 +216,7 @@ func (q *Queries) ListTenantsForUser(ctx context.Context, arg ListTenantsForUser
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.LogoUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -223,7 +229,7 @@ func (q *Queries) ListTenantsForUser(ctx context.Context, arg ListTenantsForUser
 }
 
 const listTenantsForUserAfter = `-- name: ListTenantsForUserAfter :many
-SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at FROM tenant.tenants
+SELECT id, slug, name, status, plan, region, metadata, created_at, updated_at, deleted_at, logo_url FROM tenant.tenants
 WHERE deleted_at IS NULL
   AND EXISTS (
     SELECT 1 FROM rbac.user_roles ur
@@ -267,6 +273,7 @@ func (q *Queries) ListTenantsForUserAfter(ctx context.Context, arg ListTenantsFo
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.LogoUrl,
 		); err != nil {
 			return nil, err
 		}
