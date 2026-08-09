@@ -225,19 +225,19 @@ type Config struct {
 	// public Expo push service. Override for self-hosted / proxied deployments.
 	ExpoPushURL string `envconfig:"EXPO_PUSH_URL" default:"https://exp.host/--/api/v2/push/send"`
 
-	// AI Copilot (enterprise feature). Empty CopilotProvider disables the
+	// AI Qeetai (enterprise feature). Empty QeetaiProvider disables the
 	// feature: /status returns configured=false, conversation CRUD still works,
-	// and .../messages returns 409 copilot_unconfigured.
+	// and .../messages returns 409 qeetai_unconfigured.
 	//
-	// CopilotProvider selects the backend: "anthropic" (default when set) or
+	// QeetaiProvider selects the backend: "anthropic" (default when set) or
 	// "openai" (also any OpenAI-compatible endpoint: Groq, OpenRouter, Gemini …
-	// via CopilotBaseURL). CopilotAPIKey is held server-side only — never
+	// via QeetaiBaseURL). QeetaiAPIKey is held server-side only — never
 	// serialized to any response.
-	CopilotProvider  string `envconfig:"COPILOT_PROVIDER" default:""`
-	CopilotAPIKey    string `envconfig:"COPILOT_API_KEY" default:""`
-	CopilotModel     string `envconfig:"COPILOT_MODEL" default:"claude-sonnet-5"`
-	CopilotMaxTokens int    `envconfig:"COPILOT_MAX_TOKENS" default:"4096"`
-	CopilotBaseURL   string `envconfig:"COPILOT_BASE_URL" default:""`
+	QeetaiProvider  string `envconfig:"QEETAI_PROVIDER" default:""`
+	QeetaiAPIKey    string `envconfig:"QEETAI_API_KEY" default:""`
+	QeetaiModel     string `envconfig:"QEETAI_MODEL" default:"claude-sonnet-5"`
+	QeetaiMaxTokens int    `envconfig:"QEETAI_MAX_TOKENS" default:"4096"`
+	QeetaiBaseURL   string `envconfig:"QEETAI_BASE_URL" default:""`
 }
 
 func Load() (*Config, error) {
@@ -294,9 +294,9 @@ func (c *Config) Validate() error {
 	if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) {
 		problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost")
 	}
-	// Copilot: if a provider is named, the API key must also be set.
-	if strings.TrimSpace(c.CopilotProvider) != "" && strings.TrimSpace(c.CopilotAPIKey) == "" {
-		problems = append(problems, "COPILOT_API_KEY is required when COPILOT_PROVIDER is set")
+	// Qeetai: if a provider is named, the API key must also be set.
+	if strings.TrimSpace(c.QeetaiProvider) != "" && strings.TrimSpace(c.QeetaiAPIKey) == "" {
+		problems = append(problems, "QEETAI_API_KEY is required when QEETAI_PROVIDER is set")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("insecure configuration for SERVICE_ENV=%q:\n  - %s", c.ServiceEnv, strings.Join(problems, "\n  - "))

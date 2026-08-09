@@ -40,7 +40,7 @@ func TestCatalogCompleteAndFreeLimits(t *testing.T) {
 		}
 	}
 	// ...and gates the premium ones.
-	for _, f := range []string{FeatureSSO, FeatureSCIM, FeatureLDAP, FeatureWebhooks, FeatureAuditExport, FeatureAICopilot, FeatureABAC} {
+	for _, f := range []string{FeatureSSO, FeatureSCIM, FeatureLDAP, FeatureWebhooks, FeatureAuditExport, FeatureAIQeetai, FeatureABAC} {
 		if free.Features[f] {
 			t.Errorf("free should NOT include premium feature %q", f)
 		}

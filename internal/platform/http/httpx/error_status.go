@@ -69,8 +69,8 @@ var statusByCode = map[string]int{
 	// Organization / tenant.
 	errs.CodeOrgSlugTaken: http.StatusConflict,
 
-	// Copilot.
-	"copilot_unconfigured": http.StatusConflict,
+	// Qeet AI.
+	"qeetai_unconfigured": http.StatusConflict,
 }
 
 // registerStatuses merges a domain's code→status entries into statusByCode.

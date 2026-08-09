@@ -1,4 +1,4 @@
-package copilot
+package qeetai
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 // systemPrompt is the standing instruction sent to the model on every turn.
 // Console context (route, selection) is grounding only — authorization is
 // always the server's; the model cannot widen scope from context values.
-const systemPrompt = `You are the Qeet ID AI Copilot, an AI assistant embedded in the Qeet ID admin console.
+const systemPrompt = `You are Qeet AI, the AI assistant embedded in the Qeet ID admin console.
 
 You help administrators manage their identity and access setup. You can search users, manage roles and permissions, review audit logs, create OIDC clients, and more — through the tools available to you.
 
@@ -48,23 +48,33 @@ type turnContext struct {
 	actor audit.Actor
 }
 
+// ProviderResolver resolves the effective AI provider for a tenant, applying
+// BYOK-over-platform fallback (tenant key → platform env key → unconfigured).
+// Implemented by *ProviderConfig.
+type ProviderResolver interface {
+	Resolve(ctx context.Context, tenantID uuid.UUID) (EffectiveConfig, error)
+	ProviderFor(ctx context.Context, tenantID uuid.UUID) (ai.Provider, error)
+}
+
 // Orchestrator drives the provider streaming loop and emits SSE frames.
 // It is stateless per-request: history is reconstructed from the DB each call.
-// The provider field is an ai.Provider so Anthropic and OpenAI (or any future
-// hosted endpoint) are swapped purely by config — the SSE output is unchanged.
+// The provider is resolved per-tenant (via ProviderResolver) so each turn
+// streams through the tenant's own BYOK provider or the platform fallback —
+// the SSE output is identical regardless of which is used.
 type Orchestrator struct {
-	provider ai.Provider
+	resolver ProviderResolver
 	service  *Service
 }
 
-// NewOrchestrator returns an Orchestrator backed by the given ai.Provider and
-// copilot service. The provider is constructed from COPILOT_PROVIDER in main.go
-// and injected here; the orchestrator is provider-agnostic at runtime.
-func NewOrchestrator(provider ai.Provider, service *Service) *Orchestrator {
-	return &Orchestrator{provider: provider, service: service}
+// NewOrchestrator returns an Orchestrator backed by the given per-tenant
+// provider resolver and qeetai service. The resolver picks the tenant's BYOK
+// provider (or the platform fallback) for each turn; the orchestrator is
+// provider-agnostic at runtime.
+func NewOrchestrator(resolver ProviderResolver, service *Service) *Orchestrator {
+	return &Orchestrator{resolver: resolver, service: service}
 }
 
-// Run executes one streaming turn of the copilot:
+// Run executes one streaming turn of the qeetai:
 //  1. Loads full conversation history from DB.
 //  2. Calls the configured AI provider (streaming) with history + tools.
 //  3. Emits token/thinking SSE frames as text arrives.
@@ -87,7 +97,7 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 	// Load tool definitions from the embedded manifest.
 	toolDefs, err := loadToolDefs()
 	if err != nil {
-		slog.Error("copilot: load tools", "err", err)
+		slog.Error("qeetai: load tools", "err", err)
 		sse.send(EventTypeError, errorData{Code: "config_error", Message: "tool configuration error"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
@@ -102,9 +112,20 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 		system += "\n\nCurrent console context (grounding only, not authoritative):\n" + tc.pageContext
 	}
 
+	// Resolve the tenant's effective provider (their own BYOK key, or the
+	// platform fallback). The handler has already gated on configured/plan, so
+	// an error here is unexpected and terminal for the turn.
+	provider, err := o.resolver.ProviderFor(ctx, tc.tenantID)
+	if err != nil {
+		slog.Error("qeetai: resolve provider", "err", err)
+		sse.send(EventTypeError, errorData{Code: "config_error", Message: "AI provider is not available"})
+		sse.send(EventTypeDone, doneData{Reason: "error"})
+		return
+	}
+
 	sse.send(EventTypeThinking, thinkingData{Text: "Thinking..."})
 
-	events, errC := o.provider.Stream(ctx, system, aiMsgs, toolDefs)
+	events, errC := provider.Stream(ctx, system, aiMsgs, toolDefs)
 
 	// Accumulate response blocks while streaming.
 	var (
@@ -140,7 +161,7 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 			// len(toolBlocks) > 0 after the loop.
 
 		case ai.EventProviderError:
-			slog.Error("copilot: provider stream error", "msg", ev.ErrorMessage)
+			slog.Error("qeetai: provider stream error", "msg", ev.ErrorMessage)
 			sse.send(EventTypeError, errorData{Code: "model_error", Message: ev.ErrorMessage})
 			sse.send(EventTypeDone, doneData{Reason: "error"})
 			// Drain remaining events.
@@ -153,7 +174,7 @@ func (o *Orchestrator) Run(ctx context.Context, tc turnContext, sse *sseWriter) 
 
 	// Drain the error channel (buffered, size 1).
 	if streamErr := <-errC; streamErr != nil {
-		slog.Error("copilot: stream io error", "err", streamErr)
+		slog.Error("qeetai: stream io error", "err", streamErr)
 		sse.send(EventTypeError, errorData{Code: "stream_error", Message: "model stream failed"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
@@ -177,7 +198,7 @@ func (o *Orchestrator) handleEndTurn(ctx context.Context, tc turnContext, sse *s
 	}
 	m, err := o.service.AppendMessage(ctx, tc.tenantID, tc.conversationID, "assistant", contentJSON)
 	if err != nil {
-		slog.Error("copilot: persist assistant message", "err", err)
+		slog.Error("qeetai: persist assistant message", "err", err)
 		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist response"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
@@ -220,7 +241,7 @@ func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *s
 	}
 	m, err := o.service.AppendMessage(ctx, tc.tenantID, tc.conversationID, "assistant", contentJSON)
 	if err != nil {
-		slog.Error("copilot: persist tool assistant message", "err", err)
+		slog.Error("qeetai: persist tool assistant message", "err", err)
 		sse.send(EventTypeError, errorData{Code: "db_error", Message: "failed to persist tool call"})
 		sse.send(EventTypeDone, doneData{Reason: "error"})
 		return
@@ -245,12 +266,12 @@ func (o *Orchestrator) handleToolUse(ctx context.Context, tc turnContext, sse *s
 	sse.send(EventTypeDone, doneData{Reason: "tool_use", MessageID: m.ID.String()})
 }
 
-// recordToolAudit writes a copilot.tool.requested audit row. Tool input is
+// recordToolAudit writes a qeetai.tool.requested audit row. Tool input is
 // intentionally REDACTED; only the tool name and message id are audited.
 func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, toolName string, msgID uuid.UUID) {
 	tx, err := o.service.pool.Begin(ctx)
 	if err != nil {
-		slog.Warn("copilot: audit tx begin", "err", err)
+		slog.Warn("qeetai: audit tx begin", "err", err)
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
@@ -261,8 +282,8 @@ func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, tool
 		TenantID:     &tid,
 		ActorUserID:  tc.actor.UserID,
 		ActorType:    tc.actor.Type,
-		Action:       "copilot.tool.requested",
-		ResourceType: "copilot_message",
+		Action:       "qeetai.tool.requested",
+		ResourceType: "qeetai_message",
 		ResourceID:   &mid,
 		IP:           tc.actor.IP,
 		UserAgent:    tc.actor.UserAgent,
@@ -274,15 +295,15 @@ func (o *Orchestrator) recordToolAudit(ctx context.Context, tc turnContext, tool
 		},
 	})
 	if err != nil {
-		slog.Warn("copilot: audit tool.requested", "err", err)
+		slog.Warn("qeetai: audit tool.requested", "err", err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("copilot: audit tool.requested commit", "err", err)
+		slog.Warn("qeetai: audit tool.requested commit", "err", err)
 	}
 }
 
-// buildMessages converts DB copilot.Message values to the neutral ai.Message
+// buildMessages converts DB qeetai.Message values to the neutral ai.Message
 // format. The DB stores content as JSON arrays of Anthropic-format content
 // blocks, which are identical to ai.ContentBlock in structure and JSON tags.
 // Role stays as-is ("user", "assistant", "tool"); each provider remaps as

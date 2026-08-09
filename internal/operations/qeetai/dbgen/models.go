@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type CopilotConversation struct {
+type QeetaiConversation struct {
 	ID        uuid.UUID
 	TenantID  uuid.UUID
 	UserID    uuid.UUID
@@ -21,11 +22,26 @@ type CopilotConversation struct {
 	UpdatedAt time.Time
 }
 
-type CopilotMessage struct {
+type QeetaiMessage struct {
 	ID             uuid.UUID
 	TenantID       uuid.UUID
 	ConversationID uuid.UUID
 	Role           string
 	Content        json.RawMessage
 	CreatedAt      time.Time
+}
+
+type QeetaiProviderSetting struct {
+	TenantID      uuid.UUID
+	Provider      string
+	Model         string
+	BaseUrl       string
+	MaxTokens     int32
+	KeyCiphertext []byte
+	KeyNonce      []byte
+	KeyLast4      string
+	Enabled       bool
+	UpdatedBy     pgtype.UUID
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

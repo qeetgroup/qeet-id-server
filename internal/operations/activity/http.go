@@ -418,7 +418,7 @@ func splitCSV(s string) []string {
 }
 
 // sseWriter writes SSE frames to an http.ResponseWriter and flushes after each.
-// It mirrors copilot/sse.go — not imported because copilot is not a shared
+// It mirrors qeetai/sse.go — not imported because qeetai is not a shared
 // library; copying the ~30-line writer keeps the package dependency graph clean.
 type sseWriter struct {
 	w       http.ResponseWriter
@@ -447,7 +447,7 @@ func (s *sseWriter) sendActivity(ev ActivityEvent) {
 }
 
 // keepAlive sends a comment ping (":\n\n") to prevent proxy timeouts on idle
-// connections — identical to the copilot keep-alive pattern.
+// connections — identical to the qeetai keep-alive pattern.
 func (s *sseWriter) keepAlive() {
 	fmt.Fprintf(s.w, ": keep-alive\n\n")
 	s.flusher.Flush()

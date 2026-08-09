@@ -41,9 +41,9 @@ tags:
     description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
   - name: Compliance
     description: SOC 2 and ISO 27001 live evidence generation from real tenant system state.
-  - name: Copilot
+  - name: Qeet AI
     description: >-
-      AI copilot inference service — streaming conversation turns, conversation
+      AI qeetai inference service — streaming conversation turns, conversation
       management, and configuration status. Tool execution runs client-side
       under the user's own token (RBAC/RLS/audit inherited). API key is
       server-side only and never returned by any endpoint.
@@ -1176,7 +1176,7 @@ paths:
                       ldap: false
                       webhooks: false
                       audit_export: false
-                      ai_copilot: false
+                      ai_qeetai: false
                       abac: false
                   limits:
                     type: object
@@ -2005,37 +2005,37 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/copilot/status:
+  /v1/qeetai/status:
     get:
-      operationId: get_v1_copilot_status
-      summary: Copilot configuration status
+      operationId: get_v1_qeetai_status
+      summary: Qeet AI configuration status
       description: >-
-        Returns whether the AI copilot is configured server-side and which
+        Returns whether the AI qeetai is configured server-side and which
         provider/model is active. Never returns key material. Used by the
         console to render the unconfigured setup state.
       tags:
-        - Copilot
+        - Qeet AI
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Copilot status
+          description: Qeet AI status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CopilotStatus'
+                $ref: '#/components/schemas/Qeet AIStatus'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/copilot/conversations:
+  /v1/qeetai/conversations:
     get:
-      operationId: get_v1_copilot_conversations
+      operationId: get_v1_qeetai_conversations
       summary: List conversations
       description: >-
-        Returns all copilot conversations for the authenticated user within
+        Returns all qeetai conversations for the authenticated user within
         their tenant, ordered by pinned-first then most-recently-updated.
       tags:
-        - Copilot
+        - Qeet AI
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2050,15 +2050,15 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/CopilotConversation'
+                      $ref: '#/components/schemas/Qeet AIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      operationId: post_v1_copilot_conversations
+      operationId: post_v1_qeetai_conversations
       summary: Create conversation
-      description: Creates a new copilot conversation thread for the authenticated user.
+      description: Creates a new qeetai conversation thread for the authenticated user.
       tags:
-        - Copilot
+        - Qeet AI
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2078,18 +2078,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CopilotConversation'
+                $ref: '#/components/schemas/Qeet AIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/copilot/conversations/{conversationID}:
+  /v1/qeetai/conversations/{conversationID}:
     get:
-      operationId: get_v1_copilot_conversations_ByConversationID
+      operationId: get_v1_qeetai_conversations_ByConversationID
       summary: Get conversation with messages
       description: >-
         Returns a single conversation and its full message history in
         chronological order.
       tags:
-        - Copilot
+        - Qeet AI
       parameters:
         - name: conversationID
           in: path
@@ -2109,21 +2109,21 @@ paths:
                 type: object
                 properties:
                   conversation:
-                    $ref: '#/components/schemas/CopilotConversation'
+                    $ref: '#/components/schemas/Qeet AIConversation'
                   messages:
                     type: array
                     items:
-                      $ref: '#/components/schemas/CopilotMessage'
+                      $ref: '#/components/schemas/Qeet AIMessage'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      operationId: patch_v1_copilot_conversations_ByConversationID
+      operationId: patch_v1_qeetai_conversations_ByConversationID
       summary: Update conversation
       description: Rename or pin/unpin a conversation.
       tags:
-        - Copilot
+        - Qeet AI
       parameters:
         - name: conversationID
           in: path
@@ -2151,17 +2151,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CopilotConversation'
+                $ref: '#/components/schemas/Qeet AIConversation'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
-      operationId: delete_v1_copilot_conversations_ByConversationID
+      operationId: delete_v1_qeetai_conversations_ByConversationID
       summary: Delete conversation
       description: Deletes a conversation and all its messages.
       tags:
-        - Copilot
+        - Qeet AI
       parameters:
         - name: conversationID
           in: path
@@ -2179,12 +2179,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/copilot/conversations/{conversationID}/messages:
+  /v1/qeetai/conversations/{conversationID}/messages:
     post:
-      operationId: post_v1_copilot_conversations_ByConversationID_messages
+      operationId: post_v1_qeetai_conversations_ByConversationID_messages
       summary: Send a message / continue with tool results (SSE stream)
       description: >-
-        Opens a streaming turn of the AI copilot conversation.
+        Opens a streaming turn of the AI qeetai conversation.
         The response is a `text/event-stream` of SSE frames (thinking, token,
         tool_call, tool_result, error, done). Each frame is
         `event: <type>\ndata: <json>\n\n`.
@@ -2195,10 +2195,10 @@ paths:
         `tool_results` to this same endpoint to continue generation.
 
 
-        Requires `COPILOT_PROVIDER` configured server-side; returns
-        `409 copilot_unconfigured` otherwise.
+        Requires `QEETAI_PROVIDER` configured server-side; returns
+        `409 qeetai_unconfigured` otherwise.
       tags:
-        - Copilot
+        - Qeet AI
       parameters:
         - name: conversationID
           in: path
@@ -2262,7 +2262,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Copilot not configured (COPILOT_PROVIDER/COPILOT_API_KEY unset)
+          description: Qeet AI not configured (QEETAI_PROVIDER/QEETAI_API_KEY unset)
           content:
             application/json:
               schema:
@@ -2501,22 +2501,22 @@ components:
           description: >-
             Opaque cursor for the next page. Present only when more results
             exist; omitted (not null) when this is the last page.
-    CopilotStatus:
+    Qeet AIStatus:
       type: object
-      description: AI copilot configuration state. Never contains key material.
+      description: AI qeetai configuration state. Never contains key material.
       properties:
         configured:
           type: boolean
-          description: True when COPILOT_PROVIDER and COPILOT_API_KEY are set.
+          description: True when QEETAI_PROVIDER and QEETAI_API_KEY are set.
         provider:
           type: string
           description: Provider name (e.g. "anthropic"); empty when not configured.
         model:
           type: string
           description: Model identifier (e.g. "claude-sonnet-5"); empty when not configured.
-    CopilotConversation:
+    Qeet AIConversation:
       type: object
-      description: A named copilot conversation thread (tenant + user scoped).
+      description: A named qeetai conversation thread (tenant + user scoped).
       properties:
         id:
           type: string
@@ -2537,10 +2537,10 @@ components:
         updated_at:
           type: string
           format: date-time
-    CopilotMessage:
+    Qeet AIMessage:
       type: object
       description: >-
-        One turn in a copilot conversation. `content` is an array of Anthropic
+        One turn in a qeetai conversation. `content` is an array of Anthropic
         content blocks (text / tool_use / tool_result) stored verbatim.
       properties:
         id:

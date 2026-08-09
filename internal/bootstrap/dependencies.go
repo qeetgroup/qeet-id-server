@@ -59,7 +59,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
@@ -69,9 +69,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/anthropic"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
@@ -213,36 +210,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	agentService := agent.NewService(pool, issuer)               // AI-agent identities (ephemeral scoped tokens)
 	vcService := vc.NewService(pool, issuer)                     // W3C verifiable credentials (JWT-VC)
 
-	// AI Copilot: provider unset ⇒ feature disabled (handler still mounts; /status
-	// reports configured=false; .../messages returns 409 copilot_unconfigured).
-	// COPILOT_PROVIDER selects the backend: "openai" (or any OpenAI-compatible
-	// endpoint via COPILOT_BASE_URL), else "anthropic".
-	copilotService := copilot.NewService(pool)
-	copilotConfigured := cfg.CopilotProvider != "" && cfg.CopilotAPIKey != ""
-	var copilotOrchestrator *copilot.Orchestrator
-	if copilotConfigured {
-		var provider ai.Provider
-		switch strings.ToLower(cfg.CopilotProvider) {
-		case "openai":
-			c := openai.New(cfg.CopilotAPIKey, cfg.CopilotBaseURL, cfg.CopilotModel, cfg.CopilotMaxTokens, nil)
-			provider = c
-		default: // "anthropic" and any unrecognised value fall back to Anthropic
-			c := anthropic.New(cfg.CopilotAPIKey, cfg.CopilotBaseURL, cfg.CopilotModel, cfg.CopilotMaxTokens, nil)
-			provider = anthropic.NewProvider(c)
-		}
-		copilotOrchestrator = copilot.NewOrchestrator(provider, copilotService)
-		slog.Info("AI copilot enabled", "provider", cfg.CopilotProvider, "model", cfg.CopilotModel)
-	} else {
-		slog.Info("AI copilot disabled (COPILOT_PROVIDER/COPILOT_API_KEY not set)")
-	}
-	copilotHandler := &copilot.Handler{
-		Service:      copilotService,
-		Orchestrator: copilotOrchestrator,
-		Configured:   copilotConfigured,
-		Provider:     cfg.CopilotProvider,
-		Model:        cfg.CopilotModel,
-		Plan:         entitlementSvc, // ai_copilot is a Pro+ feature
-	}
+	// Qeet AI assistant: the conversation store is created here; the per-tenant
+	// BYOK provider-config service + orchestrator + handler are wired below,
+	// after the secrets key provider exists (they reuse the same AES data key to
+	// encrypt tenant provider keys at rest).
+	qeetaiService := qeetai.NewService(pool)
 	// Live Activity hub: subscribes to NATS outbox events (when NATS_URL is set)
 	// and fans them out to authenticated SSE connections filtered by tenant.
 	// When NATS_URL is empty the hub acts as a no-op broker — the SSE stream
@@ -340,6 +312,36 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Error("init token vault", "err", err)
 		os.Exit(1)
 	}
+
+	// Qeet AI provider config: per-tenant BYOK keys encrypted with the same data
+	// key as the secrets vault. When a tenant hasn't set its own key, the
+	// deployment-level QEETAI_* env acts as the platform fallback. Because a
+	// tenant can bring its own key even when no platform key is set, the
+	// orchestrator is always constructed (configured state is resolved per-tenant).
+	qeetaiProviderCfg, err := qeetai.NewProviderConfig(rootCtx, pool, keyProvider, qeetai.PlatformProvider{
+		Provider:  cfg.QeetaiProvider,
+		APIKey:    cfg.QeetaiAPIKey,
+		Model:     cfg.QeetaiModel,
+		BaseURL:   cfg.QeetaiBaseURL,
+		MaxTokens: cfg.QeetaiMaxTokens,
+	})
+	if err != nil {
+		slog.Error("init Qeet AI provider config", "err", err)
+		os.Exit(1)
+	}
+	if qeetaiProviderCfg.PlatformConfigured() {
+		slog.Info("Qeet AI: platform provider configured", "provider", cfg.QeetaiProvider, "model", cfg.QeetaiModel)
+	} else {
+		slog.Info("Qeet AI: no platform provider set — tenants must bring their own key (BYOK)")
+	}
+	qeetaiHandler := &qeetai.Handler{
+		Service:      qeetaiService,
+		Orchestrator: qeetai.NewOrchestrator(qeetaiProviderCfg, qeetaiService),
+		Resolver:     qeetaiProviderCfg,
+		Config:       qeetaiProviderCfg,
+		Plan:         entitlementSvc, // platform fallback is a Pro+ feature; BYOK bypasses the gate
+	}
+
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
 
 	// SAML IdP signing identity: configured RSA key+cert in prod, or an
@@ -494,7 +496,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		AuthZEN:       &authzen.Handler{Service: authzenService},
 		Agent:         &agent.Handler{Service: agentService},
 		VC:            &vc.Handler{Service: vcService},
-		Copilot:       copilotHandler,
+		Qeetai:       qeetaiHandler,
 		Search:        &search.Handler{Service: searchService},
 		Activity:      activity.NewHandler(pool, activityHub),
 		Health:        healthHandler,

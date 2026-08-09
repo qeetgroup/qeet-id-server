@@ -1,11 +1,11 @@
-// Package copilot is the AI copilot inference service for the admin console.
+// Package qeetai is the AI qeetai inference service for the admin console.
 // It persists conversation and message history (tenant + user scoped), drives
 // the Anthropic tool-orchestration loop, and exposes the results over SSE.
 //
-// Security invariant: the copilot NEVER executes a domain mutation. Tool calls
+// Security invariant: the qeetai NEVER executes a domain mutation. Tool calls
 // are emitted as SSE events; the browser executes them under the user's own
 // token so RBAC and audit are inherited, never bypassed.
-package copilot
+package qeetai
 
 import (
 	"context"
@@ -17,11 +17,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/copilot/dbgen"
+	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/qeetai/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// Conversation is a named thread between one user and the copilot.
+// Conversation is a named thread between one user and the qeetai.
 type Conversation struct {
 	ID        uuid.UUID `json:"id"`
 	TenantID  uuid.UUID `json:"tenant_id"`
@@ -245,8 +245,8 @@ func (s *Service) listMessages(ctx context.Context, tenantID, conversationID uui
 	return out, nil
 }
 
-// convFromRow maps a dbgen.CopilotConversation to the domain Conversation type.
-func convFromRow(r dbgen.CopilotConversation) *Conversation {
+// convFromRow maps a dbgen.QeetaiConversation to the domain Conversation type.
+func convFromRow(r dbgen.QeetaiConversation) *Conversation {
 	return &Conversation{
 		ID:        r.ID,
 		TenantID:  r.TenantID,
@@ -258,8 +258,8 @@ func convFromRow(r dbgen.CopilotConversation) *Conversation {
 	}
 }
 
-// msgFromRow maps a dbgen.CopilotMessage to the domain Message type.
-func msgFromRow(r dbgen.CopilotMessage) *Message {
+// msgFromRow maps a dbgen.QeetaiMessage to the domain Message type.
+func msgFromRow(r dbgen.QeetaiMessage) *Message {
 	return &Message{
 		ID:             r.ID,
 		TenantID:       r.TenantID,

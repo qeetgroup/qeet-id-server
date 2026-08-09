@@ -1,10 +1,10 @@
-package copilot
+package qeetai
 
 import (
 	"encoding/json"
 	"fmt"
 
-	copilotmanifest "github.com/qeetgroup/qeet-id-server/api/copilot"
+	qeetaimanifest "github.com/qeetgroup/qeet-id-server/api/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 )
 
@@ -26,8 +26,8 @@ type toolManifest struct {
 // under the user's own token (RBAC/audit inherited, never bypassed).
 func loadToolDefs() ([]ai.ToolDef, error) {
 	var m toolManifest
-	if err := json.Unmarshal(copilotmanifest.ToolsManifestJSON, &m); err != nil {
-		return nil, fmt.Errorf("copilot: parse tools manifest: %w", err)
+	if err := json.Unmarshal(qeetaimanifest.ToolsManifestJSON, &m); err != nil {
+		return nil, fmt.Errorf("qeetai: parse tools manifest: %w", err)
 	}
 	defs := make([]ai.ToolDef, 0, len(m.Tools))
 	for _, t := range m.Tools {

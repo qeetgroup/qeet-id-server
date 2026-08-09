@@ -10,11 +10,12 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createConversation = `-- name: CreateConversation :one
 
-INSERT INTO copilot.conversations (tenant_id, user_id, title)
+INSERT INTO qeetai.conversations (tenant_id, user_id, title)
 VALUES ($1, $2, $3)
 RETURNING id, tenant_id, user_id, title, pinned, created_at, updated_at
 `
@@ -25,12 +26,12 @@ type CreateConversationParams struct {
 	Title    string
 }
 
-// Queries for the copilot domain.
-// Static queries against copilot.conversations and copilot.messages; compiled
+// Queries for the qeetai domain.
+// Static queries against qeetai.conversations and qeetai.messages; compiled
 // by sqlc into ./dbgen. All queries are scoped by tenant_id (multi-tenancy).
-func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversationParams) (CopilotConversation, error) {
+func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversationParams) (QeetaiConversation, error) {
 	row := q.db.QueryRow(ctx, createConversation, arg.TenantID, arg.UserID, arg.Title)
-	var i CopilotConversation
+	var i QeetaiConversation
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -44,7 +45,7 @@ func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversation
 }
 
 const deleteConversation = `-- name: DeleteConversation :execrows
-DELETE FROM copilot.conversations
+DELETE FROM qeetai.conversations
 WHERE id = $1 AND tenant_id = $2 AND user_id = $3
 `
 
@@ -62,9 +63,22 @@ func (q *Queries) DeleteConversation(ctx context.Context, arg DeleteConversation
 	return result.RowsAffected(), nil
 }
 
+const deleteProviderSettings = `-- name: DeleteProviderSettings :execrows
+DELETE FROM qeetai.provider_settings
+WHERE tenant_id = $1
+`
+
+func (q *Queries) DeleteProviderSettings(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProviderSettings, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getConversation = `-- name: GetConversation :one
 SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at
-FROM copilot.conversations
+FROM qeetai.conversations
 WHERE id = $1 AND tenant_id = $2 AND user_id = $3
 `
 
@@ -74,9 +88,9 @@ type GetConversationParams struct {
 	UserID   uuid.UUID
 }
 
-func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (CopilotConversation, error) {
+func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams) (QeetaiConversation, error) {
 	row := q.db.QueryRow(ctx, getConversation, arg.ID, arg.TenantID, arg.UserID)
-	var i CopilotConversation
+	var i QeetaiConversation
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -89,8 +103,39 @@ func (q *Queries) GetConversation(ctx context.Context, arg GetConversationParams
 	return i, err
 }
 
+const getProviderSettings = `-- name: GetProviderSettings :one
+
+SELECT tenant_id, provider, model, base_url, max_tokens,
+       key_ciphertext, key_nonce, key_last4, enabled, updated_by, created_at, updated_at
+FROM qeetai.provider_settings
+WHERE tenant_id = $1
+`
+
+// Per-tenant BYOK provider settings. The key is stored encrypted (ciphertext +
+// nonce); it is never selected into any response DTO — only the service layer
+// decrypts it to build the provider client.
+func (q *Queries) GetProviderSettings(ctx context.Context, tenantID uuid.UUID) (QeetaiProviderSetting, error) {
+	row := q.db.QueryRow(ctx, getProviderSettings, tenantID)
+	var i QeetaiProviderSetting
+	err := row.Scan(
+		&i.TenantID,
+		&i.Provider,
+		&i.Model,
+		&i.BaseUrl,
+		&i.MaxTokens,
+		&i.KeyCiphertext,
+		&i.KeyNonce,
+		&i.KeyLast4,
+		&i.Enabled,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertMessage = `-- name: InsertMessage :one
-INSERT INTO copilot.messages (tenant_id, conversation_id, role, content)
+INSERT INTO qeetai.messages (tenant_id, conversation_id, role, content)
 VALUES ($1, $2, $3, $4)
 RETURNING id, tenant_id, conversation_id, role, content, created_at
 `
@@ -102,14 +147,14 @@ type InsertMessageParams struct {
 	Content        json.RawMessage
 }
 
-func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (CopilotMessage, error) {
+func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (QeetaiMessage, error) {
 	row := q.db.QueryRow(ctx, insertMessage,
 		arg.TenantID,
 		arg.ConversationID,
 		arg.Role,
 		arg.Content,
 	)
-	var i CopilotMessage
+	var i QeetaiMessage
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -123,7 +168,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (C
 
 const listConversations = `-- name: ListConversations :many
 SELECT id, tenant_id, user_id, title, pinned, created_at, updated_at
-FROM copilot.conversations
+FROM qeetai.conversations
 WHERE tenant_id = $1 AND user_id = $2
 ORDER BY pinned DESC, updated_at DESC
 `
@@ -133,15 +178,15 @@ type ListConversationsParams struct {
 	UserID   uuid.UUID
 }
 
-func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]CopilotConversation, error) {
+func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]QeetaiConversation, error) {
 	rows, err := q.db.Query(ctx, listConversations, arg.TenantID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []CopilotConversation{}
+	items := []QeetaiConversation{}
 	for rows.Next() {
-		var i CopilotConversation
+		var i QeetaiConversation
 		if err := rows.Scan(
 			&i.ID,
 			&i.TenantID,
@@ -163,7 +208,7 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 
 const listMessages = `-- name: ListMessages :many
 SELECT id, tenant_id, conversation_id, role, content, created_at
-FROM copilot.messages
+FROM qeetai.messages
 WHERE conversation_id = $1 AND tenant_id = $2
 ORDER BY created_at ASC
 `
@@ -173,15 +218,15 @@ type ListMessagesParams struct {
 	TenantID       uuid.UUID
 }
 
-func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]CopilotMessage, error) {
+func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]QeetaiMessage, error) {
 	rows, err := q.db.Query(ctx, listMessages, arg.ConversationID, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []CopilotMessage{}
+	items := []QeetaiMessage{}
 	for rows.Next() {
-		var i CopilotMessage
+		var i QeetaiMessage
 		if err := rows.Scan(
 			&i.ID,
 			&i.TenantID,
@@ -201,7 +246,7 @@ func (q *Queries) ListMessages(ctx context.Context, arg ListMessagesParams) ([]C
 }
 
 const patchConversation = `-- name: PatchConversation :one
-UPDATE copilot.conversations
+UPDATE qeetai.conversations
 SET
     title      = COALESCE($1, title),
     pinned     = COALESCE($2, pinned),
@@ -218,7 +263,7 @@ type PatchConversationParams struct {
 	UserID   uuid.UUID
 }
 
-func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationParams) (CopilotConversation, error) {
+func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationParams) (QeetaiConversation, error) {
 	row := q.db.QueryRow(ctx, patchConversation,
 		arg.Title,
 		arg.Pinned,
@@ -226,7 +271,7 @@ func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationPa
 		arg.TenantID,
 		arg.UserID,
 	)
-	var i CopilotConversation
+	var i QeetaiConversation
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -240,7 +285,7 @@ func (q *Queries) PatchConversation(ctx context.Context, arg PatchConversationPa
 }
 
 const touchConversation = `-- name: TouchConversation :exec
-UPDATE copilot.conversations
+UPDATE qeetai.conversations
 SET updated_at = now()
 WHERE id = $1 AND tenant_id = $2
 `
@@ -253,4 +298,71 @@ type TouchConversationParams struct {
 func (q *Queries) TouchConversation(ctx context.Context, arg TouchConversationParams) error {
 	_, err := q.db.Exec(ctx, touchConversation, arg.ConversationID, arg.TenantID)
 	return err
+}
+
+const upsertProviderSettings = `-- name: UpsertProviderSettings :one
+INSERT INTO qeetai.provider_settings (
+    tenant_id, provider, model, base_url, max_tokens,
+    key_ciphertext, key_nonce, key_last4, enabled, updated_by, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10, now()
+)
+ON CONFLICT (tenant_id) DO UPDATE SET
+    provider       = EXCLUDED.provider,
+    model          = EXCLUDED.model,
+    base_url       = EXCLUDED.base_url,
+    max_tokens     = EXCLUDED.max_tokens,
+    key_ciphertext = EXCLUDED.key_ciphertext,
+    key_nonce      = EXCLUDED.key_nonce,
+    key_last4      = EXCLUDED.key_last4,
+    enabled        = EXCLUDED.enabled,
+    updated_by     = EXCLUDED.updated_by,
+    updated_at     = now()
+RETURNING tenant_id, provider, model, base_url, max_tokens,
+          key_ciphertext, key_nonce, key_last4, enabled, updated_by, created_at, updated_at
+`
+
+type UpsertProviderSettingsParams struct {
+	TenantID      uuid.UUID
+	Provider      string
+	Model         string
+	BaseUrl       string
+	MaxTokens     int32
+	KeyCiphertext []byte
+	KeyNonce      []byte
+	KeyLast4      string
+	Enabled       bool
+	UpdatedBy     pgtype.UUID
+}
+
+func (q *Queries) UpsertProviderSettings(ctx context.Context, arg UpsertProviderSettingsParams) (QeetaiProviderSetting, error) {
+	row := q.db.QueryRow(ctx, upsertProviderSettings,
+		arg.TenantID,
+		arg.Provider,
+		arg.Model,
+		arg.BaseUrl,
+		arg.MaxTokens,
+		arg.KeyCiphertext,
+		arg.KeyNonce,
+		arg.KeyLast4,
+		arg.Enabled,
+		arg.UpdatedBy,
+	)
+	var i QeetaiProviderSetting
+	err := row.Scan(
+		&i.TenantID,
+		&i.Provider,
+		&i.Model,
+		&i.BaseUrl,
+		&i.MaxTokens,
+		&i.KeyCiphertext,
+		&i.KeyNonce,
+		&i.KeyLast4,
+		&i.Enabled,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

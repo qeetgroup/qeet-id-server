@@ -1,4 +1,4 @@
-package copilot
+package qeetai
 
 import (
 	"encoding/json"
@@ -42,7 +42,7 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 func (s *sseWriter) send(eventType StreamEventType, data any) {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		slog.Warn("copilot: sse marshal", "err", err)
+		slog.Warn("qeetai: sse marshal", "err", err)
 		return
 	}
 	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", eventType, raw)

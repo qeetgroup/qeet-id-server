@@ -34,7 +34,7 @@ const (
 	FeatureLDAP           = "ldap"
 	FeatureWebhooks       = "webhooks"
 	FeatureAuditExport    = "audit_export"
-	FeatureAICopilot      = "ai_copilot"
+	FeatureAIQeetai      = "ai_qeetai"
 	FeatureABAC           = "abac"
 )
 
@@ -80,7 +80,7 @@ func features(on ...string) map[string]bool {
 		FeaturePasskeys, FeaturePassword, FeatureMagicLinks, FeatureSocial,
 		FeatureTOTP, FeatureEmailOTP, FeatureHostedLogin, FeatureSMSMFA,
 		FeatureCustomBranding, FeatureCustomDomain, FeatureSSO, FeatureSCIM,
-		FeatureLDAP, FeatureWebhooks, FeatureAuditExport, FeatureAICopilot, FeatureABAC,
+		FeatureLDAP, FeatureWebhooks, FeatureAuditExport, FeatureAIQeetai, FeatureABAC,
 	}
 	m := make(map[string]bool, len(all))
 	for _, k := range all {
@@ -133,7 +133,7 @@ var Catalog = map[string]Entitlements{
 		Plan: "pro",
 		Features: features(append(append([]string{}, coreLogin...),
 			FeatureSMSMFA, FeatureCustomBranding, FeatureCustomDomain, FeatureWebhooks,
-			FeatureSSO, FeatureAuditExport, FeatureAICopilot, FeatureABAC)...),
+			FeatureSSO, FeatureAuditExport, FeatureAIQeetai, FeatureABAC)...),
 		Limits: map[string]int{
 			LimitSeats:              Unlimited,
 			LimitApps:               Unlimited,
@@ -150,7 +150,7 @@ var Catalog = map[string]Entitlements{
 		Features: features(FeaturePasskeys, FeaturePassword, FeatureMagicLinks, FeatureSocial,
 			FeatureTOTP, FeatureEmailOTP, FeatureHostedLogin, FeatureSMSMFA,
 			FeatureCustomBranding, FeatureCustomDomain, FeatureSSO, FeatureSCIM,
-			FeatureLDAP, FeatureWebhooks, FeatureAuditExport, FeatureAICopilot, FeatureABAC),
+			FeatureLDAP, FeatureWebhooks, FeatureAuditExport, FeatureAIQeetai, FeatureABAC),
 		Limits: map[string]int{
 			LimitSeats:              Unlimited,
 			LimitApps:               Unlimited,
