@@ -109,7 +109,7 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	svc := auth.NewService(testPool, users, mustIssuer())
-	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{})
+	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	svc.SetMFA(mfaSvc)
 
 	email := uniqueSlug("mfa") + "@example.com"
@@ -190,7 +190,7 @@ func TestAdminResetMFA(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	svc := auth.NewService(testPool, users, mustIssuer())
-	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{})
+	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 
 	email := uniqueSlug("reset") + "@example.com"
 	if _, _, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"}); err != nil {

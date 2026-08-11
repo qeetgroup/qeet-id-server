@@ -48,11 +48,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
@@ -114,7 +114,7 @@ type Deps struct {
 	Notification  *notification.Handler
 	DomainVerify  *domainverify.Handler
 	SIEM          *siem.Handler
-	Qeetai       *qeetai.Handler
+	Qeetai        *qeetai.Handler
 	AuthHook      *authhook.Handler
 	ABAC          *abac.Handler
 	ReBAC         *rebac.Handler
@@ -337,7 +337,7 @@ func NewRouter(d Deps) http.Handler {
 			d.AuthZEN.Mount(r)      // /tenants/{id}/access/v1/evaluation: OpenID AuthZEN PDP facade over RBAC/ReBAC
 			d.Agent.Mount(r)        // /tenants/{id}/agents: AI-agent identity admin
 			d.VC.Mount(r)           // /tenants/{id}/credentials: verifiable credential issuance
-			d.Qeetai.Mount(r)      // /qeetai/status + /qeetai/conversations: AI qeetai
+			d.Qeetai.Mount(r)       // /qeetai/status + /qeetai/conversations: AI qeetai
 			d.Search.Mount(r)       // /search: universal tenant-scoped, RBAC-gated fuzzy search
 			d.Activity.Mount(r)     // /activity + /activity/stream: live activity feed (audit.read gated)
 		})

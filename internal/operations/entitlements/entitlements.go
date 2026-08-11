@@ -34,7 +34,7 @@ const (
 	FeatureLDAP           = "ldap"
 	FeatureWebhooks       = "webhooks"
 	FeatureAuditExport    = "audit_export"
-	FeatureAIQeetai      = "ai_qeetai"
+	FeatureAIQeetai       = "ai_qeetai"
 	FeatureABAC           = "abac"
 )
 
