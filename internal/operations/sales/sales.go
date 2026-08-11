@@ -92,7 +92,7 @@ func (s *Service) notify(ctx context.Context, in Lead, email string) {
 		Subject: subject,
 		Body:    body,
 	}); err != nil {
-		slog.Warn("sales lead notification failed", "err", err, "email", email)
+		slog.Warn("sales lead notification failed", "err", err, "email", httpx.SanitizeForLog(email))
 	}
 }
 

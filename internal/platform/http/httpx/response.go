@@ -71,7 +71,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Warn("request error",
 			"code", e.Code,
 			"cause", cause,
-			"path", r.URL.Path,
+			"path", SanitizeForLog(r.URL.Path),
 			"req_id", RequestID(r),
 			"client_ip", ClientIP(r),
 		)

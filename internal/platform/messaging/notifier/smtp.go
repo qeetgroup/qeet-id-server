@@ -90,6 +90,13 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 // non-empty — a multipart/alternative carrying both the text and HTML parts so
 // clients render whichever they support.
 func buildMIME(from, to, subject, body, html string) []byte {
+	// Header values are CR/LF-stripped so untrusted input (a submitted recipient,
+	// a user-derived subject) can't smuggle extra headers or a forged body —
+	// classic SMTP header injection.
+	from = sanitizeHeader(from)
+	to = sanitizeHeader(to)
+	subject = sanitizeHeader(subject)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", to)
@@ -115,6 +122,15 @@ func buildMIME(from, to, subject, body, html string) []byte {
 	b.WriteString("\r\n")
 	fmt.Fprintf(&b, "--%s--\r\n", boundary)
 	return []byte(b.String())
+}
+
+// sanitizeHeader removes CR/LF from a MIME header value, blocking header
+// injection where crafted input (recipient, subject) would otherwise add
+// unintended headers such as Bcc.
+func sanitizeHeader(v string) string {
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", "")
+	return v
 }
 
 // fromAddress extracts the bare address (the SMTP envelope sender) from a

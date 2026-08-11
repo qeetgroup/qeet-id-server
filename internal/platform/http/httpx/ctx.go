@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -40,11 +41,21 @@ func RequestID(r *http.Request) string {
 
 func ClientIP(r *http.Request) string {
 	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		return v
+		return SanitizeForLog(v)
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return SanitizeForLog(r.RemoteAddr)
 	}
-	return host
+	return SanitizeForLog(host)
+}
+
+// SanitizeForLog strips CR/LF from a request-derived value before it is written
+// into a log record, preventing log forging — an attacker injecting newlines to
+// fabricate additional (fake) log entries. Use it for any user-controlled string
+// that ends up in an slog field (client IP, request path, submitted email, …).
+func SanitizeForLog(v string) string {
+	v = strings.ReplaceAll(v, "\n", "")
+	v = strings.ReplaceAll(v, "\r", "")
+	return v
 }
