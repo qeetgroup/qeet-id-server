@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
@@ -49,6 +51,8 @@ type Service struct {
 	// breach is the optional breached-password checker (nil = feature off, a
 	// no-op). Set via SetBreachChecker; consulted on Accept.
 	breach *hibp.Checker
+	// limits gates invite creation by the plan seat limit (nil = off).
+	limits PlanLimiter
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -61,6 +65,23 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 // SetBreachChecker wires the breached-password checker. Called from
 // cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
+
+// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
+// unlimited). Satisfied by operations/entitlements.Service, injected via
+// SetPlanLimiter.
+type PlanLimiter interface {
+	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+}
+
+// SetPlanLimiter wires the seat-limit checker (nil disables the gate).
+func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
+
+// CountSeats returns the tenant's seats in use (members + pending invites) — the
+// value the plan seat limit is checked against; also surfaced as usage in billing.
+func (s *Service) CountSeats(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	n, err := s.q.CountSeats(ctx, tenantID)
+	return int(n), err
+}
 
 // uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
 func uuidPtrToPgtype(p *uuid.UUID) pgtype.UUID {
@@ -101,6 +122,21 @@ func inviteFromInsertRow(row dbgen.InsertInviteRow) Invite {
 	}
 }
 
+// inviteFromRegenerateRow mirrors inviteFromInsertRow for the (field-identical)
+// RegenerateInvite row — sqlc emits a distinct row type per query.
+func inviteFromRegenerateRow(row dbgen.RegenerateInviteRow) Invite {
+	return Invite{
+		ID:         row.ID,
+		TenantID:   row.TenantID,
+		Email:      row.Email,
+		RoleID:     pgtypeToUUIDPtr(row.RoleID),
+		Status:     row.Status,
+		ExpiresAt:  row.ExpiresAt,
+		AcceptedAt: pgtypeToTimePtr(row.AcceptedAt),
+		CreatedAt:  row.CreatedAt,
+	}
+}
+
 func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 	return Invite{
 		ID:         row.ID,
@@ -115,6 +151,23 @@ func inviteFromListRow(row dbgen.ListInvitesRow) Invite {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UUID) (*Invite, string, error) {
+	// Plan gate: a new invite consumes a seat, so refuse once the tenant's seat
+	// limit (members + pending invites) is reached.
+	if s.limits != nil {
+		lim, err := s.limits.Limit(ctx, in.TenantID, "seats")
+		if err != nil {
+			return nil, "", err
+		}
+		if lim >= 0 {
+			n, err := s.q.CountSeats(ctx, in.TenantID)
+			if err != nil {
+				return nil, "", err
+			}
+			if int(n) >= lim {
+				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "seats", "limit": lim})
+			}
+		}
+	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
 		return nil, "", err
@@ -141,11 +194,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 // resend or copy the returned token. Delivery to unverified recipients fails
 // while Amazon SES is in sandbox mode.
 func (s *Service) sendInviteEmail(ctx context.Context, inviteID uuid.UUID, email, rawToken string) {
+	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,
 		Subject: "You've been invited to Qeet",
-		Body:    fmt.Sprintf("Accept the invite: %s/invite/accept?token=%s", s.baseAppURL, rawToken),
+		Body:    fmt.Sprintf("Accept your invitation: %s", inviteURL),
+		HTML: emailtmpl.Action(
+			"You've been invited to Qeet",
+			"You've been invited to join an organization on Qeet ID. Click the button below to accept.",
+			"Accept invitation", inviteURL,
+			"If you weren't expecting this invitation, you can safely ignore this email.",
+		),
 	}); err != nil {
 		slog.Warn("invite email send failed", "err", err, "invite_id", inviteID, "email", email)
 	}
@@ -170,7 +230,7 @@ func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, 
 		}
 		return nil, "", err
 	}
-	iv := inviteFromInsertRow(row)
+	iv := inviteFromRegenerateRow(row)
 	s.sendInviteEmail(ctx, iv.ID, iv.Email, raw)
 	return &iv, raw, nil
 }
@@ -221,8 +281,9 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
 
-	inv, err := s.q.WithTx(tx).GetInviteForAccept(ctx, hash)
+	inv, err := qtx.GetInviteForAccept(ctx, hash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrInviteLinkInvalid
@@ -233,37 +294,206 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, errs.ErrInviteInvalid
 	}
 	if time.Now().After(inv.ExpiresAt) {
-		_ = s.q.WithTx(tx).MarkInviteExpired(ctx, inv.ID)
+		_ = qtx.MarkInviteExpired(ctx, inv.ID)
 		_ = tx.Commit(ctx)
 		return nil, errs.ErrInviteExpired
+	}
+
+	// Email is globally unique (migration 0022). If the invited address already
+	// has an account, the anonymous set-a-password path can't INSERT a new user
+	// row — that used to surface as an opaque unique-violation 500. Send the
+	// invitee to sign in and accept as themselves (AcceptAuthenticated).
+	if _, err := qtx.FindUserIDByEmail(ctx, inv.Email); err == nil {
+		return nil, errs.ErrInviteAccountExists
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
 	}
 
 	pwHash, err := password.Hash(in.Password)
 	if err != nil {
 		return nil, err
 	}
-	var userID uuid.UUID
-	err = tx.QueryRow(ctx, `
-		INSERT INTO "user".users (tenant_id, email, display_name, status, email_verified_at)
-		VALUES ($1, $2, NULLIF($3,''), 'active', NOW())
-		RETURNING id
-	`, inv.TenantID, inv.Email, in.DisplayName).Scan(&userID)
+	userID, err := qtx.InsertInvitedUser(ctx, dbgen.InsertInvitedUserParams{
+		TenantID:    pgtype.UUID{Bytes: inv.TenantID, Valid: true},
+		Email:       inv.Email,
+		DisplayName: in.DisplayName,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.password_credentials (user_id, password_hash) VALUES ($1, $2)
-	`, userID, pwHash); err != nil {
+	if err := qtx.InsertInviteCredential(ctx, dbgen.InsertInviteCredentialParams{
+		UserID:       userID,
+		PasswordHash: pwHash,
+	}); err != nil {
 		return nil, err
 	}
 	if roleID := pgtypeToUUIDPtr(inv.RoleID); roleID != nil {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO rbac.user_roles (user_id, tenant_id, role_id) VALUES ($1, $2, $3)
-		`, userID, inv.TenantID, *roleID); err != nil {
+		if err := qtx.GrantUserRole(ctx, dbgen.GrantUserRoleParams{
+			UserID:   userID,
+			TenantID: inv.TenantID,
+			RoleID:   *roleID,
+		}); err != nil {
 			return nil, err
 		}
 	}
-	if err := s.q.WithTx(tx).MarkInviteAccepted(ctx, inv.ID); err != nil {
+	if err := qtx.MarkInviteAccepted(ctx, inv.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &AcceptResult{UserID: userID, TenantID: inv.TenantID}, nil
+}
+
+// ReceivedInvite is a pending invitation addressed to a signed-in user, with
+// the inviting org's display name — the "pending invitations" inbox for a user
+// who may not belong to any org yet.
+type ReceivedInvite struct {
+	ID         uuid.UUID  `json:"id"`
+	TenantID   uuid.UUID  `json:"tenant_id"`
+	TenantName string     `json:"tenant_name"`
+	TenantSlug string     `json:"tenant_slug"`
+	Email      string     `json:"email"`
+	RoleID     *uuid.UUID `json:"role_id"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// ListForUser returns the pending invitations addressed to the caller's email.
+func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]ReceivedInvite, error) {
+	email, err := s.q.GetUserEmailByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrUnauthorized
+		}
+		return nil, err
+	}
+	rows, err := s.q.ListInvitesForEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ReceivedInvite, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ReceivedInvite{
+			ID:         r.ID,
+			TenantID:   r.TenantID,
+			TenantName: r.TenantName,
+			TenantSlug: r.TenantSlug,
+			Email:      r.Email,
+			RoleID:     pgtypeToUUIDPtr(r.RoleID),
+			ExpiresAt:  r.ExpiresAt,
+			CreatedAt:  r.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
+// DeclineForUser dismisses a pending invitation addressed to the caller's email.
+func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID) error {
+	email, err := s.q.GetUserEmailByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.ErrUnauthorized
+		}
+		return err
+	}
+	n, err := s.q.DeclineInviteForEmail(ctx, dbgen.DeclineInviteForEmailParams{
+		ID:    inviteID,
+		Email: email,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errs.ErrInviteInvalid
+	}
+	return nil
+}
+
+// pendingInvite is the minimal invite shape the authed-accept helper needs, fed
+// from either the by-token or by-id lookup (sqlc emits a distinct row type per
+// query, but they're field-identical so a direct conversion is legal).
+type pendingInvite struct {
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	Email     string
+	RoleID    pgtype.UUID
+	Status    string
+	ExpiresAt time.Time
+}
+
+// AcceptAuthenticated lets an already signed-in user join the invited tenant
+// with their existing account (via the emailed token) — no new user row, no
+// password. The path for a user who signed up first (tenant-less) and only
+// then opened an invite link.
+func (s *Service) AcceptAuthenticated(ctx context.Context, userID uuid.UUID, token string) (*AcceptResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+	inv, err := qtx.GetInviteForAccept(ctx, codes.Hash(token))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrInviteLinkInvalid
+		}
+		return nil, err
+	}
+	return s.grantAuthedAccept(ctx, tx, qtx, userID, pendingInvite(inv))
+}
+
+// AcceptAuthenticatedByID is the in-app "accept from my inbox" counterpart: the
+// caller picks an invite by id (from ListForUser) rather than pasting a token.
+func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID uuid.UUID) (*AcceptResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+	inv, err := qtx.GetInviteByIDForAccept(ctx, inviteID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrInviteLinkInvalid
+		}
+		return nil, err
+	}
+	return s.grantAuthedAccept(ctx, tx, qtx, userID, pendingInvite(inv))
+}
+
+// grantAuthedAccept validates a pending invite against the signed-in caller and
+// attaches the membership. The invite is bound to an email; only the account
+// that owns that email may accept it as themselves.
+func (s *Service) grantAuthedAccept(ctx context.Context, tx pgx.Tx, qtx *dbgen.Queries, userID uuid.UUID, inv pendingInvite) (*AcceptResult, error) {
+	email, err := qtx.GetUserEmailByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrUnauthorized
+		}
+		return nil, err
+	}
+	if inv.Status != "pending" {
+		return nil, errs.ErrInviteInvalid
+	}
+	if time.Now().After(inv.ExpiresAt) {
+		_ = qtx.MarkInviteExpired(ctx, inv.ID)
+		_ = tx.Commit(ctx)
+		return nil, errs.ErrInviteExpired
+	}
+	if !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(inv.Email)) {
+		return nil, errs.ErrInviteEmailMismatch
+	}
+	if roleID := pgtypeToUUIDPtr(inv.RoleID); roleID != nil {
+		if err := qtx.GrantUserRole(ctx, dbgen.GrantUserRoleParams{
+			UserID:   userID,
+			TenantID: inv.TenantID,
+			RoleID:   *roleID,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := qtx.MarkInviteAccepted(ctx, inv.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

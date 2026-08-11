@@ -175,7 +175,19 @@ type IdP struct {
 	signer       *idpSigner
 	sessions     SessionResolver
 	loginBaseURL string
+	// gate enforces the plan SSO feature on connection creation (nil = off).
+	gate PlanGate
 }
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate so federation needn't import the plan packages.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (i *IdP) SetPlanGate(g PlanGate) { i.gate = g }
 
 func NewIdP(pool *pgxpool.Pool, keyPEM, certPEM, loginBaseURL string, sessions SessionResolver) (*IdP, error) {
 	signer, err := newIdPSigner(keyPEM, certPEM)
@@ -227,6 +239,16 @@ type CreateSPInput struct {
 }
 
 func (i *IdP) CreateSP(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateSPInput) (*ServiceProvider, error) {
+	// Plan gate: enterprise SSO (SAML) is a paid feature, not included on Free.
+	if i.gate != nil {
+		ok, err := i.gate.FeatureAllowed(ctx, tenantID, "sso")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "sso"})
+		}
+	}
 	status := in.Status
 	if status == "" {
 		status = "draft"

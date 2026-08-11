@@ -14,5 +14,10 @@ func init() {
 	registerStatuses(map[string]int{
 		errs.CodeMFANotEnrolled:        http.StatusBadRequest,
 		errs.CodeMFAFactorNotConfirmed: http.StatusBadRequest,
+		// Push MFA
+		errs.CodeMFAPushDeviceNotFound:   http.StatusNotFound,
+		errs.CodeMFAPushChallengeExpired: http.StatusGone,
+		errs.CodeMFAPushChallengeInvalid: http.StatusConflict,
+		errs.CodeMFAPushUnauthorized:     http.StatusUnauthorized,
 	})
 }

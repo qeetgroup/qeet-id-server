@@ -102,7 +102,7 @@ func TestLogout_EmitsSessionRevokedWebhook(t *testing.T) {
 
 	pair, userID := tenantScopedSession(t, ctx, authSvc, tenantID)
 
-	if err := authSvc.Logout(ctx, pair.SessionID); err != nil {
+	if err := authSvc.Logout(ctx, pair.SessionID, userID); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 
@@ -119,7 +119,7 @@ func TestLogout_EmitsSessionRevokedWebhook(t *testing.T) {
 	}
 
 	// Logging out an already-revoked session is a no-op — no second delivery.
-	if err := authSvc.Logout(ctx, pair.SessionID); err != nil {
+	if err := authSvc.Logout(ctx, pair.SessionID, userID); err != nil {
 		t.Fatalf("second logout: %v", err)
 	}
 	if got := queuedDeliveries(t, ctx, tenantID, "session.revoked"); len(got) != 1 {

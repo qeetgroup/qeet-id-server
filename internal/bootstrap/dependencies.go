@@ -59,17 +59,16 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/anthropic"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
@@ -77,6 +76,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 )
@@ -133,11 +133,21 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		payments = payments.WithSandbox(cfg.PaymentSandboxBaseURL, "sandbox-dev-secret") // dev-only fake provider; config.Validate refuses it outside dev
 	}
 	billingService.SetPayments(payments)
-	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation) // else a paid plan with no provider is refused, not granted free
-	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo})  // creates the org when a signup checkout is paid
+	billingService.SetAllowUnpaidActivation(cfg.BillingAllowUnpaidActivation)    // else a paid plan with no provider is refused, not granted free
+	billingService.SetOrgProvisioner(billingOrgProvisioner{tenants: tenantRepo}) // creates the org when a signup checkout is paid
+	billingService.SetTaxConfig(billing.TaxConfig{                               // invoice GST/VAT (off unless configured)
+		Enabled:       cfg.BillingTaxEnabled,
+		SellerCountry: cfg.BillingSellerCountry,
+		SellerState:   cfg.BillingSellerState,
+		GSTRateBps:    cfg.BillingGSTRateBps,
+	})
 	if err := billingService.SeedBuiltins(rootCtx); err != nil {
 		slog.Warn("billing seed", "err", err)
 	}
+	// entitlementSvc turns a tenant's plan into a capability set (feature flags +
+	// numeric limits). It's the single source of truth read by the entitlements
+	// endpoint and injected into every plan-enforcement point below.
+	entitlementSvc := entitlements.NewService(entitlementPlanResolver{billing: billingService, tenants: tenantRepo})
 	brandingRepo := branding.NewRepository(pool)
 	emailTemplateService := email.NewService(pool)
 	policyRepo := policy.NewRepository(pool)
@@ -154,9 +164,13 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioAuthToken:  cfg.TwilioAuthToken,
 		TwilioFrom:       cfg.TwilioFrom,
 	})
+	// PNG fallback for the email logo (served at the app root): shown in clients
+	// that strip the inline SVG mark (Gmail/Outlook/Yahoo).
+	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
 	retentionService := retention.NewService(pool)
+	salesService := sales.NewService(pool, sender, cfg.SalesEmail)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
@@ -176,7 +190,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
-	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender)
+	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender, cfg.ExpoPushURL)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + validate new passwords per tenant
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
@@ -196,35 +210,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	agentService := agent.NewService(pool, issuer)               // AI-agent identities (ephemeral scoped tokens)
 	vcService := vc.NewService(pool, issuer)                     // W3C verifiable credentials (JWT-VC)
 
-	// AI Copilot: provider unset ⇒ feature disabled (handler still mounts; /status
-	// reports configured=false; .../messages returns 409 copilot_unconfigured).
-	// COPILOT_PROVIDER selects the backend: "openai" (or any OpenAI-compatible
-	// endpoint via COPILOT_BASE_URL), else "anthropic".
-	copilotService := copilot.NewService(pool)
-	copilotConfigured := cfg.CopilotProvider != "" && cfg.CopilotAPIKey != ""
-	var copilotOrchestrator *copilot.Orchestrator
-	if copilotConfigured {
-		var provider ai.Provider
-		switch strings.ToLower(cfg.CopilotProvider) {
-		case "openai":
-			c := openai.New(cfg.CopilotAPIKey, cfg.CopilotBaseURL, cfg.CopilotModel, cfg.CopilotMaxTokens, nil)
-			provider = c
-		default: // "anthropic" and any unrecognised value fall back to Anthropic
-			c := anthropic.New(cfg.CopilotAPIKey, cfg.CopilotBaseURL, cfg.CopilotModel, cfg.CopilotMaxTokens, nil)
-			provider = anthropic.NewProvider(c)
-		}
-		copilotOrchestrator = copilot.NewOrchestrator(provider, copilotService)
-		slog.Info("AI copilot enabled", "provider", cfg.CopilotProvider, "model", cfg.CopilotModel)
-	} else {
-		slog.Info("AI copilot disabled (COPILOT_PROVIDER/COPILOT_API_KEY not set)")
-	}
-	copilotHandler := &copilot.Handler{
-		Service:      copilotService,
-		Orchestrator: copilotOrchestrator,
-		Configured:   copilotConfigured,
-		Provider:     cfg.CopilotProvider,
-		Model:        cfg.CopilotModel,
-	}
+	// Qeet AI assistant: the conversation store is created here; the per-tenant
+	// BYOK provider-config service + orchestrator + handler are wired below,
+	// after the secrets key provider exists (they reuse the same AES data key to
+	// encrypt tenant provider keys at rest).
+	qeetaiService := qeetai.NewService(pool)
 	// Live Activity hub: subscribes to NATS outbox events (when NATS_URL is set)
 	// and fans them out to authenticated SSE connections filtered by tenant.
 	// When NATS_URL is empty the hub acts as a no-op broker — the SSE stream
@@ -322,6 +312,36 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Error("init token vault", "err", err)
 		os.Exit(1)
 	}
+
+	// Qeet AI provider config: per-tenant BYOK keys encrypted with the same data
+	// key as the secrets vault. When a tenant hasn't set its own key, the
+	// deployment-level QEETAI_* env acts as the platform fallback. Because a
+	// tenant can bring its own key even when no platform key is set, the
+	// orchestrator is always constructed (configured state is resolved per-tenant).
+	qeetaiProviderCfg, err := qeetai.NewProviderConfig(rootCtx, pool, keyProvider, qeetai.PlatformProvider{
+		Provider:  cfg.QeetaiProvider,
+		APIKey:    cfg.QeetaiAPIKey,
+		Model:     cfg.QeetaiModel,
+		BaseURL:   cfg.QeetaiBaseURL,
+		MaxTokens: cfg.QeetaiMaxTokens,
+	})
+	if err != nil {
+		slog.Error("init Qeet AI provider config", "err", err)
+		os.Exit(1)
+	}
+	if qeetaiProviderCfg.PlatformConfigured() {
+		slog.Info("Qeet AI: platform provider configured", "provider", cfg.QeetaiProvider, "model", cfg.QeetaiModel)
+	} else {
+		slog.Info("Qeet AI: no platform provider set — tenants must bring their own key (BYOK)")
+	}
+	qeetaiHandler := &qeetai.Handler{
+		Service:      qeetaiService,
+		Orchestrator: qeetai.NewOrchestrator(qeetaiProviderCfg, qeetaiService),
+		Resolver:     qeetaiProviderCfg,
+		Config:       qeetaiProviderCfg,
+		Plan:         entitlementSvc, // platform fallback is a Pro+ feature; BYOK bypasses the gate
+	}
+
 	samlService := saml.NewService(pool, authService, cfg.AppBaseURL)
 
 	// SAML IdP signing identity: configured RSA key+cert in prod, or an
@@ -350,6 +370,28 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	ldapService := ldap.NewService(pool, authService)
 	ipAllowService := ipallow.NewService(pool)
+
+	// Plan enforcement: inject the entitlement checker into every gated create
+	// path. Numeric limits (seats/apps/api keys/custom roles) use SetPlanLimiter;
+	// boolean features (webhooks/SSO/SCIM/LDAP) use SetPlanGate. Free-tier caps
+	// bite here; paid tiers resolve to unlimited/enabled, so it's a no-op for them.
+	inviteService.SetPlanLimiter(entitlementSvc) // seats
+	oidcService.SetPlanLimiter(entitlementSvc)   // apps (relying parties)
+	apikeyService.SetPlanLimiter(entitlementSvc) // api_keys
+	rbacService.SetPlanLimiter(entitlementSvc)   // custom_roles
+	webhookService.SetPlanGate(entitlementSvc)   // webhooks (feature)
+	samlIdP.SetPlanGate(entitlementSvc)          // SSO (SAML)
+	scimService.SetPlanGate(entitlementSvc)      // SCIM
+	ldapService.SetPlanGate(entitlementSvc)      // LDAP
+	brandingRepo.SetPlanGate(entitlementSvc)     // custom branding
+	abacService.SetPlanGate(entitlementSvc)      // ABAC
+	// Current-usage provider for the billing usage-vs-limits display.
+	entitlementSvc.SetUsageResolver(entitlementUsageResolver{
+		invites: inviteService, oidc: oidcService, apikeys: apikeyService, rbacRepo: rbacRepo,
+	})
+	// custom domain — extracted from its inline handler so the gate can be wired.
+	domainVerifyService := domainverify.NewService(pool)
+	domainVerifyService.SetPlanGate(entitlementSvc)
 
 	// Rate-limit store: Redis (shared across replicas) when REDIS_URL is set,
 	// otherwise in-process. Required for correct limits when scaling out.
@@ -419,13 +461,15 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
-		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
+		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService, Plan: entitlementSvc},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
-		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService},
+		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},
 		Audit:         &audit.Handler{Reader: auditReader, Verifier: auditVerifier},
 		AuditAnomaly:  &anomaly.Handler{Service: auditAnomalyService},
 		Billing:       &billing.Handler{Service: billingService},
+		Entitlement:   &entitlements.Handler{Service: entitlementSvc},
+		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
 		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
@@ -444,7 +488,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Risk:          &risk.Handler{Service: riskService},
 		RateLimits:    rateLimitsHandler,
 		Notification:  &notification.Handler{Service: notificationService},
-		DomainVerify:  &domainverify.Handler{Service: domainverify.NewService(pool)},
+		DomainVerify:  &domainverify.Handler{Service: domainVerifyService},
 		SIEM:          &siem.Handler{Service: siemService},
 		AuthHook:      &authhook.Handler{Service: authHookService},
 		ABAC:          &abac.Handler{Service: abacService},
@@ -452,7 +496,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		AuthZEN:       &authzen.Handler{Service: authzenService},
 		Agent:         &agent.Handler{Service: agentService},
 		VC:            &vc.Handler{Service: vcService},
-		Copilot:       copilotHandler,
+		Qeetai:        qeetaiHandler,
 		Search:        &search.Handler{Service: searchService},
 		Activity:      activity.NewHandler(pool, activityHub),
 		Health:        healthHandler,
@@ -494,6 +538,81 @@ func (p billingOrgProvisioner) ProvisionOrg(ctx context.Context, ownerID uuid.UU
 		return uuid.Nil, err
 	}
 	return t.ID, nil
+}
+
+// entitlementPlanResolver resolves a tenant's effective plan code for the
+// entitlements service. It prefers the billing subscription (the paid source of
+// truth), falls back to the tenant's plan label, and defaults to free — so an
+// in-app upgrade takes effect immediately (subscription) even before/without the
+// label sync, and a plain free org (no subscription row) reads as free.
+// Implemented here because only the composition root may touch both contexts.
+type entitlementPlanResolver struct {
+	billing *billing.Service
+	tenants *tenant.Repository
+}
+
+func (r entitlementPlanResolver) EffectivePlan(ctx context.Context, tenantID uuid.UUID) (string, error) {
+	if r.billing != nil {
+		if sub, err := r.billing.GetSubscription(ctx, tenantID); err == nil && sub != nil && sub.PlanCode != "" {
+			switch sub.Status {
+			case "active", "past_due":
+				return sub.PlanCode, nil
+			case "trialing":
+				// Trial grants the tier only until it expires; afterwards the
+				// tenant reverts to free (evaluated lazily here — no scheduler).
+				if sub.TrialEnd != nil && sub.TrialEnd.After(time.Now()) {
+					return sub.PlanCode, nil
+				}
+				return "free", nil
+			default:
+				// canceled / unknown: a subscription row exists but isn't granting,
+				// so this is a paid org that lapsed — free, not the stale label.
+				return "free", nil
+			}
+		}
+	}
+	if r.tenants != nil {
+		if t, err := r.tenants.Get(ctx, tenantID); err == nil && t != nil {
+			return t.Plan, nil
+		}
+	}
+	return "free", nil
+}
+
+// entitlementUsageResolver reports a tenant's current consumption for the
+// billing usage-vs-limits display. It reuses the same count queries the plan
+// gates check against. Best-effort per resource: a failed count is omitted
+// rather than failing the whole response.
+type entitlementUsageResolver struct {
+	invites  *invite.Service
+	oidc     *oidc.Service
+	apikeys  *apikey.Service
+	rbacRepo *rbac.Repository
+}
+
+func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID) (map[string]int, error) {
+	out := map[string]int{}
+	if u.invites != nil {
+		if n, err := u.invites.CountSeats(ctx, tenantID); err == nil {
+			out["seats"] = n
+		}
+	}
+	if u.oidc != nil {
+		if n, err := u.oidc.CountClients(ctx, tenantID); err == nil {
+			out["apps"] = n
+		}
+	}
+	if u.apikeys != nil {
+		if n, err := u.apikeys.CountActive(ctx, tenantID); err == nil {
+			out["api_keys"] = n
+		}
+	}
+	if u.rbacRepo != nil {
+		if n, err := u.rbacRepo.CountCustomRoles(ctx, tenantID); err == nil {
+			out["custom_roles"] = int(n)
+		}
+	}
+	return out, nil
 }
 
 func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {

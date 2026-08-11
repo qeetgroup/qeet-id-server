@@ -33,11 +33,22 @@ type Branding struct {
 type Repository struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
+	gate PlanGate
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, q: dbgen.New(pool)}
 }
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (r *Repository) SetPlanGate(g PlanGate) { r.gate = g }
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
@@ -91,6 +102,16 @@ func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (log
 // expression for the JSONB settings column that sqlc cannot parse reliably, so
 // this method stays hand-written on the caller-supplied pgx.Tx.
 func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
+	// Plan gate: custom branding (logo, colors, custom email sender) is a paid feature.
+	if r.gate != nil {
+		ok, err := r.gate.FeatureAllowed(ctx, b.TenantID, "custom_branding")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "custom_branding"})
+		}
+	}
 	settings, _ := json.Marshal(b.Settings)
 	_, err := tx.Exec(ctx, `
 		INSERT INTO tenant.branding (

@@ -96,6 +96,19 @@ func TestRequireRecentMFAUnauthenticated(t *testing.T) {
 	}
 }
 
+// TestTOTPStatusUnauthenticated proves the read-only TOTP status endpoint
+// rejects an anonymous caller before any DB access (so a nil-pool Service is
+// safe here): the principal check short-circuits ahead of Service.TOTPStatus.
+func TestTOTPStatusUnauthenticated(t *testing.T) {
+	h := &Handler{Service: &Service{}}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/mfa/totp", nil)
+	h.totpStatus(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rr.Code)
+	}
+}
+
 // TestRecoveryCodeHashing exercises the security contract the recovery-code
 // store relies on: codes are stored as one-way hashes (never plaintext),
 // the right code verifies, a wrong one does not, and two equal plaintexts

@@ -13,6 +13,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveAPIKeys = `-- name: CountActiveAPIKeys :one
+SELECT COUNT(*) FROM auth.api_keys
+WHERE tenant_id = $1 AND revoked_at IS NULL
+`
+
+// CountActiveAPIKeys counts a tenant's non-revoked keys — the plan-limit check.
+func (q *Queries) CountActiveAPIKeys(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAPIKeys, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAPIKey = `-- name: CreateAPIKey :one
 
 INSERT INTO auth.api_keys (tenant_id, user_id, name, prefix, key_hash, scopes, expires_at)

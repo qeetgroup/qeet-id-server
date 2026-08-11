@@ -1,4 +1,4 @@
-package copilot
+package qeetai
 
 import (
 	"context"
@@ -12,9 +12,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
+
+// stubResolver is a ProviderResolver that reports a fixed config source without
+// touching a database, so handler gate/status tests run in memory.
+type stubResolver struct{ source ConfigSource }
+
+func (s stubResolver) Resolve(_ context.Context, _ uuid.UUID) (EffectiveConfig, error) {
+	return EffectiveConfig{Source: s.source, Provider: "test", Model: "test-model"}, nil
+}
+
+func (s stubResolver) ProviderFor(_ context.Context, _ uuid.UUID) (ai.Provider, error) {
+	return nil, nil
+}
 
 // stubStore is a minimal serviceStore implementation for handler tests that
 // runs entirely in memory without a database. Fields control return values and
@@ -49,7 +62,7 @@ func (s *stubStore) AppendMessage(_ context.Context, _, _ uuid.UUID, _ string, _
 // requireTenantUser and parseConversationID helpers work without a real router.
 func newHandlerRequest(tenantID, userID, convID uuid.UUID, body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost,
-		"/v1/copilot/conversations/"+convID.String()+"/messages",
+		"/v1/qeetai/conversations/"+convID.String()+"/messages",
 		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -83,10 +96,8 @@ func TestStreamMessages_IDOROwnershipCheck(t *testing.T) {
 	svc := &stubStore{getConvErr: errs.ErrNotFound}
 
 	h := &Handler{
-		Service:    svc,
-		Configured: true,
-		Provider:   "test",
-		Model:      "test-model",
+		Service:  svc,
+		Resolver: stubResolver{source: SourceTenant},
 	}
 
 	req := newHandlerRequest(tenantID, userA, convOwnedByUserB, `{"message":"injected prompt"}`)
@@ -117,9 +128,7 @@ func TestStreamMessages_AuthorizedUserCanStream(t *testing.T) {
 	h := &Handler{
 		Service:      svc,
 		Orchestrator: nil, // nil — run will panic, but that proves we got past the gate
-		Configured:   true,
-		Provider:     "test",
-		Model:        "test-model",
+		Resolver:     stubResolver{source: SourceTenant},
 	}
 
 	req := newHandlerRequest(tenantID, userID, convID, `{"message":"hello"}`)

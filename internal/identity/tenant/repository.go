@@ -39,6 +39,7 @@ func toDomain(row dbgen.TenantTenant) *Tenant {
 		Status:    row.Status,
 		Plan:      row.Plan,
 		Region:    row.Region,
+		LogoURL:   row.LogoUrl,
 		Metadata:  dbutil.Metadata(row.Metadata),
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
@@ -78,6 +79,7 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 		Name:     in.Name,
 		Plan:     plan,
 		Region:   region,
+		LogoUrl:  in.LogoURL,
 		Metadata: metaJSON,
 	})
 	if err != nil {
@@ -200,11 +202,12 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 	if in.Status != nil {
 		ub.Set("status", *in.Status)
 	}
-	if in.Plan != nil {
-		ub.Set("plan", *in.Plan)
-	}
+	// plan is deliberately not settable here — it's owned by billing (see UpdateInput).
 	if in.Region != nil {
 		ub.Set("region", *in.Region)
+	}
+	if in.LogoURL != nil {
+		ub.Set("logo_url", *in.LogoURL)
 	}
 	if in.Metadata != nil {
 		meta, err := json.Marshal(in.Metadata)
@@ -227,7 +230,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 	row := tx.QueryRow(ctx, q, args...)
 	var rec dbgen.TenantTenant
 	if err := row.Scan(&rec.ID, &rec.Slug, &rec.Name, &rec.Status, &rec.Plan,
-		&rec.Region, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+		&rec.Region, &rec.LogoUrl, &rec.Metadata, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrNotFound
 		}
@@ -241,7 +244,7 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 
 // tenantCols is the column list for the hand-written Update RETURNING clause;
 // it matches the field order scanned into dbgen.TenantTenant above (sans deleted_at).
-const tenantCols = `id, slug, name, status, plan, region, metadata, created_at, updated_at`
+const tenantCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at`
 
 func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	n, err := r.q.SoftDeleteTenant(ctx, id)
@@ -252,4 +255,10 @@ func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 		return errs.ErrNotFound
 	}
 	return nil
+}
+
+// IsEmailVerified reports whether the user has a verified email — the gate for
+// self-serve org creation.
+func (r *Repository) IsEmailVerified(ctx context.Context, userID uuid.UUID) (bool, error) {
+	return r.q.IsEmailVerified(ctx, userID)
 }

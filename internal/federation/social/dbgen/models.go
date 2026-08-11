@@ -3,3 +3,18 @@
 //   sqlc v1.31.1
 
 package dbgen
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type AuthPlatformSocialIdentity struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	Provider string
+	Subject  string
+	Email    *string
+	LinkedAt time.Time
+}

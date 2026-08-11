@@ -23,6 +23,12 @@ FROM rbac.roles
 WHERE tenant_id = @tenant_id
 ORDER BY name;
 
+-- CountCustomRoles counts a tenant's non-system (custom) roles — the plan-limit
+-- check. Built-in roles (is_system = TRUE) don't count toward the cap.
+-- name: CountCustomRoles :one
+SELECT COUNT(*) FROM rbac.roles
+WHERE tenant_id = @tenant_id AND is_system = FALSE;
+
 -- name: GetRoleTenant :one
 SELECT tenant_id FROM rbac.roles WHERE id = @id;
 

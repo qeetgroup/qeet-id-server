@@ -82,6 +82,42 @@ func (q *Queries) DeleteExternalIdentity(ctx context.Context, arg DeleteExternal
 	return result.RowsAffected(), nil
 }
 
+const deleteExternalIdentityForUser = `-- name: DeleteExternalIdentityForUser :execrows
+DELETE FROM "user".external_identities WHERE id = $1 AND user_id = $2
+`
+
+type DeleteExternalIdentityForUserParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// DeleteExternalIdentityForUser unlinks scoped to the owner (not a tenant), so
+// a user can remove their own social login before joining any org.
+func (q *Queries) DeleteExternalIdentityForUser(ctx context.Context, arg DeleteExternalIdentityForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExternalIdentityForUser, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deletePlatformSocialIdentityForUser = `-- name: DeletePlatformSocialIdentityForUser :execrows
+DELETE FROM auth.platform_social_identities WHERE id = $1 AND user_id = $2
+`
+
+type DeletePlatformSocialIdentityForUserParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) DeletePlatformSocialIdentityForUser(ctx context.Context, arg DeletePlatformSocialIdentityForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePlatformSocialIdentityForUser, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const enabledSocialProviderNames = `-- name: EnabledSocialProviderNames :many
 SELECT provider FROM tenant.social_providers
 WHERE tenant_id = $1 AND enabled ORDER BY provider
@@ -124,6 +160,25 @@ type GetExternalIdentityUserParams struct {
 // ==========================================================================
 func (q *Queries) GetExternalIdentityUser(ctx context.Context, arg GetExternalIdentityUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getExternalIdentityUser, arg.TenantID, arg.Provider, arg.Subject)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
+const getPlatformSocialIdentityOwner = `-- name: GetPlatformSocialIdentityOwner :one
+SELECT user_id FROM auth.platform_social_identities
+WHERE provider = $1 AND subject = $2
+`
+
+type GetPlatformSocialIdentityOwnerParams struct {
+	Provider string
+	Subject  string
+}
+
+// GetPlatformSocialIdentityOwner returns the user a provider identity is already
+// linked to (pgx.ErrNoRows = not linked yet). Used to reject cross-account links.
+func (q *Queries) GetPlatformSocialIdentityOwner(ctx context.Context, arg GetPlatformSocialIdentityOwnerParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getPlatformSocialIdentityOwner, arg.Provider, arg.Subject)
 	var user_id uuid.UUID
 	err := row.Scan(&user_id)
 	return user_id, err
@@ -297,6 +352,89 @@ func (q *Queries) ListExternalIdentities(ctx context.Context, arg ListExternalId
 	return items, nil
 }
 
+const listExternalIdentitiesForUser = `-- name: ListExternalIdentitiesForUser :many
+SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+FROM "user".external_identities ei
+JOIN "user".users u ON u.id = ei.user_id
+WHERE ei.user_id = $1 AND u.deleted_at IS NULL
+ORDER BY ei.linked_at DESC
+`
+
+type ListExternalIdentitiesForUserRow struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	Provider string
+	Subject  string
+	Email    *string
+	LinkedAt time.Time
+}
+
+// ListExternalIdentitiesForUser is the self-service variant: scoped to the
+// caller's own user id across every tenant, so an org-less user can still see
+// the social logins linked to their account.
+func (q *Queries) ListExternalIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]ListExternalIdentitiesForUserRow, error) {
+	rows, err := q.db.Query(ctx, listExternalIdentitiesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListExternalIdentitiesForUserRow{}
+	for rows.Next() {
+		var i ListExternalIdentitiesForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TenantID,
+			&i.Provider,
+			&i.Subject,
+			&i.Email,
+			&i.LinkedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPlatformSocialIdentitiesForUser = `-- name: ListPlatformSocialIdentitiesForUser :many
+SELECT id, user_id, provider, subject, email, linked_at
+FROM auth.platform_social_identities
+WHERE user_id = $1
+ORDER BY linked_at DESC
+`
+
+func (q *Queries) ListPlatformSocialIdentitiesForUser(ctx context.Context, userID uuid.UUID) ([]AuthPlatformSocialIdentity, error) {
+	rows, err := q.db.Query(ctx, listPlatformSocialIdentitiesForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthPlatformSocialIdentity{}
+	for rows.Next() {
+		var i AuthPlatformSocialIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Provider,
+			&i.Subject,
+			&i.Email,
+			&i.LinkedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSocialProviders = `-- name: ListSocialProviders :many
 SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
 FROM tenant.social_providers WHERE tenant_id = $1 ORDER BY provider
@@ -375,6 +513,34 @@ UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = $1
 
 func (q *Queries) MarkSocialLoginCodeUsed(ctx context.Context, codeHash string) error {
 	_, err := q.db.Exec(ctx, markSocialLoginCodeUsed, codeHash)
+	return err
+}
+
+const upsertPlatformSocialIdentity = `-- name: UpsertPlatformSocialIdentity :exec
+
+INSERT INTO auth.platform_social_identities (user_id, provider, subject, email)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (provider, subject) DO UPDATE SET email = EXCLUDED.email
+`
+
+type UpsertPlatformSocialIdentityParams struct {
+	UserID   uuid.UUID
+	Provider string
+	Subject  string
+	Email    *string
+}
+
+// ---- Platform (tenant-less) connected social accounts ----
+// UpsertPlatformSocialIdentity records the identity for a console account. On
+// conflict the identity already belongs to a user (ownership never changes here
+// — the link path checks ownership first); we just refresh the email.
+func (q *Queries) UpsertPlatformSocialIdentity(ctx context.Context, arg UpsertPlatformSocialIdentityParams) error {
+	_, err := q.db.Exec(ctx, upsertPlatformSocialIdentity,
+		arg.UserID,
+		arg.Provider,
+		arg.Subject,
+		arg.Email,
+	)
 	return err
 }
 

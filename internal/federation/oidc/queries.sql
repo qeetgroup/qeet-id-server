@@ -57,6 +57,11 @@ SELECT id, tenant_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at
 FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
 
+-- CountOIDCClientsByTenant counts a tenant's registered applications (relying
+-- parties) — the plan "apps" limit check.
+-- name: CountOIDCClientsByTenant :one
+SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
+
 -- name: GetOIDCClient :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
        post_logout_uris, grant_types, scopes, created_at

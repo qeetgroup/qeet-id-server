@@ -65,11 +65,29 @@ func TestNew_WiresConfiguredProviders(t *testing.T) {
 }
 
 func TestBuildMIME(t *testing.T) {
-	msg := string(buildMIME("Qeet <no-reply@q.test>", "u@x.test", "Hi there", "Body line"))
+	msg := string(buildMIME("Qeet <no-reply@q.test>", "u@x.test", "Hi there", "Body line", ""))
 	for _, want := range []string{"From: Qeet <no-reply@q.test>", "To: u@x.test", "Subject: Hi there", "text/plain", "Body line"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("MIME missing %q in:\n%s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "multipart") {
+		t.Error("text-only mail should not be multipart")
+	}
+}
+
+func TestBuildMIME_HTMLMultipart(t *testing.T) {
+	msg := string(buildMIME("Qeet <no-reply@q.test>", "u@x.test", "Hi", "plain fallback", "<p>rich</p>"))
+	for _, want := range []string{
+		"multipart/alternative", "text/plain", "plain fallback", "text/html", "<p>rich</p>",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("HTML MIME missing %q in:\n%s", want, msg)
+		}
+	}
+	// Text part must come before the HTML part so clients prefer HTML.
+	if strings.Index(msg, "text/plain") > strings.Index(msg, "text/html") {
+		t.Error("text/plain part must precede text/html")
 	}
 }
 

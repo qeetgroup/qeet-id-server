@@ -23,5 +23,8 @@ func init() {
 		errs.CodeBillingWebhookVerificationFailed: http.StatusUnauthorized,
 		errs.CodeBillingTenantInvalid:             http.StatusBadRequest,
 		errs.CodeBillingTenantMismatch:            http.StatusForbidden,
+		errs.CodeBillingCheckoutRequired:          http.StatusPaymentRequired,
+		errs.CodeBillingTaxIDInvalid:              http.StatusUnprocessableEntity,
+		errs.CodeBillingTrialNotEligible:          http.StatusConflict,
 	})
 }

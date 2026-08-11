@@ -32,14 +32,15 @@ import (
 )
 
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	issuer string // "qeet-id" — shown in the authenticator app
-	sender notifier.Sender
+	pool    *pgxpool.Pool
+	q       *dbgen.Queries
+	issuer  string // "qeet-id" — shown in the authenticator app
+	sender  notifier.Sender
+	pushURL string // Expo push API endpoint
 }
 
-func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, sender: sender}
+func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender, pushURL string) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, sender: sender, pushURL: pushURL}
 }
 
 const otpTTL = 10 * time.Minute
@@ -125,6 +126,23 @@ func (s *Service) mintRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.
 		out[i] = c
 	}
 	return out, nil
+}
+
+// TOTPStatus reports whether the account has a *confirmed* TOTP factor. The
+// account UI reads this on load to render an "active" state instead of
+// re-offering enrollment — re-running StartEnroll calls UpsertMFATOTP, which
+// rotates the secret and clears confirmed_at, so a stale "begin enrollment"
+// prompt could silently break a working authenticator.
+type TOTPStatus struct {
+	Enrolled bool `json:"enrolled"`
+}
+
+func (s *Service) TOTPStatus(ctx context.Context, userID uuid.UUID) (*TOTPStatus, error) {
+	ts, err := s.q.GetMFATOTPConfirmed(ctx, userID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	return &TOTPStatus{Enrolled: err == nil && ts.Valid}, nil
 }
 
 // RecoveryStatus summarises a user's backup codes for the account UI.
@@ -538,9 +556,19 @@ type Handler struct {
 	// WebAuthn, when set, exposes the user's registered passkeys as a second
 	// factor (POST /mfa/webauthn/{challenge,verify}). Nil = feature disabled.
 	WebAuthn WebAuthnVerifier
+	// Plan gates SMS OTP enrollment by plan (nil = no gate). SMS MFA is a paid
+	// feature (it also incurs per-message cost); email OTP and TOTP stay free.
+	Plan PlanGate
+}
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
 }
 
 func (h *Handler) Mount(r chi.Router) {
+	r.Get("/mfa/totp", h.totpStatus)
 	r.Post("/mfa/totp/enroll/start", h.startEnroll)
 	r.Post("/mfa/totp/enroll/confirm", h.confirmEnroll)
 	r.Post("/mfa/totp/verify", h.verify)
@@ -555,6 +583,11 @@ func (h *Handler) Mount(r chi.Router) {
 	// WebAuthn as a second factor: assert the user's existing passkeys.
 	r.Post("/mfa/webauthn/challenge", h.webauthnChallenge)
 	r.Post("/mfa/webauthn/verify", h.webauthnVerify)
+
+	// Push authenticator device management (authenticated user).
+	r.Get("/mfa/push/devices", h.listPushDevices)
+	r.Post("/mfa/push/devices", h.registerPushDevice)
+	r.Delete("/mfa/push/devices/{id}", h.revokePushDevice)
 
 	// Step-up status — lets a client decide whether to prompt before a
 	// sensitive action.
@@ -798,6 +831,20 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) totpStatus(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	st, err := h.Service.TOTPStatus(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, st)
+}
+
 func (h *Handler) recoveryStatus(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
 	if p == nil || p.UserID == nil {
@@ -888,6 +935,22 @@ func (h *Handler) enrollOTPStart(w http.ResponseWriter, r *http.Request) {
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
+	}
+	// Plan gate: SMS OTP is a paid factor (email OTP + TOTP stay free). Resolve
+	// against the caller's active tenant; skip when there's no tenant (a pre-org
+	// user has no plan to gate against).
+	if in.Channel == "sms" && h.Plan != nil {
+		if tid, terr := httpx.RequireTenant(r); terr == nil {
+			ok, gerr := h.Plan.FeatureAllowed(r.Context(), tid, "sms_mfa")
+			if gerr != nil {
+				httpx.WriteError(w, r, gerr)
+				return
+			}
+			if !ok {
+				httpx.WriteError(w, r, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "sms_mfa"}))
+				return
+			}
+		}
 	}
 	factorID, err := h.Service.EnrollOTPStart(r.Context(), *p.UserID, in.Channel, in.Destination)
 	if err != nil {

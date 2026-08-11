@@ -48,10 +48,29 @@ type Service struct {
 	// notifier delivers the CIBA async consent prompt (nil = no notification;
 	// the user must know to check pending requests themselves). See ciba.go.
 	notifier Notifier
+	// limits gates application (relying-party) registration by plan (nil = off).
+	limits PlanLimiter
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
+}
+
+// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
+// unlimited). Satisfied by operations/entitlements.Service, injected via
+// SetPlanLimiter.
+type PlanLimiter interface {
+	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+}
+
+// SetPlanLimiter wires the plan-limit checker (nil disables the gate).
+func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
+
+// CountClients returns the tenant's number of registered applications (relying
+// parties) — the "apps" limit value, surfaced as usage in billing.
+func (s *Service) CountClients(ctx context.Context, tenantID uuid.UUID) (int, error) {
+	n, err := s.q.CountOIDCClientsByTenant(ctx, tenantID)
+	return int(n), err
 }
 
 type CreateClientInput struct {
@@ -69,6 +88,22 @@ type CreateClientInput struct {
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClientInput) (*Client, string, error) {
+	// Plan gate: refuse once the tenant's plan cap for applications is reached.
+	if s.limits != nil {
+		lim, err := s.limits.Limit(ctx, in.TenantID, "apps")
+		if err != nil {
+			return nil, "", err
+		}
+		if lim >= 0 {
+			n, err := s.q.WithTx(tx).CountOIDCClientsByTenant(ctx, in.TenantID)
+			if err != nil {
+				return nil, "", err
+			}
+			if int(n) >= lim {
+				return nil, "", errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "apps", "limit": lim})
+			}
+		}
+	}
 	if in.Type == "" {
 		in.Type = "confidential"
 	}

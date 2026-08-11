@@ -392,7 +392,7 @@
       "type": "string"
     },
     {
-      "key": "copilotConversationId",
+      "key": "qeetaiConversationId",
       "value": "",
       "type": "string"
     },
@@ -10360,25 +10360,25 @@
       ]
     },
     {
-      "name": "Copilot",
+      "name": "Qeet AI",
       "item": [
         {
-          "name": "Copilot status — GET /v1/copilot/status",
+          "name": "Qeet AI status — GET /v1/qeetai/status",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/status",
+              "raw": "{{baseUrl}}/v1/qeetai/status",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "status"
               ]
             },
-            "description": "Returns whether the AI copilot is configured server-side (`{ configured, provider, model }`). Never returns key material. `configured` is true only when COPILOT_PROVIDER + COPILOT_API_KEY are set; when false, conversation CRUD still works but the messages stream returns 409."
+            "description": "Returns whether the AI qeetai is configured server-side (`{ configured, provider, model }`). Never returns key material. `configured` is true only when QEETAI_PROVIDER + QEETAI_API_KEY are set; when false, conversation CRUD still works but the messages stream returns 409."
           },
           "event": [
             {
@@ -10393,22 +10393,22 @@
           ]
         },
         {
-          "name": "List conversations — GET /v1/copilot/conversations",
+          "name": "List conversations — GET /v1/qeetai/conversations",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/conversations",
+              "raw": "{{baseUrl}}/v1/qeetai/conversations",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "conversations"
               ]
             },
-            "description": "Lists the authenticated user's copilot conversations (tenant + user scoped), pinned-first then most-recently-updated. Returns `{ items: Conversation[] }`."
+            "description": "Lists the authenticated user's qeetai conversations (tenant + user scoped), pinned-first then most-recently-updated. Returns `{ items: Conversation[] }`."
           },
           "event": [
             {
@@ -10417,14 +10417,14 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('OK', () => pm.expect(pm.response.code).to.be.oneOf([200,204]));",
-                  "try { const r = pm.response.json(); const arr = r.items || r; if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('copilotConversationId', arr[0].id); } catch(e){}"
+                  "try { const r = pm.response.json(); const arr = r.items || r; if (Array.isArray(arr) && arr.length && arr[0].id !== undefined) pm.collectionVariables.set('qeetaiConversationId', arr[0].id); } catch(e){}"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Create conversation — POST /v1/copilot/conversations",
+          "name": "Create conversation — POST /v1/qeetai/conversations",
           "request": {
             "method": "POST",
             "header": [
@@ -10435,20 +10435,20 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Postman copilot thread {{$timestamp}}\"\n}"
+              "raw": "{\n  \"title\": \"Postman qeetai thread {{$timestamp}}\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/conversations",
+              "raw": "{{baseUrl}}/v1/qeetai/conversations",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "conversations"
               ]
             },
-            "description": "Creates a new copilot conversation thread for the authenticated user. Body is optional (title defaults to \"New conversation\" server-side). Returns the created Conversation; its id is captured into {{copilotConversationId}}."
+            "description": "Creates a new qeetai conversation thread for the authenticated user. Body is optional (title defaults to \"New conversation\" server-side). Returns the created Conversation; its id is captured into {{qeetaiConversationId}}."
           },
           "event": [
             {
@@ -10457,27 +10457,27 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Created', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
-                  "try { const b = pm.response.json(); if (b.id) pm.collectionVariables.set('copilotConversationId', b.id); } catch(e){}"
+                  "try { const b = pm.response.json(); if (b.id) pm.collectionVariables.set('qeetaiConversationId', b.id); } catch(e){}"
                 ]
               }
             }
           ]
         },
         {
-          "name": "Get conversation — GET /v1/copilot/conversations/{conversationID}",
+          "name": "Get conversation — GET /v1/qeetai/conversations/{conversationID}",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/conversations/{{copilotConversationId}}",
+              "raw": "{{baseUrl}}/v1/qeetai/conversations/{{qeetaiConversationId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "conversations",
-                "{{copilotConversationId}}"
+                "{{qeetaiConversationId}}"
               ]
             },
             "description": "Returns a conversation with its full message history (`{ conversation, messages }`). Scoped by tenant AND user — a conversation owned by another user returns 404."
@@ -10495,7 +10495,7 @@
           ]
         },
         {
-          "name": "Rename / pin conversation — PATCH /v1/copilot/conversations/{conversationID}",
+          "name": "Rename / pin conversation — PATCH /v1/qeetai/conversations/{conversationID}",
           "request": {
             "method": "PATCH",
             "header": [
@@ -10509,15 +10509,15 @@
               "raw": "{\n  \"title\": \"Renamed by Postman\",\n  \"pinned\": true\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/conversations/{{copilotConversationId}}",
+              "raw": "{{baseUrl}}/v1/qeetai/conversations/{{qeetaiConversationId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "conversations",
-                "{{copilotConversationId}}"
+                "{{qeetaiConversationId}}"
               ]
             },
             "description": "Renames and/or pins-unpins a conversation. Both `title` and `pinned` are optional (nullable) — send only the fields you want to change. Returns the updated Conversation."
@@ -10535,23 +10535,23 @@
           ]
         },
         {
-          "name": "Delete conversation — DELETE /v1/copilot/conversations/{conversationID}",
+          "name": "Delete conversation — DELETE /v1/qeetai/conversations/{conversationID}",
           "request": {
             "method": "DELETE",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/conversations/{{copilotConversationId}}",
+              "raw": "{{baseUrl}}/v1/qeetai/conversations/{{qeetaiConversationId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "conversations",
-                "{{copilotConversationId}}"
+                "{{qeetaiConversationId}}"
               ]
             },
-            "description": "Deletes a conversation and all its messages (cascade). 404 if out of scope. Run this AFTER the get/patch/messages tests for {{copilotConversationId}}."
+            "description": "Deletes a conversation and all its messages (cascade). 404 if out of scope. Run this AFTER the get/patch/messages tests for {{qeetaiConversationId}}."
           },
           "event": [
             {
@@ -10566,7 +10566,7 @@
           ]
         },
         {
-          "name": "[setup] Send a message (SSE stream) — POST /v1/copilot/conversations/{conversationID}/messages",
+          "name": "[setup] Send a message (SSE stream) — POST /v1/qeetai/conversations/{conversationID}/messages",
           "request": {
             "method": "POST",
             "header": [
@@ -10584,19 +10584,19 @@
               "raw": "{\n  \"message\": \"List the users in my tenant.\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/copilot/conversations/{{copilotConversationId}}/messages",
+              "raw": "{{baseUrl}}/v1/qeetai/conversations/{{qeetaiConversationId}}/messages",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
-                "copilot",
+                "qeetai",
                 "conversations",
-                "{{copilotConversationId}}",
+                "{{qeetaiConversationId}}",
                 "messages"
               ]
             },
-            "description": "Opens a streaming turn of the conversation, emitting the model's response as Server-Sent Events (text/event-stream). Body: `{ message }` (and/or `tool_results`, `context`). The copilot never mutates domain state itself — tool calls are streamed as SSE events for the browser to execute under the user's own token. Marked [setup] because it requires the copilot to be CONFIGURED (COPILOT_PROVIDER + COPILOT_API_KEY / an LLM key) — otherwise it returns 409 copilot_unconfigured. Postman does not render SSE incrementally; expect the raw event stream in the response body."
+            "description": "Opens a streaming turn of the conversation, emitting the model's response as Server-Sent Events (text/event-stream). Body: `{ message }` (and/or `tool_results`, `context`). The qeetai never mutates domain state itself — tool calls are streamed as SSE events for the browser to execute under the user's own token. Marked [setup] because it requires the qeetai to be CONFIGURED (QEETAI_PROVIDER + QEETAI_API_KEY / an LLM key) — otherwise it returns 409 qeetai_unconfigured. Postman does not render SSE incrementally; expect the raw event stream in the response body."
           },
           "event": [
             {

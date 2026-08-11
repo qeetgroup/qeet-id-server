@@ -59,6 +59,13 @@ SELECT EXISTS (
 UPDATE auth.password_credentials SET password_hash = @password_hash, updated_at = NOW()
 WHERE user_id = @user_id;
 
+-- RevokeOtherSessionsForUser revokes all of a user's active sessions except the
+-- one they're currently on — used after a password change/set so a compromised
+-- session can't survive the credential rotation.
+-- name: RevokeOtherSessionsForUser :execrows
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL;
+
 -- name: InsertRefreshToken :one
 INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
 VALUES (@session_id, @token_hash, @expires_at)
@@ -74,6 +81,14 @@ UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = @session_id;
 -- Idempotent: no-op on an already-revoked session.
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = @session_id AND revoked_at IS NULL;
+
+-- name: RevokeSessionForUser :one
+-- Revokes a session scoped to its owner and returns the (nullable) tenant for
+-- event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
+-- or was already revoked — a safe no-op, never a cross-user takedown.
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
+RETURNING tenant_id;
 
 -- name: InsertPasswordCredential :exec
 -- Stores the Argon2id hash for a newly created identity (signup / hosted register).

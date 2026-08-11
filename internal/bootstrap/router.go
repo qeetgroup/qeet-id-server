@@ -48,12 +48,14 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/copilot"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/sales"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
@@ -90,6 +92,8 @@ type Deps struct {
 	Audit         *audit.Handler
 	AuditAnomaly  *anomaly.Handler
 	Billing       *billing.Handler
+	Entitlement   *entitlements.Handler
+	Sales         *sales.Handler
 	Analytics     *analytics.Handler
 	Outbox        *outbox.Handler
 	OIDC          *oidc.Handler
@@ -110,7 +114,7 @@ type Deps struct {
 	Notification  *notification.Handler
 	DomainVerify  *domainverify.Handler
 	SIEM          *siem.Handler
-	Copilot       *copilot.Handler
+	Qeetai        *qeetai.Handler
 	AuthHook      *authhook.Handler
 	ABAC          *abac.Handler
 	ReBAC         *rebac.Handler
@@ -236,6 +240,14 @@ func NewRouter(d Deps) http.Handler {
 	userLimiter := newLimiter(30, 100)
 	apiKeyLimiter := newLimiter(50, 200)
 
+	// Tight per-user throttle for the endpoints that dispatch an SMS/email to a
+	// caller-supplied address or guess a credential (~6/min sustained, burst 5):
+	// blunts SMS toll-fraud, email-bombing, and online password guessing that the
+	// generous 30 rps/user bucket wouldn't. Applied per-route inside the handlers.
+	sensitiveThrottle := newLimiter(0.1, 5).MiddlewareBy("sensitive", ratelimit.PerUser)
+	d.Auth.Throttle = sensitiveThrottle
+	d.Verification.Throttle = sensitiveThrottle
+
 	r.Route("/v1", func(r chi.Router) {
 		// Public (no JWT required).
 		r.Group(func(r chi.Router) {
@@ -253,6 +265,7 @@ func NewRouter(d Deps) http.Handler {
 			d.AdminPortal.MountPublic(r) // /admin-portal/{token}/...: token-gated SAML/SCIM self-serve config
 			d.OIDC.MountBrowser(r)       // /oauth/authorize (SSO cookie) + decision + token-code
 			d.TokenVault.MountPublic(r)  // /vault/tokens/callback: 3rd-party OAuth2 redirect target
+			d.MFA.MountPublic(r)         // /mfa/push/challenges/{id}: poll + respond (no session needed)
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.
@@ -296,6 +309,8 @@ func NewRouter(d Deps) http.Handler {
 			d.Audit.Mount(r)
 			d.AuditAnomaly.Mount(r) // /tenants/{id}/audit/anomalies: behavioral-baseline anomaly detection
 			d.Billing.Mount(r)      // /billing/plans + /tenants/{id}/billing/*
+			d.Entitlement.Mount(r)  // /tenants/{id}/entitlements: resolved plan capability set
+			d.Sales.Mount(r)        // /sales/leads: in-app "Contact sales" (Enterprise)
 			d.Analytics.Mount(r)
 			d.Outbox.Mount(r)
 			d.OIDC.Mount(r)
@@ -322,7 +337,7 @@ func NewRouter(d Deps) http.Handler {
 			d.AuthZEN.Mount(r)      // /tenants/{id}/access/v1/evaluation: OpenID AuthZEN PDP facade over RBAC/ReBAC
 			d.Agent.Mount(r)        // /tenants/{id}/agents: AI-agent identity admin
 			d.VC.Mount(r)           // /tenants/{id}/credentials: verifiable credential issuance
-			d.Copilot.Mount(r)      // /copilot/status + /copilot/conversations: AI copilot
+			d.Qeetai.Mount(r)       // /qeetai/status + /qeetai/conversations: AI qeetai
 			d.Search.Mount(r)       // /search: universal tenant-scoped, RBAC-gated fuzzy search
 			d.Activity.Mount(r)     // /activity + /activity/stream: live activity feed (audit.read gated)
 		})

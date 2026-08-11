@@ -17,9 +17,21 @@ type Service struct {
 	// emitter delivers token.claims_change signals to a tenant's webhook
 	// subscriptions (nil = emission off). Set via SetEmitter.
 	emitter EventEmitter
+	// limits gates custom-role creation by plan (nil = off). Set via SetPlanLimiter.
+	limits PlanLimiter
 }
 
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+
+// PlanLimiter returns the numeric cap for a plan-gated resource (negative =
+// unlimited). Satisfied by operations/entitlements.Service, injected via
+// SetPlanLimiter so rbac needn't import the plan packages.
+type PlanLimiter interface {
+	Limit(ctx context.Context, tenantID uuid.UUID, resource string) (int, error)
+}
+
+// SetPlanLimiter wires the plan-limit checker (nil disables the gate).
+func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 
 // EventEmitter delivers a webhook-shaped event to a tenant's subscriptions.
 // Satisfied by *webhook.Service.Enqueue; kept as a func type (matching the
@@ -44,6 +56,23 @@ func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string
 }
 
 func (s *Service) CreateRole(ctx context.Context, tenantID uuid.UUID, name, desc string, actor audit.Actor) (*Role, error) {
+	// Plan gate: custom roles are capped by plan (Free allows none — built-in
+	// roles don't count). Refuse once the cap is reached.
+	if s.limits != nil {
+		lim, err := s.limits.Limit(ctx, tenantID, "custom_roles")
+		if err != nil {
+			return nil, err
+		}
+		if lim >= 0 {
+			n, err := s.repo.CountCustomRoles(ctx, tenantID)
+			if err != nil {
+				return nil, err
+			}
+			if int(n) >= lim {
+				return nil, errs.ErrPlanLimit.WithMetadata(map[string]any{"resource": "custom_roles", "limit": lim})
+			}
+		}
+	}
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
 		return nil, err

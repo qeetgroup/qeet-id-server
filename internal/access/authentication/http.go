@@ -35,6 +35,9 @@ type Handler struct {
 	// signal never fires; there is no server-side GeoIP lookup, by design (see
 	// domains/access/threat-detection/risk).
 	GeoCountryHeader string
+	// Throttle wraps sensitive self-service routes (password change/set) with a
+	// tight per-user rate limit to blunt online guessing. Nil = no extra throttle.
+	Throttle func(http.Handler) http.Handler
 }
 
 // evalBot runs the bot scorer for an auth attempt when detection is wired. The
@@ -73,6 +76,12 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/auth/sessions", h.listSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
+	r.Get("/auth/password", h.passwordStatus)
+	if h.Throttle != nil {
+		r.With(h.Throttle).Post("/auth/password", h.changePassword)
+	} else {
+		r.Post("/auth/password", h.changePassword)
+	}
 }
 
 type signupInput struct {
@@ -361,13 +370,64 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, pair)
 }
 
-func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+type changePasswordInput struct {
+	// Optional: required only when the account already has a password. A
+	// password-less account (social / passkey signup) omits it to SET one.
+	CurrentPassword string `json:"current_password" validate:"omitempty"`
+	NewPassword     string `json:"new_password" validate:"required,min=8,max=256"`
+}
+
+// passwordStatus reports whether the caller has a password set, so the account
+// UI can offer "set a password" vs "change password".
+func (h *Handler) passwordStatus(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.SessionID == nil {
+	if p == nil || p.UserID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	if err := h.Service.Logout(r.Context(), *p.SessionID); err != nil {
+	has, err := h.Service.HasPassword(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"has_password": has})
+}
+
+// changePassword rotates (or sets) a signed-in user's password — self-service
+// and tenant-independent (works before any org). Re-proving the current
+// password is required only when one is already set; either way, other sessions
+// are revoked.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || p.SessionID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	var in changePasswordInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if h.Validate != nil {
+		if err := h.Validate.Struct(in); err != nil {
+			httpx.WriteError(w, r, httpx.ValidationError(err))
+			return
+		}
+	}
+	if err := h.Service.ChangePassword(r.Context(), *p.UserID, *p.SessionID, in.CurrentPassword, in.NewPassword); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Your password has been updated."})
+}
+
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.SessionID == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	if err := h.Service.Logout(r.Context(), *p.SessionID, *p.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -430,12 +490,18 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Logout(r.Context(), id); err != nil {
+	// Scope to the caller: revoking a session you don't own is a silent no-op.
+	if err := h.Service.Logout(r.Context(), id, *p.UserID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

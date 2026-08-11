@@ -336,11 +336,26 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Restrict to profile fields regardless of what the body carried.
-	safe := UpdateInput{DisplayName: in.DisplayName, AvatarURL: in.AvatarURL}
+	// Restrict to self-editable profile fields regardless of what the body carried.
+	safe := UpdateInput{DisplayName: in.DisplayName, AvatarURL: in.AvatarURL, Locale: in.Locale}
 	if err := h.Validate.Struct(safe); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
+	}
+	// Locale lives in the metadata blob (not a column). Update replaces metadata
+	// wholesale, so merge onto the current value to preserve any other keys.
+	if in.Locale != nil {
+		cur, err := h.Repo.Get(r.Context(), *p.UserID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		meta := make(map[string]any, len(cur.Metadata)+1)
+		for k, v := range cur.Metadata {
+			meta[k] = v
+		}
+		meta["locale"] = *in.Locale
+		safe.Metadata = meta
 	}
 	u, err := h.Repo.Update(r.Context(), *p.UserID, safe)
 	if err != nil {

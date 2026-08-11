@@ -1458,6 +1458,87 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/me/social/identities:
+    get:
+      operationId: get_v1_me_social_identities
+      summary: List my connected social accounts
+      description: The signed-in (tenant-less/console) user's connected social identities, recorded by platform sign-in and the link flow.
+      tags:
+        - Social
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/social/identities/{id}:
+    delete:
+      operationId: delete_v1_me_social_identities_ById
+      summary: Unlink one of my connected social accounts
+      tags:
+        - Social
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/{provider}/link/start:
+    post:
+      operationId: post_v1_social_ByProvider_link_start
+      summary: Begin linking a provider to my account
+      description: Authenticated "connect this provider" ceremony. Returns the provider authorize URL for the browser to navigate to; the callback attaches the identity to the caller — never creating or switching accounts, and refusing an identity already linked elsewhere (`social.already_linked`).
+      tags:
+        - Social
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorize_url:
+                    type: string
+                required:
+                  - authorize_url
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/social/identities/{id}:
     delete:
       operationId: delete_v1_social_identities_ById

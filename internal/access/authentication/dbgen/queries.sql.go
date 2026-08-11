@@ -218,6 +218,27 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 	return err
 }
 
+const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :execrows
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+`
+
+type RevokeOtherSessionsForUserParams struct {
+	UserID        uuid.UUID
+	KeepSessionID uuid.UUID
+}
+
+// RevokeOtherSessionsForUser revokes all of a user's active sessions except the
+// one they're currently on — used after a password change/set so a compromised
+// session can't survive the credential rotation.
+func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOtherSessionsForUser, arg.UserID, arg.KeepSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeSessionById = `-- name: RevokeSessionById :exec
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = $1 AND revoked_at IS NULL
@@ -227,6 +248,27 @@ WHERE id = $1 AND revoked_at IS NULL
 func (q *Queries) RevokeSessionById(ctx context.Context, sessionID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, revokeSessionById, sessionID)
 	return err
+}
+
+const revokeSessionForUser = `-- name: RevokeSessionForUser :one
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+RETURNING tenant_id
+`
+
+type RevokeSessionForUserParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// Revokes a session scoped to its owner and returns the (nullable) tenant for
+// event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
+// or was already revoked — a safe no-op, never a cross-user takedown.
+func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
+	var tenant_id pgtype.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
 }
 
 const touchTrustedDevice = `-- name: TouchTrustedDevice :execrows

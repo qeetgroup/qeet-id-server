@@ -63,11 +63,23 @@ type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
 	auth *auth.Service
+	// gate enforces the plan LDAP feature on connection creation (nil = off).
+	gate PlanGate
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), auth: authSvc}
 }
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
@@ -124,6 +136,16 @@ func defaulted(v, def string) string {
 }
 
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
+	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
+	if s.gate != nil {
+		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ldap"})
+		}
+	}
 	r, err := s.q.WithTx(tx).InsertLdapConnection(ctx, dbgen.InsertLdapConnectionParams{
 		TenantID:       tenantID,
 		Name:           in.Name,

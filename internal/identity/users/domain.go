@@ -77,8 +77,11 @@ type UpdateInput struct {
 	DisplayName *string `json:"display_name,omitempty" validate:"omitempty,max=200"`
 	// AvatarURL is a small image data-URL (capped/compressed client-side). Empty
 	// string clears it. The startswith guard keeps it to image data-URLs only.
-	AvatarURL *string        `json:"avatar_url,omitempty" validate:"omitempty,max=300000,startswith=data:image/"`
-	Phone     *string        `json:"phone,omitempty" validate:"omitempty,e164"`
-	Status    *string        `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	AvatarURL *string `json:"avatar_url,omitempty" validate:"omitempty,max=300000,startswith=data:image/"`
+	Phone     *string `json:"phone,omitempty" validate:"omitempty,e164"`
+	Status    *string `json:"status,omitempty" validate:"omitempty,oneof=active suspended"`
+	// Locale is the user's preferred UI language (one of the shipped console
+	// locales). Self-service; persisted in metadata by updateMe, not a column.
+	Locale   *string        `json:"locale,omitempty" validate:"omitempty,oneof=en de es fr hi ja pt zh"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }

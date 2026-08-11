@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": "1",
-  "description": "Canonical Qeet ID Copilot tool catalog. Loaded by the Go orchestrator (go:embed → Anthropic `tools` defs) and by the frontend tool-registry (which attaches run()). Names are the contract; a qa parity test asserts both sides match. Adding a tool = edit this file + a frontend run() + the backend needs no code change.",
+  "description": "Canonical Qeet ID Qeet AI tool catalog. Loaded by the Go orchestrator (go:embed → Anthropic `tools` defs) and by the frontend tool-registry (which attaches run()). Names are the contract; a qa parity test asserts both sides match. Adding a tool = edit this file + a frontend run() + the backend needs no code change.",
   "tools": [
     {
       "name": "search_users",

@@ -463,6 +463,69 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/password:
+    get:
+      operationId: get_v1_auth_password
+      summary: Password status
+      description: Reports whether the caller has a password set, so the account UI can offer "set a password" (social/passkey accounts) vs "change password".
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  has_password:
+                    type: boolean
+                required:
+                  - has_password
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_v1_auth_password
+      summary: Change or set my password
+      description: Rotates (or sets) the signed-in user's password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password is checked against the breached-password list. Self-service and tenant-independent.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+                  maxLength: 256
+              required:
+                - current_password
+                - new_password
+      responses:
+        '200':
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions
@@ -937,6 +1000,37 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/totp:
+    get:
+      operationId: get_v1_mfa_totp
+      summary: TOTP status
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Reports whether the principal has a confirmed TOTP factor, so the account UI can show an active state instead of re-offering enrollment.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enrolled:
+                    type: boolean
+                required:
+                  - enrolled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
     delete:
       operationId: delete_v1_mfa_totp
       summary: Disable TOTP

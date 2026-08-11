@@ -10,7 +10,7 @@ import (
 // neutral ai.Message/ai.ToolDef formats to Anthropic wire format, calls the
 // underlying streaming API, and maps ParsedEvent values to ai.Event values.
 //
-// Construct via NewProvider and pass to the copilot orchestrator.
+// Construct via NewProvider and pass to the qeetai orchestrator.
 type Provider struct {
 	client *Client
 }

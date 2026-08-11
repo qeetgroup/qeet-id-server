@@ -15,6 +15,12 @@ const (
 	CodeMFAWebAuthnUnavailable = "mfa.webauthn_unavailable"
 	CodeMFANotEnrolled         = "mfa.not_enrolled"
 	CodeMFAFactorNotConfirmed  = "mfa.factor_not_confirmed"
+
+	// Push MFA
+	CodeMFAPushDeviceNotFound   = "mfa.push_device_not_found"
+	CodeMFAPushChallengeExpired = "mfa.push_challenge_expired"
+	CodeMFAPushChallengeInvalid = "mfa.push_challenge_invalid"
+	CodeMFAPushUnauthorized     = "mfa.push_unauthorized"
 )
 
 // MFA errors. The Message is what the end user sees — edit wording here, in one
@@ -31,4 +37,10 @@ var (
 	ErrMFAWebAuthnUnavailable = New(CodeMFAWebAuthnUnavailable, "Security-key MFA isn't available yet.")
 	ErrMFANotEnrolled         = New(CodeMFANotEnrolled, "Set up multi-factor authentication first.")
 	ErrMFAFactorNotConfirmed  = New(CodeMFAFactorNotConfirmed, "Confirm this factor before requesting a code.")
+
+	// Push MFA
+	ErrMFAPushDeviceNotFound   = New(CodeMFAPushDeviceNotFound, "Push device not found.")
+	ErrMFAPushChallengeExpired = New(CodeMFAPushChallengeExpired, "This push challenge has expired. Try signing in again.")
+	ErrMFAPushChallengeInvalid = New(CodeMFAPushChallengeInvalid, "This push challenge is no longer pending.")
+	ErrMFAPushUnauthorized     = New(CodeMFAPushUnauthorized, "Invalid device token.")
 )

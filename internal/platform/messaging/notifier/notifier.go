@@ -12,8 +12,11 @@ type Message struct {
 	To      string
 	Channel string // "email" or "sms"
 	Subject string
-	Body    string
-	Tags    map[string]string
+	Body    string // plain-text body (always set; the fallback for HTML mail)
+	// HTML, when set on an email, is sent as the rich alternative alongside Body.
+	// Ignored for SMS.
+	HTML string
+	Tags map[string]string
 }
 
 type Sender interface {

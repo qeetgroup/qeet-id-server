@@ -1,5 +1,5 @@
 // Package ai defines the provider-neutral inference abstraction for the AI
-// copilot. Implementations live in platform/ai/{anthropic,openai}; the copilot
+// qeetai. Implementations live in platform/ai/{anthropic,openai}; the qeetai
 // orchestrator depends only on Provider. Arch rule: platform/* must not import
 // domains/*.
 package ai
@@ -19,7 +19,7 @@ type ToolDef struct {
 
 // ContentBlock is a provider-neutral content element whose JSON shape matches
 // the Anthropic content-block format — the canonical storage format used in
-// the copilot DB. Each provider converts to/from its own wire format at the
+// the qeetai DB. Each provider converts to/from its own wire format at the
 // boundary; the orchestrator and DB always use this neutral form.
 //
 // Fields:
@@ -102,7 +102,7 @@ type Event struct {
 	ErrorMessage string
 }
 
-// Provider is the inference backend abstraction consumed by the copilot
+// Provider is the inference backend abstraction consumed by the qeetai
 // orchestrator. Implementations are in platform/ai/anthropic and
 // platform/ai/openai; the orchestrator depends only on this interface.
 //

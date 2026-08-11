@@ -1,7 +1,7 @@
 // Package openai is a streaming OpenAI Chat Completions client implementing
 // ai.Provider. Transport-only (base URL, auth header, SSE parsing); imports
 // nothing from domains/*. Also works with any hosted OpenAI-compatible endpoint
-// (Groq, OpenRouter, Gemini's OpenAI path) via COPILOT_BASE_URL.
+// (Groq, OpenRouter, Gemini's OpenAI path) via QEETAI_BASE_URL.
 package openai
 
 import (

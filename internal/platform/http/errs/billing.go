@@ -17,6 +17,9 @@ const (
 	CodeBillingWebhookVerificationFailed = "billing.webhook_verification_failed"
 	CodeBillingTenantInvalid             = "billing.tenant_invalid"
 	CodeBillingTenantMismatch            = "billing.tenant_mismatch"
+	CodeBillingCheckoutRequired          = "billing.checkout_required"
+	CodeBillingTaxIDInvalid              = "billing.tax_id_invalid"
+	CodeBillingTrialNotEligible          = "billing.trial_not_eligible"
 )
 
 // Billing errors. The Message is the end-user-facing text; edit wording here.
@@ -33,4 +36,10 @@ var (
 	ErrBillingWebhookVerificationFailed = New(CodeBillingWebhookVerificationFailed, "We couldn't verify this webhook request.")
 	ErrBillingTenantInvalid             = New(CodeBillingTenantInvalid, "That tenant reference is invalid.")
 	ErrBillingTenantMismatch            = New(CodeBillingTenantMismatch, "You can't access another tenant's billing.")
+	// ErrBillingCheckoutRequired: a paid plan can't be self-provisioned free via
+	// POST /v1/tenants — it must go through the signup checkout so payment is
+	// captured before the org exists.
+	ErrBillingCheckoutRequired = New(CodeBillingCheckoutRequired, "This plan requires checkout. Start the paid signup flow to create this organization.")
+	ErrBillingTaxIDInvalid     = New(CodeBillingTaxIDInvalid, "That tax ID isn't valid.")
+	ErrBillingTrialNotEligible = New(CodeBillingTrialNotEligible, "This organization isn't eligible for a trial.")
 )

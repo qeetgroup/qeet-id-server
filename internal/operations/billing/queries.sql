@@ -30,12 +30,22 @@ WHERE plan_id = @plan_id AND currency = @currency;
 -- currency-specific price in one round-trip.
 SELECT p.code, p.name, p.interval, s.currency, s.status,
        s.current_period_start, s.current_period_end, s.cancel_at_period_end,
+       s.trial_end,
        COALESCE(pp.amount_minor, 0) AS amount_minor
 FROM tenant.subscriptions s
 JOIN platform.billing_plans p ON p.id = s.plan_id
 LEFT JOIN platform.billing_plan_prices pp
     ON pp.plan_id = s.plan_id AND pp.currency = s.currency
 WHERE s.tenant_id = @tenant_id;
+
+-- name: InsertTrialSubscription :exec
+-- Start a no-card trial: creates a trialing subscription that reverts to free
+-- at trial_end unless it converts to paid. Fails on conflict (one trial/org) —
+-- callers check eligibility first.
+INSERT INTO tenant.subscriptions
+    (tenant_id, plan_id, currency, status,
+     current_period_start, current_period_end, trial_end, cancel_at_period_end)
+VALUES (@tenant_id, @plan_id, @currency, 'trialing', NOW(), @trial_end, @trial_end, FALSE);
 
 -- name: UpsertSubscription :exec
 -- Create or replace the tenant's subscription (one row per tenant).
@@ -54,9 +64,47 @@ ON CONFLICT (tenant_id) DO UPDATE SET
 
 -- name: InsertInvoice :exec
 -- Issue an invoice for one billing period (zero-amount plans still get a record).
+-- amount_minor is the total charged (taxable + tax).
 INSERT INTO tenant.invoices
-    (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end)
-VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end);
+    (tenant_id, plan_code, currency, amount_minor, status, period_start, period_end,
+     taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply)
+VALUES (@tenant_id, @plan_code, @currency, @amount_minor, 'paid', @period_start, @period_end,
+        @taxable_amount_minor, @tax_amount_minor, @tax_rate_bps, @tax_type, @place_of_supply);
+
+-- name: GetBillingProfile :one
+-- Fetch a tenant's billing & tax details (returns no rows until first save).
+SELECT tenant_id, legal_name, billing_email, address_line1, address_line2, city,
+       state, postal_code, country, tax_id_type, tax_id, updated_at
+FROM tenant.billing_profiles WHERE tenant_id = @tenant_id;
+
+-- name: UpsertBillingProfile :exec
+-- Create or replace a tenant's billing & tax details (one row per tenant).
+INSERT INTO tenant.billing_profiles
+    (tenant_id, legal_name, billing_email, address_line1, address_line2, city,
+     state, postal_code, country, tax_id_type, tax_id, updated_at)
+VALUES (@tenant_id, @legal_name, @billing_email, @address_line1, @address_line2,
+        @city, @state, @postal_code, @country, @tax_id_type, @tax_id, NOW())
+ON CONFLICT (tenant_id) DO UPDATE SET
+    legal_name    = EXCLUDED.legal_name,
+    billing_email = EXCLUDED.billing_email,
+    address_line1 = EXCLUDED.address_line1,
+    address_line2 = EXCLUDED.address_line2,
+    city          = EXCLUDED.city,
+    state         = EXCLUDED.state,
+    postal_code   = EXCLUDED.postal_code,
+    country       = EXCLUDED.country,
+    tax_id_type   = EXCLUDED.tax_id_type,
+    tax_id        = EXCLUDED.tax_id,
+    updated_at    = NOW();
+
+-- name: SetTenantPlan :exec
+-- Keep the tenant's plan label (tenant.tenants.plan) in sync with its
+-- subscription tier. Billing is the only writer of that column now that the
+-- tenant PATCH no longer accepts it, so the label can't drift from what's paid.
+-- Runs on the caller's tx, alongside UpsertSubscription.
+UPDATE tenant.tenants
+SET plan = @plan, updated_at = NOW()
+WHERE id = @tenant_id AND deleted_at IS NULL;
 
 -- name: CancelSubscription :execrows
 -- Mark the subscription to cancel at end of current period.  Returns 0 rows
@@ -96,7 +144,8 @@ RETURNING tenant_id, plan_code, currency;
 
 -- name: ListInvoices :many
 -- Return the tenant's billing history, most recent first.
-SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at
+SELECT id, plan_code, currency, amount_minor, status, period_start, period_end, issued_at,
+       taxable_amount_minor, tax_amount_minor, tax_rate_bps, tax_type, place_of_supply
 FROM tenant.invoices
 WHERE tenant_id = @tenant_id
 ORDER BY issued_at DESC

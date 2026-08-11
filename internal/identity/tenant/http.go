@@ -32,9 +32,13 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants", h.list)
 	r.Post("/tenants", h.create)
-	r.Get("/tenants/{id}", h.get)
-	r.Patch("/tenants/{id}", h.update)
-	r.Delete("/tenants/{id}", h.delete)
+	// Use {tenantID} (not {id}) so the router-level EnforceTenantScope guard
+	// fires: it rejects any path tenant that isn't the caller's own, closing the
+	// cross-tenant read/modify/delete hole (rbac.Enforce only checks the caller's
+	// active tenant, never the path tenant).
+	r.Get("/tenants/{tenantID}", h.get)
+	r.Patch("/tenants/{tenantID}", h.update)
+	r.Delete("/tenants/{tenantID}", h.delete)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +72,23 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return
+	}
+	// Only the free plan may be self-provisioned here. Paid plans (starter/pro)
+	// must go through signup checkout so payment is captured before the org
+	// exists; enterprise is contact-sales. This closes the gap where a direct
+	// POST /v1/tenants could mint a paid org without ever paying.
+	if in.Plan != "" && in.Plan != "free" {
+		httpx.WriteError(w, r, errs.ErrBillingCheckoutRequired)
+		return
+	}
+	// Require a verified email before spinning up an org: it becomes the owner's
+	// account of record for billing, recovery, and every downstream notification.
+	if verified, err := h.Repo.IsEmailVerified(r.Context(), *p.UserID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	} else if !verified {
+		httpx.WriteError(w, r, errs.ErrEmailNotVerified)
 		return
 	}
 	// The creator becomes the tenant's owner (role + membership) in one tx.
@@ -143,9 +164,9 @@ func (h *Handler) publishCreated(r *http.Request, t *Tenant) {
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
 	t, err := h.Repo.Get(r.Context(), id)
@@ -157,9 +178,9 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
 	var in UpdateInput
@@ -180,9 +201,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	id, err := uuid.Parse(chi.URLParam(r, "tenantID"))
 	if err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
 	if err := h.Repo.SoftDelete(r.Context(), id); err != nil {

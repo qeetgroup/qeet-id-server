@@ -25,6 +25,46 @@ ORDER BY ei.linked_at DESC;
 -- name: DeleteExternalIdentity :execrows
 DELETE FROM "user".external_identities WHERE id = @id AND tenant_id = @tenant_id;
 
+-- ListExternalIdentitiesForUser is the self-service variant: scoped to the
+-- caller's own user id across every tenant, so an org-less user can still see
+-- the social logins linked to their account.
+-- name: ListExternalIdentitiesForUser :many
+SELECT ei.id, ei.user_id, ei.tenant_id, ei.provider, ei.subject, ei.email, ei.linked_at
+FROM "user".external_identities ei
+JOIN "user".users u ON u.id = ei.user_id
+WHERE ei.user_id = @user_id AND u.deleted_at IS NULL
+ORDER BY ei.linked_at DESC;
+
+-- DeleteExternalIdentityForUser unlinks scoped to the owner (not a tenant), so
+-- a user can remove their own social login before joining any org.
+-- name: DeleteExternalIdentityForUser :execrows
+DELETE FROM "user".external_identities WHERE id = @id AND user_id = @user_id;
+
+-- ---- Platform (tenant-less) connected social accounts ----
+
+-- UpsertPlatformSocialIdentity records the identity for a console account. On
+-- conflict the identity already belongs to a user (ownership never changes here
+-- — the link path checks ownership first); we just refresh the email.
+-- name: UpsertPlatformSocialIdentity :exec
+INSERT INTO auth.platform_social_identities (user_id, provider, subject, email)
+VALUES (@user_id, @provider, @subject, @email)
+ON CONFLICT (provider, subject) DO UPDATE SET email = EXCLUDED.email;
+
+-- GetPlatformSocialIdentityOwner returns the user a provider identity is already
+-- linked to (pgx.ErrNoRows = not linked yet). Used to reject cross-account links.
+-- name: GetPlatformSocialIdentityOwner :one
+SELECT user_id FROM auth.platform_social_identities
+WHERE provider = @provider AND subject = @subject;
+
+-- name: ListPlatformSocialIdentitiesForUser :many
+SELECT id, user_id, provider, subject, email, linked_at
+FROM auth.platform_social_identities
+WHERE user_id = @user_id
+ORDER BY linked_at DESC;
+
+-- name: DeletePlatformSocialIdentityForUser :execrows
+DELETE FROM auth.platform_social_identities WHERE id = @id AND user_id = @user_id;
+
 -- name: GetTenantIDBySlug :one
 SELECT id FROM tenant.tenants WHERE slug = @slug;
 

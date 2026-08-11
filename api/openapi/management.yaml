@@ -314,6 +314,131 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/me/invites:
+    get:
+      operationId: get_v1_me_invites
+      summary: List invitations addressed to me
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Pending, unexpired invitations addressed to the signed-in user's email, each with the inviting organization's name — the in-app inbox for a user who may not belong to any org yet.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/invites/accept:
+    post:
+      operationId: post_v1_me_invites_accept
+      summary: Accept an invitation with my existing account (by token)
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required:
+                - token
+      description: Joins the caller's existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller's own email (`invite.email_mismatch` otherwise).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/invites/{id}/accept:
+    post:
+      operationId: post_v1_me_invites_ById_accept
+      summary: Accept an invitation from my inbox (by id)
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      description: Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/invites/{id}/decline:
+    post:
+      operationId: post_v1_me_invites_ById_decline
+      summary: Decline an invitation from my inbox
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      description: Dismisses a pending invitation addressed to the caller's email (marks it declined). Scoped by email, so one user can't decline another's.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/invites/{id}:
     delete:
       operationId: delete_v1_invites_ById
@@ -393,14 +518,14 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{id}:
+  /v1/tenants/{tenantID}:
     delete:
-      operationId: delete_v1_tenants_ById
+      operationId: delete_v1_tenants_ByTenantID
       summary: Delete tenant
       tags:
         - Tenants
       parameters:
-        - name: id
+        - name: tenantID
           in: path
           required: true
           schema:
@@ -418,12 +543,12 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     get:
-      operationId: get_v1_tenants_ById
+      operationId: get_v1_tenants_ByTenantID
       summary: Get tenant
       tags:
         - Tenants
       parameters:
-        - name: id
+        - name: tenantID
           in: path
           required: true
           schema:
@@ -445,12 +570,12 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      operationId: patch_v1_tenants_ById
+      operationId: patch_v1_tenants_ByTenantID
       summary: Update tenant
       tags:
         - Tenants
       parameters:
-        - name: id
+        - name: tenantID
           in: path
           required: true
           schema:
@@ -1058,6 +1183,81 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/email/change/start:
+    post:
+      operationId: post_v1_me_email_change_start
+      summary: Start changing my email
+      description: Sends a verification code to a new email address. Pre-checks the address isn't already in use by another account (`verification.email_taken`).
+      tags:
+        - Verification
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+              required:
+                - email
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/email/change/confirm:
+    post:
+      operationId: post_v1_me_email_change_confirm
+      summary: Confirm my email change
+      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email.
+      tags:
+        - Verification
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+              required:
+                - code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/users/{id}/verify/email/start:

@@ -484,7 +484,7 @@ func TestMFATOTPEnrollAndRecoveryCodes(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("mfa"))
 	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
 
 	// Start enrollment.
 	tx, err := testPool.Begin(ctx)
@@ -563,7 +563,7 @@ func TestMFAVerifyUnconfirmed(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("mfa"))
 	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
 
 	// No enrollment at all.
 	tx, _ := testPool.Begin(ctx)
@@ -602,7 +602,7 @@ func TestMFAEmailOTP(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("otp"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	rec := &recordSender{}
-	svc := mfa.NewService(testPool, "qeet-test", rec)
+	svc := mfa.NewService(testPool, "qeet-test", rec, "")
 
 	dest := "user@example.com"
 	factorID, err := svc.EnrollOTPStart(ctx, userID, "email", dest)
@@ -765,7 +765,7 @@ func TestMFAEnrollSatisfiesStepUp(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("mfa-stepup"))
 	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
 
 	// No verification before enrollment.
 	ok, _, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
@@ -822,7 +822,7 @@ func TestMFAStepUpWindow(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("step"))
 	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
 
 	// No verification yet.
 	ok, at, err := svc.RecentlyVerified(ctx, userID, time.Minute)
@@ -895,7 +895,7 @@ func TestMFARequireRecentMFAMiddleware(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("gate"))
 	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
 
 	hit := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hit = true; w.WriteHeader(http.StatusOK) })
@@ -952,7 +952,7 @@ func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("gated"))
 	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{})
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
 
 	// Enroll + confirm TOTP so the user has real factors to disable/regenerate.
 	tx, _ := testPool.Begin(ctx)

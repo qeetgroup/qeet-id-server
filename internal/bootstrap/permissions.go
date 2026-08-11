@@ -140,6 +140,14 @@ func permissionMap() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/secrets/{id}":      "secret.write",
 		"POST /v1/tenants/{tenantID}/secrets/{id}/reveal": "secret.read",
 
+		// Qeet AI provider config (BYOK) — org owner/admin only. Reuses the
+		// secrets permission so a newly added capability need not be backfilled
+		// onto existing owner roles. The other /qeetai/* routes are user-level.
+		"GET /v1/qeetai/provider-config":       "secret.read",
+		"PUT /v1/qeetai/provider-config":       "secret.write",
+		"DELETE /v1/qeetai/provider-config":    "secret.write",
+		"POST /v1/qeetai/provider-config/test": "secret.write",
+
 		// Branding + email templates (GET branding is harmless — ungated).
 		"PUT /v1/tenants/{tenantID}/branding":                       "branding.write",
 		"PUT /v1/tenants/{tenantID}/email-templates/{key}":          "branding.write",
@@ -187,6 +195,9 @@ func permissionMap() map[string]string {
 		"PUT /v1/tenants/{tenantID}/billing/subscription":         "billing.write",
 		"POST /v1/tenants/{tenantID}/billing/subscription/cancel": "billing.write",
 		"GET /v1/tenants/{tenantID}/billing/invoices":             "billing.read",
+		"GET /v1/tenants/{tenantID}/billing/profile":              "billing.read",
+		"PUT /v1/tenants/{tenantID}/billing/profile":              "billing.write",
+		"POST /v1/tenants/{tenantID}/billing/trial":               "billing.write",
 
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",

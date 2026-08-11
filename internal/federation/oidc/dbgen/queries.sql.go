@@ -113,6 +113,19 @@ func (q *Queries) ConsumeDeviceCode(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const countOIDCClientsByTenant = `-- name: CountOIDCClientsByTenant :one
+SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = $1
+`
+
+// CountOIDCClientsByTenant counts a tenant's registered applications (relying
+// parties) — the plan "apps" limit check.
+func (q *Queries) CountOIDCClientsByTenant(ctx context.Context, tenantID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countOIDCClientsByTenant, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteOIDCClient = `-- name: DeleteOIDCClient :one
 DELETE FROM auth.oidc_clients WHERE id = $1 AND tenant_id = $2 RETURNING client_id
 `

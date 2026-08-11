@@ -526,9 +526,20 @@ func validateCondition(raw json.RawMessage) error {
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
+	gate PlanGate
 }
 
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
+
+// PlanGate reports whether a plan-gated boolean feature is included in the
+// tenant's plan. Satisfied by operations/entitlements.Service, injected via
+// SetPlanGate.
+type PlanGate interface {
+	FeatureAllowed(ctx context.Context, tenantID uuid.UUID, feature string) (bool, error)
+}
+
+// SetPlanGate wires the plan-feature gate (nil allows all features).
+func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
 
 // toPolicy maps a generated AuthAbacPolicy row to the domain Policy type.
 func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
@@ -556,6 +567,16 @@ func toPolicy(row dbgen.AuthAbacPolicy) *Policy {
 // Create inserts a new ABAC policy. The audit row and outbox event are
 // committed atomically in the same transaction.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput, actor audit.Actor) (*Policy, error) {
+	// Plan gate: ABAC (attribute-based access control) is a Pro+ feature.
+	if s.gate != nil {
+		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "abac")
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "abac"})
+		}
+	}
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, errs.ErrABACNameRequired
 	}
