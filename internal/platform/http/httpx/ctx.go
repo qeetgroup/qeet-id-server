@@ -39,15 +39,44 @@ func RequestID(r *http.Request) string {
 	return middleware.GetReqID(r.Context())
 }
 
+// ClientIP resolves the originating client IP, preferring proxy headers set by
+// the edge (Caddy/nginx) so audit records carry the real caller rather than the
+// loadbalancer or a loopback address.
+//
+// X-Forwarded-For is a comma-separated chain "client, proxy1, proxy2"; the
+// left-most entry is the original client, so we take that (not the whole list,
+// which is not a valid INET and would fail to store). X-Real-IP is a single
+// value. We fall back to the transport RemoteAddr host. IPv4-mapped IPv6
+// addresses (::ffff:1.2.3.4) are unwrapped to their dotted-quad form.
 func ClientIP(r *http.Request) string {
 	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		return SanitizeForLog(v)
+		first := v
+		if i := strings.IndexByte(v, ','); i >= 0 {
+			first = v[:i]
+		}
+		if ip := strings.TrimSpace(first); ip != "" {
+			return normalizeIP(ip)
+		}
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); v != "" {
+		return normalizeIP(v)
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return SanitizeForLog(r.RemoteAddr)
+		return normalizeIP(strings.TrimSpace(r.RemoteAddr))
 	}
-	return SanitizeForLog(host)
+	return normalizeIP(host)
+}
+
+// normalizeIP unwraps IPv4-mapped IPv6 addresses and strips CR/LF for logging.
+func normalizeIP(v string) string {
+	if ip := net.ParseIP(v); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String()
+		}
+		return ip.String()
+	}
+	return SanitizeForLog(v)
 }
 
 // SanitizeForLog strips CR/LF from a request-derived value before it is written

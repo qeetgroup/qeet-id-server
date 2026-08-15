@@ -13,6 +13,96 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countTenantEnabledPolicies = `-- name: CountTenantEnabledPolicies :one
+SELECT count(*)::int AS policies
+FROM auth.abac_policies
+WHERE tenant_id = $1 AND enabled = TRUE
+`
+
+// CountTenantEnabledPolicies counts the tenant's enabled ABAC policies — the
+// access rules that can apply to any member, including this user.
+func (q *Queries) CountTenantEnabledPolicies(ctx context.Context, tenantID uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countTenantEnabledPolicies, tenantID)
+	var policies int32
+	err := row.Scan(&policies)
+	return policies, err
+}
+
+const countUserApplications = `-- name: CountUserApplications :one
+SELECT count(*)::int AS applications
+FROM auth.oidc_consents c
+JOIN auth.oidc_clients oc ON oc.client_id = c.client_id
+WHERE c.user_id = $1 AND oc.tenant_id = $2
+`
+
+type CountUserApplicationsParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// CountUserApplications counts the OIDC applications a user has consented to,
+// scoped to the applications registered in the given tenant.
+func (q *Queries) CountUserApplications(ctx context.Context, arg CountUserApplicationsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countUserApplications, arg.UserID, arg.TenantID)
+	var applications int32
+	err := row.Scan(&applications)
+	return applications, err
+}
+
+const countUserDirectPermissions = `-- name: CountUserDirectPermissions :one
+SELECT count(DISTINCT p.key)::int AS direct
+FROM rbac.user_roles ur
+JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+JOIN rbac.permissions p ON p.id = rp.permission_id
+WHERE ur.user_id = $1 AND ur.tenant_id = $2
+`
+
+type CountUserDirectPermissionsParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// CountUserDirectPermissions counts the distinct permissions a user holds via
+// directly-assigned roles (rbac.user_roles) — the "direct" half of the split.
+func (q *Queries) CountUserDirectPermissions(ctx context.Context, arg CountUserDirectPermissionsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countUserDirectPermissions, arg.UserID, arg.TenantID)
+	var direct int32
+	err := row.Scan(&direct)
+	return direct, err
+}
+
+const countUserEffectivePermissions = `-- name: CountUserEffectivePermissions :one
+SELECT count(*)::int AS effective FROM (
+  SELECT p.key
+  FROM rbac.user_roles ur
+  JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+  JOIN rbac.permissions p ON p.id = rp.permission_id
+  WHERE ur.user_id = $1 AND ur.tenant_id = $2
+  UNION
+  SELECT p.key
+  FROM tenant.group_members gm
+  JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+  JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+  JOIN rbac.permissions p ON p.id = rp.permission_id
+  WHERE gm.user_id = $1 AND gm.tenant_id = $2
+) eff
+`
+
+type CountUserEffectivePermissionsParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// CountUserEffectivePermissions counts the distinct effective permissions — the
+// union of directly-assigned roles and group-inherited roles. Mirrors the RBAC
+// ListEffectivePermissions query. "inherited" is derived as effective − direct.
+func (q *Queries) CountUserEffectivePermissions(ctx context.Context, arg CountUserEffectivePermissionsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countUserEffectivePermissions, arg.UserID, arg.TenantID)
+	var effective int32
+	err := row.Scan(&effective)
+	return effective, err
+}
+
 const getPasswordHash = `-- name: GetPasswordHash :one
 SELECT password_hash FROM auth.password_credentials WHERE user_id = $1
 `
@@ -154,6 +244,170 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (GetUserByIDRow
 	return i, err
 }
 
+const getUserOrganization = `-- name: GetUserOrganization :one
+SELECT t.id, t.name, t.slug
+FROM "user".users u
+JOIN tenant.tenants t ON t.id = u.tenant_id
+WHERE u.id = $1
+`
+
+type GetUserOrganizationRow struct {
+	ID   uuid.UUID
+	Name string
+	Slug string
+}
+
+// GetUserOrganization returns the tenant (a.k.a. organization) a user belongs to.
+// Each user belongs to exactly one tenant (users.tenant_id is NOT NULL).
+func (q *Queries) GetUserOrganization(ctx context.Context, id uuid.UUID) (GetUserOrganizationRow, error) {
+	row := q.db.QueryRow(ctx, getUserOrganization, id)
+	var i GetUserOrganizationRow
+	err := row.Scan(&i.ID, &i.Name, &i.Slug)
+	return i, err
+}
+
+const getUserPasskeyLastUsed = `-- name: GetUserPasskeyLastUsed :one
+SELECT last_used_at FROM auth.passkey_credentials
+WHERE user_id = $1 AND last_used_at IS NOT NULL
+ORDER BY last_used_at DESC
+LIMIT 1
+`
+
+// GetUserPasskeyLastUsed returns the most recent passkey use. Filtering on a
+// non-null last_used_at keeps the scanned value non-null; ErrNoRows means no
+// passkey has ever been used.
+func (q *Queries) GetUserPasskeyLastUsed(ctx context.Context, userID uuid.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getUserPasskeyLastUsed, userID)
+	var last_used_at pgtype.Timestamptz
+	err := row.Scan(&last_used_at)
+	return last_used_at, err
+}
+
+const getUserPasswordChangedAt = `-- name: GetUserPasswordChangedAt :one
+SELECT updated_at FROM auth.password_credentials WHERE user_id = $1
+`
+
+// GetUserPasswordChangedAt returns when the user's password was last set/changed.
+// ErrNoRows means the user has no password credential (password login not set up).
+func (q *Queries) GetUserPasswordChangedAt(ctx context.Context, userID uuid.UUID) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getUserPasswordChangedAt, userID)
+	var updated_at time.Time
+	err := row.Scan(&updated_at)
+	return updated_at, err
+}
+
+const getUserSecuritySummary = `-- name: GetUserSecuritySummary :one
+
+SELECT
+  u.mfa_required::boolean AS mfa_required,
+  EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)::boolean AS totp_enabled,
+  (SELECT count(*) FROM auth.mfa_otp_factors o WHERE o.user_id = u.id AND o.verified_at IS NOT NULL)::int AS otp_factors,
+  (SELECT count(*) FROM auth.mfa_push_devices d WHERE d.user_id = u.id)::int AS push_devices,
+  (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = u.id)::int AS passkeys,
+  (SELECT count(*) FROM auth.mfa_recovery_codes rc WHERE rc.user_id = u.id AND rc.used_at IS NULL)::int AS recovery_codes_remaining,
+  EXISTS(SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id)::boolean AS password_set,
+  (SELECT count(*) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL)::int AS active_sessions,
+  (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL)::int AS distinct_devices
+FROM "user".users u
+WHERE u.id = $1 AND u.deleted_at IS NULL
+`
+
+type GetUserSecuritySummaryRow struct {
+	MfaRequired            bool
+	TotpEnabled            bool
+	OtpFactors             int32
+	PushDevices            int32
+	Passkeys               int32
+	RecoveryCodesRemaining int32
+	PasswordSet            bool
+	ActiveSessions         int32
+	DistinctDevices        int32
+}
+
+// ── User 360 admin reads ──────────────────────────────────────────────────────
+// These power the console's per-user "identity investigation" workspace. They
+// read cross-schema (auth/rbac/tenant) but are fixed SQL, so they live in the
+// users package's sqlc set (whose schema path is the shared migrations dir).
+// Every aggregate / correlated subquery is explicitly cast so sqlc infers a
+// concrete Go type instead of interface{} (see the array_agg note above).
+// GetUserSecuritySummary aggregates a user's authentication posture into one row:
+// MFA factors (TOTP / email-SMS OTP / push), passkeys, recovery codes, whether a
+// password is set, and the active-session/device count. Only non-null count and
+// boolean signals live here so sqlc types them concretely; the two nullable
+// timestamps (password last-changed, passkey last-used) are fetched by the
+// dedicated :one queries below, where an absent row cleanly means "never".
+func (q *Queries) GetUserSecuritySummary(ctx context.Context, id uuid.UUID) (GetUserSecuritySummaryRow, error) {
+	row := q.db.QueryRow(ctx, getUserSecuritySummary, id)
+	var i GetUserSecuritySummaryRow
+	err := row.Scan(
+		&i.MfaRequired,
+		&i.TotpEnabled,
+		&i.OtpFactors,
+		&i.PushDevices,
+		&i.Passkeys,
+		&i.RecoveryCodesRemaining,
+		&i.PasswordSet,
+		&i.ActiveSessions,
+		&i.DistinctDevices,
+	)
+	return i, err
+}
+
+const getUserStats = `-- name: GetUserStats :one
+WITH members AS (
+  SELECT u.id, u.status
+  FROM "user".users u
+  WHERE u.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
+),
+mfa AS (
+  SELECT m.id,
+    (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = m.id AND t.confirmed_at IS NOT NULL)
+     OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = m.id AND o.verified_at IS NOT NULL)
+     OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = m.id)) AS has_mfa
+  FROM members m
+)
+SELECT
+  count(*)::int AS total_users,
+  (count(*) FILTER (WHERE members.status = 'active'))::int AS active_users,
+  (count(*) FILTER (WHERE members.status = 'suspended'))::int AS suspended_users,
+  (count(*) FILTER (WHERE members.status = 'invited'))::int AS invited_users,
+  (count(*) FILTER (WHERE mfa.has_mfa))::int AS mfa_enabled,
+  (count(*) FILTER (WHERE NOT mfa.has_mfa))::int AS mfa_missing,
+  (count(*) FILTER (WHERE members.created_at >= now() - interval '30 days'))::int AS new_last_30d
+FROM members JOIN mfa USING (id)
+`
+
+type GetUserStatsRow struct {
+	TotalUsers     int32
+	ActiveUsers    int32
+	SuspendedUsers int32
+	InvitedUsers   int32
+	MfaEnabled     int32
+	MfaMissing     int32
+	NewLast30d     int32
+}
+
+// GetUserStats returns the tenant-wide member counts for the Users admin summary
+// strip: total, active, suspended, invited, and MFA enabled/missing. Membership
+// is defined the same way the list is (an rbac.user_roles row in this tenant),
+// and "MFA enabled" matches the list's OR-logic (confirmed TOTP / verified OTP /
+// a push device).
+func (q *Queries) GetUserStats(ctx context.Context, tenantID uuid.UUID) (GetUserStatsRow, error) {
+	row := q.db.QueryRow(ctx, getUserStats, tenantID)
+	var i GetUserStatsRow
+	err := row.Scan(
+		&i.TotalUsers,
+		&i.ActiveUsers,
+		&i.SuspendedUsers,
+		&i.InvitedUsers,
+		&i.MfaEnabled,
+		&i.MfaMissing,
+		&i.NewLast30d,
+	)
+	return i, err
+}
+
 const getUserTenantOf = `-- name: GetUserTenantOf :one
 SELECT tenant_id FROM "user".users WHERE id = $1
 `
@@ -165,6 +419,64 @@ func (q *Queries) GetUserTenantOf(ctx context.Context, id uuid.UUID) (pgtype.UUI
 	var tenant_id pgtype.UUID
 	err := row.Scan(&tenant_id)
 	return tenant_id, err
+}
+
+const getUserTrends = `-- name: GetUserTrends :many
+WITH days AS (
+  SELECT generate_series(
+    date_trunc('day', now()) - interval '29 days',
+    date_trunc('day', now()),
+    interval '1 day'
+  ) AS day
+),
+members AS (
+  SELECT u.id, u.created_at,
+    (SELECT min(e.at) FROM (
+       SELECT t.confirmed_at AS at FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL
+       UNION ALL
+       SELECT o.verified_at FROM auth.mfa_otp_factors o WHERE o.user_id = u.id AND o.verified_at IS NOT NULL
+       UNION ALL
+       SELECT d.created_at FROM auth.mfa_push_devices d WHERE d.user_id = u.id
+     ) e) AS mfa_at
+  FROM "user".users u
+  WHERE u.deleted_at IS NULL
+    AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
+)
+SELECT
+  (SELECT count(*) FROM members m WHERE m.created_at < days.day + interval '1 day')::int AS total,
+  (SELECT count(*) FROM members m WHERE m.mfa_at IS NOT NULL AND m.mfa_at < days.day + interval '1 day')::int AS mfa
+FROM days
+ORDER BY days.day
+`
+
+type GetUserTrendsRow struct {
+	Total int32
+	Mfa   int32
+}
+
+// GetUserTrends returns a 30-day daily series (one row per day, oldest first) for
+// the Users KPI sparklines: cumulative total members and cumulative members with
+// at least one MFA factor enrolled. Both are derived from real timestamps
+// (users.created_at and the earliest MFA factor enrolment); the MFA curve is an
+// enrolment curve (factor removals are not historised, so it never decreases).
+func (q *Queries) GetUserTrends(ctx context.Context, tenantID uuid.UUID) ([]GetUserTrendsRow, error) {
+	rows, err := q.db.Query(ctx, getUserTrends, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUserTrendsRow{}
+	for rows.Next() {
+		var i GetUserTrendsRow
+		if err := rows.Scan(&i.Total, &i.Mfa); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertPasswordCredential = `-- name: InsertPasswordCredential :exec
@@ -293,6 +605,132 @@ func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersPara
 	return items, nil
 }
 
+const listUserActiveSessions = `-- name: ListUserActiveSessions :many
+SELECT id, COALESCE(host(ip), '')::text AS ip, user_agent, created_at, last_seen_at
+FROM auth.sessions
+WHERE user_id = $1 AND revoked_at IS NULL
+ORDER BY last_seen_at DESC
+LIMIT 100
+`
+
+type ListUserActiveSessionsRow struct {
+	ID         uuid.UUID
+	Ip         string
+	UserAgent  *string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+}
+
+// ListUserActiveSessions lists a user's live sessions (most-recently-seen first).
+// ip is rendered through host() (clean address, no INET CIDR suffix) and
+// COALESCEd so the nullable INET scans into a plain non-null string.
+func (q *Queries) ListUserActiveSessions(ctx context.Context, userID uuid.UUID) ([]ListUserActiveSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listUserActiveSessions, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserActiveSessionsRow{}
+	for rows.Next() {
+		var i ListUserActiveSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.CreatedAt,
+			&i.LastSeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserGroupsInTenant = `-- name: ListUserGroupsInTenant :many
+SELECT g.id, g.name, g.description
+FROM tenant.group_members gm
+JOIN tenant.groups g ON g.id = gm.group_id
+WHERE gm.user_id = $1 AND gm.tenant_id = $2
+ORDER BY g.name
+`
+
+type ListUserGroupsInTenantParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+type ListUserGroupsInTenantRow struct {
+	ID          uuid.UUID
+	Name        string
+	Description string
+}
+
+// ListUserGroupsInTenant returns the groups a user belongs to within a tenant.
+func (q *Queries) ListUserGroupsInTenant(ctx context.Context, arg ListUserGroupsInTenantParams) ([]ListUserGroupsInTenantRow, error) {
+	rows, err := q.db.Query(ctx, listUserGroupsInTenant, arg.UserID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserGroupsInTenantRow{}
+	for rows.Next() {
+		var i ListUserGroupsInTenantRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserRolesInTenant = `-- name: ListUserRolesInTenant :many
+SELECT ro.id, ro.name, ro.description
+FROM rbac.user_roles ur
+JOIN rbac.roles ro ON ro.id = ur.role_id
+WHERE ur.user_id = $1 AND ur.tenant_id = $2
+ORDER BY ro.name
+`
+
+type ListUserRolesInTenantParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+type ListUserRolesInTenantRow struct {
+	ID          uuid.UUID
+	Name        string
+	Description string
+}
+
+// ListUserRolesInTenant returns the roles directly assigned to a user within a
+// tenant (group-inherited roles are reflected in effective permissions elsewhere).
+func (q *Queries) ListUserRolesInTenant(ctx context.Context, arg ListUserRolesInTenantParams) ([]ListUserRolesInTenantRow, error) {
+	rows, err := q.db.Query(ctx, listUserRolesInTenant, arg.UserID, arg.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserRolesInTenantRow{}
+	for rows.Next() {
+		var i ListUserRolesInTenantRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markEmailVerified = `-- name: MarkEmailVerified :exec
 UPDATE "user".users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
@@ -330,6 +768,22 @@ func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (int64, error) 
 	return result.RowsAffected(), nil
 }
 
+const revokeAllUserSessions = `-- name: RevokeAllUserSessions :execrows
+UPDATE auth.sessions
+SET revoked_at = NOW()
+WHERE user_id = $1 AND revoked_at IS NULL
+`
+
+// RevokeAllUserSessions revokes every live session for a user (admin force
+// sign-out). Returns the number of sessions revoked.
+func (q *Queries) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAllUserSessions, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setPassword = `-- name: SetPassword :exec
 INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
 VALUES ($1, $2, NOW())
@@ -344,6 +798,27 @@ type SetPasswordParams struct {
 func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error {
 	_, err := q.db.Exec(ctx, setPassword, arg.UserID, arg.PasswordHash)
 	return err
+}
+
+const setUserMfaRequired = `-- name: SetUserMfaRequired :execrows
+UPDATE "user".users
+SET mfa_required = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+type SetUserMfaRequiredParams struct {
+	ID          uuid.UUID
+	MfaRequired bool
+}
+
+// SetUserMfaRequired flips the users.mfa_required policy flag for a user. Returns
+// the rows affected (0 = user not found / soft-deleted).
+func (q *Queries) SetUserMfaRequired(ctx context.Context, arg SetUserMfaRequiredParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUserMfaRequired, arg.ID, arg.MfaRequired)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const softDeleteUser = `-- name: SoftDeleteUser :execrows

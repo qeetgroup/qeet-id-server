@@ -275,7 +275,7 @@ func TestCategoryOf(t *testing.T) {
 	}{
 		{"user.created", CategoryDirectory, SeveritySuccess},
 		{"user.deleted", CategoryDirectory, SeverityWarning},
-		{"auth.login.failed", CategoryAuthentication, SeverityWarning},
+		{"auth.login.failed", CategoryAuthentication, SeverityError},
 		{"auth.session.revoked_for_reuse", CategoryAuthentication, SeverityCritical},
 		{"threat.anomaly_detected", CategorySecurity, SeverityCritical},
 		{"rbac.role_assigned", CategoryAuthorization, SeverityInfo},

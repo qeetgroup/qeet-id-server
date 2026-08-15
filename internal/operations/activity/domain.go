@@ -58,6 +58,7 @@ type ActivityEvent struct {
 	Device      *string         `json:"device,omitempty"`
 	Browser     *string         `json:"browser,omitempty"`
 	Status      *string         `json:"status,omitempty"`
+	RequestID   *string         `json:"request_id,omitempty"`
 	Metadata    map[string]any  `json:"metadata,omitempty"`
 }
 
@@ -154,14 +155,20 @@ var severityCriticalInfix = []string{
 	"malicious",
 }
 
-// severityWarningSuffixes are action suffixes that indicate a failed or
-// destructive operation.
-var severityWarningSuffixes = []string{
+// severityErrorSuffixes are action suffixes that indicate an outright failure or
+// denial — the outcome an operator reads as "Failed" (red). Checked before the
+// (softer) warning suffixes.
+var severityErrorSuffixes = []string{
 	".failed",
 	".locked",
 	".blocked",
 	".denied",
 	".rejected",
+}
+
+// severityWarningSuffixes are action suffixes for destructive-but-expected
+// operations — the outcome an operator reads as "Warning" (amber).
+var severityWarningSuffixes = []string{
 	".deleted",
 	".purged",
 	".revoked",
@@ -212,6 +219,11 @@ func severityOf(action string) string {
 			return SeverityCritical
 		}
 	}
+	for _, s := range severityErrorSuffixes {
+		if strings.HasSuffix(action, s) {
+			return SeverityError
+		}
+	}
 	for _, s := range severityWarningSuffixes {
 		if strings.HasSuffix(action, s) {
 			return SeverityWarning
@@ -223,6 +235,24 @@ func severityOf(action string) string {
 		}
 	}
 	return SeverityInfo
+}
+
+// outcomeOf collapses a derived severity into the coarse outcome bucket the
+// console's summary strip and Outcome facet use. It reuses severityOf's result
+// so there is a single source of truth for the derivation.
+//
+//	success → success · warning → warning · error/critical → failed · info → info
+func outcomeOf(sev string) string {
+	switch sev {
+	case SeveritySuccess:
+		return "success"
+	case SeverityWarning:
+		return "warning"
+	case SeverityError, SeverityCritical:
+		return "failed"
+	default:
+		return "info"
+	}
 }
 
 // titleOf derives a human-readable title from the audit action string.
@@ -296,9 +326,22 @@ type auditRow struct {
 	ResourceID   *uuid.UUID
 	IP           *string
 	UserAgent    *string
+	RequestID    *string
+	ActorName    *string // LEFT-joined display_name/email; nil for non-user actors
 	CreatedAt    time.Time
 	Metadata     []byte
 	TenantID     uuid.UUID // scanned last; used to populate ActivityEvent.TenantID
+}
+
+// firstNonEmpty returns the first non-nil, non-empty pointer value (used to
+// prefer display_name over email for the actor name).
+func firstNonEmpty(vals ...*string) *string {
+	for _, v := range vals {
+		if v != nil && *v != "" {
+			return v
+		}
+	}
+	return nil
 }
 
 // mapAuditRow converts one DB row from audit.events into a public ActivityEvent.
@@ -319,7 +362,11 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		if t == "" {
 			t = "user"
 		}
-		ev.Actor = &ActivityActor{ID: r.ActorUserID, Type: t}
+		actor := &ActivityActor{ID: r.ActorUserID, Type: t}
+		if r.ActorName != nil {
+			actor.Name = *r.ActorName
+		}
+		ev.Actor = actor
 	}
 
 	if r.ResourceType != "" {
@@ -341,6 +388,13 @@ func mapAuditRow(r auditRow) ActivityEvent {
 		if ua != "" {
 			ev.Browser = &ua
 		}
+	}
+
+	// request_id is nullable and often empty on older rows; surface only when set
+	// so it drives correlation/copy in the console without adding noise.
+	if r.RequestID != nil && *r.RequestID != "" {
+		rid := *r.RequestID
+		ev.RequestID = &rid
 	}
 
 	return ev

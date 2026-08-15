@@ -44,6 +44,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Patch("/me", h.updateMe)
 
 	r.Get("/users", h.list)
+	r.Get("/users/stats", h.getUserStats)
+	r.Get("/users/trends", h.getUserTrends)
 	r.Get("/users/deleted", h.listDeleted)
 	r.Post("/users", h.create)
 	r.Post("/users/bulk", h.bulkCreate)
@@ -55,6 +57,13 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/users/{id}/mfa", h.resetMFA)
 	r.Post("/users/{id}/restore", h.restore)
 	r.Delete("/users/{id}/purge", h.purge)
+
+	// User 360 — admin read surfaces (+ one force-sign-out mutation). See user360.go.
+	r.Get("/users/{id}/security", h.getSecurity)
+	r.Get("/users/{id}/sessions", h.getSessions)
+	r.Post("/users/{id}/sessions/revoke-all", h.revokeAllSessions)
+	r.Get("/users/{id}/access", h.getAccess)
+	r.Put("/users/{id}/mfa-required", h.setMfaRequired)
 }
 
 // scopedID parses the {id} path param AND enforces that the target user belongs
@@ -217,7 +226,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, next, err := h.Repo.ListByTenant(r.Context(), *p.TenantID, limit, r.URL.Query().Get("cursor"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	out, next, err := h.Repo.ListByTenant(r.Context(), *p.TenantID, limit, r.URL.Query().Get("cursor"), offset)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -22,6 +22,8 @@ func permissionMap() map[string]string {
 
 		// Users.
 		"GET /v1/users":                "user.read",
+		"GET /v1/users/stats":          "user.read",
+		"GET /v1/users/trends":         "user.read",
 		"POST /v1/users":               "user.write",
 		"POST /v1/users/bulk":          "user.write",
 		"GET /v1/users/deleted":        "user.read",
@@ -32,6 +34,13 @@ func permissionMap() map[string]string {
 		"DELETE /v1/users/{id}/purge":  "user.write",
 		"POST /v1/users/{id}/password": "user.write",
 		"DELETE /v1/users/{id}/mfa":    "user.write", // admin MFA reset (Phase 3 feature)
+
+		// User 360 — per-user admin read surfaces + force sign-out (see user360.go).
+		"GET /v1/users/{id}/security":             "user.read",
+		"GET /v1/users/{id}/sessions":             "user.read",
+		"GET /v1/users/{id}/access":               "user.read",
+		"POST /v1/users/{id}/sessions/revoke-all": "user.write",
+		"PUT /v1/users/{id}/mfa-required":         "user.write",
 
 		// Invites (inviting/removing members is user management).
 		"POST /v1/invites":                   "user.write",
@@ -180,8 +189,10 @@ func permissionMap() map[string]string {
 		"GET /v1/admin/outbox/dlq":                "audit.read",
 
 		// Live Activity feed — sourced from the audit log; same sensitivity.
-		"GET /v1/activity":        "audit.read",
-		"GET /v1/activity/stream": "audit.read",
+		"GET /v1/activity":              "audit.read",
+		"GET /v1/activity/summary":      "audit.read",
+		"GET /v1/activity/stream":       "audit.read",
+		"GET /v1/activity/{id}/related": "audit.read",
 
 		// Audit intelligence: behavioral-baseline anomaly detection over audit.events.
 		"GET /v1/tenants/{tenantID}/audit/anomalies":               "audit.read",

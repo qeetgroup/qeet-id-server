@@ -22,6 +22,12 @@ type User struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
+	// List-only enrichment (populated by ListByTenant, nil on single-user
+	// fetches): a security/access snapshot for the Users admin table.
+	MfaEnabled  *bool      `json:"mfa_enabled,omitempty"`
+	GroupsCount *int       `json:"groups_count,omitempty"`
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+	LastSeenIP  *string    `json:"last_seen_ip,omitempty"`
 }
 
 // DeletedUser is the soft-deleted view shown in the recycle bin — enough to

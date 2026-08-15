@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -43,6 +44,27 @@ func toDomain(row dbgen.TenantTenant) *Tenant {
 		Metadata:  dbutil.Metadata(row.Metadata),
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
+	}
+}
+
+// listRowToTenant maps an enriched list row (tenant columns + the two per-org
+// counts) to the domain Tenant. The two ListTenantsForUser* variants generate
+// distinct-but-identical row structs, so callers pass the fields positionally.
+func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL string, metadata []byte, createdAt, updatedAt time.Time, memberCount, mfaCount int64) Tenant {
+	mc, mfa := memberCount, mfaCount
+	return Tenant{
+		ID:              id,
+		Slug:            slug,
+		Name:            name,
+		Status:          status,
+		Plan:            plan,
+		Region:          region,
+		LogoURL:         logoURL,
+		Metadata:        dbutil.Metadata(metadata),
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+		MemberCount:     &mc,
+		MFAEnabledCount: &mfa,
 	}
 }
 
@@ -147,34 +169,39 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	var (
-		rows []dbgen.TenantTenant
-		err  error
-	)
+	out := make([]Tenant, 0, limit+1)
 	if cursor == "" {
-		rows, err = r.q.ListTenantsForUser(ctx, dbgen.ListTenantsForUserParams{
+		rows, err := r.q.ListTenantsForUser(ctx, dbgen.ListTenantsForUserParams{
 			UserID: userID,
 			Limit:  int32(limit + 1),
 		})
+		if err != nil {
+			return nil, "", err
+		}
+		for _, row := range rows {
+			out = append(out, listRowToTenant(row.ID, row.Slug, row.Name, row.Status, row.Plan,
+				row.Region, row.LogoUrl, row.Metadata, row.CreatedAt, row.UpdatedAt,
+				row.MemberCount, row.MfaEnabledCount))
+		}
 	} else {
 		curT, curID, perr := paging.DecodeTimeUUID(cursor)
 		if perr != nil {
 			return nil, "", errs.ErrBadRequest.WithDetail("invalid cursor")
 		}
-		rows, err = r.q.ListTenantsForUserAfter(ctx, dbgen.ListTenantsForUserAfterParams{
+		rows, err := r.q.ListTenantsForUserAfter(ctx, dbgen.ListTenantsForUserAfterParams{
 			UserID:          userID,
 			BeforeCreatedAt: curT,
 			BeforeID:        curID,
 			RowLimit:        int32(limit + 1),
 		})
-	}
-	if err != nil {
-		return nil, "", err
-	}
-
-	out := make([]Tenant, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, *toDomain(row))
+		if err != nil {
+			return nil, "", err
+		}
+		for _, row := range rows {
+			out = append(out, listRowToTenant(row.ID, row.Slug, row.Name, row.Status, row.Plan,
+				row.Region, row.LogoUrl, row.Metadata, row.CreatedAt, row.UpdatedAt,
+				row.MemberCount, row.MfaEnabledCount))
+		}
 	}
 	var next string
 	if len(out) > limit {
