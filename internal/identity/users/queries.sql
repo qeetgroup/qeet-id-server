@@ -222,7 +222,7 @@ WHERE id = $1 AND deleted_at IS NULL;
 -- a push device).
 -- name: GetUserStats :one
 WITH members AS (
-  SELECT u.id, u.status
+  SELECT u.id, u.status, u.created_at
   FROM "user".users u
   WHERE u.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)

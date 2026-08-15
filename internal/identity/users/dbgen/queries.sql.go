@@ -355,7 +355,7 @@ func (q *Queries) GetUserSecuritySummary(ctx context.Context, id uuid.UUID) (Get
 
 const getUserStats = `-- name: GetUserStats :one
 WITH members AS (
-  SELECT u.id, u.status
+  SELECT u.id, u.status, u.created_at
   FROM "user".users u
   WHERE u.deleted_at IS NULL
     AND EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = u.id AND ur.tenant_id = $1)
