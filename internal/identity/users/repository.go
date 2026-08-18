@@ -311,7 +311,7 @@ func (r *Repository) GetByEmailGlobal(ctx context.Context, email string) (*User,
 // ListByTenant returns a tenant's members, defined by rbac.user_roles membership (not users.tenant_id).
 // The roles subquery returns text[] which sqlc infers as interface{}; these two variants
 // remain hand-written so we can scan into the correct []string target type.
-func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string) ([]User, string, error) {
+func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit int, cursor string, offset int) ([]User, string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -319,7 +319,9 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 		rows pgx.Rows
 		err  error
 	)
-	if cursor == "" {
+	if offset > 0 {
+		// Offset paging powers the console's numbered pager (jump to page N).
+		// Keyset (cursor) remains the default for forward walks.
 		rows, err = r.pool.Query(ctx, `
 			SELECT `+userCols+`,
 			  COALESCE((
@@ -327,7 +329,47 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 				FROM rbac.user_roles ur2
 				JOIN rbac.roles r ON r.id = ur2.role_id
 				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
-			  ), '{}') AS roles
+			  ), '{}') AS roles,
+			  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
+			   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
+			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
+			  (SELECT count(*) FROM tenant.group_members gm
+			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
+			  (SELECT s.last_seen_at FROM auth.sessions s
+			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
+			  (SELECT host(s.ip) FROM auth.sessions s
+			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
+			FROM "user".users
+			WHERE deleted_at IS NULL
+			  AND EXISTS (
+				SELECT 1 FROM rbac.user_roles ur
+				WHERE ur.user_id = "user".users.id AND ur.tenant_id = $1
+			  )
+			ORDER BY created_at DESC, id DESC
+			LIMIT $2 OFFSET $3
+		`, tenantID, limit+1, offset)
+	} else if cursor == "" {
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+userCols+`,
+			  COALESCE((
+				SELECT array_agg(r.name ORDER BY r.name)
+				FROM rbac.user_roles ur2
+				JOIN rbac.roles r ON r.id = ur2.role_id
+				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
+			  ), '{}') AS roles,
+			  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
+			   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
+			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
+			  (SELECT count(*) FROM tenant.group_members gm
+			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
+			  (SELECT s.last_seen_at FROM auth.sessions s
+			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
+			  (SELECT host(s.ip) FROM auth.sessions s
+			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND EXISTS (
@@ -350,7 +392,18 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 				FROM rbac.user_roles ur2
 				JOIN rbac.roles r ON r.id = ur2.role_id
 				WHERE ur2.user_id = "user".users.id AND ur2.tenant_id = $1
-			  ), '{}') AS roles
+			  ), '{}') AS roles,
+			  (EXISTS(SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = "user".users.id AND t.confirmed_at IS NOT NULL)
+			   OR EXISTS(SELECT 1 FROM auth.mfa_otp_factors o WHERE o.user_id = "user".users.id AND o.verified_at IS NOT NULL)
+			   OR EXISTS(SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = "user".users.id))::boolean AS mfa_enabled,
+			  (SELECT count(*) FROM tenant.group_members gm
+			   WHERE gm.user_id = "user".users.id AND gm.tenant_id = $1)::int AS groups_count,
+			  (SELECT s.last_seen_at FROM auth.sessions s
+			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			   ORDER BY s.last_seen_at DESC LIMIT 1) AS last_seen_at,
+			  (SELECT host(s.ip) FROM auth.sessions s
+			   WHERE s.user_id = "user".users.id AND s.revoked_at IS NULL
+			   ORDER BY s.last_seen_at DESC LIMIT 1)::text AS last_seen_ip
 			FROM "user".users
 			WHERE deleted_at IS NULL
 			  AND EXISTS (
@@ -373,15 +426,24 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 		var meta []byte
 		var tid *uuid.UUID
 		var roles []string
+		var mfaEnabled bool
+		var groupsCount int
+		var lastSeenAt *time.Time
+		var lastSeenIP *string
 		if err := rows.Scan(&u.ID, &tid, &u.Email, &u.EmailVerifiedAt,
 			&u.Phone, &u.PhoneVerifiedAt, &u.DisplayName, &u.Status, &meta,
-			&u.CreatedAt, &u.UpdatedAt, &roles); err != nil {
+			&u.CreatedAt, &u.UpdatedAt, &roles,
+			&mfaEnabled, &groupsCount, &lastSeenAt, &lastSeenIP); err != nil {
 			return nil, "", err
 		}
 		if tid != nil {
 			u.TenantID = *tid
 		}
 		u.Roles = roles
+		u.MfaEnabled = &mfaEnabled
+		u.GroupsCount = &groupsCount
+		u.LastSeenAt = lastSeenAt
+		u.LastSeenIP = lastSeenIP
 		u.Metadata = parseUserMetadata(meta, u.ID)
 		out = append(out, u)
 	}

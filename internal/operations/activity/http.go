@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -38,7 +40,9 @@ func NewHandler(pool *pgxpool.Pool, hub *Hub) *Handler {
 // Both routes are gated by "audit.read" in the central permissionMap.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/activity", h.history)
+	r.Get("/activity/summary", h.summary)
 	r.Get("/activity/stream", h.stream)
+	r.Get("/activity/{id}/related", h.related)
 }
 
 // stream handles GET /v1/activity/stream.
@@ -171,34 +175,7 @@ func (h *Handler) history(w http.ResponseWriter, r *http.Request) {
 
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	cursor := r.URL.Query().Get("cursor")
-
-	f := ListFilter{
-		Types:    splitCSV(r.URL.Query().Get("types")),
-		Severity: r.URL.Query().Get("severity"),
-		Category: r.URL.Query().Get("category"),
-		Search:   r.URL.Query().Get("q"),
-	}
-
-	if raw := r.URL.Query().Get("actor"); raw != "" {
-		if id, err2 := uuid.Parse(raw); err2 == nil {
-			f.ActorID = id
-		}
-	}
-	if raw := r.URL.Query().Get("subject"); raw != "" {
-		if id, err2 := uuid.Parse(raw); err2 == nil {
-			f.Subject = &id
-		}
-	}
-	if raw := r.URL.Query().Get("from"); raw != "" {
-		if t, err2 := time.Parse(time.RFC3339, raw); err2 == nil {
-			f.From = &t
-		}
-	}
-	if raw := r.URL.Query().Get("to"); raw != "" {
-		if t, err2 := time.Parse(time.RFC3339, raw); err2 == nil {
-			f.To = &t
-		}
-	}
+	f := parseListFilter(r)
 
 	events, next, err := h.listHistory(r.Context(), tenantID, f, cursor, limit)
 	if err != nil {
@@ -293,6 +270,387 @@ func (h *Handler) listHistory(ctx context.Context, tenantID uuid.UUID, f ListFil
 	return out, next, nil
 }
 
+// parseListFilter builds a ListFilter from the request's query params. It is
+// shared by history and summary so both honour identical predicates
+// (types, severity, category, actor, subject, q, from, to). limit and cursor are
+// history-only and parsed by the caller.
+func parseListFilter(r *http.Request) ListFilter {
+	f := ListFilter{
+		Types:    splitCSV(r.URL.Query().Get("types")),
+		Severity: r.URL.Query().Get("severity"),
+		Category: r.URL.Query().Get("category"),
+		Search:   r.URL.Query().Get("q"),
+	}
+	if raw := r.URL.Query().Get("actor"); raw != "" {
+		if id, err := uuid.Parse(raw); err == nil {
+			f.ActorID = id
+		}
+	}
+	if raw := r.URL.Query().Get("subject"); raw != "" {
+		if id, err := uuid.Parse(raw); err == nil {
+			f.Subject = &id
+		}
+	}
+	if raw := r.URL.Query().Get("from"); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			f.From = &t
+		}
+	}
+	if raw := r.URL.Query().Get("to"); raw != "" {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			f.To = &t
+		}
+	}
+	return f
+}
+
+// Summary window bounds. Without an explicit `from`, the summary defaults to the
+// last 24h; the window is hard-capped at 90d so a per-tenant aggregate (notably
+// count(DISTINCT actor_user_id)) can never scan unbounded history.
+const (
+	summaryDefaultWindow = 24 * time.Hour
+	summaryMaxWindow     = 90 * 24 * time.Hour
+	summaryDefaultBucket = int64(3600) // 1h buckets
+	summaryMinBucket     = int64(60)
+	summaryMaxBucket     = int64(86400)
+	summaryTargetBuckets = 48
+)
+
+// activitySummaryResponse is the aggregate wire shape for GET /v1/activity/summary.
+type activitySummaryResponse struct {
+	Total          int64            `json:"total"`
+	UniqueActors   int64            `json:"unique_actors"`
+	SecurityAlerts int64            `json:"security_alerts"`
+	BySeverity     map[string]int64 `json:"by_severity"`
+	ByCategory     map[string]int64 `json:"by_category"`
+	ByOutcome      map[string]int64 `json:"by_outcome"`
+	Series         []summaryBucket  `json:"series"`
+	BucketSeconds  int64            `json:"bucket_seconds"`
+	Window         summaryWindow    `json:"window"`
+}
+
+// summaryBucket is one time slice of the sparkline series. Total is all events
+// in the bucket; the remaining fields are per-outcome/severity breakdowns so the
+// console can draw a distinct sparkline per metric card.
+type summaryBucket struct {
+	At       time.Time `json:"at"`
+	Count    int64     `json:"count"` // total (kept as `count` for back-compat)
+	Success  int64     `json:"success"`
+	Warning  int64     `json:"warning"`
+	Failed   int64     `json:"failed"`
+	Info     int64     `json:"info"`
+	Critical int64     `json:"critical"`
+}
+
+type summaryWindow struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+}
+
+// summary handles GET /v1/activity/summary.
+//
+// It returns aggregate counts over the SAME filter predicates as history
+// (types, actor, subject, from/to, q) but deliberately IGNORES the severity and
+// category filters — its job is to PRODUCE the severity/category/outcome
+// distribution, so filtering by them would be self-contradictory. Severity,
+// category and outcome are derived from the action string (not columns), so the
+// per-action GROUP BY is folded into buckets in Go via severityOf/categoryOf/
+// outcomeOf — the single source of truth for that derivation.
+func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	f := parseListFilter(r)
+
+	// Resolve and bound the aggregation window. A missing lower bound defaults to
+	// now-24h; the span is clamped to summaryMaxWindow.
+	to := time.Now().UTC()
+	if f.To != nil {
+		to = f.To.UTC()
+	}
+	from := to.Add(-summaryDefaultWindow)
+	if f.From != nil {
+		from = f.From.UTC()
+	}
+	if to.Sub(from) > summaryMaxWindow {
+		from = to.Add(-summaryMaxWindow)
+	}
+	if !from.Before(to) {
+		from = to.Add(-summaryDefaultWindow)
+	}
+	f.From = &from
+	f.To = &to
+
+	// Bucket width: explicit ?bucket= wins (clamped), else aim for ~48 buckets.
+	bucket := summaryDefaultBucket
+	if raw := r.URL.Query().Get("bucket"); raw != "" {
+		if b, errB := strconv.ParseInt(raw, 10, 64); errB == nil && b > 0 {
+			bucket = b
+		}
+	} else {
+		span := int64(to.Sub(from).Seconds())
+		if span > 0 {
+			bucket = span / summaryTargetBuckets
+		}
+	}
+	if bucket < summaryMinBucket {
+		bucket = summaryMinBucket
+	}
+	if bucket > summaryMaxBucket {
+		bucket = summaryMaxBucket
+	}
+
+	q := dbgen.New(h.pool)
+	ctx := r.Context()
+
+	byAction, err := q.SummarizeActivityByAction(ctx, dbgen.SummarizeActivityByActionParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Actions:  f.Types,
+		ActorID:  nargUUID(f.ActorID),
+		Subject:  nargSubject(f.Subject),
+		FromTs:   pgtype.Timestamptz{Time: from, Valid: true},
+		ToTs:     pgtype.Timestamptz{Time: to, Valid: true},
+		Q:        nargSearch(f.Search),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	totals, err := q.SummarizeActivityTotals(ctx, dbgen.SummarizeActivityTotalsParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		Actions:  f.Types,
+		ActorID:  nargUUID(f.ActorID),
+		Subject:  nargSubject(f.Subject),
+		FromTs:   pgtype.Timestamptz{Time: from, Valid: true},
+		ToTs:     pgtype.Timestamptz{Time: to, Valid: true},
+		Q:        nargSearch(f.Search),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	series, err := q.SummarizeActivityTimeSeries(ctx, dbgen.SummarizeActivityTimeSeriesParams{
+		BucketSeconds: bucket,
+		TenantID:      pgtype.UUID{Bytes: tenantID, Valid: true},
+		Actions:       f.Types,
+		ActorID:       nargUUID(f.ActorID),
+		Subject:       nargSubject(f.Subject),
+		FromTs:        pgtype.Timestamptz{Time: from, Valid: true},
+		ToTs:          pgtype.Timestamptz{Time: to, Valid: true},
+		Q:             nargSearch(f.Search),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	// Zero-fill all buckets so the console renders a stable legend.
+	bySeverity := map[string]int64{
+		SeverityInfo: 0, SeveritySuccess: 0, SeverityWarning: 0, SeverityError: 0, SeverityCritical: 0,
+	}
+	byCategory := map[string]int64{
+		CategoryAuthentication: 0, CategoryAuthorization: 0, CategorySecurity: 0,
+		CategoryDirectory: 0, CategoryDeveloper: 0, CategorySystem: 0,
+	}
+	byOutcome := map[string]int64{"success": 0, "warning": 0, "failed": 0, "info": 0}
+	for _, row := range byAction {
+		sev := severityOf(row.Action)
+		bySeverity[sev] += row.Count
+		byCategory[categoryOf(row.Action)] += row.Count
+		byOutcome[outcomeOf(sev)] += row.Count
+	}
+
+	// Fold the per-(bucket, action) rows into per-outcome buckets. Rows arrive
+	// ordered by bucket ASC so same-bucket rows are contiguous; we mutate the
+	// tail bucket by index (no pointer aliasing across appends).
+	out := make([]summaryBucket, 0)
+	for _, s := range series {
+		at := s.Bucket.UTC()
+		if len(out) == 0 || !out[len(out)-1].At.Equal(at) {
+			out = append(out, summaryBucket{At: at})
+		}
+		i := len(out) - 1
+		sev := severityOf(s.Action)
+		out[i].Count += s.Count
+		switch outcomeOf(sev) {
+		case "success":
+			out[i].Success += s.Count
+		case "warning":
+			out[i].Warning += s.Count
+		case "failed":
+			out[i].Failed += s.Count
+		default:
+			out[i].Info += s.Count
+		}
+		if sev == SeverityCritical {
+			out[i].Critical += s.Count
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, activitySummaryResponse{
+		Total:          totals.Total,
+		UniqueActors:   totals.UniqueActors,
+		SecurityAlerts: bySeverity[SeverityCritical],
+		BySeverity:     bySeverity,
+		ByCategory:     byCategory,
+		ByOutcome:      byOutcome,
+		Series:         out,
+		BucketSeconds:  bucket,
+		Window:         summaryWindow{From: from, To: to},
+	})
+}
+
+// Related-events window bounds around the anchor event.
+const (
+	relatedDefaultWindow = 5 * time.Minute
+	relatedMinWindow     = 1 * time.Minute
+	relatedMaxWindow     = 1 * time.Hour
+	relatedRowLimit      = int32(20)
+)
+
+// activityRelatedResponse is the wire shape for GET /v1/activity/{id}/related.
+type activityRelatedResponse struct {
+	Event   ActivityEvent      `json:"event"`
+	Related activityRelatedSet `json:"related"`
+}
+
+type activityRelatedSet struct {
+	ByRequestID []ActivityEvent `json:"by_request_id"`
+	ByActor     []ActivityEvent `json:"by_actor"`
+}
+
+// related handles GET /v1/activity/{id}/related.
+//
+// It resolves the anchor event (tenant-scoped — an unknown id or a foreign
+// tenant's id both surface as 404, never a cross-tenant leak), then returns
+// events correlated by the anchor's request_id and by the same actor within a
+// symmetric time window. An event never appears in both lists.
+func (h *Handler) related(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid event id"))
+		return
+	}
+
+	q := dbgen.New(h.pool)
+	ctx := r.Context()
+
+	anchorRow, err := q.GetActivityEventByID(ctx, dbgen.GetActivityEventByIDParams{
+		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		ID:       id,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			httpx.WriteError(w, r, errs.ErrNotFound)
+			return
+		}
+		httpx.WriteError(w, r, err)
+		return
+	}
+	anchor := mapAuditRow(getRowToAuditRow(anchorRow))
+
+	window := relatedDefaultWindow
+	if raw := r.URL.Query().Get("window"); raw != "" {
+		if secs, errW := strconv.ParseInt(raw, 10, 64); errW == nil && secs > 0 {
+			window = time.Duration(secs) * time.Second
+		}
+	}
+	if window < relatedMinWindow {
+		window = relatedMinWindow
+	}
+	if window > relatedMaxWindow {
+		window = relatedMaxWindow
+	}
+
+	seen := map[uuid.UUID]bool{id: true}
+
+	byRequest := []ActivityEvent{}
+	if anchorRow.RequestID != nil && *anchorRow.RequestID != "" {
+		rows, errR := q.ListRelatedByRequestID(ctx, dbgen.ListRelatedByRequestIDParams{
+			TenantID:  pgtype.UUID{Bytes: tenantID, Valid: true},
+			RequestID: anchorRow.RequestID,
+			ExcludeID: id,
+			RowLimit:  relatedRowLimit,
+		})
+		if errR != nil {
+			httpx.WriteError(w, r, errR)
+			return
+		}
+		for _, row := range rows {
+			ev := mapAuditRow(relatedRequestRowToAuditRow(row))
+			seen[ev.ID] = true
+			byRequest = append(byRequest, ev)
+		}
+	}
+
+	byActor := []ActivityEvent{}
+	if anchorRow.ActorUserID.Valid {
+		rows, errA := q.ListRelatedByActor(ctx, dbgen.ListRelatedByActorParams{
+			TenantID:  pgtype.UUID{Bytes: tenantID, Valid: true},
+			ActorID:   anchorRow.ActorUserID,
+			FromTs:    anchor.At.Add(-window),
+			ToTs:      anchor.At.Add(window),
+			ExcludeID: id,
+			RowLimit:  relatedRowLimit,
+		})
+		if errA != nil {
+			httpx.WriteError(w, r, errA)
+			return
+		}
+		for _, row := range rows {
+			ev := mapAuditRow(relatedActorRowToAuditRow(row))
+			if seen[ev.ID] {
+				continue // already surfaced under by_request_id
+			}
+			seen[ev.ID] = true
+			byActor = append(byActor, ev)
+		}
+	}
+
+	httpx.WriteJSON(w, http.StatusOK, activityRelatedResponse{
+		Event: anchor,
+		Related: activityRelatedSet{
+			ByRequestID: byRequest,
+			ByActor:     byActor,
+		},
+	})
+}
+
+// nargUUID maps a possibly-Nil actor id to a nullable pgtype.UUID (Nil → NULL).
+func nargUUID(id uuid.UUID) pgtype.UUID {
+	if id == uuid.Nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
+
+// nargSubject maps a possibly-nil subject id to a nullable pgtype.UUID.
+func nargSubject(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *id, Valid: true}
+}
+
+// nargSearch maps an empty search string to a nil *string (NULL predicate).
+func nargSearch(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // encodeCursor packs (createdAt, id) into an opaque base64url token. The
 // format is "<RFC3339Nano>:<uuid>" — sufficient precision for a timestamptz
 // cursor and unambiguous when split on the first colon.
@@ -335,6 +693,8 @@ func listRowToAuditRow(r dbgen.ListActivityHistoryRow) auditRow {
 		Action:       r.Action,
 		ResourceType: r.ResourceType,
 		UserAgent:    r.UserAgent,
+		RequestID:    r.RequestID,
+		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
 		CreatedAt:    r.CreatedAt,
 		Metadata:     r.Metadata,
 		TenantID:     uuid.UUID(r.TenantID.Bytes),
@@ -362,6 +722,93 @@ func replayRowToAuditRow(r dbgen.ReplayActivityHistoryRow) auditRow {
 		Action:       r.Action,
 		ResourceType: r.ResourceType,
 		UserAgent:    r.UserAgent,
+		RequestID:    r.RequestID,
+		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:    r.CreatedAt,
+		Metadata:     r.Metadata,
+		TenantID:     uuid.UUID(r.TenantID.Bytes),
+	}
+	if r.ActorUserID.Valid {
+		uid := uuid.UUID(r.ActorUserID.Bytes)
+		row.ActorUserID = &uid
+	}
+	if r.ResourceID.Valid {
+		rid := uuid.UUID(r.ResourceID.Bytes)
+		row.ResourceID = &rid
+	}
+	if r.Ip != "" {
+		row.IP = &r.Ip
+	}
+	return row
+}
+
+// getRowToAuditRow converts a GetActivityEventByIDRow (the related-events anchor)
+// into the local auditRow so mapAuditRow can be reused.
+func getRowToAuditRow(r dbgen.GetActivityEventByIDRow) auditRow {
+	row := auditRow{
+		ID:           r.ID,
+		ActorType:    r.ActorType,
+		Action:       r.Action,
+		ResourceType: r.ResourceType,
+		UserAgent:    r.UserAgent,
+		RequestID:    r.RequestID,
+		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:    r.CreatedAt,
+		Metadata:     r.Metadata,
+		TenantID:     uuid.UUID(r.TenantID.Bytes),
+	}
+	if r.ActorUserID.Valid {
+		uid := uuid.UUID(r.ActorUserID.Bytes)
+		row.ActorUserID = &uid
+	}
+	if r.ResourceID.Valid {
+		rid := uuid.UUID(r.ResourceID.Bytes)
+		row.ResourceID = &rid
+	}
+	if r.Ip != "" {
+		row.IP = &r.Ip
+	}
+	return row
+}
+
+// relatedRequestRowToAuditRow converts a ListRelatedByRequestIDRow into auditRow.
+func relatedRequestRowToAuditRow(r dbgen.ListRelatedByRequestIDRow) auditRow {
+	row := auditRow{
+		ID:           r.ID,
+		ActorType:    r.ActorType,
+		Action:       r.Action,
+		ResourceType: r.ResourceType,
+		UserAgent:    r.UserAgent,
+		RequestID:    r.RequestID,
+		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
+		CreatedAt:    r.CreatedAt,
+		Metadata:     r.Metadata,
+		TenantID:     uuid.UUID(r.TenantID.Bytes),
+	}
+	if r.ActorUserID.Valid {
+		uid := uuid.UUID(r.ActorUserID.Bytes)
+		row.ActorUserID = &uid
+	}
+	if r.ResourceID.Valid {
+		rid := uuid.UUID(r.ResourceID.Bytes)
+		row.ResourceID = &rid
+	}
+	if r.Ip != "" {
+		row.IP = &r.Ip
+	}
+	return row
+}
+
+// relatedActorRowToAuditRow converts a ListRelatedByActorRow into auditRow.
+func relatedActorRowToAuditRow(r dbgen.ListRelatedByActorRow) auditRow {
+	row := auditRow{
+		ID:           r.ID,
+		ActorType:    r.ActorType,
+		Action:       r.Action,
+		ResourceType: r.ResourceType,
+		UserAgent:    r.UserAgent,
+		RequestID:    r.RequestID,
+		ActorName:    firstNonEmpty(r.ActorDisplayName, r.ActorEmail),
 		CreatedAt:    r.CreatedAt,
 		Metadata:     r.Metadata,
 		TenantID:     uuid.UUID(r.TenantID.Bytes),

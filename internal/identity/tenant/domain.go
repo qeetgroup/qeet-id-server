@@ -17,6 +17,10 @@ type Tenant struct {
 	Metadata  map[string]any `json:"metadata"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
+	// List-only enrichment (populated by List; nil on single-tenant fetches):
+	// per-org member counts for the Organizations admin table.
+	MemberCount     *int64 `json:"member_count,omitempty"`
+	MFAEnabledCount *int64 `json:"mfa_enabled_count,omitempty"`
 }
 
 type CreateInput struct {

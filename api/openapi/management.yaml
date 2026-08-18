@@ -749,6 +749,48 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/users/trends:
+    get:
+      operationId: get_v1_users_trends
+      summary: User directory 30-day trends
+      description: 30-day daily total/MFA-enrolled series for the Users KPI sparklines. Requires `user.read`.
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Trend series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserTrends'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/users/stats:
+    get:
+      operationId: get_v1_users_stats
+      summary: User directory summary
+      description: Tenant-wide member counts (total / active / suspended / invited / MFA enabled / MFA missing) for the Users admin summary strip. Requires `user.read`.
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Directory summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/users:
     get:
       operationId: get_v1_users
@@ -758,6 +800,13 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for numbered paging (jump to page N). Alternative to cursor.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -1065,6 +1114,227 @@ paths:
                 properties:
                   message:
                     type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/security:
+    get:
+      operationId: get_v1_users_ById_security
+      summary: User security posture
+      description: >-
+        Aggregated authentication posture for a user (User 360): MFA factors
+        (TOTP / email-SMS OTP / push), passkeys, recovery codes, password state,
+        and the active-session / device count. Requires `user.read`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Security posture
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mfa_required: { type: boolean }
+                  mfa_enabled: { type: boolean }
+                  totp_enabled: { type: boolean }
+                  otp_factors: { type: integer }
+                  push_devices: { type: integer }
+                  passkeys: { type: integer }
+                  passkey_last_used_at: { type: string, format: date-time, nullable: true }
+                  recovery_codes_remaining: { type: integer }
+                  password_set: { type: boolean }
+                  password_changed_at: { type: string, format: date-time, nullable: true }
+                  active_sessions: { type: integer }
+                  distinct_devices: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/sessions:
+    get:
+      operationId: get_v1_users_ById_sessions
+      summary: List a user's live sessions
+      description: Admin view of a user's active (non-revoked) sessions. Requires `user.read`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        ip: { type: string, nullable: true }
+                        user_agent: { type: string, nullable: true }
+                        created_at: { type: string, format: date-time }
+                        last_seen_at: { type: string, format: date-time }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/sessions/revoke-all:
+    post:
+      operationId: post_v1_users_ById_sessions_revokeAll
+      summary: Revoke all of a user's sessions
+      description: Admin force sign-out — revokes every live session for the user. Requires `user.write`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/access:
+    get:
+      operationId: get_v1_users_ById_access
+      summary: User access summary
+      description: >-
+        Per-user access within the caller's tenant (User 360): the organization
+        (tenant), directly-assigned roles, group memberships, and counts of
+        consented applications and enabled tenant policies. Requires `user.read`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Access summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    type: object
+                    nullable: true
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: string }
+                      slug: { type: string }
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        description: { type: string }
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        description: { type: string }
+                  applications_count: { type: integer }
+                  policies_count: { type: integer }
+                  permissions_direct: { type: integer }
+                  permissions_inherited: { type: integer }
+                  permissions_total: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/mfa-required:
+    put:
+      operationId: put_v1_users_ById_mfaRequired
+      summary: Set user MFA-required policy
+      description: Toggle the per-user `mfa_required` policy flag. Requires `user.write`; audited as `user.mfa_required_set`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - required
+              properties:
+                required:
+                  type: boolean
+      responses:
+        '200':
+          description: MFA-required flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mfa_required: { type: boolean }
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1707,6 +1977,46 @@ components:
         updated_at:
           type: string
           format: date-time
+        roles:
+          type: array
+          items: { type: string }
+          description: Role names in the listed tenant. Populated only by the list endpoint.
+        mfa_enabled:
+          type: boolean
+          description: List-only. True if the user has a confirmed TOTP, a verified OTP factor, or a push device.
+        groups_count:
+          type: integer
+          description: List-only. Number of groups the user belongs to in this tenant.
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: List-only. Most recent live-session activity, or null.
+        last_seen_ip:
+          type: string
+          nullable: true
+          description: List-only. IP of the most-recent live session, or null.
+    UserStats:
+      type: object
+      properties:
+        total: { type: integer }
+        active: { type: integer }
+        suspended: { type: integer }
+        invited: { type: integer }
+        mfa_enabled: { type: integer }
+        mfa_missing: { type: integer }
+        new_last_30d: { type: integer }
+    UserTrends:
+      type: object
+      properties:
+        total:
+          type: array
+          items: { type: integer }
+          description: 30-day daily cumulative member count (oldest first).
+        mfa_enabled:
+          type: array
+          items: { type: integer }
+          description: 30-day daily cumulative MFA-enrolled count (oldest first).
     UserCreate:
       type: object
       required:
@@ -1850,6 +2160,12 @@ components:
         updated_at:
           type: string
           format: date-time
+        member_count:
+          type: integer
+          description: List-only. Distinct members (rbac.user_roles holders) in this org.
+        mfa_enabled_count:
+          type: integer
+          description: List-only. Members with at least one MFA factor enrolled.
     TenantCreate:
       type: object
       required:

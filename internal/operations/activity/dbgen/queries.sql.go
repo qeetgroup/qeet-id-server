@@ -14,20 +14,78 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getActivityEventByID = `-- name: GetActivityEventByID :one
+SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       u.display_name AS actor_display_name, u.email AS actor_email
+FROM audit.events e
+LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+WHERE e.tenant_id = $1 AND e.id = $2
+`
+
+type GetActivityEventByIDParams struct {
+	TenantID pgtype.UUID
+	ID       uuid.UUID
+}
+
+type GetActivityEventByIDRow struct {
+	ID               uuid.UUID
+	ActorUserID      pgtype.UUID
+	ActorType        string
+	Action           string
+	ResourceType     string
+	ResourceID       pgtype.UUID
+	Ip               string
+	UserAgent        *string
+	RequestID        *string
+	CreatedAt        time.Time
+	Metadata         json.RawMessage
+	TenantID         pgtype.UUID
+	ActorDisplayName *string
+	ActorEmail       *string
+}
+
+// Anchor lookup for related-events correlation, tenant-scoped. Returns
+// pgx.ErrNoRows when the id is unknown OR belongs to another tenant, so a
+// cross-tenant fetch surfaces as 404 (never a leak).
+func (q *Queries) GetActivityEventByID(ctx context.Context, arg GetActivityEventByIDParams) (GetActivityEventByIDRow, error) {
+	row := q.db.QueryRow(ctx, getActivityEventByID, arg.TenantID, arg.ID)
+	var i GetActivityEventByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.ActorUserID,
+		&i.ActorType,
+		&i.Action,
+		&i.ResourceType,
+		&i.ResourceID,
+		&i.Ip,
+		&i.UserAgent,
+		&i.RequestID,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.TenantID,
+		&i.ActorDisplayName,
+		&i.ActorEmail,
+	)
+	return i, err
+}
+
 const listActivityHistory = `-- name: ListActivityHistory :many
 
-SELECT id, actor_user_id, actor_type, action, resource_type, resource_id,
-       COALESCE(host(ip), '')::text AS ip, user_agent, created_at, metadata, tenant_id
-FROM audit.events
-WHERE tenant_id = $1
-  AND ($2::text[] IS NULL OR action = ANY($2))
-  AND ($3::uuid IS NULL OR actor_user_id = $3)
-  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4))
-  AND ($5::timestamptz IS NULL OR created_at >= $5)
-  AND ($6::timestamptz IS NULL OR created_at <= $6)
-  AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
-  AND ($8::timestamptz IS NULL OR created_at < $8 OR (created_at = $8 AND id < $9::uuid))
-ORDER BY created_at DESC, id DESC
+SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       u.display_name AS actor_display_name, u.email AS actor_email
+FROM audit.events e
+LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+WHERE e.tenant_id = $1
+  AND ($2::text[] IS NULL OR e.action = ANY($2))
+  AND ($3::uuid IS NULL OR e.actor_user_id = $3)
+  AND ($4::uuid IS NULL OR e.actor_user_id = $4 OR (e.resource_type = 'user' AND e.resource_id = $4))
+  AND ($5::timestamptz IS NULL OR e.created_at >= $5)
+  AND ($6::timestamptz IS NULL OR e.created_at <= $6)
+  AND ($7::text IS NULL OR e.search_vector @@ websearch_to_tsquery('simple', $7))
+  AND ($8::timestamptz IS NULL OR e.created_at < $8 OR (e.created_at = $8 AND e.id < $9::uuid))
+ORDER BY e.created_at DESC, e.id DESC
 LIMIT $10
 `
 
@@ -45,17 +103,20 @@ type ListActivityHistoryParams struct {
 }
 
 type ListActivityHistoryRow struct {
-	ID           uuid.UUID
-	ActorUserID  pgtype.UUID
-	ActorType    string
-	Action       string
-	ResourceType string
-	ResourceID   pgtype.UUID
-	Ip           string
-	UserAgent    *string
-	CreatedAt    time.Time
-	Metadata     json.RawMessage
-	TenantID     pgtype.UUID
+	ID               uuid.UUID
+	ActorUserID      pgtype.UUID
+	ActorType        string
+	Action           string
+	ResourceType     string
+	ResourceID       pgtype.UUID
+	Ip               string
+	UserAgent        *string
+	RequestID        *string
+	CreatedAt        time.Time
+	Metadata         json.RawMessage
+	TenantID         pgtype.UUID
+	ActorDisplayName *string
+	ActorEmail       *string
 }
 
 // Queries for the activity domain.
@@ -68,8 +129,13 @@ type ListActivityHistoryRow struct {
 // (created_at, id) < (cursor_ts, cursor_id) is rewritten as the equivalent OR
 // expression.
 // ip is nullable INET; COALESCE(host(ip), ”)::text ensures a non-null string.
+// request_id is nullable TEXT (may be empty); it is surfaced so the console can
+// display, copy, and correlate events by request.
 // subject captures a user's full identity timeline: every event where that user
 // is either the actor or the target of a 'user' resource event.
+// actor_display_name / actor_email are LEFT-joined from the users table so the
+// console can show a human actor name instead of a bare UUID (nullable: system/
+// service actors have no user row).
 func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHistoryParams) ([]ListActivityHistoryRow, error) {
 	rows, err := q.db.Query(ctx, listActivityHistory,
 		arg.TenantID,
@@ -99,9 +165,175 @@ func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHisto
 			&i.ResourceID,
 			&i.Ip,
 			&i.UserAgent,
+			&i.RequestID,
 			&i.CreatedAt,
 			&i.Metadata,
 			&i.TenantID,
+			&i.ActorDisplayName,
+			&i.ActorEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRelatedByActor = `-- name: ListRelatedByActor :many
+SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       u.display_name AS actor_display_name, u.email AS actor_email
+FROM audit.events e
+LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+WHERE e.tenant_id = $1
+  AND e.actor_user_id = $2
+  AND e.created_at BETWEEN $3 AND $4
+  AND e.id <> $5
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT $6
+`
+
+type ListRelatedByActorParams struct {
+	TenantID  pgtype.UUID
+	ActorID   pgtype.UUID
+	FromTs    time.Time
+	ToTs      time.Time
+	ExcludeID uuid.UUID
+	RowLimit  int32
+}
+
+type ListRelatedByActorRow struct {
+	ID               uuid.UUID
+	ActorUserID      pgtype.UUID
+	ActorType        string
+	Action           string
+	ResourceType     string
+	ResourceID       pgtype.UUID
+	Ip               string
+	UserAgent        *string
+	RequestID        *string
+	CreatedAt        time.Time
+	Metadata         json.RawMessage
+	TenantID         pgtype.UUID
+	ActorDisplayName *string
+	ActorEmail       *string
+}
+
+// Same actor within [@from_ts, @to_ts] (a symmetric window around the anchor),
+// excluding the anchor. Ordered newest-first for parity with history.
+func (q *Queries) ListRelatedByActor(ctx context.Context, arg ListRelatedByActorParams) ([]ListRelatedByActorRow, error) {
+	rows, err := q.db.Query(ctx, listRelatedByActor,
+		arg.TenantID,
+		arg.ActorID,
+		arg.FromTs,
+		arg.ToTs,
+		arg.ExcludeID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRelatedByActorRow{}
+	for rows.Next() {
+		var i ListRelatedByActorRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.ActorType,
+			&i.Action,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.Metadata,
+			&i.TenantID,
+			&i.ActorDisplayName,
+			&i.ActorEmail,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRelatedByRequestID = `-- name: ListRelatedByRequestID :many
+SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       u.display_name AS actor_display_name, u.email AS actor_email
+FROM audit.events e
+LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+WHERE e.tenant_id = $1
+  AND e.request_id = $2
+  AND e.id <> $3
+ORDER BY e.created_at ASC, e.id ASC
+LIMIT $4
+`
+
+type ListRelatedByRequestIDParams struct {
+	TenantID  pgtype.UUID
+	RequestID *string
+	ExcludeID uuid.UUID
+	RowLimit  int32
+}
+
+type ListRelatedByRequestIDRow struct {
+	ID               uuid.UUID
+	ActorUserID      pgtype.UUID
+	ActorType        string
+	Action           string
+	ResourceType     string
+	ResourceID       pgtype.UUID
+	Ip               string
+	UserAgent        *string
+	RequestID        *string
+	CreatedAt        time.Time
+	Metadata         json.RawMessage
+	TenantID         pgtype.UUID
+	ActorDisplayName *string
+	ActorEmail       *string
+}
+
+// Other events sharing the anchor's request_id. Caller only runs this when the
+// anchor's request_id is non-empty.
+func (q *Queries) ListRelatedByRequestID(ctx context.Context, arg ListRelatedByRequestIDParams) ([]ListRelatedByRequestIDRow, error) {
+	rows, err := q.db.Query(ctx, listRelatedByRequestID,
+		arg.TenantID,
+		arg.RequestID,
+		arg.ExcludeID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRelatedByRequestIDRow{}
+	for rows.Next() {
+		var i ListRelatedByRequestIDRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.ActorType,
+			&i.Action,
+			&i.ResourceType,
+			&i.ResourceID,
+			&i.Ip,
+			&i.UserAgent,
+			&i.RequestID,
+			&i.CreatedAt,
+			&i.Metadata,
+			&i.TenantID,
+			&i.ActorDisplayName,
+			&i.ActorEmail,
 		); err != nil {
 			return nil, err
 		}
@@ -114,12 +346,14 @@ func (q *Queries) ListActivityHistory(ctx context.Context, arg ListActivityHisto
 }
 
 const replayActivityHistory = `-- name: ReplayActivityHistory :many
-SELECT id, actor_user_id, actor_type, action, resource_type, resource_id,
-       COALESCE(host(ip), '')::text AS ip, user_agent, created_at, metadata, tenant_id
-FROM audit.events
-WHERE tenant_id = $1
-  AND (created_at > $2 OR (created_at = $2 AND id > $3))
-ORDER BY created_at ASC, id ASC
+SELECT e.id, e.actor_user_id, e.actor_type, e.action, e.resource_type, e.resource_id,
+       COALESCE(host(e.ip), '')::text AS ip, e.user_agent, e.request_id, e.created_at, e.metadata, e.tenant_id,
+       u.display_name AS actor_display_name, u.email AS actor_email
+FROM audit.events e
+LEFT JOIN "user".users u ON u.id = e.actor_user_id AND u.tenant_id = e.tenant_id
+WHERE e.tenant_id = $1
+  AND (e.created_at > $2 OR (e.created_at = $2 AND e.id > $3))
+ORDER BY e.created_at ASC, e.id ASC
 LIMIT 100
 `
 
@@ -130,17 +364,20 @@ type ReplayActivityHistoryParams struct {
 }
 
 type ReplayActivityHistoryRow struct {
-	ID           uuid.UUID
-	ActorUserID  pgtype.UUID
-	ActorType    string
-	Action       string
-	ResourceType string
-	ResourceID   pgtype.UUID
-	Ip           string
-	UserAgent    *string
-	CreatedAt    time.Time
-	Metadata     json.RawMessage
-	TenantID     pgtype.UUID
+	ID               uuid.UUID
+	ActorUserID      pgtype.UUID
+	ActorType        string
+	Action           string
+	ResourceType     string
+	ResourceID       pgtype.UUID
+	Ip               string
+	UserAgent        *string
+	RequestID        *string
+	CreatedAt        time.Time
+	Metadata         json.RawMessage
+	TenantID         pgtype.UUID
+	ActorDisplayName *string
+	ActorEmail       *string
 }
 
 // Replay events newer than (after_ts, after_id) in chronological order (ASC).
@@ -165,9 +402,12 @@ func (q *Queries) ReplayActivityHistory(ctx context.Context, arg ReplayActivityH
 			&i.ResourceID,
 			&i.Ip,
 			&i.UserAgent,
+			&i.RequestID,
 			&i.CreatedAt,
 			&i.Metadata,
 			&i.TenantID,
+			&i.ActorDisplayName,
+			&i.ActorEmail,
 		); err != nil {
 			return nil, err
 		}
@@ -177,4 +417,176 @@ func (q *Queries) ReplayActivityHistory(ctx context.Context, arg ReplayActivityH
 		return nil, err
 	}
 	return items, nil
+}
+
+const summarizeActivityByAction = `-- name: SummarizeActivityByAction :many
+SELECT action, count(*)::bigint AS count
+FROM audit.events
+WHERE tenant_id = $1
+  AND ($2::text[] IS NULL OR action = ANY($2))
+  AND ($3::uuid IS NULL OR actor_user_id = $3)
+  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4))
+  AND ($5::timestamptz IS NULL OR created_at >= $5)
+  AND ($6::timestamptz IS NULL OR created_at <= $6)
+  AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+GROUP BY action
+`
+
+type SummarizeActivityByActionParams struct {
+	TenantID pgtype.UUID
+	Actions  []string
+	ActorID  pgtype.UUID
+	Subject  pgtype.UUID
+	FromTs   pgtype.Timestamptz
+	ToTs     pgtype.Timestamptz
+	Q        *string
+}
+
+type SummarizeActivityByActionRow struct {
+	Action string
+	Count  int64
+}
+
+// Per-action counts over the same predicates as ListActivityHistory (no cursor/
+// limit). Folded into severity/category/outcome buckets in Go via severityOf()/
+// categoryOf()/outcomeOf() — those are derived from `action`, not stored columns,
+// so aggregation by severity cannot be a plain GROUP BY on a column.
+func (q *Queries) SummarizeActivityByAction(ctx context.Context, arg SummarizeActivityByActionParams) ([]SummarizeActivityByActionRow, error) {
+	rows, err := q.db.Query(ctx, summarizeActivityByAction,
+		arg.TenantID,
+		arg.Actions,
+		arg.ActorID,
+		arg.Subject,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Q,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeActivityByActionRow{}
+	for rows.Next() {
+		var i SummarizeActivityByActionRow
+		if err := rows.Scan(&i.Action, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeActivityTimeSeries = `-- name: SummarizeActivityTimeSeries :many
+SELECT (to_timestamp(floor(extract(epoch FROM created_at) / $1::bigint) * $1::bigint))::timestamptz AS bucket,
+       action,
+       count(*)::bigint AS count
+FROM audit.events
+WHERE tenant_id = $2
+  AND ($3::text[] IS NULL OR action = ANY($3))
+  AND ($4::uuid IS NULL OR actor_user_id = $4)
+  AND ($5::uuid IS NULL OR actor_user_id = $5 OR (resource_type = 'user' AND resource_id = $5))
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+  AND ($7::timestamptz IS NULL OR created_at <= $7)
+  AND ($8::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $8))
+GROUP BY bucket, action
+ORDER BY bucket ASC
+`
+
+type SummarizeActivityTimeSeriesParams struct {
+	BucketSeconds int64
+	TenantID      pgtype.UUID
+	Actions       []string
+	ActorID       pgtype.UUID
+	Subject       pgtype.UUID
+	FromTs        pgtype.Timestamptz
+	ToTs          pgtype.Timestamptz
+	Q             *string
+}
+
+type SummarizeActivityTimeSeriesRow struct {
+	Bucket time.Time
+	Action string
+	Count  int64
+}
+
+// Per-bucket, per-action counts for sparklines. Bucket width = @bucket_seconds.
+// Grouped by action too so the handler can fold each bucket into per-outcome
+// series (severity/outcome are derived from action in Go, not columns). Empty
+// buckets are omitted (the frontend fills gaps). Same predicates as history.
+func (q *Queries) SummarizeActivityTimeSeries(ctx context.Context, arg SummarizeActivityTimeSeriesParams) ([]SummarizeActivityTimeSeriesRow, error) {
+	rows, err := q.db.Query(ctx, summarizeActivityTimeSeries,
+		arg.BucketSeconds,
+		arg.TenantID,
+		arg.Actions,
+		arg.ActorID,
+		arg.Subject,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Q,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SummarizeActivityTimeSeriesRow{}
+	for rows.Next() {
+		var i SummarizeActivityTimeSeriesRow
+		if err := rows.Scan(&i.Bucket, &i.Action, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const summarizeActivityTotals = `-- name: SummarizeActivityTotals :one
+SELECT count(*)::bigint AS total,
+       count(DISTINCT actor_user_id)::bigint AS unique_actors
+FROM audit.events
+WHERE tenant_id = $1
+  AND ($2::text[] IS NULL OR action = ANY($2))
+  AND ($3::uuid IS NULL OR actor_user_id = $3)
+  AND ($4::uuid IS NULL OR actor_user_id = $4 OR (resource_type = 'user' AND resource_id = $4))
+  AND ($5::timestamptz IS NULL OR created_at >= $5)
+  AND ($6::timestamptz IS NULL OR created_at <= $6)
+  AND ($7::text IS NULL OR search_vector @@ websearch_to_tsquery('simple', $7))
+`
+
+type SummarizeActivityTotalsParams struct {
+	TenantID pgtype.UUID
+	Actions  []string
+	ActorID  pgtype.UUID
+	Subject  pgtype.UUID
+	FromTs   pgtype.Timestamptz
+	ToTs     pgtype.Timestamptz
+	Q        *string
+}
+
+type SummarizeActivityTotalsRow struct {
+	Total        int64
+	UniqueActors int64
+}
+
+// Total events and unique-actor count over the same window. unique_actors cannot
+// be folded from the per-action rows (one actor spans many actions), so it needs
+// its own aggregate pass.
+func (q *Queries) SummarizeActivityTotals(ctx context.Context, arg SummarizeActivityTotalsParams) (SummarizeActivityTotalsRow, error) {
+	row := q.db.QueryRow(ctx, summarizeActivityTotals,
+		arg.TenantID,
+		arg.Actions,
+		arg.ActorID,
+		arg.Subject,
+		arg.FromTs,
+		arg.ToTs,
+		arg.Q,
+	)
+	var i SummarizeActivityTotalsRow
+	err := row.Scan(&i.Total, &i.UniqueActors)
+	return i, err
 }
