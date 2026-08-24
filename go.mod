@@ -5,13 +5,13 @@ go 1.25.0
 toolchain go1.25.12
 
 require (
-	github.com/aws/aws-sdk-go-v2 v1.43.6
-	github.com/aws/aws-sdk-go-v2/config v1.32.37
-	github.com/aws/aws-sdk-go-v2/service/kms v1.55.6
-	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.6
-	github.com/beevik/etree v1.7.0
+	github.com/aws/aws-sdk-go-v2 v1.43.7
+	github.com/aws/aws-sdk-go-v2/config v1.32.38
+	github.com/aws/aws-sdk-go-v2/service/kms v1.55.7
+	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.67.0
+	github.com/beevik/etree v1.7.1
 	github.com/descope/virtualwebauthn v1.0.5
-	github.com/go-chi/chi/v5 v5.3.1
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/go-chi/cors v1.2.2
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/go-playground/validator/v10 v10.30.3
@@ -34,7 +34,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0
 	go.opentelemetry.io/otel/sdk v1.45.0
 	go.opentelemetry.io/otel/trace v1.45.0
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -43,17 +43,17 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.36 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.37 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.37 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.37 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.38 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.37 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.39 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.17 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.37 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.5.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.33.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.6 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.45.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.38 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.5.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.33.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.45.7 // indirect
 	github.com/aws/smithy-go v1.27.8 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -128,7 +128,7 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/grpc v1.83.0 // indirect
