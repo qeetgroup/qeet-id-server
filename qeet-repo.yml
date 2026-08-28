@@ -1,0 +1,125 @@
+# qeet-id-server — repository context metadata (Level 2).
+# Machine-readable identity for coding agents and tooling.
+# Inherits qeetgroup/qeet-context (L0) and qeetgroup/qeet-id-context (L1).
+
+schema_version: 1
+
+context:
+  type: repository
+  level: L2
+  canonical: true
+  last_verified: "2026-08-28"
+
+inheritance:
+  organization:
+    repository: qeetgroup/qeet-context
+    level: L0            # organization standards — security, domain, API, engineering
+  product:
+    repository: qeetgroup/qeet-id-context
+    level: L1            # Qeet ID product architecture, flows, cross-repo contracts
+
+repository:
+  name: qeet-id-server
+  product: qeet-id
+  type: backend
+  role: primary
+  status: active         # the product is pre-1.0; this repository is actively developed
+  visibility: public
+  default_branch: main
+  working_branch: develop
+
+runtime:
+  language: Go
+  version: "1.25.0"      # go.mod; toolchain go1.25.12
+  build_image: golang:1.26-alpine
+  runtime_image: gcr.io/distroless/static-debian12:nonroot
+  port: 4001
+
+module:
+  name: github.com/qeetgroup/qeet-id-server
+
+architecture:
+  style: modular-monolith
+  composition_root: internal/bootstrap
+  shared_kernel: internal/platform
+  bounded_contexts:
+    - internal/access        # authentication, authorization, MFA, passkeys, risk
+    - internal/identity      # tenants, users, groups, invitations, verification
+    - internal/federation    # OIDC provider, SAML, SCIM, LDAP, social
+    - internal/developer     # API keys, principals, agents, webhooks, vaults
+    - internal/operations    # audit, billing, GDPR, analytics, SIEM, retention
+  boundary_enforcement:
+    mechanism: build-time-test
+    path: tests/architecture/arch_test.go
+    rules:
+      R1: internal/platform/* imports no bounded context, no cmd/*, not internal/bootstrap
+      R2: bounded contexts import neither cmd/* nor internal/bootstrap
+      note: cross-context imports are NOT yet enforced
+
+entrypoints:
+  - {name: api,       path: cmd/api,       purpose: HTTP API server}
+  - {name: worker,    path: cmd/worker,    purpose: background workers, standalone}
+  - {name: scheduler, path: cmd/scheduler, purpose: scheduled maintenance, advisory-lock coordinated}
+  - {name: migrate,   path: cmd/migrate,   purpose: golang-migrate wrapper}
+  - {name: seed,      path: cmd/seed,      purpose: development-only demo data}
+
+contracts:
+  openapi:
+    path: api/openapi/
+    format: openapi-3.1
+    documents: 5           # auth, management, federation, developer, operations
+    version: "0.2.0"
+    coverage_gate: tests/integration/coverage_test.go
+  postman: api/postman/
+  ai_tools: api/qeetai/tools.manifest.json
+
+data:
+  database: postgresql
+  driver: pgx/v5
+  query_codegen: sqlc      # 48 queries.sql + sqlc.yaml pairs -> dbgen packages
+  migrations:
+    path: internal/platform/database/migrations/
+    tool: golang-migrate
+    embedded: true         # //go:embed *.sql in runner.go
+    range: "0001..0096"    # 95 pairs; 0082 absent
+    schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
+
+http:
+  router: chi/v5
+  wiring: internal/bootstrap/router.go
+  health: [/healthz, /readyz]
+  metrics: /metrics
+
+dependencies:
+  internal: []             # depends on NO other Qeet product — it is the identity root
+  external:
+    required: [postgresql]
+    optional: [redis, nats, aws-kms, aws-ses, smtp, twilio, stripe, razorpay, hibp, anthropic, openai]
+  dev_only: [mailpit]
+
+security:
+  tenant_isolation:
+    mechanism: application-layer
+    rls: false             # VERIFIED: zero RLS policies across all migrations
+    guard: internal/platform/http/httpx/auth.go  # EnforceTenantScope, RequireTenant
+  authentication: internal/platform/http/httpx/auth.go
+  authorization: internal/access/authorization/
+  permission_map: internal/bootstrap/permissions.go
+  tokens: internal/platform/crypto/tokens/jwt.go   # ES256, RFC 7638 kid
+  password_hash: argon2id                          # internal/platform/crypto/encryption/hasher.go
+  csrf: internal/platform/http/httpx/csrf.go
+  boot_gate: internal/platform/config/config.go    # Config.Validate()
+
+ci:
+  workflows: [.github/workflows/ci.yml, .github/workflows/codeql.yml, .github/workflows/deploy.yml]
+  jobs: [test, lint, integration, vuln, analyze, deploy]
+  deploy_trigger: push to main
+
+llm_context:
+  canonical: docs/llm/context.md
+  subsystems: docs/llm/subsystems.md   # L3 subsystem map + L4 source pointers
+  boundaries: docs/llm/boundaries.md
+  workflows: docs/llm/workflows.md
+  architecture_map: docs/llm/architecture-map.md
+  primary_instructions: AGENTS.md
+  adapters: [CLAUDE.md, GEMINI.md, .github/copilot-instructions.md]

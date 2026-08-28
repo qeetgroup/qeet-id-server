@@ -1,65 +1,77 @@
-# qeet-id — CLAUDE.md
+# CLAUDE.md — qeet-id-server
 
-**Qeet ID** — identity platform (Auth0/Okta alternative, passkeys-first), pre-1.0. This repo (`qeet-id-server`, module `github.com/qeetgroup/qeet-id-server`) is the **Go modular-monolith backend**. The three React frontends now live in their own repos: console → `qeet-consoles/qeet-id-console`, marketing site → `qeet-websites/qeet-id-website`, hosted login → `qeet-hosted/qeet-id-login`.
+**Read [AGENTS.md](AGENTS.md) first.** It is the model-neutral instruction file and the source of
+truth for this repository. This file adds only Claude-specific guidance and does not duplicate
+architecture.
 
-## Layout
-
-Single Go module `github.com/qeetgroup/qeet-id-server`; **all application code lives under `internal/`** (thin entrypoints under `cmd/`).
-
-```
-cmd/          Go entrypoints: api, worker, scheduler, migrate, seed
-internal/
-  bootstrap/  composition root — the ONLY package that wires everything (chi router + permissions live here)
-  access/ identity/ federation/ developer/ operations/   5 bounded contexts (business logic)
-  platform/   PURE infra: http/{httpx,codes,errs,paging}  database/{postgres,migrations}
-              cache/ config/ crypto/ events/ messaging/ observability/ ai/ jobs/
-api/          contracts: openapi/ (5 split OpenAPI 3.1 specs) · postman/
-tests/ tools/   (deploy manifests + CD → qeet-deploy/qeet-id-deploy)
+```text
+CLAUDE.md  →  AGENTS.md  →  docs/llm/*
 ```
 
-## Commands (run from repo root)
+## Canonical context
 
-**Backend + infra — Makefile (Go only).** The complete target set is exactly:
+| File | For |
+|---|---|
+| [qeet-repo.yml](qeet-repo.yml) | Machine-readable repository identity |
+| [AGENTS.md](AGENTS.md) | **Rules, commands, what CI enforces** |
+| [docs/llm/architecture-map.md](docs/llm/architecture-map.md) | "Where is X?" |
+| [docs/llm/context.md](docs/llm/context.md) | How the backend works |
+| [docs/llm/subsystems.md](docs/llm/subsystems.md) | Subsystem map + real filenames |
+| [docs/llm/boundaries.md](docs/llm/boundaries.md) | Ownership and hard limits |
+| [docs/llm/workflows.md](docs/llm/workflows.md) | Step-by-step for common changes |
+
+Parent context: **L0** `qeetgroup/qeet-context` (organization standards) · **L1**
+`qeetgroup/qeet-id-context` (Qeet ID product architecture). Read them when a task needs
+organization or product understanding; this repository does not restate them.
+
+## The five things most likely to trip you up here
+
+1. **Tenant scope comes from `httpx.RequireTenant(r)`** — never from a path, body or header. There
+   is **no PostgreSQL RLS**; a missing `WHERE tenant_id = $1` is a cross-tenant data exposure.
+2. **`make lint` is `go vet` only.** CI also runs `golangci-lint` v2.12.2. Passing locally proves
+   less than it looks.
+3. **A new route without an OpenAPI entry fails CI** — `tests/integration/coverage_test.go`.
+4. **Wiring goes in `internal/bootstrap`.** `internal/platform` importing a bounded context fails
+   the architecture test.
+5. **Two behaviours that look like bugs are deliberate, with ADRs:** the rate limiter fails **open**
+   on store error, and auth hooks default to **fail-open**. Do not "fix" them.
+
+## Working style in this repository
+
+- **Read before editing.** 77 packages, and similar names mean different things —
+  `internal/access/risk/ipallow` is not `internal/access/threat/risk`.
+- **Prefer `rg`/`grep` over guessing a path.** Use the architecture map.
+- **Match the neighbouring package's shape** rather than introducing an abstraction: `queries.sql` +
+  `sqlc.yaml` + generated `dbgen/` + service + handler.
+- **Never hand-edit `dbgen/`** — it is sqlc output.
+- **Do not read `.env` or `.secrets/`** into anything you write. Both are gitignored and hold real
+  local key material.
+
+## Finishing a change
 
 ```bash
-make install        # go mod download (backend deps)
-make dev            # go run ./cmd/api  (:4001)
-make build test lint
-make db-up db-down db-reset          # Postgres :5001 (Docker Compose)
-make migrate-up migrate-down         # one migration at a time
-make seed seed-reset                 # demo data
-make kill                            # free a stuck :4001
+go build ./... && go test -race ./... && make lint && git diff
+make test-integration      # if the change touched a route
 ```
 
-No `make help`/`dev-*`/`test-*` exist — don't invent targets. Single Go test: `go test ./internal/access/authentication/... -run TestName`.
+## Issues and the project board
 
-**Frontends — not in this repo.** Each is its own repo (bun): hosted login → `qeet-hosted/qeet-id-login` (:3003),
-admin console → `qeet-consoles/qeet-id-console` (:3002), marketing site → `qeet-websites/qeet-id-website` (:3001).
+Issues live in `qeetgroup/qeet-id-server`.
 
-## Architecture
+- **Title:** `[feat] …`, `[fix] …`, `[chore] …`
+- **Body:** Context / Requirements / Acceptance criteria
+- Roadmap board: org Project **#24**. Setting board fields needs the `project` scope —
+  `gh auth refresh -s project`.
 
-**Backend** — a single Go module `github.com/qeetgroup/qeet-id-server`; **all code lives under [internal/](internal/)**. The 5 bounded contexts sit directly under `internal/`, pure infra under [internal/platform/](internal/platform/), and the composition root under [internal/bootstrap/](internal/bootstrap/):
+> **Note:** earlier revisions of this file referenced subagents at `.claude/agents/issue-tracker.md`
+> and `.claude/agents/product-manager.md`. **No `.claude/` directory exists in this repository.**
+> Those references were dangling and have been removed rather than recreated. Create the agents if
+> they are wanted; do not assume they are available.
 
-- **internal/access/** — authentication, authorization (rbac/rebac/policy), mfa, passkeys, recovery, risk, threat
-- **internal/identity/** — users, tenant, groups, invitations, verification, domainverify
-- **internal/federation/** — oidc, saml, scim, ldap, social
-- **internal/developer/** — api-keys, principal, credentials, auth-hooks, webhooks, agents
-- **internal/operations/** — audit, analytics, notifications, email, retention, gdpr, billing, siem
-- **internal/platform/** — pure infra only: http, database, cache, config, crypto, events, messaging, observability, ai, jobs
+## Escalate rather than proceed
 
-**Dependency rule** (the whole point of the layout): `internal/platform/*` is **pure infra** — it imports no bounded context, no `cmd/*`, and not `internal/bootstrap`. The 5 contexts may import `internal/platform/*` but never `cmd/*` or `internal/bootstrap`. **Only `internal/bootstrap`** — the composition root — imports and wires everything together (the chi router + permission table live there); `cmd/*` entrypoints just call into it.
+Stop and report if a task would weaken a security control, bypass `EnforceTenantScope`, edit an
+applied migration, change JWT claims or signing, change SCIM/SAML/webhook contracts, restructure the
+chi route tree, or require modifying another repository.
 
-Only packages with real code exist; planned work lives in [ROADMAP.md](ROADMAP.md), not empty dirs. The former semantic folder≠package mismatches were aligned to **folder == package** (`organizations`→`tenant`, `compliance`→`gdpr`, `identity/domains`→`domainverify`, `service-accounts`→`principal`, `email`→`package email`). **A few folders still differ where the package uses a shorter idiomatic name — intentional and legal** (e.g. `internal/access/authentication` = `package auth`, `internal/developer/api-keys` = `package apikey`, `internal/platform/jobs` = `package worker`).
-
-Entrypoint [cmd/api/main.go](cmd/api/main.go); HTTP wiring in [internal/bootstrap/router.go](internal/bootstrap/router.go) (chi v5). Postgres via pgx v5, **multi-tenant by `tenant_id`** across schemas — tenant isolation is enforced in the **application layer** (per-query `WHERE tenant_id = $1` predicates + the router-level `EnforceTenantScope` guard that rejects any `{tenantID}` path that isn't the caller's own tenant). A single `DB_URL` is used for both runtime queries and migrations. Config is envconfig-driven ([internal/platform/config/config.go](internal/platform/config/config.go)); `HTTP_PORT` defaults to `4001`. Transactional outbox + webhook dispatcher (DLQ); the outbox dispatcher publishes domain events to **NATS** when `NATS_URL` is set (else log-only). Hash-chained append-only audit log. API contract = 5 bounded-context OpenAPI 3.1 specs in [api/openapi/](api/openapi/) (no monolith spec).
-
-**Frontends (all separate repos now)** — hosted login → `qeet-hosted/qeet-id-login` (Next.js), admin console → `qeet-consoles/qeet-id-console` (Vite + TanStack), marketing site → `qeet-websites/qeet-id-website` (Next.js); all on the shared **`@qeetrix/*`** design system. SDKs (`@qeet-id/{sdk,react,nextjs}` + Go/Python) live in `qeet-sdks/`. End-user docs live in the separate `qeet-docs` site.
-
-## Deployment
-
-Single Docker container on EC2 (`ap-south-2`) behind Caddy, Postgres on RDS; migrations auto-apply on startup (`//go:embed`). **Deploy (build image → GHCR + SSH rollout) and all manifests (compose/Caddy/Helm/Terraform) live in the separate `qeet-deploy/qeet-id-deploy` repo** (full runbook there). Frontends deploy separately.
-
-## Gotchas
-
-- **Migrations** — golang-migrate pairs **0001–0081** in [internal/platform/database/migrations/](internal/platform/database/migrations/) (latest `0081_compliance_evidence`; go **1.25.0**). Never edit an applied migration — add a new pair.
-- **Docker** — `Dockerfile` at repo root; build stage `golang:1.26-alpine` (newer than go.mod's `1.25.0`), final image distroless `static-debian12:nonroot`. `.dockerignore` excludes the JS workspace.- **Issues & board** — issues in `qeetgroup/qeet-id-server` (title `[feat]`/`[fix]`/`[chore]`; body Context / Requirements / Acceptance criteria). Roadmap = org Project **#24**. The **`issue-tracker`** subagent ([.claude/agents/issue-tracker.md](.claude/agents/issue-tracker.md)) creates issues + sets board fields; `gh` needs `project` scope (`gh auth refresh -s project`).
+Cross-repository impact: `qeet-id-context/CHANGE-MATRIX.md`.
