@@ -10,7 +10,7 @@ import (
 	"os/exec"
 )
 
-const migrationsPath = "platform/database/migrations"
+const migrationsPath = "internal/platform/database/migrations"
 
 func main() {
 	dbURL := os.Getenv("DB_URL")

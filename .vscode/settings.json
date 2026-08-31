@@ -12,18 +12,24 @@
   "search.exclude": {
     "**/go.sum": true
   },
-
   // ── Go ───────────────────────────────────────────────────────────────────
   "[go]": {
     "editor.defaultFormatter": "golang.go",
     "editor.formatOnSave": true,
-    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
   },
   "go.useLanguageServer": true,
   "go.lintTool": "golangci-lint",
   "go.lintOnSave": "workspace",
-  "go.testFlags": ["-race", "-count=1"],
-
+  "go.testFlags": [
+    "-race",
+    "-count=1"
+  ],
   // ── SQL (migrations) ─────────────────────────────────────────────────────
-  "[sql]": { "editor.tabSize": 4 }
+  "[sql]": {
+    "editor.tabSize": 4
+  },
+  "sqltools.connections": []
 }
