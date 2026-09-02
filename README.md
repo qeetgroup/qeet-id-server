@@ -143,7 +143,6 @@ cd qeet-id-server
 make install
 
 cp .env.example .env
-perl -pi -e 's/<password>/password/' .env   # DB_URL ships a placeholder; local Postgres uses "password"
 
 make db-up    # postgres :5001 · nats :4222 · mailpit :8025
 make dev      # generates .secrets/, applies migrations, serves http://localhost:4001
