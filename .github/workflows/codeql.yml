@@ -16,6 +16,11 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    # Code scanning upload requires GitHub Advanced Security on a private
+    # repository, which this organization's plan does not include — the analysis
+    # runs fine but the upload step fails. Skip while private; gosec in ci.yml
+    # covers Go SAST in the meantime. Drop this guard if GHAS is enabled.
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
