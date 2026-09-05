@@ -41,11 +41,66 @@ current implementation status is:
 | QID-AUD-025 | Remediated | OpenAPI paths, production servers, architecture paths, migration inventory, and worker documentation match the live system. |
 | QID-AUD-026 | Remediated | Session listing uses bounded, user-bound cursor pagination beyond 100 records. |
 
-Deployment must apply migrations `0097` through `0104`, configure a persistent
-`SECRETS_KEY` or AWS KMS-backed DEK, and follow
+## Post-Remediation Review
+
+The remediation above was reviewed against the code (not just this ledger)
+before merge. That review confirmed the 26 findings but surfaced further work,
+now also applied:
+
+| Issue | Resolution |
+|---|---|
+| `agents.Service.transition` queried `tenant.agents`, which does not exist — every agent suspend/resume/decommission would have failed at runtime. The path had no test coverage. | Corrected to `auth.agents`; `TestAgentLifecycleTransitionsWriteEvidence` now covers all three transitions and their audit/outbox evidence. |
+| The MFA attempt budget opened a second pool connection while the caller held a transaction. At `DB_MAX_CONNS` concurrent verifications the pool deadlocks until request deadlines fire. | Reservation moved ahead of the caller's transaction and refunds after it closes; the ordering contract is documented on `mfa.Attempt`. |
+| Machine-scope enforcement had no migration, so every pre-existing API key, service principal, and agent would have been denied on deploy. | `0105` writes each credential's pre-enforcement access into its scope array. A drift test pins that list to `builtinPermissionDefinitions`. |
+| IdP-initiated SAML became impossible once AuthnRequest correlation was mandatory — an unannounced capability removal. | `0106` adds per-connection `allow_idp_initiated`, off by default. It relaxes correlation only; replay IDs are still consumed. |
+| Redirect-URI validation rejected RFC 8252 private-use schemes, breaking native/mobile OAuth clients. | HTTPS, HTTP loopback, and reverse-DNS private-use schemes are accepted; reserved schemes (`javascript:`, `data:`, …) are not. |
+| Social login required a verified email even when provisioning a brand-new account, locking out any OIDC provider that omits `email_verified`. | Verification is required only when adopting an account that already exists — the actual takeover path. New-account provisioning stores the address unverified. |
+| `egress.HTTPClient` hard-disabled proxying, breaking deployments whose only route out is a forward proxy. | `EGRESS_PROXY_URL` configures one explicitly; ambient `HTTPS_PROXY` stays ignored. When set, the proxy owns address filtering. |
+| A non-member hitting `/oauth/authorize` received a raw JSON error instead of an OAuth response. | Errors go to the registered `redirect_uri` per RFC 6749 §4.1.2.1, and are rendered locally only when the URI cannot be confirmed as registered. |
+| Expired SAML correlation and replay rows were swept with a full-table `DELETE` on every SSO ceremony. | Collection is throttled to once per five minutes per replica. |
+| Hand-rolled single-block HKDF in `envelope`. | Replaced with `crypto/hkdf`, verified byte-identical so existing ciphertext still opens. |
+| `ScopedMachinePolicy` was dead code; `runBulkImport` returned a slice no caller used; `CodeRequestBodyTooLarge` broke the file's naming convention. | Removed, simplified, renamed to `request_body_too_large`. |
+
+A second adversarial pass over the remediated tree found and closed a further
+set, the first three of which were not in the original audit at all:
+
+| Issue | Resolution |
+|---|---|
+| **Cross-tenant account takeover via social login.** `GetUserByEmail` was not tenant-scoped while emails are globally unique (migration `0022`), so a tenant admin pointing their own IdP at another tenant's user's address received a token pair carrying that user's id — enough to change their password and `switch-tenant` into their org. | Adoption of an existing account now requires it to belong to the login's tenant; new `social.account_not_in_tenant`, worded vaguely so it cannot be used to probe for addresses in other tenants. |
+| **Exploitable CSRF on `POST /v1/social/providers`.** CSRF exemptions were prefix-matched, so `/v1/social/` also exempted three authenticated mutations; `DecodeJSON` accepts any content type, making a simple cross-site POST sufficient to overwrite a tenant's social IdP. The same shape exempted `POST /v1/oauth/bc-authorize/decision`. | Exemptions are now exact, `/`-suffixed prefixes, or `*` single-segment. `TestNoAuthenticatedRouteIsCSRFExempt` walks the authenticated router and fails if any mutation is covered. |
+| **SSRF via Qeet AI BYOK `base_url`**, on a bare HTTP client, with the validation probe returning a response snippet as a read oracle. | Routed through the shared egress policy at both configuration and inference time. |
+| SCIM user create/replace/patch/delete emitted no audit row and no domain event, leaving IdP-driven provisioning and deprovisioning invisible. | All four run in one transaction with their evidence, attributed to actor type `scim`; an atomicity test proves a blocked audit write rolls the user back. |
+| Qeet AI tenant provider keys were sealed with a process-global AES-GCM and a nil AAD, so ciphertext was transplantable between tenant rows. | Sealed with the context-bound envelope; legacy rows open via the existing fallback and are resealed on first read. No migration required — same deployment DEK. |
+| Admin `POST /v1/users/{id}/password` revoked no sessions and recorded nothing. | Credential, full session revocation, audit and outbox in one transaction. |
+| Device and CIBA grants applied no liveness check, so a suspended user could still approve one. | Both now require an active user and active tenant, matching the authorization-code path. |
+| Route policy resolved overlapping patterns by map iteration order (`/v1/vault/{name}` also matches `/v1/vault/tokens`). | Deterministic literal-first ordering. |
+| Six SCIM handlers read unbounded request bodies. | Bounded to `httpx.MaxJSONBodyBytes`, returning SCIM `tooLarge`. |
+| The integration suite deadlocked for 30 minutes: the outbox lease test assumed a private `platform.outbox`, so a row from another test parked the second sweep inside the shared blocking publisher. | Target-scoped publisher plus a backlog drain; the suite runs in ~19s. |
+
+Two behaviours were reviewed and deliberately left as they are, now documented
+where they live: the unwrapped KMS DEK is pinned for the process lifetime (so
+DEK rotation needs a restart), and GDPR ownership keys off `users.tenant_id`
+while OIDC authorization keys off `rbac.user_roles` — erasure is restricted to
+the tenant that owns the record.
+
+Migration `0097` builds its `UNIQUE (id, tenant_id)` index non-concurrently and
+will hold `ACCESS EXCLUSIVE` on `"user".users` for the duration. That is
+acceptable only because no deployment has a populated users table yet; against
+a large table it must be rebuilt as `CREATE UNIQUE INDEX CONCURRENTLY` outside
+a transaction first.
+
+## Deployment Prerequisites
+
+Apply migrations `0097` through `0106`, configure a persistent `SECRETS_KEY` or
+AWS KMS-backed DEK, and follow
 [`docs/JWT-KEY-ROTATION.md`](JWT-KEY-ROTATION.md) for two-phase key activation.
-Consumers must adopt mandatory public-client PKCE and the token-free admin portal
-session contract before rollout.
+Note that pre-staging a candidate key already widens the fleet's trusted
+verification set — see that document.
+
+Consumers must adopt mandatory public-client PKCE and the token-free admin
+portal session contract before rollout. `0102` revokes every outstanding admin
+portal link, and `0105` widens existing machine credentials to a compatibility
+scope set that should then be narrowed per integration.
 
 ## Scope And Method
 

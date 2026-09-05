@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
@@ -487,28 +486,65 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	if ui.Email == "" {
 		return uuid.Nil, errs.ErrSocialEmailMissing
 	}
-	if !ui.EmailVerified {
-		return uuid.Nil, errs.ErrSocialEmailUnverified
-	}
 
 	// No linked identity yet: reuse a user with the same (globally-unique)
-	// email, else create one.
+	// email, else create one. Only the reuse branch needs a verified address —
+	// see the comments below.
 	userID, err = q.GetUserByEmail(ctx, ui.Email)
-	if errors.Is(err, pgx.ErrNoRows) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Provisioning a fresh account. An unverified assertion may *name* the
+		// account — refusing would lock out every provider that omits the claim
+		// — but it must not mark the address verified. Other flows treat a
+		// verified address as proof of control, so the provider's word is only
+		// carried through when the provider actually vouched for it.
+		//
+		// Written as raw SQL rather than InsertUserWithEmail because that query
+		// hardcodes email_verified_at = NOW(); fold this parameter into
+		// queries.sql at the next `sqlc generate`.
 		var displayName *string
 		if ui.Name != "" {
 			displayName = &ui.Name
 		}
-		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
-			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
-			Email:       ui.Email,
-			DisplayName: displayName,
-		})
+		var verifiedAt *time.Time
+		if ui.EmailVerified {
+			now := time.Now().UTC()
+			verifiedAt = &now
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+			VALUES ($1, $2, $3, $4, 'active')
+			RETURNING id
+		`, tenantID, ui.Email, verifiedAt, displayName).Scan(&userID); err != nil {
+			return uuid.Nil, err
+		}
+	case err != nil:
+		return uuid.Nil, err
+	default:
+		// Adopting an account that already exists. Two things have to hold.
+		//
+		// First, the assertion must be verified: otherwise anyone who can
+		// persuade a provider to emit the victim's address inherits their
+		// account.
+		if !ui.EmailVerified {
+			return uuid.Nil, errs.ErrSocialEmailUnverified
+		}
+		// Second — and this is the one a verified assertion does NOT cover —
+		// the account must already belong to the tenant this login is for.
+		// Emails are globally unique platform-wide (migration 0022), so
+		// GetUserByEmail above can return a user owned by a completely
+		// different tenant. Without this check, a tenant admin could register
+		// an IdP they control, assert another tenant's user's address with
+		// email_verified=true, and be handed a token pair carrying that user's
+		// id — enough to change their password, read their profile, and
+		// switch-tenant into their org.
+		belongs, err := userInTenant(ctx, tx, userID, tenantID)
 		if err != nil {
 			return uuid.Nil, err
 		}
-	} else if err != nil {
-		return uuid.Nil, err
+		if !belongs {
+			return uuid.Nil, errs.ErrSocialAccountNotInTenant
+		}
 	}
 
 	var emailPtr *string
@@ -897,4 +933,25 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+// userInTenant reports whether a user is one this tenant can sign in.
+//
+// Two things count: the user's home tenant (users.tenant_id, which is what a
+// social-provisioned user gets and what a repeat login has to match), and an
+// rbac.user_roles grant (which is how a guest becomes a member). Requiring only
+// the latter would reject a user this very flow provisioned, since provisioning
+// grants no role.
+func userInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (bool, error) {
+	var ok bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM "user".users u
+			WHERE u.id = $1 AND u.deleted_at IS NULL AND u.tenant_id = $2
+			UNION ALL
+			SELECT 1 FROM rbac.user_roles ur
+			WHERE ur.user_id = $1 AND ur.tenant_id = $2
+		)
+	`, userID, tenantID).Scan(&ok)
+	return ok, err
 }

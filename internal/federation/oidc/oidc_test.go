@@ -235,3 +235,41 @@ func TestValidateClientInput(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRegisteredRedirectURI(t *testing.T) {
+	valid := []string{
+		"https://app.example.com/callback",
+		"https://app.example.com/callback?next=%2Fhome",
+		"http://127.0.0.1:8080/cb",
+		"http://[::1]:8080/cb",
+		"http://localhost:3000/cb",
+		"com.example.app:/oauth2redirect",
+		"com.example.app://oauth2redirect",
+		"in.qeet.console:/cb",
+	}
+	for _, uri := range valid {
+		if err := validateRegisteredRedirectURI(uri); err != nil {
+			t.Errorf("validateRegisteredRedirectURI(%q) = %v, want nil", uri, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"/callback",                          // relative
+		"https://app.example.com/cb#frag",    // fragment is the response's
+		"https://user:pw@app.example.com/cb", // userinfo
+		"http://example.com/cb",              // non-loopback cleartext
+		"http://169.254.169.254/cb",          // link-local, not loopback
+		"myapp:/cb",                          // no dot: not reverse-DNS
+		"javascript:alert(1)",                // reserved scheme
+		"data:text/html,x",                   // reserved scheme
+		"ftp://example.com/cb",               // reserved scheme
+		".com.example:/cb",                   // malformed scheme
+		"com..example:/cb",                   // malformed scheme
+	}
+	for _, uri := range invalid {
+		if err := validateRegisteredRedirectURI(uri); err == nil {
+			t.Errorf("validateRegisteredRedirectURI(%q) = nil, want error", uri)
+		}
+	}
+}

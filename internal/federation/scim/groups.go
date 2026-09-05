@@ -407,8 +407,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p scimGroupPayload
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeSCIMBody(w, r, &p) {
 		return
 	}
 	name := strings.TrimSpace(p.DisplayName)
@@ -454,8 +453,7 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p scimGroupPayload
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeSCIMBody(w, r, &p) {
 		return
 	}
 	name := strings.TrimSpace(p.DisplayName)
@@ -500,8 +498,7 @@ func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body patchBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeSCIMBody(w, r, &body) {
 		return
 	}
 	p, err := parseGroupPatch(body)

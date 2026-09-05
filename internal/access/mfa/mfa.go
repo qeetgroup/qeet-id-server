@@ -82,7 +82,7 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	`, userID, ciphertext, nonce); err != nil {
 		return nil, err
 	}
-	if err := clearMFAAttempt(ctx, tx, userID, "totp-enroll"); err != nil {
+	if err := clearMFAAttempt(ctx, tx, userID, PurposeTOTPEnroll); err != nil {
 		return nil, err
 	}
 	return &Enrollment{
@@ -91,23 +91,18 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	}, nil
 }
 
-func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, error) {
-	remaining, err := s.reserveMFAAttempt(ctx, userID, "totp-enroll")
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) ([]string, error) {
+	userID := attempt.userID
 	qtx := s.q.WithTx(tx)
 	secret, _, err := s.loadTOTP(ctx, tx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		s.releaseMFAAttempt(ctx, userID, "totp-enroll")
 		return nil, errs.ErrMFAEnrollNotStarted
 	}
 	if err != nil {
-		s.releaseMFAAttempt(ctx, userID, "totp-enroll")
 		return nil, err
 	}
 	if !totp.Verify(secret, code) {
-		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, remaining)
+		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, attempt.remaining)
 	}
 	if err := qtx.ConfirmMFATOTP(ctx, userID); err != nil {
 		return nil, err
@@ -120,7 +115,7 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	if err := s.RecordVerification(ctx, tx, userID, "totp"); err != nil {
 		return nil, err
 	}
-	if err := clearMFAAttempt(ctx, tx, userID, "totp-enroll"); err != nil {
+	if err := clearMFAAttempt(ctx, tx, userID, PurposeTOTPEnroll); err != nil {
 		return nil, err
 	}
 	// Wipe old recovery codes, mint a fresh batch.
@@ -272,20 +267,16 @@ type VerifyResult struct {
 // Verify accepts a TOTP code or a one-time recovery code. Recovery codes
 // are consumed on use. The caller passes a tx so the consumption and any
 // audit row commit together.
-func (s *Service) Verify(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (*VerifyResult, error) {
-	remaining, err := s.reserveMFAAttempt(ctx, userID, "factor-verify")
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) Verify(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (*VerifyResult, error) {
+	userID := attempt.userID
 	result, err := s.verifyCode(ctx, tx, userID, code)
 	if err != nil {
 		if errors.Is(err, errs.ErrMFACodeInvalid) {
-			return nil, attemptError(errs.ErrMFACodeInvalid, remaining)
+			return nil, attemptError(errs.ErrMFACodeInvalid, attempt.remaining)
 		}
-		s.releaseMFAAttempt(ctx, userID, "factor-verify")
 		return nil, err
 	}
-	if err := clearMFAAttempt(ctx, tx, userID, "factor-verify"); err != nil {
+	if err := clearMFAAttempt(ctx, tx, userID, attempt.purpose); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -469,12 +460,8 @@ func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, channel,
 }
 
 // EnrollOTPConfirm verifies the code and marks the factor usable.
-func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, userID, factorID uuid.UUID, code string) error {
-	purpose := "otp-enroll:" + factorID.String()
-	remaining, err := s.reserveMFAAttempt(ctx, userID, purpose)
-	if err != nil {
-		return err
-	}
+func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, attempt Attempt, factorID uuid.UUID, code string) error {
+	userID := attempt.userID
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForConfirm(ctx, dbgen.GetOTPCodeForConfirmParams{
 		ID:       factorID,
@@ -482,10 +469,9 @@ func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, userID, facto
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return attemptError(errs.ErrMFAOTPCodeInvalid, remaining)
+		return attemptError(errs.ErrMFAOTPCodeInvalid, attempt.remaining)
 	}
 	if err != nil {
-		s.releaseMFAAttempt(ctx, userID, purpose)
 		return err
 	}
 	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
@@ -493,12 +479,12 @@ func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, userID, facto
 		return err
 	}
 	if tag.RowsAffected() != 1 {
-		return attemptError(errs.ErrMFAOTPCodeInvalid, remaining)
+		return attemptError(errs.ErrMFAOTPCodeInvalid, attempt.remaining)
 	}
 	if err := qtx.MarkOTPFactorVerified(ctx, factorID); err != nil {
 		return err
 	}
-	if err := clearMFAAttempt(ctx, tx, userID, purpose); err != nil {
+	if err := clearMFAAttempt(ctx, tx, userID, attempt.purpose); err != nil {
 		return err
 	}
 	return nil
@@ -555,21 +541,17 @@ func (s *Service) ChallengeOTP(ctx context.Context, userID, factorID uuid.UUID) 
 }
 
 // VerifyOTP consumes a code from any of the user's verified OTP factors.
-func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error) {
-	remaining, err := s.reserveMFAAttempt(ctx, userID, "otp-verify")
-	if err != nil {
-		return false, err
-	}
+func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) (bool, error) {
+	userID := attempt.userID
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
 		UserID:   userID,
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, attemptError(errs.ErrMFACodeInvalid, remaining)
+		return false, attemptError(errs.ErrMFACodeInvalid, attempt.remaining)
 	}
 	if err != nil {
-		s.releaseMFAAttempt(ctx, userID, "otp-verify")
 		return false, err
 	}
 	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
@@ -577,9 +559,9 @@ func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, co
 		return false, err
 	}
 	if tag.RowsAffected() != 1 {
-		return false, attemptError(errs.ErrMFACodeInvalid, remaining)
+		return false, attemptError(errs.ErrMFACodeInvalid, attempt.remaining)
 	}
-	if err := clearMFAAttempt(ctx, tx, userID, "otp-verify"); err != nil {
+	if err := clearMFAAttempt(ctx, tx, userID, attempt.purpose); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -794,15 +776,25 @@ func (h *Handler) confirmEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeTOTPEnroll)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// Registered before the transaction below so the refund only takes a
+	// connection once that transaction has released its own — see Attempt.
+	var opErr error
+	defer func() { h.refund(ctx, attempt, opErr) }()
+	tx, opErr := h.Service.Pool().Begin(ctx)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
+		return
+	}
 	defer tx.Rollback(ctx)
-	codes, err := h.Service.ConfirmEnroll(ctx, tx, *p.UserID, in.Code)
-	if err != nil {
-		httpx.WriteError(w, r, err)
+	var codes []string
+	codes, opErr = h.Service.ConfirmEnroll(ctx, tx, attempt, in.Code)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
 	actorID, actorType := auditActor(r)
@@ -848,15 +840,23 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeFactorVerify)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	var opErr error
+	defer func() { h.refund(ctx, attempt, opErr) }()
+	tx, opErr := h.Service.Pool().Begin(ctx)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
+		return
+	}
 	defer tx.Rollback(ctx)
-	result, err := h.Service.Verify(ctx, tx, *p.UserID, in.Code)
-	if err != nil {
-		httpx.WriteError(w, r, err)
+	var result *VerifyResult
+	result, opErr = h.Service.Verify(ctx, tx, attempt, in.Code)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
 	// Record the verification for step-up: any successful factor (TOTP or a
@@ -865,8 +865,8 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 	if result.UsedRecoveryCode {
 		method = "recovery_code"
 	}
-	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, method); err != nil {
-		httpx.WriteError(w, r, err)
+	if opErr = h.Service.RecordVerification(ctx, tx, *p.UserID, method); opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
 	// Only audit when a recovery code was consumed — every successful
@@ -1087,14 +1087,21 @@ func (h *Handler) enrollOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeOTPEnroll(factorID))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	var opErr error
+	defer func() { h.refund(ctx, attempt, opErr) }()
+	tx, opErr := h.Service.Pool().Begin(ctx)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
+		return
+	}
 	defer tx.Rollback(ctx)
-	if err := h.Service.EnrollOTPConfirm(ctx, tx, *p.UserID, factorID, in.Code); err != nil {
-		httpx.WriteError(w, r, err)
+	if opErr = h.Service.EnrollOTPConfirm(ctx, tx, attempt, factorID, in.Code); opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
 	actorID, actorType := auditActor(r)
@@ -1195,27 +1202,35 @@ func (h *Handler) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tx, err := h.Service.Pool().Begin(ctx)
+	attempt, err := h.Service.ReserveAttempt(ctx, *p.UserID, PurposeOTPVerify)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	var opErr error
+	defer func() { h.refund(ctx, attempt, opErr) }()
+	tx, opErr := h.Service.Pool().Begin(ctx)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
+		return
+	}
 	defer tx.Rollback(ctx)
-	ok, err := h.Service.VerifyOTP(ctx, tx, *p.UserID, in.Code)
-	if err != nil {
-		httpx.WriteError(w, r, err)
+	var ok bool
+	ok, opErr = h.Service.VerifyOTP(ctx, tx, attempt, in.Code)
+	if opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
 	if !ok {
 		httpx.WriteError(w, r, errs.ErrMFACodeInvalid)
 		return
 	}
-	if err := h.Service.RecordVerification(ctx, tx, *p.UserID, "otp"); err != nil {
-		httpx.WriteError(w, r, err)
+	if opErr = h.Service.RecordVerification(ctx, tx, *p.UserID, "otp"); opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
-	if err := tx.Commit(ctx); err != nil {
-		httpx.WriteError(w, r, err)
+	if opErr = tx.Commit(ctx); opErr != nil {
+		httpx.WriteError(w, r, opErr)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"verified": true})

@@ -92,6 +92,16 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	if err != nil {
 		return nil, err
 	}
+	// GetUserByEmailInTenant filters soft-deletes but not suspension, and the
+	// tenant's own state is never consulted. Match the authorization-code
+	// path's liveness requirement before minting anything.
+	live, err := s.activeTenantPrincipal(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !live {
+		return nil, oauthErr("unknown_user_id", "login_hint does not resolve to a known user")
+	}
 
 	raw, hash, err := codes.URLToken()
 	if err != nil {

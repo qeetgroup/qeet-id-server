@@ -39,6 +39,29 @@ const (
 
 var errCSRFFailed = errors.New("csrf check failed")
 
+// matchExemptPath reports whether path is covered by a CSRF exemption entry.
+// A trailing "/" makes the entry a prefix; a "*" segment matches exactly one
+// path segment; otherwise the whole path must match.
+func matchExemptPath(pattern, path string) bool {
+	if !strings.Contains(pattern, "*") {
+		if strings.HasSuffix(pattern, "/") {
+			return strings.HasPrefix(path, pattern)
+		}
+		return path == pattern
+	}
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(patternParts) != len(pathParts) {
+		return false
+	}
+	for i, part := range patternParts {
+		if part != "*" && part != pathParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // CSRFConfig tunes the middleware behaviour. AllowedOrigins is matched
 // scheme + host + (optional) port. CookieSecure should be true outside
 // dev so the cookie is only sent over HTTPS.
@@ -49,11 +72,17 @@ type CSRFConfig struct {
 	// sub-domains (e.g. admin.id.qeet.in / api.id.qeet.in). Leave empty
 	// to scope strictly to the issuing host.
 	CookieDomain string
-	// ExemptPaths are URL-path prefixes the double-submit/origin check is
-	// skipped for. Reserved for endpoints that are authenticated by another
-	// mechanism and are legitimately invoked cross-site by a third party —
-	// e.g. a SAML Assertion Consumer Service, which the IdP form-POSTs to and
-	// which is protected by XML-signature validation, not a CSRF cookie.
+	// ExemptPaths are URL paths the double-submit/origin check is skipped for.
+	// Reserved for endpoints that are authenticated by another mechanism and
+	// are legitimately invoked cross-site by a third party — e.g. a SAML
+	// Assertion Consumer Service, which the IdP form-POSTs to and which is
+	// protected by XML-signature validation, not a CSRF cookie.
+	//
+	// An entry ending in "/" is a prefix; "*" matches exactly one path segment;
+	// anything else must match the whole path. Prefer the narrowest form that
+	// works. A prefix covering a whole feature area will sooner or later also
+	// cover an authenticated mutation added to it later, and that mutation is
+	// then silently CSRF-exempt.
 	ExemptPaths []string
 }
 
@@ -85,7 +114,7 @@ func CSRF(cfg CSRFConfig) func(http.Handler) http.Handler {
 			// Explicitly-exempt paths (e.g. SAML ACS) are authenticated by
 			// another mechanism and are invoked cross-site by design.
 			for _, p := range cfg.ExemptPaths {
-				if strings.HasPrefix(r.URL.Path, p) {
+				if matchExemptPath(p, r.URL.Path) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -200,3 +229,7 @@ func newCSRFToken() (string, error) {
 	suffix := mac.Sum(nil)[:8]
 	return base64.RawURLEncoding.EncodeToString(append(b, suffix...)), nil
 }
+
+// MatchExemptPathForTest exposes the exemption matcher so the composition root
+// can assert no authenticated route is covered by an entry.
+func MatchExemptPathForTest(pattern, path string) bool { return matchExemptPath(pattern, path) }

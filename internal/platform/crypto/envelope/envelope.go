@@ -5,6 +5,7 @@ package envelope
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -83,22 +84,16 @@ func (c *Cipher) contextAEAD(tenantID uuid.UUID, purpose, resource string) (ciph
 	if err != nil {
 		return nil, nil, err
 	}
-	derived := hkdfSHA256(c.master, []byte("qeet-id-envelope-v1"), aad)
+	// Salt is the fixed scheme label and info is the encryption context, so
+	// every (tenant, purpose, resource) gets its own key from the one DEK.
+	derived, err := hkdf.Key(sha256.New, c.master, []byte("qeet-id-envelope-v1"), string(aad), 32)
+	if err != nil {
+		return nil, nil, err
+	}
 	block, err := aes.NewCipher(derived)
 	if err != nil {
 		return nil, nil, err
 	}
 	aead, err := cipher.NewGCM(block)
 	return aead, aad, err
-}
-
-func hkdfSHA256(ikm, salt, info []byte) []byte {
-	extract := hmac.New(sha256.New, salt)
-	extract.Write(ikm)
-	prk := extract.Sum(nil)
-
-	expand := hmac.New(sha256.New, prk)
-	expand.Write(info)
-	expand.Write([]byte{1})
-	return expand.Sum(nil)
 }

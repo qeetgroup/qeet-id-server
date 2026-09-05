@@ -20,6 +20,14 @@ import (
 )
 
 type blockingPublisher struct {
+	// target scopes both the block and the tally to the one event under test.
+	//
+	// platform.outbox is shared by the whole package, so a dispatcher sweep
+	// legitimately claims rows other tests enqueued. Blocking on those would
+	// deadlock the release sequencing below: the second sweep would park inside
+	// Publish on a foreign row, so the main goroutine would never reach
+	// close(release) and the first sweep would park forever too.
+	target  uuid.UUID
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -28,6 +36,9 @@ type blockingPublisher struct {
 }
 
 func (p *blockingPublisher) Publish(_ context.Context, eventID uuid.UUID, _, _ string, _ []byte) error {
+	if p.target != uuid.Nil && eventID != p.target {
+		return nil // another test's row: let it drain, don't block on it
+	}
 	p.mu.Lock()
 	p.ids = append(p.ids, eventID)
 	p.mu.Unlock()
@@ -45,6 +56,12 @@ func (p *blockingPublisher) count() int {
 func TestOutboxLeaseExclusiveAndRecoverable(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
+	// Retire anything earlier tests left unpublished so this test's event is
+	// reliably inside the first claimed batch rather than behind a backlog.
+	if _, err := testPool.Exec(ctx,
+		`UPDATE platform.outbox SET published_at = NOW() WHERE published_at IS NULL`); err != nil {
+		t.Fatalf("drain pre-existing outbox rows: %v", err)
+	}
 	eventID := uuid.New()
 	tx, err := testPool.Begin(ctx)
 	if err != nil {
@@ -60,7 +77,7 @@ func TestOutboxLeaseExclusiveAndRecoverable(t *testing.T) {
 		t.Fatalf("commit outbox event: %v", err)
 	}
 
-	publisher := &blockingPublisher{started: make(chan struct{}), release: make(chan struct{})}
+	publisher := &blockingPublisher{target: eventID, started: make(chan struct{}), release: make(chan struct{})}
 	first := outbox.NewDispatcher(testPool, publisher, time.Second, 10)
 	second := outbox.NewDispatcher(testPool, publisher, time.Second, 10)
 	done := make(chan error, 1)
@@ -106,7 +123,7 @@ func TestOutboxLeaseExclusiveAndRecoverable(t *testing.T) {
 	`, recoveredID, uuid.New()); err != nil {
 		t.Fatalf("seed expired outbox lease: %v", err)
 	}
-	recoveryPublisher := &blockingPublisher{started: make(chan struct{}), release: make(chan struct{})}
+	recoveryPublisher := &blockingPublisher{target: recoveredID, started: make(chan struct{}), release: make(chan struct{})}
 	close(recoveryPublisher.release)
 	recovery := outbox.NewDispatcher(testPool, recoveryPublisher, time.Second, 10)
 	if err := recovery.Sweep(ctx); err != nil {

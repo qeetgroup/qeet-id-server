@@ -600,60 +600,46 @@ func TestMFATOTPEnrollAndRecoveryCodes(t *testing.T) {
 	}
 
 	// A wrong code must not confirm.
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, userID, "000000"); err == nil {
+	if _, err := mfaConfirmEnroll(ctx, svc, userID, "000000"); err == nil {
 		t.Fatal("confirm with a wrong TOTP must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Confirm with the real code for the current window.
 	code, err := totp.Code(enr.Secret, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("totp code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	recoveryCodes, err := svc.ConfirmEnroll(ctx, tx, userID, code)
+	recoveryCodes, err := mfaConfirmEnroll(ctx, svc, userID, code)
 	if err != nil {
 		t.Fatalf("confirm enroll: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit confirm: %v", err)
 	}
 	if len(recoveryCodes) != 10 {
 		t.Fatalf("expected 10 recovery codes, got %d", len(recoveryCodes))
 	}
 
 	// Verify accepts a fresh TOTP (not flagged as a recovery code).
-	tx, _ = testPool.Begin(ctx)
 	totpCode, _ := totp.Code(enr.Secret, time.Now().UTC())
-	res, err := svc.Verify(ctx, tx, userID, totpCode)
+	res, err := mfaVerify(ctx, svc, userID, totpCode)
 	if err != nil {
 		t.Fatalf("verify totp: %v", err)
 	}
 	if res.UsedRecoveryCode {
 		t.Error("a TOTP verify must not be flagged as a recovery-code use")
 	}
-	tx.Commit(ctx)
 
 	// Verify consumes a recovery code exactly once.
 	rc := recoveryCodes[0]
-	tx, _ = testPool.Begin(ctx)
-	res, err = svc.Verify(ctx, tx, userID, rc)
+	res, err = mfaVerify(ctx, svc, userID, rc)
 	if err != nil {
 		t.Fatalf("verify recovery code: %v", err)
 	}
 	if !res.UsedRecoveryCode || res.RecoveryCodeID == nil {
 		t.Fatal("expected the recovery-code branch to fire")
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit recovery: %v", err)
-	}
 	// The same recovery code can't be used a second time.
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.Verify(ctx, tx, userID, rc); err == nil {
+	if _, err := mfaVerify(ctx, svc, userID, rc); err == nil {
 		t.Fatal("a recovery code must be single-use")
 	}
-	tx.Rollback(ctx)
 
 	legacyUserID := createUserInTenant(t, ctx, tenantID)
 	legacySecret, err := totp.NewSecret()
@@ -669,13 +655,8 @@ func TestMFATOTPEnrollAndRecoveryCodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("legacy TOTP code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, legacyUserID, legacyCode); err != nil {
-		_ = tx.Rollback(ctx)
+	if _, err := mfaConfirmEnroll(ctx, svc, legacyUserID, legacyCode); err != nil {
 		t.Fatalf("confirm legacy TOTP: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit legacy TOTP migration: %v", err)
 	}
 	if err := testPool.QueryRow(ctx, `
 		SELECT secret, secret_ct, secret_nonce FROM auth.mfa_totp WHERE user_id = $1
@@ -705,18 +686,12 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 		t.Fatalf("commit TOTP enrollment: %v", err)
 	}
 	totpCode, _ := totp.Code(enrollment.Secret, time.Now().UTC())
-	tx, _ = testPool.Begin(ctx)
-	if _, err := service.ConfirmEnroll(ctx, tx, userID, totpCode); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, service, userID, totpCode); err != nil {
 		t.Fatalf("confirm TOTP enrollment: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit TOTP confirmation: %v", err)
 	}
 
 	for attempt := 1; attempt <= 5; attempt++ {
-		tx, _ = testPool.Begin(ctx)
-		_, verifyErr := service.Verify(ctx, tx, userID, "not-a-code")
-		_ = tx.Rollback(ctx)
+		_, verifyErr := mfaVerify(ctx, service, userID, "not-a-code")
 		if attempt < 5 && !errors.Is(verifyErr, errs.ErrMFACodeInvalid) {
 			t.Fatalf("factor attempt %d error = %v", attempt, verifyErr)
 		}
@@ -724,11 +699,9 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 			t.Fatalf("fifth factor attempt error = %v, want exhausted", verifyErr)
 		}
 	}
-	tx, _ = testPool.Begin(ctx)
-	if _, err := service.Verify(ctx, tx, userID, totpCode); !errors.Is(err, errs.ErrMFAAttemptsExceeded) {
+	if _, err := mfaVerify(ctx, service, userID, totpCode); !errors.Is(err, errs.ErrMFAAttemptsExceeded) {
 		t.Fatalf("correct TOTP after exhaustion error = %v", err)
 	}
-	_ = tx.Rollback(ctx)
 	if _, err := testPool.Exec(ctx, `
 		UPDATE auth.mfa_attempt_budgets
 		SET locked_until = NOW() - INTERVAL '1 second', window_started_at = NOW() - INTERVAL '11 minutes'
@@ -736,12 +709,8 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 	`, userID); err != nil {
 		t.Fatalf("expire factor budget: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	if _, err := service.Verify(ctx, tx, userID, totpCode); err != nil {
+	if _, err := mfaVerify(ctx, service, userID, totpCode); err != nil {
 		t.Fatalf("correct TOTP after lockout expiry: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit TOTP after lockout: %v", err)
 	}
 
 	factorID, err := service.EnrollOTPStart(ctx, userID, "email", "budget@example.com")
@@ -749,30 +718,22 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 		t.Fatalf("start email OTP enrollment: %v", err)
 	}
 	enrollmentCode := extractCode(t, recorder.last.Body)
-	tx, _ = testPool.Begin(ctx)
-	if err := service.EnrollOTPConfirm(ctx, tx, userID, factorID, enrollmentCode); err != nil {
+	if err := mfaEnrollOTPConfirm(ctx, service, userID, factorID, enrollmentCode); err != nil {
 		t.Fatalf("confirm email OTP: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit email OTP: %v", err)
 	}
 	if err := service.ChallengeOTP(ctx, userID, factorID); err != nil {
 		t.Fatalf("challenge email OTP: %v", err)
 	}
 	challengeCode := extractCode(t, recorder.last.Body)
 	for attempt := 1; attempt <= 5; attempt++ {
-		tx, _ = testPool.Begin(ctx)
-		_, verifyErr := service.VerifyOTP(ctx, tx, userID, "000000")
-		_ = tx.Rollback(ctx)
+		_, verifyErr := mfaVerifyOTP(ctx, service, userID, "000000")
 		if attempt == 5 && !errors.Is(verifyErr, errs.ErrMFAAttemptsExceeded) {
 			t.Fatalf("fifth OTP attempt error = %v, want exhausted", verifyErr)
 		}
 	}
-	tx, _ = testPool.Begin(ctx)
-	if _, err := service.VerifyOTP(ctx, tx, userID, challengeCode); !errors.Is(err, errs.ErrMFAAttemptsExceeded) {
+	if _, err := mfaVerifyOTP(ctx, service, userID, challengeCode); !errors.Is(err, errs.ErrMFAAttemptsExceeded) {
 		t.Fatalf("correct OTP after exhaustion error = %v", err)
 	}
-	_ = tx.Rollback(ctx)
 }
 
 func TestMFARecoveryCodeConcurrentSingleUse(t *testing.T) {
@@ -791,13 +752,9 @@ func TestMFARecoveryCodeConcurrentSingleUse(t *testing.T) {
 		t.Fatalf("commit enrollment: %v", err)
 	}
 	code, _ := totp.Code(enrollment.Secret, time.Now().UTC())
-	tx, _ = testPool.Begin(ctx)
-	recoveryCodes, err := service.ConfirmEnroll(ctx, tx, userID, code)
+	recoveryCodes, err := mfaConfirmEnroll(ctx, service, userID, code)
 	if err != nil {
 		t.Fatalf("confirm enrollment: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit confirmation: %v", err)
 	}
 
 	const contenders = 8
@@ -809,12 +766,17 @@ func TestMFARecoveryCodeConcurrentSingleUse(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
+			attempt, err := service.ReserveAttempt(ctx, userID, mfa.PurposeFactorVerify)
+			if err != nil {
+				results <- false
+				return
+			}
 			tx, err := testPool.Begin(ctx)
 			if err != nil {
 				results <- false
 				return
 			}
-			result, err := service.Verify(ctx, tx, userID, recoveryCodes[0])
+			result, err := service.Verify(ctx, tx, attempt, recoveryCodes[0])
 			if err != nil || result == nil || !result.UsedRecoveryCode {
 				_ = tx.Rollback(ctx)
 				results <- false
@@ -852,23 +814,19 @@ func TestMFAVerifyUnconfirmed(t *testing.T) {
 	svc.SetCipher(testEnvelope(t))
 
 	// No enrollment at all.
-	tx, _ := testPool.Begin(ctx)
-	if _, err := svc.Verify(ctx, tx, userID, "123456"); err == nil {
+	if _, err := mfaVerify(ctx, svc, userID, "123456"); err == nil {
 		t.Error("verify with no MFA configured must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Start (but never confirm) enrollment.
-	tx, _ = testPool.Begin(ctx)
+	tx, _ := testPool.Begin(ctx)
 	if _, err := svc.StartEnroll(ctx, tx, userID, "a@b.c"); err != nil {
 		t.Fatalf("start enroll: %v", err)
 	}
 	tx.Commit(ctx)
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.Verify(ctx, tx, userID, "123456"); err == nil {
+	if _, err := mfaVerify(ctx, svc, userID, "123456"); err == nil {
 		t.Error("verify before confirmation must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Regenerate requires a confirmed factor.
 	tx, _ = testPool.Begin(ctx)
@@ -968,18 +926,14 @@ func TestMFAEmailOTP(t *testing.T) {
 	enrollCode := extractCode(t, rec.last.Body)
 
 	// Wrong code does not confirm.
-	tx, _ := testPool.Begin(ctx)
-	if err := svc.EnrollOTPConfirm(ctx, tx, userID, factorID, "000000"); err == nil {
+	if err := mfaEnrollOTPConfirm(ctx, svc, userID, factorID, "000000"); err == nil {
 		t.Error("confirm with a wrong OTP must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Correct code confirms.
-	tx, _ = testPool.Begin(ctx)
-	if err := svc.EnrollOTPConfirm(ctx, tx, userID, factorID, enrollCode); err != nil {
+	if err := mfaEnrollOTPConfirm(ctx, svc, userID, factorID, enrollCode); err != nil {
 		t.Fatalf("confirm otp: %v", err)
 	}
-	tx.Commit(ctx)
 
 	// Channel/destination validation.
 	if _, err := svc.EnrollOTPStart(ctx, userID, "carrier-pigeon", "x"); err == nil {
@@ -994,18 +948,14 @@ func TestMFAEmailOTP(t *testing.T) {
 		t.Fatalf("challenge otp: %v", err)
 	}
 	challengeCode := extractCode(t, rec.last.Body)
-	tx, _ = testPool.Begin(ctx)
-	ok, err := svc.VerifyOTP(ctx, tx, userID, challengeCode)
+	ok, err := mfaVerifyOTP(ctx, svc, userID, challengeCode)
 	if err != nil || !ok {
 		t.Fatalf("verify otp = %v, %v; want true", ok, err)
 	}
-	tx.Commit(ctx)
 	// Re-using the consumed code fails.
-	tx, _ = testPool.Begin(ctx)
-	if ok, _ := svc.VerifyOTP(ctx, tx, userID, challengeCode); ok {
+	if ok, _ := mfaVerifyOTP(ctx, svc, userID, challengeCode); ok {
 		t.Error("an OTP code must be single-use")
 	}
-	tx.Rollback(ctx)
 
 	// Expired code is rejected: send one, then push it into the past.
 	if err := svc.ChallengeOTP(ctx, userID, factorID); err != nil {
@@ -1017,11 +967,9 @@ func TestMFAEmailOTP(t *testing.T) {
 		codes.Hash(staleCode)); err != nil {
 		t.Fatalf("expire code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	if ok, _ := svc.VerifyOTP(ctx, tx, userID, staleCode); ok {
+	if ok, _ := mfaVerifyOTP(ctx, svc, userID, staleCode); ok {
 		t.Error("an expired OTP code must be rejected")
 	}
-	tx.Rollback(ctx)
 
 	// Listing masks the destination.
 	factors, err := svc.ListOTPFactors(ctx, userID)
@@ -1144,11 +1092,9 @@ func TestMFAEnrollSatisfiesStepUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("totp code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, svc, userID, code); err != nil {
 		t.Fatalf("confirm enroll: %v", err)
 	}
-	tx.Commit(ctx)
 
 	// The fix: enrollment itself counts as a recent verification.
 	ok, at, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
@@ -1322,11 +1268,9 @@ func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
 	}
 	tx.Commit(ctx)
 	code, _ := totp.Code(enr.Secret, time.Now().UTC())
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, svc, userID, code); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	tx.Commit(ctx)
 
 	// Enrollment now records a verification (QID-17 fix), which satisfies the
 	// step-up window. Clear it so the "without step-up" assertions below still

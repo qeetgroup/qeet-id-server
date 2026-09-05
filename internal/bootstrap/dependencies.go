@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -93,7 +94,17 @@ type namedWorker struct {
 // HTTP dependency set plus the background workers to supervise. Keeping all
 // wiring here lets main() focus on process lifecycle.
 func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (Deps, []namedWorker) {
-	outboundPolicy := egress.NewPolicy(egress.Options{})
+	var egressProxy *url.URL
+	if raw := strings.TrimSpace(cfg.EgressProxyURL); raw != "" {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			slog.Error("parse EGRESS_PROXY_URL", "err", err)
+			os.Exit(1)
+		}
+		egressProxy = parsed
+		slog.Info("outbound integrations routed through egress proxy", "host", egressProxy.Host)
+	}
+	outboundPolicy := egress.NewPolicy(egress.Options{ProxyURL: egressProxy})
 	if cfg.ServiceEnv == "dev" {
 		outboundPolicy = egress.DevelopmentPolicy()
 	}
@@ -112,6 +123,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Error("init domain encryption", "err", err)
 		os.Exit(1)
 	}
+	// Pin the unwrapped DEK for the process lifetime. Both vaults and every
+	// envelope-encrypted column derive from this one key, so re-unwrapping per
+	// call would buy nothing — the plaintext key is already resident. The
+	// consequence is that rotating a KMS-backed DEK needs a restart, not just a
+	// KMS-side rotation; see docs/JWT-KEY-ROTATION.md for the same two-phase
+	// shape applied to signing keys.
 	keyProvider = secret.StaticKeyProvider{Key: dataKey}
 	signingKeyPEM := cfg.JWTSigningKey
 	ephemeralSigningKey := signingKeyPEM == ""
@@ -354,7 +371,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Model:     cfg.QeetaiModel,
 		BaseURL:   cfg.QeetaiBaseURL,
 		MaxTokens: cfg.QeetaiMaxTokens,
-	})
+	}, outboundPolicy)
 	if err != nil {
 		slog.Error("init Qeet AI provider config", "err", err)
 		os.Exit(1)

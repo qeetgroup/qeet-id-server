@@ -154,15 +154,15 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("totp start: %v", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
 	code, err := totp.Code(enr.Secret, time.Now())
 	if err != nil {
 		t.Fatalf("totp code: %v", err)
 	}
-	if _, err := mfaSvc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, mfaSvc, userID, code); err != nil {
 		t.Fatalf("totp confirm: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit: %v", err)
 	}
 
 	// Now login must challenge for a second factor — no tokens yet.
@@ -219,12 +219,12 @@ func TestMFALoginAttemptBudgetAndConcurrentConsumption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start enrollment: %v", err)
 	}
-	code, _ := totp.Code(enrollment.Secret, time.Now().UTC())
-	if _, err := mfaService.ConfirmEnroll(ctx, tx, userID, code); err != nil {
-		t.Fatalf("confirm enrollment: %v", err)
-	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit enrollment: %v", err)
+	}
+	code, _ := totp.Code(enrollment.Secret, time.Now().UTC())
+	if _, err := mfaConfirmEnroll(ctx, mfaService, userID, code); err != nil {
+		t.Fatalf("confirm enrollment: %v", err)
 	}
 
 	login, err := authService.Login(ctx, auth.LoginInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
@@ -584,15 +584,15 @@ func TestAdminResetMFA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("totp start: %v", err)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
 	code, err := totp.Code(enr.Secret, time.Now())
 	if err != nil {
 		t.Fatalf("totp code: %v", err)
 	}
-	if _, err := mfaSvc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, mfaSvc, userID, code); err != nil {
 		t.Fatalf("totp confirm: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit: %v", err)
 	}
 	if ok, err := mfaSvc.IsEnrolled(ctx, userID); err != nil || !ok {
 		t.Fatalf("expected enrolled before reset (ok=%v err=%v)", ok, err)
@@ -1830,7 +1830,7 @@ func TestSAMLRequestCorrelationAndConcurrentReplay(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			results <- service.ConsumeValidatedResponse(ctx, connection.ID, requestID, "_response-once", []string{"_assertion-once"})
+			results <- service.ConsumeValidatedResponse(ctx, connection.ID, requestID, "_response-once", []string{"_assertion-once"}, false)
 		}()
 	}
 	close(start)
@@ -1850,11 +1850,20 @@ func TestSAMLRequestCorrelationAndConcurrentReplay(t *testing.T) {
 	if successes != 1 || replays != contenders-1 {
 		t.Fatalf("concurrent SAML consumption: successes=%d replays=%d", successes, replays)
 	}
-	if err := service.ConsumeValidatedResponse(ctx, connection.ID, "_unknown-request", "_new-response", []string{"_new-assertion"}); !errors.Is(err, errs.ErrSAMLRequestCorrelation) {
+	if err := service.ConsumeValidatedResponse(ctx, connection.ID, "_unknown-request", "_new-response", []string{"_new-assertion"}, false); !errors.Is(err, errs.ErrSAMLRequestCorrelation) {
 		t.Fatalf("unknown InResponseTo error = %v, want correlation failure", err)
 	}
-	if err := service.ConsumeValidatedResponse(ctx, connection.ID, "", "_idp-response", []string{"_idp-assertion"}); !errors.Is(err, errs.ErrSAMLRequestCorrelation) {
+
+	// IdP-initiated: refused by default, accepted once the connection opts in,
+	// and still covered by replay protection either way.
+	if err := service.ConsumeValidatedResponse(ctx, connection.ID, "", "_idp-response", []string{"_idp-assertion"}, false); !errors.Is(err, errs.ErrSAMLRequestCorrelation) {
 		t.Fatalf("IdP-initiated response error = %v, want correlation failure", err)
+	}
+	if err := service.ConsumeValidatedResponse(ctx, connection.ID, "", "_idp-response", []string{"_idp-assertion"}, true); err != nil {
+		t.Fatalf("opted-in IdP-initiated response error = %v, want accepted", err)
+	}
+	if err := service.ConsumeValidatedResponse(ctx, connection.ID, "", "_idp-response", []string{"_idp-assertion"}, true); !errors.Is(err, errs.ErrSAMLReplayDetected) {
+		t.Fatalf("replayed IdP-initiated response error = %v, want replay detected", err)
 	}
 }
 
@@ -2405,5 +2414,121 @@ func TestAnalyticsOverviewRuns(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("an"))
 	if _, err := analytics.NewReader(testPool).Overview(ctx, tenantID); err != nil {
 		t.Fatalf("analytics overview: %v", err)
+	}
+}
+
+// TestSocialEmailVerifiedStatesOnProvisioning pins the three states an OIDC
+// provider can put the account in, independently.
+//
+// Refusing to provision without a verified claim would lock out every provider
+// that omits `email_verified`, so provisioning is allowed. What must not happen
+// is the provider's silence being upgraded into a verified address: other flows
+// treat email_verified_at as proof of control, so an unverified or absent claim
+// has to land as NULL.
+func TestSocialEmailVerifiedStatesOnProvisioning(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		name         string
+		claim        string // the email_verified fragment, or "" to omit it entirely
+		wantVerified bool
+	}{
+		{"claim true", `,"email_verified":true`, true},
+		{"claim false", `,"email_verified":false`, false},
+		{"claim absent", ``, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			email := uniqueSlug("social-state") + "@example.com"
+			idp := fakeIdPWithUserinfo(t, fmt.Sprintf(
+				`{"sub":%q,"email":%q%s,"name":"New User"}`, uniqueSlug("sub"), email, tc.claim))
+			defer idp.Close()
+
+			tenantID := createTenant(t, ctx, uniqueSlug("social-state"))
+			authService, _ := newAuth()
+			service := social.NewService(testPool, authService, "http://app.local", egress.DevelopmentPolicy())
+			service.SetCipher(testEnvelope(t))
+			provider := "stateprov"
+			if _, err := service.UpsertProvider(ctx, social.CreateProviderInput{
+				TenantID: tenantID, Provider: provider, ClientID: "cid", ClientSecret: "secret",
+				DiscoveryURL: idp.URL + "/.well-known/openid-configuration",
+			}); err != nil {
+				t.Fatalf("register provider: %v", err)
+			}
+
+			authorizeURL, err := service.BeginLogin(ctx, provider, tenantID.String(),
+				"http://api.local/v1/social/"+provider+"/callback", "")
+			if err != nil {
+				t.Fatalf("begin login: %v", err)
+			}
+			parsed, _ := url.Parse(authorizeURL)
+			if _, err := service.CompleteCallback(ctx, provider, parsed.Query().Get("state"), "code"); err != nil {
+				t.Fatalf("provisioning a new account must succeed regardless of the claim, got %v", err)
+			}
+
+			var verifiedAt *time.Time
+			if err := testPool.QueryRow(ctx, `
+				SELECT email_verified_at FROM "user".users WHERE tenant_id = $1 AND email = $2
+			`, tenantID, email).Scan(&verifiedAt); err != nil {
+				t.Fatalf("read provisioned user: %v", err)
+			}
+			if tc.wantVerified && verifiedAt == nil {
+				t.Error("a verified claim should carry through to email_verified_at")
+			}
+			if !tc.wantVerified && verifiedAt != nil {
+				t.Error("an unverified or absent claim must NOT mark the address verified")
+			}
+		})
+	}
+}
+
+// TestSocialAbsentEmailVerifiedCannotAdoptExistingAccount covers the takeover
+// path for the third state: an omitted claim must be treated exactly like an
+// explicit false when an account with that address already exists.
+func TestSocialAbsentEmailVerifiedCannotAdoptExistingAccount(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	victimEmail := uniqueSlug("social-absent") + "@example.com"
+	// Note: no email_verified key at all.
+	idp := fakeIdPWithUserinfo(t, fmt.Sprintf(
+		`{"sub":"attacker-absent","email":%q,"name":"Attacker"}`, victimEmail))
+	defer idp.Close()
+
+	tenantID := createTenant(t, ctx, uniqueSlug("social-absent"))
+	victimID := createUserInTenant(t, ctx, tenantID)
+	if _, err := testPool.Exec(ctx,
+		`UPDATE "user".users SET email = $2 WHERE id = $1`, victimID, victimEmail); err != nil {
+		t.Fatalf("set victim email: %v", err)
+	}
+
+	authService, _ := newAuth()
+	service := social.NewService(testPool, authService, "http://app.local", egress.DevelopmentPolicy())
+	service.SetCipher(testEnvelope(t))
+	if _, err := service.UpsertProvider(ctx, social.CreateProviderInput{
+		TenantID: tenantID, Provider: "absentprov", ClientID: "cid", ClientSecret: "secret",
+		DiscoveryURL: idp.URL + "/.well-known/openid-configuration",
+	}); err != nil {
+		t.Fatalf("register provider: %v", err)
+	}
+	authorizeURL, err := service.BeginLogin(ctx, "absentprov", tenantID.String(),
+		"http://api.local/v1/social/absentprov/callback", "")
+	if err != nil {
+		t.Fatalf("begin login: %v", err)
+	}
+	parsed, _ := url.Parse(authorizeURL)
+	if _, err := service.CompleteCallback(ctx, "absentprov", parsed.Query().Get("state"), "code"); !errors.Is(err, errs.ErrSocialEmailUnverified) {
+		t.Fatalf("absent email_verified adopting an existing account: err = %v, want unverified", err)
+	}
+	var links int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM "user".external_identities
+		WHERE tenant_id = $1 AND subject = 'attacker-absent'
+	`, tenantID).Scan(&links); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if links != 0 {
+		t.Fatalf("a rejected adoption still created %d identity links", links)
 	}
 }

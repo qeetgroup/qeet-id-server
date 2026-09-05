@@ -466,9 +466,80 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.SetPassword(r.Context(), id, hash); err != nil {
+	if err := h.setPasswordWithEvidence(r, tenantID, id, hash); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// setPasswordWithEvidence writes the credential, evicts the target's sessions,
+// and records the act — all in one transaction.
+//
+// An administrator resetting a password is nearly always incident response, so
+// leaving the compromised sessions live defeats the point of the reset. This is
+// the same guarantee ChangePassword gives for self-service; the two paths had
+// drifted, and this one additionally recorded nothing at all.
+func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid.UUID, hash string) error {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+		    password_hash = EXCLUDED.password_hash, updated_at = NOW()
+	`, userID, hash); err != nil {
+		return err
+	}
+	// Every session, including any the admin is not aware of. Unlike the
+	// self-service change there is no session to preserve here: the caller is a
+	// different person from the account holder.
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, userID); err != nil {
+		return err
+	}
+
+	actor := httpx.PrincipalFromCtx(ctx)
+	var actorID *uuid.UUID
+	actorType := "system"
+	if actor != nil {
+		actorID = actor.UserID
+		if actor.ActorType != "" {
+			actorType = actor.ActorType
+		}
+	}
+	target := userID
+	tenant := tenantID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenant,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "user.password_set",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"sessions_revoked": true},
+	}); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: userID,
+		Topic:       "user.events",
+		EventType:   "user.password_set",
+		Payload: map[string]any{
+			"user_id": userID, "tenant_id": tenantID, "sessions_revoked": true,
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

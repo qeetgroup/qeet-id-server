@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,8 +21,10 @@ type Checker interface {
 }
 
 type compiledRoute struct {
-	re     *regexp.Regexp
-	policy RoutePolicy
+	pattern   string
+	re        *regexp.Regexp
+	wildcards int
+	policy    RoutePolicy
 }
 
 // RoutePolicy is the complete authorization contract for one authenticated
@@ -51,15 +54,6 @@ func PermissionPolicy(permission string) RoutePolicy {
 }
 
 func UserOnlyPolicy() RoutePolicy { return RoutePolicy{AllowUser: true} }
-
-func ScopedMachinePolicy(scopes ...string) RoutePolicy {
-	return RoutePolicy{
-		MachineScopes: scopes,
-		AllowAPIKey:   true,
-		AllowService:  true,
-		AllowAgent:    true,
-	}
-}
 
 func HandlerAuthorizedPolicy(allowUser bool) RoutePolicy {
 	return RoutePolicy{
@@ -102,7 +96,26 @@ func Enforce(c Checker, policies map[string]RoutePolicy) func(http.Handler) http
 		if !ok {
 			continue
 		}
-		byMethod[method] = append(byMethod[method], compiledRoute{re: patternToRegex(pattern), policy: policy})
+		byMethod[method] = append(byMethod[method], compiledRoute{
+			pattern:   pattern,
+			re:        patternToRegex(pattern),
+			wildcards: strings.Count(pattern, "{"),
+			policy:    policy,
+		})
+	}
+	// Two patterns can match one concrete path — "/v1/vault/{name}" also matches
+	// "/v1/vault/tokens", which is separately classified. Ranging over a Go map
+	// would pick a winner by iteration order, so the policy applied to such a
+	// path could differ between processes. Sort literal-first (chi's own
+	// precedence), then by pattern for a total order.
+	for method := range byMethod {
+		routes := byMethod[method]
+		sort.SliceStable(routes, func(i, j int) bool {
+			if routes[i].wildcards != routes[j].wildcards {
+				return routes[i].wildcards < routes[j].wildcards
+			}
+			return routes[i].pattern < routes[j].pattern
+		})
 	}
 
 	lookup := func(method, path string) (RoutePolicy, bool) {

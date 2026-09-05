@@ -286,7 +286,7 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 103 up/down pairs, `0001`–`0104`
+**Evidence:** `internal/platform/database/migrations/` — 105 up/down pairs, `0001`–`0106` (`0082` intentionally absent)
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 
@@ -323,7 +323,7 @@ The source states the rule directly:
 
 ### There is no PostgreSQL RLS
 
-**Verified: zero `ROW LEVEL SECURITY` or `CREATE POLICY` statements across all 103 migrations.**
+**Verified: zero `ROW LEVEL SECURITY` or `CREATE POLICY` statements across all 105 migrations.**
 
 | Enforcement | A missing `tenant_id` predicate causes |
 |---|---|

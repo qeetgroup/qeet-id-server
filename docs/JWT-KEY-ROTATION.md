@@ -35,6 +35,23 @@ deployment. Replicas refresh the registry every
    expired public key from JWKS. Non-expiring JWT-VCs must be revoked/reissued
    before that deadline or the grace period must cover their intended lifetime.
 
+## What a staged candidate can already do
+
+Between pre-stage and activate, the candidate's **public** key is published in
+JWKS and accepted for verification on every replica. That is what makes the
+activation step seamless — a replica that has already switched can hand a token
+to one that has not — but it means the trusted verification set widens the
+moment you pre-stage, not the moment you activate.
+
+Practically: anyone holding the candidate **private** key can mint tokens the
+whole fleet accepts, before `JWT_ACTIVATE_SIGNING_KEY` is ever set. Treat
+pre-staging as the point at which the new key becomes security-relevant, and
+keep the pre-stage window short.
+
+Retired keys are the mirror image: their private material is deleted from the
+registry on activation (`private_key_ct = NULL`) and only the public key
+survives, until `retire_at` passes.
+
 ## Rollback
 
 During the grace period, deploy the prior private key as `JWT_SIGNING_KEY`,

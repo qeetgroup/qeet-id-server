@@ -188,17 +188,14 @@ func NewRouter(d Deps) http.Handler {
 			//     already gate them — so the double-submit only adds friction.
 			//     NB: /v1/auth/session (the cookie-session creator) is deliberately
 			//     NOT exempt — it stays CSRF-protected.
-			ExemptPaths: []string{
-				"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
-				"/v1/oauth/token-code", "/v1/oauth/device_authorization", "/v1/oauth/bc-authorize",
-				"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
-				"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
-				"/v1/passkeys/login/", "/v1/social/", "/v1/invites/accept",
-				"/v1/billing/webhooks/",  // provider-signed (Stripe/Razorpay), no cookie session
-				"/v1/billing/sandbox/",   // dev-only mock hosted-checkout page + pay (no cookie session)
-				"/v1/agents/token",       // agent-credential auth (no cookie session)
-				"/v1/credentials/verify", // public JWT-VC verification (no cookie session)
-			},
+			// Entries are exact paths unless they end in "/" (prefix) or contain
+			// "*" (one path segment). Keep them narrow: a prefix over a whole
+			// feature area also exempts every authenticated mutation later added
+			// under it. Two such cases were found and closed here — "/v1/social/"
+			// was exempting POST /v1/social/providers (a connection.write that
+			// overwrites a tenant's social IdP), and "/v1/oauth/bc-authorize" as
+			// a prefix was exempting the authenticated .../decision endpoint.
+			ExemptPaths: csrfExemptPaths(),
 		}))
 	}
 
@@ -353,4 +350,25 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Qeetai.Mount(r)
 	d.Search.Mount(r)
 	d.Activity.Mount(r)
+}
+
+// csrfExemptPaths lists the paths that skip the double-submit/origin check.
+// Extracted so TestNoAuthenticatedRouteIsCSRFExempt can assert the list never
+// covers a route in the authenticated tree.
+func csrfExemptPaths() []string {
+	return []string{
+		"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
+		"/v1/oauth/token-code", "/v1/oauth/device_authorization",
+		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
+		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
+		"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
+		"/v1/passkeys/login/",
+		"/v1/social/exchange",    // one-time code exchange, no cookie session
+		"/v1/social/*/callback",  // Apple response_mode=form_post lands cross-site
+		"/v1/invites/accept",     //
+		"/v1/billing/webhooks/",  // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/billing/sandbox/",   // dev-only mock hosted-checkout page + pay (no cookie session)
+		"/v1/agents/token",       // agent-credential auth (no cookie session)
+		"/v1/credentials/verify", // public JWT-VC verification (no cookie session)
+	}
 }

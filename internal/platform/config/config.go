@@ -98,6 +98,12 @@ type Config struct {
 	HTTPIdleTimeout       time.Duration `envconfig:"HTTP_IDLE_TIMEOUT" default:"60s"`
 	HTTPMaxHeaderBytes    int           `envconfig:"HTTP_MAX_HEADER_BYTES" default:"65536"`
 
+	// EgressProxyURL routes tenant-configured outbound HTTP (webhooks, auth
+	// hooks, SIEM sinks, social/token-vault calls) through a forward proxy.
+	// Ambient HTTPS_PROXY is ignored on purpose — see egress.Options.ProxyURL.
+	// When set, the proxy resolves destinations, so it owns address filtering.
+	EgressProxyURL string `envconfig:"EGRESS_PROXY_URL" default:""`
+
 	AllowedOriginsRaw   string `envconfig:"ALLOWED_ORIGINS" default:""`
 	AuthDevTrustHeaders bool   `envconfig:"AUTH_DEV_TRUST_HEADERS" default:"false"`
 	CSRFDisabled        bool   `envconfig:"CSRF_DISABLED" default:"false"`
@@ -293,6 +299,12 @@ func (c *Config) Validate() error {
 	}
 	if c.JWTSigningKeyRefreshInterval <= 0 {
 		problems = append(problems, "JWT_SIGNING_KEY_REFRESH_INTERVAL must be positive")
+	}
+	if raw := strings.TrimSpace(c.EgressProxyURL); raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || !u.IsAbs() || u.Host == "" {
+			problems = append(problems, "EGRESS_PROXY_URL must be an absolute URL with a host")
+		}
 	}
 	switch c.SecretsProvider {
 	case "", "static":

@@ -27,12 +27,11 @@ const maxImportRows = 1000
 type userCreator func(ctx context.Context, in CreateInput) (*User, error)
 
 // runBulkImport validates and creates each row, continuing past per-row
-// failures (partial success). It returns the summary plus the users that were
-// created, so the caller can emit created events. HTTP/DB specifics are kept
+// failures (partial success). `create` writes each user's own audit and outbox
+// evidence, so only the summary comes back here. HTTP/DB specifics are kept
 // out — `create` is injected — so this is pure and testable.
-func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) (BulkImportResult, []*User) {
+func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) BulkImportResult {
 	var res BulkImportResult
-	created := make([]*User, 0, len(rows))
 	for i, row := range rows {
 		line := i + 1
 		if v != nil {
@@ -42,7 +41,7 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 				continue
 			}
 		}
-		u, err := create(ctx, CreateInput{
+		_, err := create(ctx, CreateInput{
 			TenantID:    tenantID,
 			Email:       row.Email,
 			Password:    row.Password,
@@ -61,9 +60,8 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			continue
 		}
 		res.Succeeded++
-		created = append(created, u)
 	}
-	return res, created
+	return res
 }
 
 // firstValidationMsg renders a concise message from a validator error.
@@ -113,8 +111,7 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		return h.createWithEvidence(r, ci, hash)
 	}
 
-	res, created := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
-	_ = created
+	res := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
 	if err := h.auditBulkImport(r, tenantID, res); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -163,13 +160,12 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	create := func(ctx context.Context, ci CreateInput) (*User, error) {
 		return h.createWithEvidence(r, ci, "")
 	}
-	res, created := runBulkImport(r.Context(), h.Validate, tenantID, rows, create)
+	res := runBulkImport(r.Context(), h.Validate, tenantID, rows, create)
 	// Parse-level failures (rows that never reached validation) count toward
 	// the same summary, with their own line numbers from the source file.
 	res.Failed += len(parseErrs)
 	res.Errors = append(parseErrs, res.Errors...)
 
-	_ = created
 	if err := h.auditBulkImport(r, tenantID, res); err != nil {
 		httpx.WriteError(w, r, err)
 		return

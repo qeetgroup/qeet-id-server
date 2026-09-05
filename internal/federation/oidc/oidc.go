@@ -195,22 +195,67 @@ func validateClientInput(in CreateClientInput) error {
 	return nil
 }
 
+// validateRegisteredRedirectURI accepts the three redirect forms RFC 8252
+// sanctions: an HTTPS URL, an HTTP loopback URL, and a private-use scheme for
+// native apps. A fragment or userinfo component is rejected everywhere — the
+// authorization response owns the fragment, and credentials in a registered
+// URI would leak through logs and referrers.
 func validateRegisteredRedirectURI(raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || !u.IsAbs() || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+	if err != nil || !u.IsAbs() || u.User != nil || u.Fragment != "" {
 		return errs.ErrOIDCRedirectURIInvalid.WithDetail("redirect URI must be an absolute URI without userinfo or fragment")
 	}
-	switch strings.ToLower(u.Scheme) {
+	switch scheme := strings.ToLower(u.Scheme); scheme {
 	case "https":
+		if u.Hostname() == "" {
+			break
+		}
 		return nil
 	case "http":
+		// Loopback only. RFC 8252 §8.3 prefers a literal address because
+		// "localhost" can resolve to a non-loopback interface, but rejecting it
+		// outright would break local development, so both are accepted.
 		host := strings.ToLower(u.Hostname())
-		ip := net.ParseIP(host)
-		if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	default:
+		// Private-use scheme, e.g. "com.example.app:/oauth2redirect". RFC 8252
+		// §7.1 requires a reverse-DNS-style scheme the app controls, so insist
+		// on a dot and reject anything resembling a network scheme.
+		if isPrivateUseScheme(scheme) {
 			return nil
 		}
 	}
-	return errs.ErrOIDCRedirectURIInvalid.WithDetail("redirect URI must use HTTPS or an HTTP loopback host")
+	return errs.ErrOIDCRedirectURIInvalid.WithDetail(
+		"redirect URI must use HTTPS, an HTTP loopback IP, or a reverse-DNS private-use scheme")
+}
+
+// reservedRedirectSchemes are network schemes a client must never register as
+// a private-use redirect, even though some contain a dot.
+var reservedRedirectSchemes = map[string]struct{}{
+	"http": {}, "https": {}, "ftp": {}, "file": {}, "data": {},
+	"javascript": {}, "ws": {}, "wss": {}, "mailto": {}, "blob": {},
+}
+
+func isPrivateUseScheme(scheme string) bool {
+	if _, reserved := reservedRedirectSchemes[scheme]; reserved {
+		return false
+	}
+	// Must look like a domain the app owns, reversed: at least one dot, and no
+	// leading/trailing/doubled separators.
+	if !strings.Contains(scheme, ".") || strings.HasPrefix(scheme, ".") ||
+		strings.HasSuffix(scheme, ".") || strings.Contains(scheme, "..") {
+		return false
+	}
+	for _, char := range scheme {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') ||
+			char == '.' || char == '-' || char == '+' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // ShadowAICandidate is an OIDC client capable of unattended machine access
@@ -369,6 +414,43 @@ func (s *Service) activeClientTenantMember(ctx context.Context, userID uuid.UUID
 		)
 	`, userID, clientID).Scan(&member)
 	return member, err
+}
+
+// RegisteredRedirect reports whether redirectURI is registered for the client.
+// The authorize endpoint uses it to decide whether a failure can be reported to
+// the relying party or has to be rendered here.
+func (s *Service) RegisteredRedirect(ctx context.Context, clientID, redirectURI string) bool {
+	if clientID == "" || redirectURI == "" {
+		return false
+	}
+	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
+	if err != nil {
+		return false
+	}
+	return contains(info.RedirectUris, redirectURI)
+}
+
+// activeTenantPrincipal reports whether a user is live enough to be granted a
+// tenant-stamped token: the user is active and not deleted, and the tenant is
+// active and not deleted.
+//
+// It deliberately does not assert *which* membership model the caller uses —
+// the authorization-code path keys off rbac.user_roles while device and CIBA
+// key off users.tenant_id (see the note on activeClientTenantMember). This
+// covers the liveness half, which every flow needs regardless.
+func (s *Service) activeTenantPrincipal(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
+	var live bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM "user".users u
+			JOIN tenant.tenants t ON t.id = $2
+			WHERE u.id = $1
+			  AND u.status = 'active' AND u.deleted_at IS NULL
+			  AND t.status = 'active' AND t.deleted_at IS NULL
+		)
+	`, userID, tenantID).Scan(&live)
+	return live, err
 }
 
 // ClientName resolves a client's display name and tenant from its client_id —
@@ -1125,7 +1207,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 
 	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
 		return
 	}
 	if !has {
@@ -1138,11 +1220,41 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	code, _, err := h.Service.Authorize(r.Context(), userID, clientID, redirect,
 		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"))
 	if err != nil {
-		httpx.WriteError(w, r, err)
+		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
 	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state"), "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
+}
+
+// authorizeError reports a failure that happened before a code was minted.
+// RFC 6749 §4.1.2.1 wants these delivered to the client's registered
+// redirect_uri so the RP can react; we only render the error here when the URI
+// can't be confirmed as registered, since bouncing to an unverified URI would
+// make this endpoint an open redirect.
+func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientID, redirect, state string, err error) {
+	if redirect == "" || !h.Service.RegisteredRedirect(r.Context(), clientID, redirect) {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	oauthCode := "server_error"
+	switch {
+	case errors.Is(err, errs.ErrOIDCUserTenantMismatch):
+		oauthCode = "access_denied"
+	case errors.Is(err, errs.ErrOIDCScopeNotPermitted):
+		oauthCode = "invalid_scope"
+	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
+		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
+		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported):
+		oauthCode = "invalid_request"
+	case errors.Is(err, errs.ErrOIDCRedirectURIInvalid):
+		// The URI validated as registered above, so this is some other
+		// redirect-shaped rejection; do not bounce it back.
+		httpx.WriteError(w, r, err)
+		return
+	}
+	http.Redirect(w, r, appendQuery(redirect,
+		"error", oauthCode, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
 type decisionInput struct {

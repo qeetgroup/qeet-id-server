@@ -82,6 +82,12 @@ func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error)
 	return purgeRequestFromRow(row), nil
 }
 
+// userBelongsToTenant keys off users.tenant_id — the user's home tenant —
+// rather than rbac.user_roles membership, which is what OIDC authorization
+// uses. The two answers differ for a guest who holds a role in another tenant,
+// and that difference is deliberate: erasure is destructive and irreversible,
+// so only the tenant that owns the record may order it. A tenant the user
+// merely has a role in can revoke that role, not delete the person.
 func (s *Service) userBelongsToTenant(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
 	var owned bool
 	err := s.pool.QueryRow(ctx, `

@@ -392,3 +392,138 @@ func urlFilter(name string) string {
 }
 
 const schemaPatchOp = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+
+// TestSCIMUserMutationsEmitAtomicEvidence covers the residual half of
+// QID-AUD-018: SCIM is the highest-volume user-mutation surface in the product
+// and previously wrote no audit row and emitted no domain event for create,
+// replace, patch or delete — leaving IdP-driven provisioning and, more
+// importantly, deprovisioning invisible to incident response.
+func TestSCIMUserMutationsEmitAtomicEvidence(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	f := newSCIMFixture(t, ctx)
+
+	email := "evidence-" + uuid.NewString()[:8] + "@example.com"
+	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{
+		"userName": email, "displayName": "Evidence User", "active": true,
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create user = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created user: %v", err)
+	}
+	userID := uuid.MustParse(created.ID)
+
+	// Deactivate via PATCH — the deprovisioning shape IdPs actually use.
+	rec = f.do(t, http.MethodPatch, "/scim/v2/Users/"+created.ID, map[string]any{
+		"Operations": []map[string]any{{"op": "replace", "path": "active", "value": false}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch user = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	rec = f.do(t, http.MethodDelete, "/scim/v2/Users/"+created.ID, nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete user = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	wantActions := []string{"user.created", "user.updated", "user.deleted"}
+
+	auditActions := collectColumn(t, ctx, `
+		SELECT action FROM audit.events
+		WHERE tenant_id = $1 AND resource_type = 'user' AND resource_id = $2
+		ORDER BY created_at, action
+	`, f.tenantID, userID)
+	if !equalStrings(auditActions, wantActions) {
+		t.Errorf("audit actions = %v, want %v", auditActions, wantActions)
+	}
+
+	// Attribution has to name the SCIM credential, not a user and not "system":
+	// there is no human actor on this path, and mislabelling it would make the
+	// trail misleading rather than merely thin.
+	actorTypes := collectColumn(t, ctx, `
+		SELECT DISTINCT actor_type FROM audit.events
+		WHERE tenant_id = $1 AND resource_id = $2
+	`, f.tenantID, userID)
+	if len(actorTypes) != 1 || actorTypes[0] != "scim" {
+		t.Errorf("actor types = %v, want [scim]", actorTypes)
+	}
+
+	outboxTypes := collectColumn(t, ctx, `
+		SELECT event_type FROM platform.outbox
+		WHERE aggregate_id = $1 AND topic = 'user.events'
+		ORDER BY created_at, event_type
+	`, userID)
+	if !equalStrings(outboxTypes, wantActions) {
+		t.Errorf("outbox event types = %v, want %v", outboxTypes, wantActions)
+	}
+}
+
+// TestSCIMCreateRollsBackWithoutEvidence proves the write is atomic rather than
+// merely accompanied: with the audit table refusing inserts, the user must not
+// exist afterwards.
+func TestSCIMCreateRollsBackWithoutEvidence(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	f := newSCIMFixture(t, ctx)
+
+	if _, err := testPool.Exec(ctx, `
+		CREATE OR REPLACE FUNCTION scim_audit_block() RETURNS trigger AS $$
+		BEGIN RAISE EXCEPTION 'audit write blocked'; END; $$ LANGUAGE plpgsql;
+		CREATE TRIGGER scim_audit_block_trg BEFORE INSERT ON audit.events
+		FOR EACH ROW EXECUTE FUNCTION scim_audit_block();
+	`); err != nil {
+		t.Fatalf("install audit trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DROP TRIGGER IF EXISTS scim_audit_block_trg ON audit.events`)
+	})
+
+	email := "rollback-" + uuid.NewString()[:8] + "@example.com"
+	rec := f.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{"userName": email, "active": true})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create with blocked audit = %d, want 500", rec.Code)
+	}
+	var users int
+	if err := testPool.QueryRow(ctx,
+		`SELECT count(*) FROM "user".users WHERE email = $1`, email).Scan(&users); err != nil {
+		t.Fatalf("count users: %v", err)
+	}
+	if users != 0 {
+		t.Errorf("user rows = %d, want 0 — the mutation committed without its evidence", users)
+	}
+}
+
+func collectColumn(t *testing.T, ctx context.Context, sql string, args ...any) []string {
+	t.Helper()
+	rows, err := testPool.Query(ctx, sql, args...)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

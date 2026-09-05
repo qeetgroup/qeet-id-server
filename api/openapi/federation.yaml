@@ -3765,6 +3765,15 @@ components:
           type: string
         status:
           type: string
+        allow_idp_initiated:
+          type: boolean
+          default: false
+          description: >-
+            Accept unsolicited assertions that carry no InResponseTo, i.e.
+            IdP-initiated SSO. Off by default. Enabling it relaxes only the
+            AuthnRequest correlation — signature, issuer, audience, destination
+            and time-condition validation are unchanged, and response and
+            assertion IDs are still consumed for replay protection.
         created_at:
           type: string
           format: date-time

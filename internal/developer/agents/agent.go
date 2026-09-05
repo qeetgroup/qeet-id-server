@@ -113,7 +113,7 @@ func (s *Service) transition(ctx context.Context, id, tenantID uuid.UUID, target
 	defer tx.Rollback(ctx)
 	var cur string
 	err = tx.QueryRow(ctx, `
-		SELECT status FROM tenant.agents WHERE id = $1 AND tenant_id = $2 FOR UPDATE
+		SELECT status FROM auth.agents WHERE id = $1 AND tenant_id = $2 FOR UPDATE
 	`, id, tenantID).Scan(&cur)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", errs.ErrAgentNotFound

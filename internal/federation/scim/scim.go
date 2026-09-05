@@ -26,6 +26,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -225,12 +226,12 @@ func (s *Service) listProvisioned(ctx context.Context, tenantID uuid.UUID, email
 	return out, total, rows.Err()
 }
 
-func (s *Service) tagProvisioned(ctx context.Context, id uuid.UUID, externalID string) error {
+func (s *Service) tagProvisionedTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, externalID string) error {
 	var ext *string
 	if externalID != "" {
 		ext = &externalID
 	}
-	return s.q.TagProvisionedUser(ctx, dbgen.TagProvisionedUserParams{
+	return s.q.WithTx(tx).TagProvisionedUser(ctx, dbgen.TagProvisionedUserParams{
 		ExternalID: ext,
 		ID:         id,
 	})
@@ -651,8 +652,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p scimUserPayload
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeSCIMBody(w, r, &p) {
 		return
 	}
 	email := p.email()
@@ -661,7 +661,13 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	u, err := h.Service.users.CreateWithCredential(ctx, user.CreateInput{
+	tx, err := h.Service.users.Pool().Begin(ctx)
+	if err != nil {
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
+	}
+	defer tx.Rollback(ctx)
+	u, err := h.Service.users.CreateWithCredentialTx(ctx, tx, user.CreateInput{
 		TenantID:    tid,
 		Email:       email,
 		DisplayName: p.display(),
@@ -674,14 +680,29 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusBadRequest, "create failed")
 		return
 	}
-	if err := h.Service.tagProvisioned(ctx, u.ID, p.ExternalID); err != nil {
+	if err := h.Service.tagProvisionedTx(ctx, tx, u.ID, p.ExternalID); err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "tagging failed")
 		return
 	}
-	// IdP can create a user already deactivated.
+	// IdP can create a user already deactivated. Previously this ignored its
+	// own error, so the response could claim a state the database never had.
+	active := true
 	if p.Active != nil && !*p.Active {
+		active = false
 		suspended := "suspended"
-		_, _ = h.Service.users.Update(ctx, u.ID, user.UpdateInput{Status: &suspended})
+		if _, err := h.Service.users.UpdateTx(ctx, tx, u.ID, user.UpdateInput{Status: &suspended}); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+			return
+		}
+	}
+	if err := recordUserEvidence(ctx, tx, r, tid, u.ID, "user.created",
+		map[string]any{"email": u.Email, "active": active}); err != nil {
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+		return
 	}
 	row, err := h.Service.getProvisioned(ctx, tid, u.ID)
 	if err != nil {
@@ -710,8 +731,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var p scimUserPayload
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeSCIMBody(w, r, &p) {
 		return
 	}
 	in := user.UpdateInput{}
@@ -722,8 +742,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 	if status != "" {
 		in.Status = &status
 	}
-	if _, err := h.Service.users.Update(r.Context(), id, in); err != nil {
-		writeSCIMErr(w, http.StatusNotFound, "user not found")
+	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated") {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -751,8 +770,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body patchBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+	if !decodeSCIMBody(w, r, &body) {
 		return
 	}
 	in := user.UpdateInput{}
@@ -793,8 +811,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if _, err := h.Service.users.Update(r.Context(), id, in); err != nil {
-		writeSCIMErr(w, http.StatusNotFound, "user not found")
+	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated") {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -815,7 +832,7 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
-	if err := h.Service.users.SoftDelete(r.Context(), id); err != nil {
+	if err := h.deprovision(r, tid, id); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -942,4 +959,115 @@ func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 		"itemsPerPage": 2,
 		"Resources":    []map[string]any{userSchema, groupSchema},
 	})
+}
+
+// decodeSCIMBody bounds a SCIM request body before decoding it.
+//
+// SCIM does not go through httpx.DecodeJSON — it needs SCIM-shaped errors, not
+// the platform envelope — so the body caps applied elsewhere were skipped here
+// entirely, leaving the highest-volume provisioning surface reading unbounded
+// JSON straight off the wire. Same ceiling as httpx.MaxJSONBodyBytes.
+func decodeSCIMBody(w http.ResponseWriter, r *http.Request, out any) bool {
+	if r.ContentLength > httpx.MaxJSONBodyBytes {
+		writeSCIMTypedErr(w, http.StatusRequestEntityTooLarge, "tooLarge", "Request body is too large.")
+		return false
+	}
+	limited := http.MaxBytesReader(w, r.Body, httpx.MaxJSONBodyBytes)
+	if err := json.NewDecoder(limited).Decode(out); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeSCIMTypedErr(w, http.StatusRequestEntityTooLarge, "tooLarge", "Request body is too large.")
+			return false
+		}
+		writeSCIMErr(w, http.StatusBadRequest, "invalid JSON")
+		return false
+	}
+	return true
+}
+
+// recordUserEvidence writes the audit row and domain event for a SCIM user
+// mutation inside the caller's transaction.
+//
+// SCIM is the highest-volume user-mutation surface in the product — an IdP can
+// create, suspend and deprovision people all day — and it previously wrote no
+// audit row and emitted no outbox event for any of it, leaving that activity
+// invisible to incident response and to every downstream consumer. The actor is
+// the tenant's SCIM credential rather than a user, so it is attributed as such.
+func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID, userID uuid.UUID, action string, metadata map[string]any) error {
+	tenant := tenantID
+	target := userID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenant,
+		ActorType:    "scim",
+		Action:       action,
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     metadata,
+	}); err != nil {
+		return err
+	}
+	payload := map[string]any{"user_id": userID, "tenant_id": tenantID, "source": "scim"}
+	for k, v := range metadata {
+		payload[k] = v
+	}
+	return outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: userID,
+		Topic:       "user.events",
+		EventType:   action,
+		Payload:     payload,
+	})
+}
+
+// applyUserUpdate runs a SCIM-driven user update and its evidence in one
+// transaction, so a provisioning change is never durable without a record of it.
+func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string) bool {
+	ctx := r.Context()
+	tx, err := h.Service.users.Pool().Begin(ctx)
+	if err != nil {
+		writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+		return false
+	}
+	defer tx.Rollback(ctx)
+	if _, err := h.Service.users.UpdateTx(ctx, tx, userID, in); err != nil {
+		writeSCIMErr(w, http.StatusNotFound, "user not found")
+		return false
+	}
+	metadata := map[string]any{}
+	if in.Status != nil {
+		metadata["status"] = *in.Status
+	}
+	if in.DisplayName != nil {
+		metadata["display_name_changed"] = true
+	}
+	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, action, metadata); err != nil {
+		writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+		return false
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+		return false
+	}
+	return true
+}
+
+// deprovision soft-deletes a SCIM-managed user and records it in the same
+// transaction. Deprovisioning is the single most incident-relevant thing an IdP
+// does here, and it was previously the least observable.
+func (h *Handler) deprovision(r *http.Request, tenantID, userID uuid.UUID) error {
+	ctx := r.Context()
+	tx, err := h.Service.users.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := h.Service.users.SoftDeleteTx(ctx, tx, userID); err != nil {
+		return err
+	}
+	if err := recordUserEvidence(ctx, tx, r, tenantID, userID, "user.deleted", nil); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

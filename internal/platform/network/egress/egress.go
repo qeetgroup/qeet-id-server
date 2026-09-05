@@ -31,6 +31,11 @@ type Options struct {
 	AllowInsecure   bool
 	AllowAllPrivate bool
 	Dialer          dialer
+	// ProxyURL routes outbound HTTP through an operator-run forward proxy.
+	// Ambient HTTPS_PROXY is deliberately ignored: a proxy resolves the
+	// destination itself, so it decides what this service can reach. That has
+	// to be a deployment decision, not something the environment can turn on.
+	ProxyURL *url.URL
 }
 
 type Policy struct {
@@ -39,6 +44,7 @@ type Policy struct {
 	allowInsecure   bool
 	allowAllPrivate bool
 	dialer          dialer
+	proxyURL        *url.URL
 }
 
 func NewPolicy(options Options) *Policy {
@@ -56,6 +62,7 @@ func NewPolicy(options Options) *Policy {
 		allowInsecure:   options.AllowInsecure,
 		allowAllPrivate: options.AllowAllPrivate,
 		dialer:          baseDialer,
+		proxyURL:        options.ProxyURL,
 	}
 }
 
@@ -205,14 +212,26 @@ func (p *Policy) CheckRedirect(req *http.Request, via []*http.Request) error {
 	if err != nil {
 		return err
 	}
+	if p.proxyURL != nil {
+		return nil
+	}
 	_, err = p.resolveAllowed(req.Context(), req.URL.Hostname())
 	return err
 }
 
 func (p *Policy) HTTPClient(timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DialContext = p.DialContext
+	if p.proxyURL != nil {
+		// The proxy opens the destination connection, so pinning here would
+		// only re-validate the proxy's own address — and reject it whenever the
+		// proxy sits on a private network, which is the usual deployment. URL
+		// validation still runs on every request and redirect; enforcing the
+		// address policy becomes the proxy's job.
+		transport.Proxy = http.ProxyURL(p.proxyURL)
+	} else {
+		transport.Proxy = nil
+		transport.DialContext = p.DialContext
+	}
 	return &http.Client{
 		Timeout:       timeout,
 		Transport:     transport,

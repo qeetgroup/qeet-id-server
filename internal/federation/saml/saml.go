@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -44,18 +45,21 @@ const (
 )
 
 type Connection struct {
-	ID             uuid.UUID  `json:"id"`
-	TenantID       uuid.UUID  `json:"tenant_id"`
-	Name           string     `json:"name"`
-	IdpEntityID    string     `json:"idp_entity_id"`
-	IdpSSOURL      string     `json:"idp_sso_url"`
-	IdpCertificate string     `json:"idp_certificate"`
-	EmailAttribute string     `json:"email_attribute"`
-	NameAttribute  string     `json:"name_attribute"`
-	Status         string     `json:"status"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	LastLoginAt    *time.Time `json:"last_login_at"`
+	ID             uuid.UUID `json:"id"`
+	TenantID       uuid.UUID `json:"tenant_id"`
+	Name           string    `json:"name"`
+	IdpEntityID    string    `json:"idp_entity_id"`
+	IdpSSOURL      string    `json:"idp_sso_url"`
+	IdpCertificate string    `json:"idp_certificate"`
+	EmailAttribute string    `json:"email_attribute"`
+	NameAttribute  string    `json:"name_attribute"`
+	Status         string    `json:"status"`
+	// AllowIdPInitiated is read separately from the generated row until the
+	// column folds into queries.sql at the next `sqlc generate`.
+	AllowIdPInitiated bool       `json:"allow_idp_initiated"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	LastLoginAt       *time.Time `json:"last_login_at"`
 }
 
 type Service struct {
@@ -63,6 +67,27 @@ type Service struct {
 	q          *dbgen.Queries
 	auth       *auth.Service
 	appBaseURL string
+	// Throttles for collecting expired correlation and replay rows. Both tables
+	// are pure anti-replay ledgers keyed by expiry, so collecting them lazily is
+	// safe — and far cheaper than the full-table DELETE on every single SSO
+	// ceremony that the hot path used to do. They are tracked separately because
+	// they sit on different code paths (login start vs. ACS), and a shared
+	// counter would let a busy path starve the other table's collection.
+	nextRequestSweep atomic.Int64
+	nextReplaySweep  atomic.Int64
+}
+
+// replaySweepInterval is how often any one replica collects expired SAML
+// correlation and replay rows.
+const replaySweepInterval = 5 * time.Minute
+
+// sweepDue reports whether this replica should collect now, and claims the
+// slot if so. Replicas sweeping independently is harmless: the deletes are
+// idempotent and touch only rows that are already past their expiry.
+func sweepDue(next *atomic.Int64) bool {
+	now := time.Now().Unix()
+	due := next.Load()
+	return now >= due && next.CompareAndSwap(due, now+int64(replaySweepInterval.Seconds()))
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
@@ -139,7 +164,36 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Connection, e
 	for i, r := range rows {
 		out[i] = *toConnection(r)
 	}
+	flags, err := s.idpInitiatedFlags(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].AllowIdPInitiated = flags[out[i].ID]
+	}
 	return out, nil
+}
+
+// idpInitiatedFlags loads the whole tenant's opt-in state in one round trip so
+// List doesn't issue a query per connection.
+func (s *Service) idpInitiatedFlags(ctx context.Context, tenantID uuid.UUID) (map[uuid.UUID]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, allow_idp_initiated FROM tenant.saml_connections WHERE tenant_id = $1
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	flags := map[uuid.UUID]bool{}
+	for rows.Next() {
+		var id uuid.UUID
+		var allowed bool
+		if err := rows.Scan(&id, &allowed); err != nil {
+			return nil, err
+		}
+		flags[id] = allowed
+	}
+	return flags, rows.Err()
 }
 
 func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection, error) {
@@ -150,7 +204,12 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 	if err != nil {
 		return nil, err
 	}
-	return toConnection(r), nil
+	out := toConnection(r)
+	out.AllowIdPInitiated, err = s.AllowsIdPInitiated(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // getByID loads a connection without tenant scoping — used by the public SSO
@@ -174,6 +233,9 @@ type UpdateInput struct {
 	EmailAttribute *string `json:"email_attribute"`
 	NameAttribute  *string `json:"name_attribute"`
 	Status         *string `json:"status"`
+	// AllowIdPInitiated opts this connection into unsolicited assertions. See
+	// AllowsIdPInitiated for what the opt-in does and does not relax.
+	AllowIdPInitiated *bool `json:"allow_idp_initiated"`
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
@@ -194,7 +256,42 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	if err != nil {
 		return nil, err
 	}
-	return toConnection(r), nil
+	// allow_idp_initiated is written separately because the generated update
+	// predates the column; fold it in at the next `sqlc generate`.
+	if in.AllowIdPInitiated != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE tenant.saml_connections
+			SET allow_idp_initiated = $3, updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID, *in.AllowIdPInitiated); err != nil {
+			return nil, err
+		}
+	}
+	out := toConnection(r)
+	if in.AllowIdPInitiated != nil {
+		out.AllowIdPInitiated = *in.AllowIdPInitiated
+	} else {
+		out.AllowIdPInitiated, _ = s.AllowsIdPInitiated(ctx, id)
+	}
+	return out, nil
+}
+
+// AllowsIdPInitiated reports whether this connection accepts an assertion that
+// carries no InResponseTo, i.e. one the IdP sent without this SP asking.
+//
+// The opt-in relaxes request correlation only. Signature, issuer, audience,
+// destination, and time-condition checks are unchanged, and the response and
+// assertion IDs are still consumed against auth.saml_replay_ids, so an
+// assertion still cannot be replayed inside its validity window.
+func (s *Service) AllowsIdPInitiated(ctx context.Context, connectionID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT allow_idp_initiated FROM tenant.saml_connections WHERE id = $1
+	`, connectionID).Scan(&allowed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, errs.ErrNotFound
+	}
+	return allowed, err
 }
 
 func (s *Service) Delete(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
@@ -319,8 +416,10 @@ func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID,
 	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
 		return errs.ErrSAMLRequestInvalid
 	}
-	if _, err := s.pool.Exec(ctx, `DELETE FROM auth.saml_authn_requests WHERE expires_at <= NOW()`); err != nil {
-		return err
+	if sweepDue(&s.nextRequestSweep) {
+		if _, err := s.pool.Exec(ctx, `DELETE FROM auth.saml_authn_requests WHERE expires_at <= NOW()`); err != nil {
+			return err
+		}
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at)
@@ -332,8 +431,15 @@ func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID,
 // ConsumeValidatedResponse atomically reserves every signed SAML identifier
 // and consumes the matching SP-initiated request. Callers must invoke it only
 // after cryptographic signature and assertion-condition validation succeeds.
-func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string) error {
-	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
+// An empty requestID means the IdP sent this assertion unsolicited. That is
+// only acceptable when the connection opted into it (see AllowsIdPInitiated);
+// the replay-ID reservation below still runs either way.
+func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string, allowIdPInitiated bool) error {
+	idpInitiated := strings.TrimSpace(requestID) == ""
+	if idpInitiated && !allowIdPInitiated {
+		return errs.ErrSAMLRequestCorrelation
+	}
+	if !idpInitiated && len(requestID) > 1024 {
 		return errs.ErrSAMLRequestCorrelation
 	}
 	if strings.TrimSpace(responseID) == "" || len(responseID) > 1024 || len(assertionIDs) == 0 || len(assertionIDs) > 16 {
@@ -353,8 +459,10 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DELETE FROM auth.saml_replay_ids WHERE expires_at <= NOW()`); err != nil {
-		return err
+	if sweepDue(&s.nextReplaySweep) {
+		if _, err := tx.Exec(ctx, `DELETE FROM auth.saml_replay_ids WHERE expires_at <= NOW()`); err != nil {
+			return err
+		}
 	}
 	for _, candidate := range ids {
 		tag, err := tx.Exec(ctx, `
@@ -369,15 +477,21 @@ func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uui
 			return errs.ErrSAMLReplayDetected
 		}
 	}
-	tag, err := tx.Exec(ctx, `
-		DELETE FROM auth.saml_authn_requests
-		WHERE request_id = $1 AND connection_id = $2 AND expires_at > NOW()
-	`, requestID, connectionID)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return errs.ErrSAMLRequestCorrelation
+	// Correlation is consumed only for SP-initiated responses. An opted-in
+	// IdP-initiated response has no AuthnRequest to match by definition, so
+	// running this would find no row and reject every one of them. The replay
+	// reservations above still ran, which is what actually stops a resend.
+	if !idpInitiated {
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM auth.saml_authn_requests
+			WHERE request_id = $1 AND connection_id = $2 AND expires_at > NOW()
+		`, requestID, connectionID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errs.ErrSAMLRequestCorrelation
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -899,7 +1013,12 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs); err != nil {
+	allowIdPInitiated, err := h.Service.AllowsIdPInitiated(r.Context(), conn.ID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs, allowIdPInitiated); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

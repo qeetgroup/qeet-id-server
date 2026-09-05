@@ -140,3 +140,45 @@ func TestValidateMachineScopes(t *testing.T) {
 		}
 	}
 }
+
+// TestEnforce_MostLiteralPolicyWins pins the resolution order for overlapping
+// patterns. "/v1/vault/{name}" also matches "/v1/vault/tokens", which carries a
+// different policy; ranging over a map would decide the winner by iteration
+// order, so the same request could be classified differently between processes.
+func TestEnforce_MostLiteralPolicyWins(t *testing.T) {
+	policies := map[string]RoutePolicy{
+		"GET /v1/vault/tokens": UserOnlyPolicy(),
+		"GET /v1/vault/{name}": HandlerAuthorizedPolicy(true),
+	}
+	uid, tid := uuid.New(), uuid.New()
+	machine := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: "api_key", Scopes: []string{"vault:read"}}
+
+	// Run repeatedly: a map-order bug shows up as a flake, not a hard failure.
+	for i := 0; i < 50; i++ {
+		// The literal route is user-only, so a machine principal must be denied.
+		if got := do(vaultRouter(policies, machine), http.MethodGet, "/v1/vault/tokens"); got != http.StatusForbidden {
+			t.Fatalf("iteration %d: GET /v1/vault/tokens as api_key = %d, want 403", i, got)
+		}
+		// The wildcard route is handler-authorized, so it passes the middleware.
+		if got := do(vaultRouter(policies, machine), http.MethodGet, "/v1/vault/db-password"); got != http.StatusOK {
+			t.Fatalf("iteration %d: GET /v1/vault/db-password as api_key = %d, want 200", i, got)
+		}
+	}
+}
+
+// vaultRouter mounts the two overlapping vault routes with Enforce in front,
+// rebuilt per call so each iteration re-runs the map->slice ordering.
+func vaultRouter(policies map[string]RoutePolicy, p *httpx.Principal) http.Handler {
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), p)))
+		})
+	})
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(Enforce(&fakeChecker{allow: true}, policies))
+		r.Get("/vault/tokens", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		r.Get("/vault/{name}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	})
+	return r
+}

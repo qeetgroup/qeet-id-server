@@ -15,7 +15,7 @@ const (
 	CodeUnprocessable       = "unprocessable"
 	CodeValidation          = "validation_failed"
 	CodeTooManyRequests     = "too_many_requests"
-	CodeRequestBodyTooLarge = "request.body_too_large"
+	CodeRequestBodyTooLarge = "request_body_too_large"
 	CodeInternal            = "internal"
 	CodeNotImplemented      = "not_implemented"
 )
