@@ -100,3 +100,31 @@ jobs:
 
       - name: govulncheck
         run: govulncheck ./...
+
+  sast:
+    name: Security scan
+    runs-on: ubuntu-latest
+    # Advisory, not blocking. gosec currently reports 92 findings against this
+    # tree; the four that are both HIGH severity and HIGH confidence were
+    # checked by hand and are all scanner blind spots (the token-vault SSRF
+    # hits go through the egress policy, the SAML one is xml.Unmarshal into a
+    # typed struct, and cmd/migrate uses exec.Command with an arg slice, not a
+    # shell). 42 of the 65 HIGH findings are G101 "hardcoded credentials" on
+    # constant names. Promote this to blocking once those are triaged and the
+    # genuine false positives carry #nosec justifications.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      # Generated sqlc code is excluded for the same reason golangci-lint
+      # excludes it: it is not hand-authored.
+      - name: gosec
+        run: gosec -exclude-dir='.*dbgen' -exclude-generated ./...
