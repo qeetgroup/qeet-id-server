@@ -10,6 +10,7 @@ package rbac
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,56 @@ type Permission struct {
 	ID          uuid.UUID `json:"id"`
 	Key         string    `json:"key"`
 	Description string    `json:"description"`
+}
+
+type permissionDefinition struct{ Key, Description string }
+
+var builtinPermissionDefinitions = []permissionDefinition{
+	{"tenant.read", "Read tenant configuration"},
+	{"tenant.write", "Modify tenant configuration"},
+	{"user.read", "List and read users"},
+	{"user.write", "Create, update, delete users (incl. set password, reset MFA)"},
+	{"role.read", "Read roles and assignments"},
+	{"role.write", "Manage roles and assignments"},
+	{"audit.read", "Read audit events"},
+	{"audit.write", "Resolve audit anomalies and manage anomaly-detection settings"},
+	{"group.read", "Read groups and members"},
+	{"group.write", "Manage groups and members"},
+	{"connection.read", "Read SSO/identity connections (OIDC, SAML, SCIM, LDAP, social)"},
+	{"connection.write", "Manage SSO/identity connections"},
+	{"apikey.read", "Read API keys and service principals"},
+	{"apikey.write", "Manage API keys and service principals"},
+	{"secret.read", "Read tenant secrets metadata"},
+	{"secret.write", "Manage tenant secrets"},
+	{"webhook.read", "Read webhook endpoints"},
+	{"webhook.write", "Manage webhook endpoints"},
+	{"billing.read", "Read billing plans and subscription"},
+	{"billing.write", "Manage billing subscription"},
+	{"branding.write", "Manage hosted-login branding and email templates"},
+	{"policy.read", "Read security/auth policy"},
+	{"policy.write", "Manage security/auth policy (password, IP rules, retention, MFA enforcement)"},
+	{"gdpr.write", "Run GDPR erasure / data operations"},
+	{"analytics.read", "Read tenant analytics"},
+}
+
+// ValidateMachineScopes rejects unknown capabilities at credential issuance.
+// vault:<resource> is intentionally dynamic and is rechecked against the path
+// by the vault handlers; every other scope must be a built-in permission key.
+func ValidateMachineScopes(scopes []string) error {
+	known := make(map[string]struct{}, len(builtinPermissionDefinitions))
+	for _, permission := range builtinPermissionDefinitions {
+		known[permission.Key] = struct{}{}
+	}
+	for _, scope := range scopes {
+		if _, ok := known[scope]; ok {
+			continue
+		}
+		if scope == "vault:read" || (strings.HasPrefix(scope, "vault:") && strings.TrimPrefix(scope, "vault:") != "") {
+			continue
+		}
+		return errs.ErrBadRequest.WithDetail("unknown machine scope: " + scope)
+	}
+	return nil
 }
 
 type Role struct {
@@ -325,40 +376,13 @@ func (r *Repository) Explain(ctx context.Context, userID, tenantID uuid.UUID, pe
 // roles exist. Idempotent; safe to call on every boot. Manages its own
 // transaction since it isn't invoked from an HTTP handler.
 func (r *Repository) SeedBuiltins(ctx context.Context) error {
-	builtins := []struct{ Key, Desc string }{
-		{"tenant.read", "Read tenant configuration"},
-		{"tenant.write", "Modify tenant configuration"},
-		{"user.read", "List and read users"},
-		{"user.write", "Create, update, delete users (incl. set password, reset MFA)"},
-		{"role.read", "Read roles and assignments"},
-		{"role.write", "Manage roles and assignments"},
-		{"audit.read", "Read audit events"},
-		{"audit.write", "Resolve audit anomalies and manage anomaly-detection settings"},
-		{"group.read", "Read groups and members"},
-		{"group.write", "Manage groups and members"},
-		{"connection.read", "Read SSO/identity connections (OIDC, SAML, SCIM, LDAP, social)"},
-		{"connection.write", "Manage SSO/identity connections"},
-		{"apikey.read", "Read API keys and service principals"},
-		{"apikey.write", "Manage API keys and service principals"},
-		{"secret.read", "Read tenant secrets metadata"},
-		{"secret.write", "Manage tenant secrets"},
-		{"webhook.read", "Read webhook endpoints"},
-		{"webhook.write", "Manage webhook endpoints"},
-		{"billing.read", "Read billing plans and subscription"},
-		{"billing.write", "Manage billing subscription"},
-		{"branding.write", "Manage hosted-login branding and email templates"},
-		{"policy.read", "Read security/auth policy"},
-		{"policy.write", "Manage security/auth policy (password, IP rules, retention, MFA enforcement)"},
-		{"gdpr.write", "Run GDPR erasure / data operations"},
-		{"analytics.read", "Read tenant analytics"},
-	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	for _, b := range builtins {
-		if _, err := r.UpsertPermission(ctx, tx, b.Key, b.Desc); err != nil {
+	for _, permission := range builtinPermissionDefinitions {
+		if _, err := r.UpsertPermission(ctx, tx, permission.Key, permission.Description); err != nil {
 			return err
 		}
 	}

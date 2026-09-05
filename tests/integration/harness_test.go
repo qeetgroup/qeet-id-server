@@ -23,6 +23,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 )
 
 // testPool is the shared pool for the whole package; nil means setup was
@@ -111,6 +113,15 @@ func requireDB(t *testing.T) {
 	}
 }
 
+func testEnvelope(t *testing.T) *envelope.Cipher {
+	t.Helper()
+	box, err := envelope.New([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatalf("create test envelope: %v", err)
+	}
+	return box
+}
+
 // uniqueSlug returns a short, collision-resistant identifier for test data.
 func uniqueSlug(prefix string) string {
 	return prefix + "-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
@@ -128,4 +139,23 @@ func createTenant(t *testing.T, ctx context.Context, slug string) uuid.UUID {
 		t.Fatalf("createTenant: %v", err)
 	}
 	return id
+}
+
+func addTenantMembership(t *testing.T, ctx context.Context, userID, tenantID uuid.UUID) {
+	t.Helper()
+	var roleID uuid.UUID
+	err := testPool.QueryRow(ctx, `
+		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+		VALUES ($1, $2, 'integration membership', FALSE)
+		RETURNING id
+	`, tenantID, uniqueSlug("member")).Scan(&roleID)
+	if err != nil {
+		t.Fatalf("create membership role: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
+		VALUES ($1, $2, $3)
+	`, userID, tenantID, roleID); err != nil {
+		t.Fatalf("assign tenant membership: %v", err)
+	}
 }

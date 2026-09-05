@@ -1,14 +1,6 @@
 -- Queries for the siem domain.
 -- Static queries against tenant.log_sinks and audit.events live here and are
 -- compiled by sqlc into ./dbgen.
--- The token field is write-only: included in INSERTs and internal reads but
--- never projected to the API.
-
--- name: InsertLogSink :one
-INSERT INTO tenant.log_sinks (tenant_id, type, endpoint, token, cursor_created_at, cursor_id)
-VALUES (@tenant_id, @type, @endpoint, @token, NOW(), '00000000-0000-0000-0000-000000000000')
-RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at;
-
 -- name: ListLogSinks :many
 SELECT id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
 FROM tenant.log_sinks
@@ -38,13 +30,6 @@ WHERE id = @id;
 UPDATE tenant.log_sinks
 SET last_error = @last_error
 WHERE id = @id;
-
--- Load all enabled sinks with their cursors for the background forwarder.
--- Nullable cursor columns are read as-is; Go maps nil → sensible defaults.
--- name: ListEnabledLogSinks :many
-SELECT id, tenant_id, type, endpoint, token, cursor_created_at, cursor_id
-FROM tenant.log_sinks
-WHERE enabled;
 
 -- Fetch audit events strictly after (after_at, after_id) for a tenant.
 -- Row-value comparison (created_at, id) > (after_at, after_id) is rewritten

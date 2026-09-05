@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -60,14 +61,46 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 	if err != nil {
 		return PushDevice{}, "", err
 	}
-	row, err := s.q.UpsertPushDevice(ctx, dbgen.UpsertPushDeviceParams{
-		UserID:      userID,
-		Name:        name,
-		PushToken:   pushToken,
-		Platform:    platform,
-		DeviceToken: tok,
-	})
+	if s.box == nil {
+		return PushDevice{}, "", errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
+	}
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return PushDevice{}, "", err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := s.loadPushTokens(ctx, tx, userID); err != nil {
+		return PushDevice{}, "", err
+	}
+	pushTokenHash := secretHash(pushToken)
+	ciphertext, nonce, err := s.box.Seal(userID, "mfa-push-token", pushTokenHash, []byte(pushToken))
+	if err != nil {
+		return PushDevice{}, "", err
+	}
+	var row dbgen.AuthMfaPushDevice
+	err = tx.QueryRow(ctx, `
+		INSERT INTO auth.mfa_push_devices
+		    (user_id, name, push_token, push_token_ct, push_token_nonce, push_token_hash,
+		     platform, device_token, device_token_hash, encryption_version)
+		VALUES ($1, $2, NULL, $3, $4, $5, $6, NULL, $7, 1)
+		ON CONFLICT (user_id, push_token_hash) WHERE push_token_hash IS NOT NULL DO UPDATE SET
+		    name = EXCLUDED.name,
+		    push_token = NULL,
+		    push_token_ct = EXCLUDED.push_token_ct,
+		    push_token_nonce = EXCLUDED.push_token_nonce,
+		    platform = EXCLUDED.platform,
+		    device_token = NULL,
+		    device_token_hash = EXCLUDED.device_token_hash,
+		    encryption_version = 1,
+		    last_seen_at = NOW()
+		RETURNING id, user_id, name, platform, created_at, last_seen_at
+	`, userID, name, ciphertext, nonce, pushTokenHash, platform, secretHash(tok)).Scan(
+		&row.ID, &row.UserID, &row.Name, &row.Platform, &row.CreatedAt, &row.LastSeenAt,
+	)
+	if err != nil {
+		return PushDevice{}, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return PushDevice{}, "", err
 	}
 	d := PushDevice{
@@ -116,7 +149,12 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 	if err != nil {
 		return uuid.Nil, err
 	}
-	ch, err := s.q.InsertPushChallenge(ctx, dbgen.InsertPushChallengeParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
+	ch, err := s.q.WithTx(tx).InsertPushChallenge(ctx, dbgen.InsertPushChallengeParams{
 		UserID:  userID,
 		Action:  action,
 		Context: ctxJSON,
@@ -124,8 +162,11 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 	if err != nil {
 		return uuid.Nil, err
 	}
-	tokens, err := s.q.ListPushTokensByUser(ctx, userID)
+	tokens, err := s.loadPushTokens(ctx, tx, userID)
 	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, err
 	}
 	for _, tok := range tokens {
@@ -157,23 +198,25 @@ func (s *Service) GetPushChallenge(ctx context.Context, id uuid.UUID) (*PushChal
 // RespondToPushChallenge validates the device_token, checks that the challenge
 // is still pending and not expired, then updates its status to approved/denied.
 func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userID uuid.UUID, deviceToken string, approved bool) error {
-	// Verify the device_token belongs to one of this user's devices.
-	_, err := s.q.VerifyDeviceToken(ctx, dbgen.VerifyDeviceTokenParams{
-		UserID:      userID,
-		DeviceToken: deviceToken,
-	})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := s.loadPushTokens(ctx, tx, userID); err != nil {
+		return err
+	}
+	var deviceID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM auth.mfa_push_devices
+		WHERE user_id = $1 AND device_token_hash = $2
+	`, userID, secretHash(deviceToken)).Scan(&deviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrMFAPushUnauthorized
 	}
 	if err != nil {
 		return err
 	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
 
 	row, err := s.q.WithTx(tx).GetPushChallengeForUpdate(ctx, challengeID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -203,6 +246,90 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+type storedPushToken struct {
+	id         uuid.UUID
+	legacy     *string
+	ciphertext []byte
+	nonce      []byte
+	hash       *string
+	device     *string
+}
+
+func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, push_token, push_token_ct, push_token_nonce, push_token_hash, device_token
+		FROM auth.mfa_push_devices
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var records []storedPushToken
+	for rows.Next() {
+		var record storedPushToken
+		if err := rows.Scan(&record.id, &record.legacy, &record.ciphertext, &record.nonce, &record.hash, &record.device); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	tokens := make([]string, 0, len(records))
+	for _, record := range records {
+		if len(record.ciphertext) > 0 {
+			if s.box == nil {
+				return nil, errors.New("MFA secret encryption is unavailable")
+			}
+			if record.hash == nil || *record.hash == "" {
+				return nil, errors.New("encrypted push device token has no lookup hash")
+			}
+			plain, err := s.box.Open(userID, "mfa-push-token", *record.hash, record.ciphertext, record.nonce)
+			if err != nil {
+				return nil, err
+			}
+			tokens = append(tokens, string(plain))
+			continue
+		}
+		if record.legacy == nil {
+			return nil, errors.New("push device token is missing")
+		}
+		if s.box == nil {
+			return nil, errors.New("MFA secret encryption is unavailable")
+		}
+		pushTokenHash := secretHash(*record.legacy)
+		ciphertext, nonce, err := s.box.Seal(userID, "mfa-push-token", pushTokenHash, []byte(*record.legacy))
+		if err != nil {
+			return nil, err
+		}
+		var deviceTokenHash *string
+		if record.device != nil {
+			hash := secretHash(*record.device)
+			deviceTokenHash = &hash
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE auth.mfa_push_devices
+			SET push_token = NULL, push_token_ct = $2, push_token_nonce = $3,
+			    push_token_hash = $4, device_token = NULL, device_token_hash = $5,
+			    encryption_version = 1
+			WHERE id = $1 AND push_token_ct IS NULL
+		`, record.id, ciphertext, nonce, pushTokenHash, deviceTokenHash); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, *record.legacy)
+	}
+	return tokens, nil
+}
+
+func secretHash(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
 }
 
 // ── Expo push helper ──────────────────────────────────────────────────────────

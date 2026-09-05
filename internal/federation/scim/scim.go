@@ -12,6 +12,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -478,6 +479,15 @@ func writeSCIMErr(w http.ResponseWriter, status int, detail string) {
 	})
 }
 
+func writeSCIMTypedErr(w http.ResponseWriter, status int, scimType, detail string) {
+	writeSCIM(w, status, map[string]any{
+		"schemas":  []string{schemaError},
+		"status":   strconv.Itoa(status),
+		"scimType": scimType,
+		"detail":   detail,
+	})
+}
+
 func scimLocation(r *http.Request, suffix string) string {
 	scheme := "https"
 	if r.TLS == nil && (strings.HasPrefix(r.Host, "localhost") || strings.HasPrefix(r.Host, "127.0.0.1")) {
@@ -515,22 +525,29 @@ func toResource(r *http.Request, u *userRow) map[string]any {
 	return res
 }
 
-// parseUserNameFilter extracts the value from a `userName eq "x"` filter.
-// Anything else is treated as "no filter" (returns all provisioned users),
-// which is the safe default for IdP imports.
-func parseUserNameFilter(filter string) string {
+var equalityFilterPattern = regexp.MustCompile(`(?i)^([A-Za-z][A-Za-z0-9._-]*)\s+eq\s+("(?:[^"\\]|\\.)*")$`)
+
+// parseEqualityFilter accepts exactly one quoted-string equality expression
+// on the expected attribute. Empty input means no filter; every other
+// unsupported/malformed expression is an RFC 7644 invalidFilter error.
+func parseEqualityFilter(filter, attribute string) (string, error) {
 	f := strings.TrimSpace(filter)
 	if f == "" {
-		return ""
+		return "", nil
 	}
-	lower := strings.ToLower(f)
-	if !strings.HasPrefix(lower, "username eq") {
-		return ""
+	matches := equalityFilterPattern.FindStringSubmatch(f)
+	if len(matches) != 3 || !strings.EqualFold(matches[1], attribute) {
+		return "", errors.New("unsupported or malformed SCIM filter")
 	}
-	rest := strings.TrimSpace(f[len("userName eq"):])
-	rest = strings.Trim(rest, " ")
-	rest = strings.Trim(rest, `"`)
-	return rest
+	value, err := strconv.Unquote(matches[2])
+	if err != nil || value == "" {
+		return "", errors.New("unsupported or malformed SCIM filter")
+	}
+	return value, nil
+}
+
+func parseUserNameFilter(filter string) (string, error) {
+	return parseEqualityFilter(filter, "userName")
 }
 
 // --- SCIM /Users handlers ---
@@ -552,7 +569,11 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if count > maxPageCount {
 		count = maxPageCount
 	}
-	email := parseUserNameFilter(r.URL.Query().Get("filter"))
+	email, err := parseUserNameFilter(r.URL.Query().Get("filter"))
+	if err != nil {
+		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidFilter", "Only userName eq \"value\" is supported.")
+		return
+	}
 
 	rows, total, err := h.Service.listProvisioned(r.Context(), tid, email, start, count)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func testIssuer(t *testing.T) *tokens.Issuer {
@@ -101,6 +102,27 @@ func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 	}
 }
 
+func TestClientAuthenticatedEndpointsRejectOversizedForms(t *testing.T) {
+	handler := &Handler{}
+	router := chi.NewRouter()
+	handler.MountPublic(router)
+	body := "token=" + strings.Repeat("x", int(httpx.MaxFormBodyBytes)+1)
+
+	for _, path := range []string{"/oauth/revoke", "/oauth/introspect"} {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413: %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestContains(t *testing.T) {
 	hay := []string{"openid", "profile", "email"}
 	for _, want := range hay {
@@ -173,5 +195,43 @@ func TestCurrentURL(t *testing.T) {
 	req.Host = "id.test"
 	if got := currentURL(req); got != "https://id.test/v1/oauth/authorize?client_id=rp&scope=openid" {
 		t.Errorf("currentURL = %q", got)
+	}
+}
+
+func TestValidateClientInput(t *testing.T) {
+	valid := CreateClientInput{
+		Type:           "confidential",
+		RedirectURIs:   []string{"https://client.example/callback"},
+		PostLogoutURIs: []string{"https://client.example/signed-out"},
+		GrantTypes:     []string{"authorization_code", "refresh_token"},
+	}
+	if err := validateClientInput(valid); err != nil {
+		t.Fatalf("valid client rejected: %v", err)
+	}
+	loopback := valid
+	loopback.Type = "public"
+	loopback.RedirectURIs = []string{"http://127.0.0.1:49152/callback", "http://localhost:3000/callback"}
+	if err := validateClientInput(loopback); err != nil {
+		t.Fatalf("loopback native callback rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*CreateClientInput)
+	}{
+		{"unknown client type", func(in *CreateClientInput) { in.Type = "browser" }},
+		{"unknown grant", func(in *CreateClientInput) { in.GrantTypes = []string{"password"} }},
+		{"authorization code without redirect", func(in *CreateClientInput) { in.RedirectURIs = nil }},
+		{"non-loopback http redirect", func(in *CreateClientInput) { in.RedirectURIs = []string{"http://client.example/callback"} }},
+		{"redirect fragment", func(in *CreateClientInput) { in.RedirectURIs = []string{"https://client.example/callback#fragment"} }},
+		{"redirect userinfo", func(in *CreateClientInput) { in.RedirectURIs = []string{"https://user@client.example/callback"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := valid
+			tc.mutate(&in)
+			if err := validateClientInput(in); err == nil {
+				t.Fatal("invalid client input was accepted")
+			}
+		})
 	}
 }

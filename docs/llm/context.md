@@ -286,7 +286,7 @@ One PostgreSQL database, **seven schemas**: `auth`, `tenant`, `user`, `rbac`, `a
 
 ### Migrations
 
-**Evidence:** `internal/platform/database/migrations/` — 95 up/down pairs, `0001`–`0096`
+**Evidence:** `internal/platform/database/migrations/` — 103 up/down pairs, `0001`–`0104`
 (`0082` is absent and must not be reused). Embedded with `//go:embed *.sql` in `runner.go` and
 applied on startup.
 
@@ -323,7 +323,7 @@ The source states the rule directly:
 
 ### There is no PostgreSQL RLS
 
-**Verified: zero `ROW LEVEL SECURITY` or `CREATE POLICY` statements across all 95 migrations.**
+**Verified: zero `ROW LEVEL SECURITY` or `CREATE POLICY` statements across all 103 migrations.**
 
 | Enforcement | A missing `tenant_id` predicate causes |
 |---|---|
@@ -381,16 +381,17 @@ The **route → permission map** lives in `internal/bootstrap/permissions.go` an
 | Algorithm | **ES256 only** — `validMethods` is a one-element allowlist, so `alg` confusion is impossible |
 | `kid` | RFC 7638 JWK thumbprint, computed at key load |
 | Verification | Missing or unknown `kid` → rejected |
-| Rotation | Dual-publish, grace window, then drop. Retired keys held verify-only |
+| Rotation | Shared encrypted registry: candidate staging, explicit activation, replica refresh, timed public-key retirement |
 | Password hash | Argon2id |
 | CSRF token | HMAC-keyed, constant-time comparison |
 | Vault | AES-256-GCM, per-tenant HKDF-derived key, static or AWS KMS provider |
 | Randomness | `crypto/rand` only |
 
-**Evidence:** `internal/platform/crypto/tokens/jwt.go`, `internal/platform/crypto/encryption/`
+**Evidence:** `internal/platform/crypto/tokens/{jwt,registry}.go`, `internal/platform/crypto/encryption/`
 
-> `Rotate()` returns the new private key **in memory only**. It must be persisted as
-> `JWT_SIGNING_KEY` before the process restarts, or it is lost. Rotation is a runbook, not an API call.
+> There is no signing-key mutation API. `JWT_SIGNING_KEY` stages encrypted key
+> material in PostgreSQL; `JWT_ACTIVATE_SIGNING_KEY=true` performs the explicit
+> activation step. See `docs/JWT-KEY-ROTATION.md`.
 
 ## Federation
 
@@ -438,8 +439,10 @@ dead-letter
 
 **Evidence:** `internal/platform/events/outbox/`, `internal/platform/jobs/worker.go`
 
-Workers run **embedded in `cmd/api` by default**; `cmd/worker` runs them standalone for independent
-scaling. Registered workers: webhooks, audit anomaly, GDPR, retention, SIEM, outbox dispatch.
+Workers run **embedded in `cmd/api` by default**; set `EMBEDDED_WORKERS=false` when `cmd/worker`
+runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL leases with
+owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers:
+webhooks, audit anomaly, GDPR, retention, SIEM, outbox dispatch.
 
 `cmd/scheduler` runs low-frequency tenant-wide maintenance, coordinated by PostgreSQL advisory locks
 so multiple replicas are safe.
@@ -497,11 +500,11 @@ in-package) — 69 of them. There is no `testdata/` or `mocks/` directory.
 | `access/recovery`, `access/authorization/authzen` | none — integration only |
 | `developer/principal`, `operations/notifications` | none — integration only |
 
-> **`go test ./...` will not catch a mistake in `router.go` or `permissions.go`.** Those are the most
-> security-sensitive files in the repository and the least unit-tested. Run `make test-integration`.
-
-`tests/integration/flows_test.go` (1,579 lines) and `coverage_test.go` (1,316) are cross-cutting;
-the rest map to a single subsystem — see [subsystems.md](subsystems.md).
+`internal/bootstrap/permissions_test.go` walks the exact authenticated production mounts and
+requires an explicit route policy. `internal/bootstrap/openapi_coverage_test.go` walks all three
+production mount helpers and compares them bidirectionally with the union of the five OpenAPI
+documents, including API-auth security classification. Integration tests remain the cross-cutting
+behavioral and database layer — see [subsystems.md](subsystems.md).
 
 ## CI/CD
 
@@ -554,7 +557,7 @@ Then `make test`, `make test-integration`, `make lint`, `make build`.
 |---|---|---|---|
 | **Tenant isolation** | `internal/platform/http/httpx/auth.go` | **Critical** | Security review, mandatory |
 | **Route tree / middleware order** | `internal/bootstrap/router.go` | **Critical** | Security review — the tenant guard depends on nesting |
-| **Route permissions** | `internal/bootstrap/permissions.go` | **Critical** | Security review · **no unit tests** |
+| **Route permissions** | `internal/bootstrap/permissions.go` | **Critical** | Security review · executable route-policy coverage |
 | **Authorization** | `internal/access/authorization/` | **Critical** | Security review |
 | **Authentication, sessions** | `internal/access/authentication/` | **Critical** | Security review |
 | **Tokens, signing, rotation** | `internal/platform/crypto/tokens/jwt.go` | **Critical** | Security review · cross-repo |
@@ -612,13 +615,8 @@ Repository-local documentation inconsistencies found on this revision. Product-l
 
 | Issue | Detail |
 |---|---|
-| `ROADMAP.md` migration range | Claims `0001–0081`; actual is `0096` (QID-007) |
 | `ROADMAP.md` SDK count | Claims 6 SDK packages; three repositories exist (QID-008) |
-| `ROADMAP.md` planned Terraform | Listed as planned; it exists in `qeet-id-deploy` (QID-014) |
-| `ROADMAP.md` gitleaks | Listed as a CI gate; **not present in `.github/workflows/`** |
 | `ROADMAP.md` ✅ rows in the planned table | Two shipped items sit under "Planned" (QID-018) |
-| OpenAPI `info.description` | Cites `internal/http/router.go` and a coverage-test path that no longer exist (QID-013) |
-| `cmd/worker/main.go` comment | References `cmd/server`, which does not exist (QID-019) |
 | Old `CLAUDE.md` Make targets | Claimed a "complete" set that omitted `dev-secrets`, `test-integration`, `bench` |
 | Old `CLAUDE.md` `.claude/` agents | Referenced `.claude/agents/*` — **no `.claude/` directory exists** (QID-020) |
 

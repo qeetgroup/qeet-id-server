@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -39,11 +40,14 @@ func NewNATSPublisher(url string) (*NATSPublisher, error) {
 // Publish sends one event to its topic subject and flushes, so a delivery
 // failure is returned to the dispatcher (which retries) rather than silently
 // buffered on a dead connection.
-func (p *NATSPublisher) Publish(ctx context.Context, topic, eventType string, payload []byte) error {
+func (p *NATSPublisher) Publish(ctx context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error {
 	msg := &nats.Msg{
 		Subject: topic,
 		Data:    payload,
-		Header:  nats.Header{"Qeet-Event-Type": []string{eventType}},
+		Header: nats.Header{
+			"Qeet-Event-ID":   []string{eventID.String()},
+			"Qeet-Event-Type": []string{eventType},
+		},
 	}
 	if err := p.nc.PublishMsg(msg); err != nil {
 		return fmt.Errorf("nats publish %q: %w", topic, err)
@@ -71,7 +75,7 @@ func (p *NATSPublisher) Close() error {
 // NewPublisher returns a NATS-backed publisher when natsURL is non-empty, and
 // otherwise the dependency-free log-only publisher (the default). The returned
 // close func should be deferred by the caller; it is a no-op for LogPublisher.
-// This keeps both entrypoints (cmd/server, cmd/worker) on one code path.
+// This keeps both entrypoints (cmd/api, cmd/worker) on one code path.
 func NewPublisher(natsURL string) (Publisher, func() error, error) {
 	if natsURL == "" {
 		return LogPublisher{}, func() error { return nil }, nil

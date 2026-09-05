@@ -22,6 +22,8 @@ const (
 	CodeSAMLAssertionInvalid         = "saml.assertion_invalid"
 	CodeSAMLAssertionConditions      = "saml.assertion_conditions"
 	CodeSAMLAssertionNoEmail         = "saml.assertion_no_email"
+	CodeSAMLRequestCorrelation       = "saml.request_correlation_invalid"
+	CodeSAMLReplayDetected           = "saml.replay_detected"
 	CodeSAMLIdPNotConfigured         = "saml.idp_not_configured"
 	CodeSAMLAuthnRequestInvalid      = "saml.authn_request_invalid"
 	CodeSAMLRequestParamMissing      = "saml.request_param_missing"
@@ -51,6 +53,8 @@ var (
 	ErrSAMLAssertionInvalid         = New(CodeSAMLAssertionInvalid, "We couldn't validate the SAML assertion.")
 	ErrSAMLAssertionConditions      = New(CodeSAMLAssertionConditions, "The SAML assertion is expired or wasn't intended for this service. Please sign in again.").AsRetryable()
 	ErrSAMLAssertionNoEmail         = New(CodeSAMLAssertionNoEmail, "The SAML assertion didn't include an email address.")
+	ErrSAMLRequestCorrelation       = New(CodeSAMLRequestCorrelation, "The SAML sign-in request is missing, expired, or has already been used. Please sign in again.")
+	ErrSAMLReplayDetected           = New(CodeSAMLReplayDetected, "This SAML response has already been used. Please sign in again.")
 	ErrSAMLIdPNotConfigured         = New(CodeSAMLIdPNotConfigured, "SAML identity-provider mode isn't available.")
 	ErrSAMLAuthnRequestInvalid      = New(CodeSAMLAuthnRequestInvalid, "The SAMLRequest couldn't be read.")
 	ErrSAMLRequestParamMissing      = New(CodeSAMLRequestParamMissing, "A SAMLRequest or sp parameter is required.")

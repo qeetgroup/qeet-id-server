@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,7 +30,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 )
 
@@ -304,6 +305,49 @@ func TestSCIMGroupLifecycle(t *testing.T) {
 	rec = f.do(t, http.MethodGet, "/scim/v2/Groups/"+gid, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("get after delete: status %d, want 404", rec.Code)
+	}
+}
+
+func TestSCIMUserFilterAndUnfilteredPagination(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	fixture := newSCIMFixture(t, ctx)
+	firstEmail := "first-" + uuid.NewString() + "@acme.test"
+	secondEmail := "second-" + uuid.NewString() + "@acme.test"
+	for _, email := range []string{firstEmail, secondEmail} {
+		recorder := fixture.do(t, http.MethodPost, "/scim/v2/Users", map[string]any{
+			"schemas": []string{schemaUser}, "userName": email, "active": true,
+		})
+		if recorder.Code != http.StatusCreated {
+			t.Fatalf("create SCIM user %s: status %d body %s", email, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	exact := fixture.do(t, http.MethodGet, `/scim/v2/Users?filter=`+url.QueryEscape(`userName eq "`+firstEmail+`"`), nil)
+	if exact.Code != http.StatusOK {
+		t.Fatalf("exact user filter status = %d: %s", exact.Code, exact.Body.String())
+	}
+	exactBody := decodeBody(t, exact)
+	if exactBody["totalResults"] != float64(1) {
+		t.Fatalf("exact user filter totalResults = %v, want 1", exactBody["totalResults"])
+	}
+
+	unfiltered := fixture.do(t, http.MethodGet, "/scim/v2/Users?startIndex=1&count=1", nil)
+	if unfiltered.Code != http.StatusOK {
+		t.Fatalf("unfiltered user list status = %d: %s", unfiltered.Code, unfiltered.Body.String())
+	}
+	unfilteredBody := decodeBody(t, unfiltered)
+	if unfilteredBody["totalResults"] != float64(2) || unfilteredBody["itemsPerPage"] != float64(1) {
+		t.Fatalf("unfiltered pagination = total %v page %v, want 2/1", unfilteredBody["totalResults"], unfilteredBody["itemsPerPage"])
+	}
+
+	invalid := fixture.do(t, http.MethodGet, `/scim/v2/Users?filter=`+url.QueryEscape(`emails.value eq "`+firstEmail+`"`), nil)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported user filter status = %d, want 400", invalid.Code)
+	}
+	invalidBody := decodeBody(t, invalid)
+	if invalidBody["scimType"] != "invalidFilter" {
+		t.Fatalf("unsupported user filter scimType = %v", invalidBody["scimType"])
 	}
 }
 

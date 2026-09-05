@@ -18,6 +18,7 @@ const (
 	CodeSocialTokenExchangeFailed   = "social.token_exchange_failed"
 	CodeSocialUserinfoFailed        = "social.userinfo_failed"
 	CodeSocialEmailMissing          = "social.email_missing"
+	CodeSocialEmailUnverified       = "social.email_unverified"
 	CodeSocialCodeRequired          = "social.code_required"
 	CodeSocialLoginCodeInvalid      = "social.login_code_invalid"
 	CodeSocialLoginCodeUsed         = "social.login_code_used"
@@ -43,6 +44,7 @@ var (
 	ErrSocialTokenExchangeFailed   = New(CodeSocialTokenExchangeFailed, "We couldn't complete sign-in with the provider. Please try again.").AsRetryable()
 	ErrSocialUserinfoFailed        = New(CodeSocialUserinfoFailed, "We couldn't retrieve your profile from the provider. Please try again.").AsRetryable()
 	ErrSocialEmailMissing          = New(CodeSocialEmailMissing, "The sign-in provider didn't share an email address, which is required.")
+	ErrSocialEmailUnverified       = New(CodeSocialEmailUnverified, "The sign-in provider did not verify ownership of that email address. Link it from a signed-in account instead.")
 	ErrSocialCodeRequired          = New(CodeSocialCodeRequired, "A sign-in code is required.")
 	ErrSocialLoginCodeInvalid      = New(CodeSocialLoginCodeInvalid, "That sign-in code is invalid. Please start again.").AsRetryable()
 	ErrSocialLoginCodeUsed         = New(CodeSocialLoginCodeUsed, "That sign-in code has already been used. Please start again.")

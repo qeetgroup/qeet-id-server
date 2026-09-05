@@ -94,7 +94,7 @@ in a specification. Update the spec in the same change as the route.
 - Use `httpx.RequireTenant(r)`. It is the only trustworthy source.
 - `httpx.EnforceTenantScope` compares any `{tenantID}` path parameter to the caller's own tenant.
 - Every tenant-scoped query carries `WHERE tenant_id = $1`.
-- **There is no PostgreSQL RLS.** Verified: zero policies across all 95 migrations. A missing
+- **There is no PostgreSQL RLS.** Verified: zero policies across all 104 migrations. A missing
   predicate is a cross-tenant data exposure, not an error the database will catch.
 
 **Restructuring the chi route tree is a security change.** The guard depends on chi's nested-route
@@ -121,7 +121,7 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0096`; `0082` is absent and is not to be
+Numbering continues from the highest present (currently `0104`; `0082` is absent and is not to be
 reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
 expand, migrate, contract across releases.
 

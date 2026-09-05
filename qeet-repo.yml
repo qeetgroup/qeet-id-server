@@ -81,7 +81,7 @@ data:
     path: internal/platform/database/migrations/
     tool: golang-migrate
     embedded: true         # //go:embed *.sql in runner.go
-    range: "0001..0096"    # 95 pairs; 0082 absent
+    range: "0001..0105"    # 104 pairs; 0082 absent
     schemas: [auth, tenant, "user", rbac, audit, platform, qeetai]
 
 http:

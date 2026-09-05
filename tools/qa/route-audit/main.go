@@ -216,7 +216,7 @@ func scanFile(path string) []finding {
 }
 
 // specDoc/loadSpec/specRoutes deliberately mirror
-// platform/api/rest/openapi_coverage_test.go's minimal parse — duplicated
+// internal/bootstrap/openapi_coverage_test.go's minimal parse — duplicated
 // rather than imported since that file lives in a _test.go and this is a
 // separate `go run` command, not a test binary.
 type specDoc struct {

@@ -1,7 +1,10 @@
 package scim
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,21 +12,27 @@ import (
 
 func TestParseUserNameFilter(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name    string
+		in      string
+		want    string
+		wantErr bool
 	}{
-		{"empty", "", ""},
-		{"standard okta filter", `userName eq "alice@acme.com"`, "alice@acme.com"},
-		{"case-insensitive operator", `USERNAME EQ "bob@acme.com"`, "bob@acme.com"},
-		{"extra whitespace", `userName eq   "carol@acme.com"  `, "carol@acme.com"},
-		{"unsupported attribute returns all", `emails.value eq "x@acme.com"`, ""},
-		{"unsupported operator returns all", `userName co "acme"`, ""},
+		{name: "empty", in: "", want: ""},
+		{name: "standard okta filter", in: `userName eq "alice@acme.com"`, want: "alice@acme.com"},
+		{name: "case-insensitive operator", in: `USERNAME EQ "bob@acme.com"`, want: "bob@acme.com"},
+		{name: "extra whitespace", in: `userName eq   "carol@acme.com"  `, want: "carol@acme.com"},
+		{"escaped quote", `userName eq "alice\"ops@example.com"`, `alice"ops@example.com`, false},
+		{"unsupported attribute", `emails.value eq "x@acme.com"`, "", true},
+		{"unsupported operator", `userName co "acme"`, "", true},
+		{"missing quotes", `userName eq alice@acme.com`, "", true},
+		{"boolean expression", `userName eq "a" or userName eq "b"`, "", true},
+		{"empty value", `userName eq ""`, "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := parseUserNameFilter(c.in); got != c.want {
-				t.Errorf("parseUserNameFilter(%q) = %q, want %q", c.in, got, c.want)
+			got, err := parseUserNameFilter(c.in)
+			if (err != nil) != c.wantErr || got != c.want {
+				t.Errorf("parseUserNameFilter(%q) = (%q, %v), want (%q, err=%v)", c.in, got, err, c.want, c.wantErr)
 			}
 		})
 	}
@@ -81,21 +90,53 @@ func TestScimUserPayload_Display(t *testing.T) {
 
 func TestParseDisplayNameFilter(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name    string
+		in      string
+		want    string
+		wantErr bool
 	}{
-		{"empty", "", ""},
-		{"standard okta filter", `displayName eq "Engineering"`, "Engineering"},
-		{"case-insensitive operator", `DISPLAYNAME EQ "Sales"`, "Sales"},
-		{"extra whitespace", `displayName eq   "Ops Team"  `, "Ops Team"},
-		{"unsupported attribute returns all", `id eq "x"`, ""},
-		{"unsupported operator returns all", `displayName co "Eng"`, ""},
+		{name: "empty", in: "", want: ""},
+		{name: "standard okta filter", in: `displayName eq "Engineering"`, want: "Engineering"},
+		{name: "case-insensitive operator", in: `DISPLAYNAME EQ "Sales"`, want: "Sales"},
+		{name: "extra whitespace", in: `displayName eq   "Ops Team"  `, want: "Ops Team"},
+		{"unsupported attribute", `id eq "x"`, "", true},
+		{"unsupported operator", `displayName co "Eng"`, "", true},
+		{"missing closing quote", `displayName eq "Engineering`, "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := parseDisplayNameFilter(c.in); got != c.want {
-				t.Errorf("parseDisplayNameFilter(%q) = %q, want %q", c.in, got, c.want)
+			got, err := parseDisplayNameFilter(c.in)
+			if (err != nil) != c.wantErr || got != c.want {
+				t.Errorf("parseDisplayNameFilter(%q) = (%q, %v), want (%q, err=%v)", c.in, got, err, c.want, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestUnsupportedFiltersReturnSCIMInvalidFilter(t *testing.T) {
+	handler := &Handler{}
+	for _, test := range []struct {
+		name string
+		path string
+		call func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "users", path: `/scim/v2/Users?filter=emails.value+eq+%22x%40example.com%22`, call: handler.listUsers},
+		{name: "groups", path: `/scim/v2/Groups?filter=displayName+co+%22Eng%22`, call: handler.listGroups},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			request = request.WithContext(context.WithValue(request.Context(), tenantCtxKey, uuid.New()))
+			recorder := httptest.NewRecorder()
+			test.call(recorder, request)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", recorder.Code, recorder.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode SCIM error: %v", err)
+			}
+			if body["scimType"] != "invalidFilter" {
+				t.Fatalf("scimType = %v, want invalidFilter", body["scimType"])
 			}
 		})
 	}

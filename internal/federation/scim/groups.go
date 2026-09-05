@@ -290,22 +290,8 @@ func touchGroupTx(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, name, 
 	return nil
 }
 
-// parseDisplayNameFilter extracts the value from a `displayName eq "x"`
-// filter. Anything else is treated as "no filter" (returns all groups),
-// mirroring parseUserNameFilter.
-func parseDisplayNameFilter(filter string) string {
-	f := strings.TrimSpace(filter)
-	if f == "" {
-		return ""
-	}
-	lower := strings.ToLower(f)
-	if !strings.HasPrefix(lower, "displayname eq") {
-		return ""
-	}
-	rest := strings.TrimSpace(f[len("displayName eq"):])
-	rest = strings.Trim(rest, " ")
-	rest = strings.Trim(rest, `"`)
-	return rest
+func parseDisplayNameFilter(filter string) (string, error) {
+	return parseEqualityFilter(filter, "displayName")
 }
 
 // toGroupResource renders a group row + its members as a SCIM core Group.
@@ -363,7 +349,11 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	if count > maxPageCount {
 		count = maxPageCount
 	}
-	name := parseDisplayNameFilter(r.URL.Query().Get("filter"))
+	name, err := parseDisplayNameFilter(r.URL.Query().Get("filter"))
+	if err != nil {
+		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidFilter", "Only displayName eq \"value\" is supported.")
+		return
+	}
 
 	rows, total, err := h.Service.listGroups(r.Context(), tid, name, start, count)
 	if err != nil {

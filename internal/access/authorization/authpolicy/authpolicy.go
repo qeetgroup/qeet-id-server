@@ -97,7 +97,7 @@ type Service struct {
 func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
 
 // SetBreachChecker wires (or clears, with nil) the breached-password checker.
-// Called from cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+// Called from internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }

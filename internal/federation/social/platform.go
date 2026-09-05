@@ -169,10 +169,15 @@ func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc provi
 	if err != nil {
 		return "", err
 	}
+	nonce, nonceHash, err := codes.URLToken()
+	if err != nil {
+		return "", err
+	}
 	if _, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.platform_social_states (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create)
-		VALUES ($1, $2, '', $3, $4, $5, $6)`,
-		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate,
+		INSERT INTO auth.platform_social_states
+		    (state_hash, provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash)
+		VALUES ($1, $2, '', $3, $4, $5, $6, $7)`,
+		stateHash, provider, redirectURI, time.Now().UTC().Add(socialStateTTL), linkArg(linkUserID), allowCreate, nonceHash,
 	); err != nil {
 		return "", err
 	}
@@ -183,6 +188,7 @@ func (s *Service) beginAppleLogin(ctx context.Context, provider string, pc provi
 		"redirect_uri":  {redirectURI},
 		"scope":         {appleScopes},
 		"state":         {state},
+		"nonce":         {nonce},
 	}
 	return appleAuthorizeURL + "?" + q.Encode(), nil
 }
@@ -225,12 +231,13 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		gotProvider, verifier, redirectURI string
 		expiresAt                          time.Time
 		linkUserID                         *uuid.UUID
+		nonceHash                          *string
 		allowCreate                        bool
 	)
 	err := s.pool.QueryRow(ctx, `
 		DELETE FROM auth.platform_social_states WHERE state_hash = $1
-		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create`, stateHash,
-	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID, &allowCreate)
+		RETURNING provider, code_verifier, redirect_uri, expires_at, link_user_id, allow_create, nonce_hash`, stateHash,
+	).Scan(&gotProvider, &verifier, &redirectURI, &expiresAt, &linkUserID, &allowCreate, &nonceHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrSocialStateInvalid
 	}
@@ -254,11 +261,14 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 		}
 	} else if pc.kind == "apple" {
+		if nonceHash == nil || *nonceHash == "" {
+			return nil, errs.ErrSocialStateInvalid
+		}
 		secret, err := appleClientSecret(pc.clientID, pc.teamID, pc.keyID, pc.privateKey)
 		if err != nil {
 			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
-		if ui, err = s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI); err != nil {
+		if ui, err = s.oauth.appleExchange(ctx, secret, pc.clientID, code, redirectURI, *nonceHash); err != nil {
 			return nil, errs.ErrSocialTokenExchangeFailed.Wrap(err)
 		}
 	} else {
@@ -274,49 +284,58 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 			return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 		}
 	}
-	if ui.Email == "" {
-		return nil, errs.ErrSocialEmailMissing
+	owner, ownerErr := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
+		Provider: provider,
+		Subject:  ui.Subject,
+	})
+	if ownerErr != nil && !errors.Is(ownerErr, pgx.ErrNoRows) {
+		return nil, ownerErr
 	}
 
-	// Link ceremony: attach the identity to the initiating user. Never create or
-	// switch accounts; refuse an identity already linked to a different user.
+	// An authenticated link ceremony proves control of the local account, so it
+	// may bind the provider subject without using email as identity proof.
 	if linkUserID != nil {
-		owner, oerr := s.q.GetPlatformSocialIdentityOwner(ctx, dbgen.GetPlatformSocialIdentityOwnerParams{
-			Provider: provider,
-			Subject:  ui.Subject,
-		})
-		if oerr != nil && !errors.Is(oerr, pgx.ErrNoRows) {
-			return nil, oerr
-		}
-		if oerr == nil && owner != *linkUserID {
+		if ownerErr == nil && owner != *linkUserID {
 			return nil, errs.ErrSocialAlreadyLinked
+		}
+		verifiedEmail := ""
+		if ui.EmailVerified {
+			verifiedEmail = ui.Email
 		}
 		if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
 			UserID:   *linkUserID,
 			Provider: provider,
 			Subject:  ui.Subject,
-			Email:    emailPtr(ui.Email),
+			Email:    emailPtr(verifiedEmail),
 		}); err != nil {
 			return nil, err
 		}
 		return &PlatformCallbackResult{Linked: true, Provider: provider}, nil
 	}
 
-	// Login / signup ceremony. allowCreate distinguishes them: sign-up may
-	// provision just-in-time; sign-in requires an existing account.
-	userID, err := s.findOrCreatePlatformUser(ctx, ui, allowCreate)
-	if err != nil {
-		return nil, err
-	}
-	// Record the identity so the account shows this provider as connected — and
-	// so a provider the user already signs in with can't be "linked" again.
-	if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
-		UserID:   userID,
-		Provider: provider,
-		Subject:  ui.Subject,
-		Email:    emailPtr(ui.Email),
-	}); err != nil {
-		return nil, err
+	var userID uuid.UUID
+	if ownerErr == nil {
+		// Existing provider-subject binding is the identity proof; an upstream
+		// provider omitting email on later logins does not break the account.
+		userID = owner
+	} else {
+		if ui.Email == "" {
+			return nil, errs.ErrSocialEmailMissing
+		}
+		if !ui.EmailVerified {
+			return nil, errs.ErrSocialEmailUnverified
+		}
+		// New login/signup binding: verified email may resolve an existing local
+		// account or provision a new one when this is a signup ceremony.
+		userID, err = s.findOrCreatePlatformUser(ctx, ui, allowCreate)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.q.UpsertPlatformSocialIdentity(ctx, dbgen.UpsertPlatformSocialIdentityParams{
+			UserID: userID, Provider: provider, Subject: ui.Subject, Email: emailPtr(ui.Email),
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	rawCode, codeHash, err := codes.URLToken()

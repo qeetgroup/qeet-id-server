@@ -23,6 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -166,6 +168,10 @@ func subjectString(typ, id, rel string) string {
 // Write upserts a relationship tuple. object = "type:id", subject =
 // "user:<id>" or "type:id#relation".
 func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relation, subject string) (*Tuple, error) {
+	return s.WriteWithActor(ctx, tenantID, object, relation, subject, audit.Actor{Type: "system"})
+}
+
+func (s *Service) WriteWithActor(ctx context.Context, tenantID uuid.UUID, object, relation, subject string, actor audit.Actor) (*Tuple, error) {
 	o, ok := parseObject(object)
 	if !ok {
 		return nil, errs.ErrReBACObjectInvalid
@@ -177,7 +183,12 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 	if strings.TrimSpace(relation) == "" {
 		return nil, errs.ErrReBACRelationRequired
 	}
-	id, err := s.q.InsertRelationTuple(ctx, dbgen.InsertRelationTupleParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	id, err := s.q.WithTx(tx).InsertRelationTuple(ctx, dbgen.InsertRelationTupleParams{
 		TenantID:        tenantID,
 		ObjectType:      o.Type,
 		ObjectID:        o.ID,
@@ -189,18 +200,44 @@ func (s *Service) Write(ctx context.Context, tenantID uuid.UUID, object, relatio
 	if err != nil {
 		return nil, err
 	}
-	return &Tuple{ID: id, Object: object, Relation: relation, Subject: subjectString(subj.Type, subj.ID, subj.Relation)}, nil
+	tuple := &Tuple{ID: id, Object: object, Relation: relation, Subject: subjectString(subj.Type, subj.ID, subj.Relation)}
+	metadata := map[string]any{"object": tuple.Object, "relation": tuple.Relation, "subject": tuple.Subject}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_written", "relation_tuple", tuple.ID, metadata)); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tuple.ID, Topic: "authorization.events", EventType: "rebac.tuple_written", Payload: map[string]any{"tuple_id": tuple.ID, "tenant_id": tenantID, "object": tuple.Object, "relation": tuple.Relation, "subject": tuple.Subject}}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return tuple, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
+	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
+}
+
+func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).DeleteRelationTuple(ctx, dbgen.DeleteRelationTupleParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "rebac.tuple_deleted", "relation_tuple", id, nil)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "authorization.events", EventType: "rebac.tuple_deleted", Payload: map[string]any{"tuple_id": id, "tenant_id": tenantID}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // List returns the tuples on a given object (type:id).
@@ -412,6 +449,17 @@ type Handler struct {
 	Service *Service
 }
 
+func actorOf(r *http.Request) audit.Actor {
+	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
+		actor.UserID = principal.UserID
+		if principal.ActorType != "" {
+			actor.Type = principal.ActorType
+		}
+	}
+	return actor
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/relation-tuples", h.list)
 	r.Post("/tenants/{tenantID}/relation-tuples", h.write)
@@ -481,7 +529,7 @@ func (h *Handler) write(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	t, err := h.Service.Write(r.Context(), tenantID, in.Object, in.Relation, in.Subject)
+	t, err := h.Service.WriteWithActor(r.Context(), tenantID, in.Object, in.Relation, in.Subject, actorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -500,7 +548,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID); err != nil {
+	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

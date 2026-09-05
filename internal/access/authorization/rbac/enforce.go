@@ -20,8 +20,55 @@ type Checker interface {
 }
 
 type compiledRoute struct {
-	re   *regexp.Regexp
-	perm string
+	re     *regexp.Regexp
+	policy RoutePolicy
+}
+
+// RoutePolicy is the complete authorization contract for one authenticated
+// route. Administrative routes use PermissionPolicy; self-service routes must
+// opt in with UserOnlyPolicy. Absence from the policy table always denies.
+type RoutePolicy struct {
+	UserPermission string
+	MachineScopes  []string
+	AllowUser      bool
+	AllowAPIKey    bool
+	AllowService   bool
+	AllowAgent     bool
+	// HandlerAuthorizedMachine is reserved for routes whose machine scope is
+	// resource-derived (for example vault:<name>) and is checked by the handler.
+	HandlerAuthorizedMachine bool
+}
+
+func PermissionPolicy(permission string) RoutePolicy {
+	return RoutePolicy{
+		UserPermission: permission,
+		MachineScopes:  []string{permission},
+		AllowUser:      true,
+		AllowAPIKey:    true,
+		AllowService:   true,
+		AllowAgent:     true,
+	}
+}
+
+func UserOnlyPolicy() RoutePolicy { return RoutePolicy{AllowUser: true} }
+
+func ScopedMachinePolicy(scopes ...string) RoutePolicy {
+	return RoutePolicy{
+		MachineScopes: scopes,
+		AllowAPIKey:   true,
+		AllowService:  true,
+		AllowAgent:    true,
+	}
+}
+
+func HandlerAuthorizedPolicy(allowUser bool) RoutePolicy {
+	return RoutePolicy{
+		AllowUser:                allowUser,
+		AllowAPIKey:              true,
+		AllowService:             true,
+		AllowAgent:               true,
+		HandlerAuthorizedMachine: true,
+	}
 }
 
 // patternToRegex turns a chi-style route pattern ("/v1/users/{id}/mfa") into an
@@ -45,56 +92,96 @@ func patternToRegex(pattern string) *regexp.Regexp {
 //
 // It matches the request's method + concrete path against the patterns itself
 // (rather than chi's RoutePattern(), which isn't reliably resolved inside group
-// middleware). It enforces ONLY for end-user principals (ActorType "user");
-// API-key and service-principal callers carry no RBAC roles — they're
-// authorized by their key scopes / OAuth grants — so they pass through. Routes
-// absent from the map (public, self-service, tenant-create) also pass through.
-func Enforce(c Checker, perms map[string]string) func(http.Handler) http.Handler {
+// middleware). Every authenticated route must be explicitly classified; an
+// unknown route is denied. Users are checked through RBAC, while machine
+// principals must carry one of the policy's exact scopes.
+func Enforce(c Checker, policies map[string]RoutePolicy) func(http.Handler) http.Handler {
 	byMethod := map[string][]compiledRoute{}
-	for key, perm := range perms {
+	for key, policy := range policies {
 		method, pattern, ok := strings.Cut(key, " ")
 		if !ok {
 			continue
 		}
-		byMethod[method] = append(byMethod[method], compiledRoute{re: patternToRegex(pattern), perm: perm})
+		byMethod[method] = append(byMethod[method], compiledRoute{re: patternToRegex(pattern), policy: policy})
 	}
 
-	lookup := func(method, path string) (string, bool) {
+	lookup := func(method, path string) (RoutePolicy, bool) {
 		for _, cr := range byMethod[method] {
 			if cr.re.MatchString(path) {
-				return cr.perm, true
+				return cr.policy, true
 			}
 		}
-		return "", false
+		return RoutePolicy{}, false
 	}
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			p := httpx.PrincipalFromCtx(r.Context())
-			// Only RBAC-bearing end users are gated here.
-			if p == nil || p.ActorType != "user" || p.UserID == nil {
-				next.ServeHTTP(w, r)
+			if p == nil {
+				httpx.WriteError(w, r, errs.ErrForbidden)
 				return
 			}
-			perm, ok := lookup(r.Method, r.URL.Path)
+			policy, ok := lookup(r.Method, r.URL.Path)
 			if !ok {
-				next.ServeHTTP(w, r) // route not gated by RBAC
+				httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("route has no authorization policy"))
 				return
 			}
-			if p.TenantID == nil {
-				httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant scope required"))
-				return
-			}
-			allowed, err := c.Check(r.Context(), *p.UserID, *p.TenantID, perm)
-			if err != nil {
-				httpx.WriteError(w, r, err)
-				return
-			}
-			if !allowed {
+
+			switch p.ActorType {
+			case "", "user":
+				if !policy.AllowUser || p.UserID == nil {
+					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+					return
+				}
+				if policy.UserPermission != "" {
+					if p.TenantID == nil {
+						httpx.WriteError(w, r, errs.ErrForbidden.WithDetail("tenant scope required"))
+						return
+					}
+					allowed, err := c.Check(r.Context(), *p.UserID, *p.TenantID, policy.UserPermission)
+					if err != nil {
+						httpx.WriteError(w, r, err)
+						return
+					}
+					if !allowed {
+						httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+						return
+					}
+				}
+			case "api_key":
+				if !policy.AllowAPIKey || !machineScopeAllowed(p, policy) {
+					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+					return
+				}
+			case "service", "service_principal":
+				if !policy.AllowService || !machineScopeAllowed(p, policy) {
+					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+					return
+				}
+			case "agent":
+				if !policy.AllowAgent || !machineScopeAllowed(p, policy) {
+					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+					return
+				}
+			default:
 				httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func machineScopeAllowed(p *httpx.Principal, policy RoutePolicy) bool {
+	if policy.HandlerAuthorizedMachine {
+		return true
+	}
+	for _, have := range p.Scopes {
+		for _, want := range policy.MachineScopes {
+			if have == want {
+				return true
+			}
+		}
+	}
+	return false
 }

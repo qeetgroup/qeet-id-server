@@ -5,7 +5,9 @@ package oidc
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,10 +20,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -113,6 +115,9 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	if len(in.Scopes) == 0 {
 		in.Scopes = []string{"openid", "profile", "email"}
 	}
+	if err := validateClientInput(in); err != nil {
+		return nil, "", err
+	}
 	// The columns are NOT NULL DEFAULT '{}'; a nil Go slice encodes as SQL NULL,
 	// so coalesce to empty to honour callers that omit these arrays.
 	if in.RedirectURIs == nil {
@@ -158,6 +163,54 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
 	}
 	return &c, raw, nil
+}
+
+var supportedClientGrantTypes = map[string]struct{}{
+	"authorization_code": {},
+	"refresh_token":      {},
+	"client_credentials": {},
+	"token_exchange":     {},
+	"urn:ietf:params:oauth:grant-type:device_code":    {},
+	"urn:ietf:params:oauth:grant-type:token-exchange": {},
+	"urn:openid:params:grant-type:ciba":               {},
+}
+
+func validateClientInput(in CreateClientInput) error {
+	if in.Type != "public" && in.Type != "confidential" {
+		return errs.ErrBadRequest.WithDetail("type must be public or confidential")
+	}
+	for _, grantType := range in.GrantTypes {
+		if _, ok := supportedClientGrantTypes[grantType]; !ok {
+			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
+		}
+	}
+	if contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
+		return errs.ErrOIDCRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
+	}
+	for _, raw := range append(append([]string(nil), in.RedirectURIs...), in.PostLogoutURIs...) {
+		if err := validateRegisteredRedirectURI(raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRegisteredRedirectURI(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return errs.ErrOIDCRedirectURIInvalid.WithDetail("redirect URI must be an absolute URI without userinfo or fragment")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		host := strings.ToLower(u.Hostname())
+		ip := net.ParseIP(host)
+		if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return errs.ErrOIDCRedirectURIInvalid.WithDetail("redirect URI must use HTTPS or an HTTP loopback host")
 }
 
 // ShadowAICandidate is an OIDC client capable of unattended machine access
@@ -229,6 +282,13 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 	if err != nil {
 		return "", uuid.Nil, err
 	}
+	member, err := s.activeClientTenantMember(ctx, userID, clientID)
+	if err != nil {
+		return "", uuid.Nil, err
+	}
+	if !member {
+		return "", uuid.Nil, errs.ErrOIDCUserTenantMismatch
+	}
 	if !contains(info.RedirectUris, redirectURI) {
 		return "", uuid.Nil, errs.ErrOIDCRedirectURIInvalid
 	}
@@ -236,6 +296,9 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 		if !contains(info.Scopes, sc) {
 			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
+	}
+	if err := validatePKCEAuthorization(info.Type, challenge, challengeMethod); err != nil {
+		return "", uuid.Nil, err
 	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
@@ -256,6 +319,56 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 		return "", uuid.Nil, err
 	}
 	return raw, info.TenantID, nil
+}
+
+func validatePKCEAuthorization(clientType, challenge, method string) error {
+	if challenge == "" {
+		if method != "" {
+			return errs.ErrOIDCCodeChallengeInvalid
+		}
+		if clientType == "public" {
+			return errs.ErrOIDCCodeChallengeRequired
+		}
+		return nil
+	}
+	if method != "S256" {
+		return errs.ErrOIDCCodeChallengeMethodUnsupported
+	}
+	if !validPKCEValue(challenge, 43, 43) {
+		return errs.ErrOIDCCodeChallengeInvalid
+	}
+	return nil
+}
+
+func validPKCEValue(value string, minLength, maxLength int) bool {
+	if len(value) < minLength || len(value) > maxLength {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '.' || char == '_' || char == '~' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Service) activeClientTenantMember(ctx context.Context, userID uuid.UUID, clientID string) (bool, error) {
+	var member bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM auth.oidc_clients c
+			JOIN tenant.tenants t ON t.id = c.tenant_id
+			JOIN rbac.user_roles ur ON ur.tenant_id = c.tenant_id AND ur.user_id = $1
+			JOIN "user".users u ON u.id = ur.user_id
+			WHERE c.client_id = $2
+			  AND t.status = 'active' AND t.deleted_at IS NULL
+			  AND u.status = 'active' AND u.deleted_at IS NULL
+		)
+	`, userID, clientID).Scan(&member)
+	return member, err
 }
 
 // ClientName resolves a client's display name and tenant from its client_id —
@@ -288,6 +401,13 @@ func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri 
 // HasConsent reports whether the user has already granted the client every
 // requested scope (so the consent screen can be skipped).
 func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) (bool, error) {
+	member, err := s.activeClientTenantMember(ctx, userID, clientID)
+	if err != nil {
+		return false, err
+	}
+	if !member {
+		return false, errs.ErrOIDCUserTenantMismatch
+	}
 	granted, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -306,6 +426,13 @@ func (s *Service) HasConsent(ctx context.Context, userID uuid.UUID, clientID str
 // GrantConsent records the user's approval of a client for the given scopes,
 // replacing any prior grant for that (user, client) pair.
 func (s *Service) GrantConsent(ctx context.Context, userID uuid.UUID, clientID string, scopes []string) error {
+	member, err := s.activeClientTenantMember(ctx, userID, clientID)
+	if err != nil {
+		return err
+	}
+	if !member {
+		return errs.ErrOIDCUserTenantMismatch
+	}
 	return s.q.UpsertConsent(ctx, dbgen.UpsertConsentParams{UserID: userID, ClientID: clientID, Scopes: scopes})
 }
 
@@ -458,6 +585,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	if err != nil {
 		return nil, err
 	}
+	clientInfo, err := s.q.GetClientForAuth(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
 	hash := codes.Hash(code)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -488,15 +619,22 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	if ac.RedirectUri != redirectURI {
 		return nil, errs.ErrOIDCRedirectURIMismatch
 	}
+	if clientInfo.Type == "public" && (challenge == nil || *challenge == "") {
+		return nil, errs.ErrOIDCCodeChallengeRequired
+	}
 	if challenge != nil && *challenge != "" {
 		if codeVerifier == "" {
 			return nil, errs.ErrOIDCCodeVerifierRequired
+		}
+		if !validPKCEValue(codeVerifier, 43, 128) {
+			return nil, errs.ErrOIDCCodeVerifierInvalid
 		}
 		// We support S256 only (the recommended PKCE method).
 		if method == nil || *method != "S256" {
 			return nil, errs.ErrOIDCCodeChallengeMethodUnsupported
 		}
-		if codes.Hash(codeVerifier) != *challenge {
+		computed := codes.Hash(codeVerifier)
+		if subtle.ConstantTimeCompare([]byte(computed), []byte(*challenge)) != 1 {
 			return nil, errs.ErrOIDCCodeVerifierInvalid
 		}
 	}
@@ -807,7 +945,6 @@ func (h *Handler) Mount(r chi.Router) {
 
 	// Signing-key management (global/issuer-level, not tenant-scoped).
 	r.Get("/oidc/signing-keys", h.signingKeys)
-	r.Post("/oidc/signing-keys/rotate", h.rotateKey)
 }
 
 // MountBrowser registers the browser/RP-facing OAuth endpoints that authenticate
@@ -900,11 +1037,17 @@ func (h *Handler) MountPublic(r chi.Router) {
 }
 
 func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in CreateClientInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.TenantID = tenantID
 	ctx := r.Context()
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
@@ -927,10 +1070,10 @@ func (h *Handler) registerClient(w http.ResponseWriter, r *http.Request) {
 			actorType = "user"
 		}
 	}
-	tenantID := c.TenantID
+	auditTenantID := c.TenantID
 	resourceID := c.ID
 	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tenantID,
+		TenantID:     &auditTenantID,
 		ActorUserID:  actorID,
 		ActorType:    actorType,
 		Action:       "oidc.client_registered",
@@ -1128,8 +1271,8 @@ func appendQuery(base string, kv ...string) string {
 }
 
 func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	// RFC 8707 §2 — validate the optional resource indicator if present.
@@ -1209,24 +1352,24 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 
 // clientCreds parses OAuth client credentials from the form body or HTTP Basic
 // auth (the two RFC 6749 §2.3.1 mechanisms). Shared by revoke + introspect.
-func (h *Handler) clientCreds(r *http.Request) (id, secret string, ok bool) {
-	if err := r.ParseForm(); err != nil {
-		return "", "", false
+func (h *Handler) clientCreds(r *http.Request) (id, secret string, err error) {
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		return "", "", err
 	}
 	id = r.Form.Get("client_id")
 	secret = r.Form.Get("client_secret")
 	if u, p, has := r.BasicAuth(); has {
 		id, secret = u, p
 	}
-	return id, secret, true
+	return id, secret, nil
 }
 
 // revoke is the RFC 7009 token-revocation endpoint. It always answers 200 with
 // an empty body on success (including for unknown tokens).
 func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
-	clientID, clientSecret, ok := h.clientCreds(r)
-	if !ok {
-		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
+	clientID, clientSecret, err := h.clientCreds(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Service.RevokeToken(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint")); err != nil {
@@ -1238,9 +1381,9 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 
 // introspect is the RFC 7662 token-introspection endpoint.
 func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
-	clientID, clientSecret, ok := h.clientCreds(r)
-	if !ok {
-		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
+	clientID, clientSecret, err := h.clientCreds(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	resp, err := h.Service.Introspect(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint"))

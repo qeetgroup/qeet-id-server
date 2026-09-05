@@ -41,13 +41,13 @@ func Enqueue(ctx context.Context, tx pgx.Tx, e Event) error {
 }
 
 type Publisher interface {
-	Publish(ctx context.Context, topic, eventType string, payload []byte) error
+	Publish(ctx context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error
 }
 
 type LogPublisher struct{}
 
-func (LogPublisher) Publish(_ context.Context, topic, eventType string, payload []byte) error {
-	slog.Info("outbox publish", "topic", topic, "event", eventType, "payload_bytes", len(payload))
+func (LogPublisher) Publish(_ context.Context, eventID uuid.UUID, topic, eventType string, payload []byte) error {
+	slog.Info("outbox publish", "event_id", eventID, "topic", topic, "event", eventType, "payload_bytes", len(payload))
 	return nil
 }
 
@@ -57,6 +57,8 @@ type Dispatcher struct {
 	interval    time.Duration
 	batchSize   int
 	maxAttempts int
+	workerID    uuid.UUID
+	lease       time.Duration
 }
 
 // DefaultMaxAttempts caps how many times the dispatcher retries before
@@ -73,7 +75,10 @@ func NewDispatcher(pool *pgxpool.Pool, pub Publisher, interval time.Duration, ba
 	if batchSize <= 0 {
 		batchSize = 50
 	}
-	return &Dispatcher{pool: pool, pub: pub, interval: interval, batchSize: batchSize, maxAttempts: DefaultMaxAttempts}
+	return &Dispatcher{
+		pool: pool, pub: pub, interval: interval, batchSize: batchSize,
+		maxAttempts: DefaultMaxAttempts, workerID: uuid.New(), lease: 2 * time.Minute,
+	}
 }
 
 // Run polls platform.outbox until ctx is cancelled.
@@ -92,21 +97,33 @@ func (d *Dispatcher) Run(ctx context.Context) {
 	}
 }
 
+// Sweep claims and processes one due batch. It is exposed for operational
+// triggers and concurrency tests; leases make concurrent callers safe.
+func (d *Dispatcher) Sweep(ctx context.Context) error { return d.tick(ctx) }
+
 func (d *Dispatcher) tick(ctx context.Context) error {
 	// Pick rows that are either fresh (last_attempt_at IS NULL) or
 	// whose backoff window has elapsed. We deliberately compute the
 	// minimum gap in Go (via backoff()) rather than in SQL so the
 	// retry curve can change without a migration.
 	rows, err := d.pool.Query(ctx, `
-		SELECT id, topic, event_type, payload, attempts
-		FROM platform.outbox
-		WHERE published_at IS NULL
-		  AND (last_attempt_at IS NULL
-		       OR last_attempt_at < NOW() - (LEAST(POWER(2, attempts), 300) || ' seconds')::interval)
-		ORDER BY created_at
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED
-	`, d.batchSize)
+		WITH candidates AS (
+			SELECT id
+			FROM platform.outbox
+			WHERE published_at IS NULL
+			  AND (lease_until IS NULL OR lease_until <= NOW())
+			  AND (last_attempt_at IS NULL
+			       OR last_attempt_at < NOW() - (LEAST(POWER(2, attempts), 300) || ' seconds')::interval)
+			ORDER BY created_at
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE platform.outbox AS event
+		SET lease_owner = $2, lease_until = $3
+		FROM candidates
+		WHERE event.id = candidates.id
+		RETURNING event.id, event.topic, event.event_type, event.payload, event.attempts
+	`, d.batchSize, d.workerID, time.Now().UTC().Add(d.lease))
 	if err != nil {
 		return err
 	}
@@ -131,11 +148,15 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		return nil
 	}
 	for _, r := range batch {
-		if err := d.pub.Publish(ctx, r.Topic, r.EventType, r.Payload); err != nil {
+		if err := d.pub.Publish(ctx, r.ID, r.Topic, r.EventType, r.Payload); err != nil {
 			d.recordFailure(ctx, r.ID, r.Attempts+1, err)
 			continue
 		}
-		if _, err := d.pool.Exec(ctx, `UPDATE platform.outbox SET published_at = NOW() WHERE id = $1`, r.ID); err != nil {
+		if _, err := d.pool.Exec(ctx, `
+			UPDATE platform.outbox
+			SET published_at = NOW(), lease_owner = NULL, lease_until = NULL
+			WHERE id = $1 AND lease_owner = $2
+		`, r.ID, d.workerID); err != nil {
 			slog.Warn("outbox mark published", "id", r.ID, "err", err)
 		}
 	}
@@ -150,9 +171,10 @@ func (d *Dispatcher) recordFailure(ctx context.Context, id uuid.UUID, attempts i
 	if attempts < d.maxAttempts {
 		_, err := d.pool.Exec(ctx, `
 			UPDATE platform.outbox
-			SET attempts = $1, last_error = $2, last_attempt_at = NOW()
-			WHERE id = $3
-		`, attempts, pubErr.Error(), id)
+			SET attempts = $1, last_error = $2, last_attempt_at = NOW(),
+			    lease_owner = NULL, lease_until = NULL
+			WHERE id = $3 AND lease_owner = $4
+		`, attempts, pubErr.Error(), id, d.workerID)
 		if err != nil {
 			slog.Warn("outbox bump attempts", "id", id, "err", err)
 		}
@@ -168,12 +190,12 @@ func (d *Dispatcher) recordFailure(ctx context.Context, id uuid.UUID, attempts i
 		INSERT INTO platform.outbox_dead_letter
 		    (id, aggregate_id, topic, event_type, payload, created_at, attempts, last_error)
 		SELECT id, aggregate_id, topic, event_type, payload, created_at, $1, $2
-		FROM platform.outbox WHERE id = $3
-	`, attempts, pubErr.Error(), id); err != nil {
+		FROM platform.outbox WHERE id = $3 AND lease_owner = $4
+	`, attempts, pubErr.Error(), id, d.workerID); err != nil {
 		slog.Error("outbox dlq insert", "id", id, "err", err)
 		return
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM platform.outbox WHERE id = $1`, id); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.outbox WHERE id = $1 AND lease_owner = $2`, id, d.workerID); err != nil {
 		slog.Error("outbox dlq delete-from-outbox", "id", id, "err", err)
 		return
 	}

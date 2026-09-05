@@ -12,7 +12,7 @@
 // The Checker is OFF by default (constructed only when enabled) and FAIL-OPEN:
 // any transport error, timeout, or non-200 status logs a warning and reports
 // not-breached, so a HIBP outage can never block a password change. Wiring is
-// in cmd/server/main.go; the validation hooks live in the password-setting
+// in internal/bootstrap/dependencies.go; the validation hooks live in the password-setting
 // flows (auth signup, recovery reset, invite accept, user set-password).
 package hibp
 

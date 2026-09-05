@@ -56,7 +56,7 @@ database catches.
 
 ## Migrations
 
-`internal/platform/database/migrations/NNNN_description.{up,down}.sql` — highest is `0096`.
+`internal/platform/database/migrations/NNNN_description.{up,down}.sql` — highest is `0105` (`0082` is intentionally absent).
 **Never edit an applied migration.** Additive first.
 
 ## Tests

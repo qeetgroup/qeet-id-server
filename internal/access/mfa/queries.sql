@@ -1,13 +1,6 @@
 -- Queries for the access/mfa domain.
 -- All static queries are compiled by sqlc into ./dbgen.
 
--- name: UpsertMFATOTP :exec
-INSERT INTO auth.mfa_totp (user_id, secret) VALUES ($1, $2)
-ON CONFLICT (user_id) DO UPDATE SET secret = EXCLUDED.secret, confirmed_at = NULL;
-
--- name: GetMFATOTPSecret :one
-SELECT secret FROM auth.mfa_totp WHERE user_id = $1;
-
 -- name: ConfirmMFATOTP :exec
 UPDATE auth.mfa_totp SET confirmed_at = NOW() WHERE user_id = $1;
 
@@ -20,11 +13,6 @@ DELETE FROM auth.mfa_totp WHERE user_id = $1;
 
 -- name: GetMFATOTPConfirmed :one
 SELECT confirmed_at FROM auth.mfa_totp WHERE user_id = $1;
-
--- GetMFATOTPFull returns the secret and confirmed_at for the Verify path.
-
--- name: GetMFATOTPFull :one
-SELECT secret, confirmed_at FROM auth.mfa_totp WHERE user_id = $1;
 
 -- name: DeleteMFARecoveryCodes :exec
 DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1;
@@ -40,10 +28,11 @@ FROM auth.mfa_recovery_codes WHERE user_id = $1;
 
 -- name: ListUnusedRecoveryCodes :many
 SELECT id, code_hash FROM auth.mfa_recovery_codes
-WHERE user_id = $1 AND used_at IS NULL;
+WHERE user_id = $1 AND used_at IS NULL
+FOR UPDATE;
 
 -- name: MarkRecoveryCodeUsed :exec
-UPDATE auth.mfa_recovery_codes SET used_at = NOW() WHERE id = $1;
+UPDATE auth.mfa_recovery_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL;
 
 -- name: UpsertMFAVerification :exec
 INSERT INTO auth.mfa_verifications (user_id, method, verified_at)
@@ -78,7 +67,7 @@ ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE;
 
 -- name: MarkOTPCodeUsed :exec
-UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1;
+UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL;
 
 -- name: MarkOTPFactorVerified :exec
 UPDATE auth.mfa_otp_factors SET verified_at = NOW() WHERE id = $1;
@@ -98,25 +87,12 @@ FROM auth.mfa_otp_factors WHERE id = $1 AND user_id = $2;
 
 -- ── Push MFA ──────────────────────────────────────────────────────────────────
 
--- name: UpsertPushDevice :one
-INSERT INTO auth.mfa_push_devices (user_id, name, push_token, platform, device_token)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (user_id, push_token) DO UPDATE
-    SET name         = EXCLUDED.name,
-        platform     = EXCLUDED.platform,
-        device_token = EXCLUDED.device_token,
-        last_seen_at = NOW()
-RETURNING id, user_id, name, platform, created_at, last_seen_at;
-
 -- name: ListPushDevices :many
 SELECT id, user_id, name, platform, created_at, last_seen_at
 FROM auth.mfa_push_devices WHERE user_id = $1 ORDER BY created_at;
 
 -- name: DeletePushDevice :execrows
 DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2;
-
--- name: ListPushTokensByUser :many
-SELECT push_token FROM auth.mfa_push_devices WHERE user_id = $1;
 
 -- name: InsertPushChallenge :one
 INSERT INTO auth.mfa_push_challenges (user_id, action, context)
@@ -131,9 +107,6 @@ FROM auth.mfa_push_challenges WHERE id = $1;
 SELECT id, user_id, status, expires_at
 FROM auth.mfa_push_challenges WHERE id = $1
 FOR UPDATE;
-
--- name: VerifyDeviceToken :one
-SELECT id FROM auth.mfa_push_devices WHERE user_id = $1 AND device_token = $2;
 
 -- name: UpdatePushChallengeStatus :exec
 UPDATE auth.mfa_push_challenges

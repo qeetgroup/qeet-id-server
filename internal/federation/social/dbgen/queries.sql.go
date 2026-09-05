@@ -478,35 +478,6 @@ func (q *Queries) ListSocialProviders(ctx context.Context, tenantID uuid.UUID) (
 	return items, nil
 }
 
-const loadSocialProvider = `-- name: LoadSocialProvider :one
-SELECT client_id, client_secret, discovery_url, enabled
-FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2
-`
-
-type LoadSocialProviderParams struct {
-	TenantID uuid.UUID
-	Provider string
-}
-
-type LoadSocialProviderRow struct {
-	ClientID     string
-	ClientSecret string
-	DiscoveryUrl *string
-	Enabled      bool
-}
-
-func (q *Queries) LoadSocialProvider(ctx context.Context, arg LoadSocialProviderParams) (LoadSocialProviderRow, error) {
-	row := q.db.QueryRow(ctx, loadSocialProvider, arg.TenantID, arg.Provider)
-	var i LoadSocialProviderRow
-	err := row.Scan(
-		&i.ClientID,
-		&i.ClientSecret,
-		&i.DiscoveryUrl,
-		&i.Enabled,
-	)
-	return i, err
-}
-
 const markSocialLoginCodeUsed = `-- name: MarkSocialLoginCodeUsed :exec
 UPDATE auth.social_login_codes SET used_at = NOW() WHERE code_hash = $1
 `
@@ -542,57 +513,4 @@ func (q *Queries) UpsertPlatformSocialIdentity(ctx context.Context, arg UpsertPl
 		arg.Email,
 	)
 	return err
-}
-
-const upsertSocialProvider = `-- name: UpsertSocialProvider :one
-
-INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, discovery_url)
-VALUES ($1, $2, $3, $4, NULLIF($5,''))
-ON CONFLICT (tenant_id, provider) DO UPDATE SET
-    client_id     = EXCLUDED.client_id,
-    client_secret = EXCLUDED.client_secret,
-    discovery_url = EXCLUDED.discovery_url,
-    enabled       = TRUE
-RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
-`
-
-type UpsertSocialProviderParams struct {
-	TenantID     uuid.UUID
-	Provider     string
-	ClientID     string
-	ClientSecret string
-	DiscoveryUrl interface{}
-}
-
-type UpsertSocialProviderRow struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Provider     string
-	ClientID     string
-	DiscoveryUrl *string
-	Enabled      bool
-	CreatedAt    time.Time
-}
-
-// Queries for the social domain.
-// All queries are STATIC and compiled by sqlc into ./dbgen.
-func (q *Queries) UpsertSocialProvider(ctx context.Context, arg UpsertSocialProviderParams) (UpsertSocialProviderRow, error) {
-	row := q.db.QueryRow(ctx, upsertSocialProvider,
-		arg.TenantID,
-		arg.Provider,
-		arg.ClientID,
-		arg.ClientSecret,
-		arg.DiscoveryUrl,
-	)
-	var i UpsertSocialProviderRow
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Provider,
-		&i.ClientID,
-		&i.DiscoveryUrl,
-		&i.Enabled,
-		&i.CreatedAt,
-	)
-	return i, err
 }

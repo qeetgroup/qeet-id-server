@@ -68,7 +68,7 @@ func TestAgentSponsorRequiredAndTransferable(t *testing.T) {
 		t.Fatal("Create with a non-member sponsor should fail")
 	}
 
-	a1, err := svc.Create(ctx, tenantID, "agent-one", []string{"users:read"}, 0, sponsor)
+	a1, err := svc.Create(ctx, tenantID, "agent-one", []string{"user.read"}, 0, sponsor)
 	if err != nil {
 		t.Fatalf("create agent-one: %v", err)
 	}

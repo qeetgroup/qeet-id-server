@@ -25,9 +25,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	saml2 "github.com/russellhaering/gosaml2"
+	samltypes "github.com/russellhaering/gosaml2/types"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -36,8 +37,10 @@ import (
 )
 
 const (
-	provider     = "saml"
-	loginCodeTTL = 5 * time.Minute
+	provider        = "saml"
+	loginCodeTTL    = 5 * time.Minute
+	authnRequestTTL = 10 * time.Minute
+	replayIDTTL     = 24 * time.Hour
 )
 
 type Connection struct {
@@ -310,6 +313,73 @@ func (s *Service) buildSP(r *http.Request, conn *Connection) (*saml2.SAMLService
 			Roots: []*x509.Certificate{cert},
 		},
 	}, nil
+}
+
+func (s *Service) storeAuthnRequest(ctx context.Context, connectionID uuid.UUID, requestID string) error {
+	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
+		return errs.ErrSAMLRequestInvalid
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM auth.saml_authn_requests WHERE expires_at <= NOW()`); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO auth.saml_authn_requests (request_id, connection_id, expires_at)
+		VALUES ($1, $2, $3)
+	`, requestID, connectionID, time.Now().UTC().Add(authnRequestTTL))
+	return err
+}
+
+// ConsumeValidatedResponse atomically reserves every signed SAML identifier
+// and consumes the matching SP-initiated request. Callers must invoke it only
+// after cryptographic signature and assertion-condition validation succeeds.
+func (s *Service) ConsumeValidatedResponse(ctx context.Context, connectionID uuid.UUID, requestID, responseID string, assertionIDs []string) error {
+	if strings.TrimSpace(requestID) == "" || len(requestID) > 1024 {
+		return errs.ErrSAMLRequestCorrelation
+	}
+	if strings.TrimSpace(responseID) == "" || len(responseID) > 1024 || len(assertionIDs) == 0 || len(assertionIDs) > 16 {
+		return errs.ErrSAMLAssertionInvalid
+	}
+	ids := make([]struct{ kind, id string }, 0, len(assertionIDs)+1)
+	ids = append(ids, struct{ kind, id string }{"response", responseID})
+	for _, assertionID := range assertionIDs {
+		if strings.TrimSpace(assertionID) == "" || len(assertionID) > 1024 {
+			return errs.ErrSAMLAssertionInvalid
+		}
+		ids = append(ids, struct{ kind, id string }{"assertion", assertionID})
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.saml_replay_ids WHERE expires_at <= NOW()`); err != nil {
+		return err
+	}
+	for _, candidate := range ids {
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO auth.saml_replay_ids (connection_id, kind, saml_id, expires_at)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT DO NOTHING
+		`, connectionID, candidate.kind, candidate.id, time.Now().UTC().Add(replayIDTTL))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errs.ErrSAMLReplayDetected
+		}
+	}
+	tag, err := tx.Exec(ctx, `
+		DELETE FROM auth.saml_authn_requests
+		WHERE request_id = $1 AND connection_id = $2 AND expires_at > NOW()
+	`, requestID, connectionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errs.ErrSAMLRequestCorrelation
+	}
+	return tx.Commit(ctx)
 }
 
 // findOrCreateUser links the SAML NameID to an existing user (by linked
@@ -738,9 +808,26 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
 		return
 	}
-	authURL, err := sp.BuildAuthURL(r.URL.Query().Get("relay"))
+	doc, err := sp.BuildAuthRequestDocument()
+	if err != nil {
+		slog.Error("saml login: build auth request", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
+		return
+	}
+	if doc.Root() == nil {
+		slog.Error("saml login: generated auth request has no root", "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
+		return
+	}
+	requestID := doc.Root().SelectAttrValue("ID", "")
+	authURL, err := sp.BuildAuthURLFromDocument(r.URL.Query().Get("relay"), doc)
 	if err != nil {
 		slog.Error("saml login: build auth url", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrInternalServer)
+		return
+	}
+	if err := h.Service.storeAuthnRequest(r.Context(), conn.ID, requestID); err != nil {
+		slog.Error("saml login: persist request", "err", err, "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
@@ -762,8 +849,8 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionDisabled)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLRequestInvalid)
+	if err := httpx.ParseForm(r, httpx.MaxSAMLBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	encoded := r.PostFormValue("SAMLResponse")
@@ -775,6 +862,12 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("saml acs: build SP", "err", err, "connection", conn.ID)
 		httpx.WriteError(w, r, errs.ErrSAMLConnectionMisconfigured)
+		return
+	}
+	response, err := sp.ValidateEncodedResponse(encoded)
+	if err != nil {
+		slog.Warn("saml acs: response validation failed", "err", err, "connection", conn.ID)
+		httpx.WriteError(w, r, errs.ErrSAMLAssertionInvalid)
 		return
 	}
 	info, err := sp.RetrieveAssertionInfo(encoded)
@@ -799,6 +892,15 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		httpx.WriteError(w, r, errs.ErrSAMLAssertionNoEmail)
+		return
+	}
+	requestID, assertionIDs, err := trustedCorrelation(response)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.ConsumeValidatedResponse(r.Context(), conn.ID, requestID, response.ID, assertionIDs); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	name := ""
@@ -831,6 +933,31 @@ func (h *Handler) acs(w http.ResponseWriter, r *http.Request) {
 	// server / proxy log); the SPA trades it at /saml/exchange.
 	target := h.Service.appBaseURL + "/sso/callback#saml_code=" + rawCode
 	http.Redirect(w, r, target, http.StatusFound)
+}
+
+func trustedCorrelation(response *samltypes.Response) (string, []string, error) {
+	requestID := ""
+	if response.SignatureValidated {
+		requestID = response.InResponseTo
+	}
+	assertionIDs := make([]string, 0, len(response.Assertions))
+	for _, assertion := range response.Assertions {
+		assertionIDs = append(assertionIDs, assertion.ID)
+		if assertion.Subject == nil || assertion.Subject.SubjectConfirmation == nil ||
+			assertion.Subject.SubjectConfirmation.SubjectConfirmationData == nil {
+			continue
+		}
+		candidate := assertion.Subject.SubjectConfirmation.SubjectConfirmationData.InResponseTo
+		if candidate == "" || (!response.SignatureValidated && !assertion.SignatureValidated) {
+			continue
+		}
+		if requestID == "" {
+			requestID = candidate
+		} else if requestID != candidate {
+			return "", nil, errs.ErrSAMLRequestCorrelation
+		}
+	}
+	return requestID, assertionIDs, nil
 }
 
 func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {

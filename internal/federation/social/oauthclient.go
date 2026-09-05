@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // discoveryDoc is the subset of an OIDC discovery document we consume.
@@ -21,10 +23,11 @@ type discoveryDoc struct {
 
 // userInfo is the subset of OIDC userinfo claims we consume.
 type userInfo struct {
-	Subject string `json:"sub"`
-	Email   string `json:"email"`
-	Name    string `json:"name"`
-	Picture string `json:"picture"` // provider avatar URL (e.g. Google)
+	Subject       string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"` // provider avatar URL (e.g. Google)
 }
 
 type cachedDoc struct {
@@ -38,15 +41,21 @@ const discoveryTTL = time.Hour
 // provider's discovery document and drives the authorization-code exchange and
 // userinfo lookup over plain net/http. Discovery docs are cached in-memory.
 type oauthClient struct {
-	http  *http.Client
-	mu    sync.Mutex
-	cache map[string]cachedDoc
+	http          *http.Client
+	mu            sync.Mutex
+	cache         map[string]cachedDoc
+	appleMu       sync.Mutex
+	appleKeys     cachedAppleKeys
+	appleTokenURL string
+	appleJWKSURL  string
 }
 
-func newOAuthClient() *oauthClient {
+func newOAuthClient(policy *egress.Policy) *oauthClient {
 	return &oauthClient{
-		http:  &http.Client{Timeout: 10 * time.Second},
-		cache: map[string]cachedDoc{},
+		http:          policy.HTTPClient(10 * time.Second),
+		cache:         map[string]cachedDoc{},
+		appleTokenURL: appleTokenURL,
+		appleJWKSURL:  appleJWKSURL,
 	}
 }
 

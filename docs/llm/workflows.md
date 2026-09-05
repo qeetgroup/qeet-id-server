@@ -64,7 +64,7 @@ path or body, and carry `WHERE tenant_id = $1` into every query.
 
 ```text
 1  read the existing schema        internal/platform/database/migrations/  (+ subsystems.md)
-2  new pair, next number           NNNN_description.{up,down}.sql   (highest is 0096; 0082 is absent)
+2  new pair, next number           NNNN_description.{up,down}.sql   (highest is 0105; 0082 is absent)
 3  additive first                  add columns/tables; do not drop in the same release
 4  queries.sql                     update the affected domain
 5  regenerate                      sqlc → dbgen/

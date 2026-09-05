@@ -17,9 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -64,6 +65,9 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Principal, string, error) {
+	if err := rbac.ValidateMachineScopes(in.Scopes); err != nil {
+		return nil, "", err
+	}
 	raw, _, err := codes.URLToken()
 	if err != nil {
 		return nil, "", err
@@ -341,8 +345,8 @@ func (h *Handler) disable(w http.ResponseWriter, r *http.Request) {
 // per spec, accepts grant_type=client_credentials with client_id and
 // client_secret either in the body or in Basic auth.
 func (h *Handler) tokenEndpoint(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid form"))
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if r.Form.Get("grant_type") != "client_credentials" {

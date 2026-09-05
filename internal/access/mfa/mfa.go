@@ -19,12 +19,14 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption/totp"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -37,11 +39,14 @@ type Service struct {
 	issuer  string // "qeet-id" — shown in the authenticator app
 	sender  notifier.Sender
 	pushURL string // Expo push API endpoint
+	box     *envelope.Cipher
 }
 
 func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender, pushURL string) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, sender: sender, pushURL: pushURL}
 }
+
+func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 const otpTTL = 10 * time.Minute
 
@@ -59,10 +64,25 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.q.WithTx(tx).UpsertMFATOTP(ctx, dbgen.UpsertMFATOTPParams{
-		UserID: userID,
-		Secret: secret,
-	}); err != nil {
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
+	}
+	ciphertext, nonce, err := s.box.Seal(userID, "mfa-totp", userID.String(), []byte(secret))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.mfa_totp
+		    (user_id, secret, secret_ct, secret_nonce, encryption_version)
+		VALUES ($1, '', $2, $3, 1)
+		ON CONFLICT (user_id) DO UPDATE SET
+		    secret = '', secret_ct = EXCLUDED.secret_ct,
+		    secret_nonce = EXCLUDED.secret_nonce, encryption_version = 1,
+		    confirmed_at = NULL
+	`, userID, ciphertext, nonce); err != nil {
+		return nil, err
+	}
+	if err := clearMFAAttempt(ctx, tx, userID, "totp-enroll"); err != nil {
 		return nil, err
 	}
 	return &Enrollment{
@@ -72,16 +92,22 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 }
 
 func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, error) {
-	qtx := s.q.WithTx(tx)
-	secret, err := qtx.GetMFATOTPSecret(ctx, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrMFAEnrollNotStarted
-	}
+	remaining, err := s.reserveMFAAttempt(ctx, userID, "totp-enroll")
 	if err != nil {
 		return nil, err
 	}
+	qtx := s.q.WithTx(tx)
+	secret, _, err := s.loadTOTP(ctx, tx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.releaseMFAAttempt(ctx, userID, "totp-enroll")
+		return nil, errs.ErrMFAEnrollNotStarted
+	}
+	if err != nil {
+		s.releaseMFAAttempt(ctx, userID, "totp-enroll")
+		return nil, err
+	}
 	if !totp.Verify(secret, code) {
-		return nil, errs.ErrMFATOTPCodeInvalid
+		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, remaining)
 	}
 	if err := qtx.ConfirmMFATOTP(ctx, userID); err != nil {
 		return nil, err
@@ -94,8 +120,49 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	if err := s.RecordVerification(ctx, tx, userID, "totp"); err != nil {
 		return nil, err
 	}
+	if err := clearMFAAttempt(ctx, tx, userID, "totp-enroll"); err != nil {
+		return nil, err
+	}
 	// Wipe old recovery codes, mint a fresh batch.
 	return s.mintRecoveryCodes(ctx, tx, userID)
+}
+
+func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (string, pgtype.Timestamptz, error) {
+	var confirmedAt pgtype.Timestamptz
+	var legacySecret string
+	var ciphertext, nonce []byte
+	err := tx.QueryRow(ctx, `
+		SELECT secret, secret_ct, secret_nonce, confirmed_at
+		FROM auth.mfa_totp
+		WHERE user_id = $1
+	`, userID).Scan(&legacySecret, &ciphertext, &nonce, &confirmedAt)
+	if err != nil {
+		return "", confirmedAt, err
+	}
+	if len(ciphertext) > 0 {
+		if s.box == nil {
+			return "", confirmedAt, errors.New("MFA secret encryption is unavailable")
+		}
+		plain, openErr := s.box.Open(userID, "mfa-totp", userID.String(), ciphertext, nonce)
+		if openErr != nil {
+			return "", confirmedAt, openErr
+		}
+		return string(plain), confirmedAt, nil
+	}
+	if legacySecret != "" && s.box != nil {
+		ct, newNonce, sealErr := s.box.Seal(userID, "mfa-totp", userID.String(), []byte(legacySecret))
+		if sealErr != nil {
+			return "", confirmedAt, sealErr
+		}
+		if _, updateErr := tx.Exec(ctx, `
+			UPDATE auth.mfa_totp
+			SET secret = '', secret_ct = $2, secret_nonce = $3, encryption_version = 1
+			WHERE user_id = $1 AND secret_ct IS NULL
+		`, userID, ct, newNonce); updateErr != nil {
+			return "", confirmedAt, updateErr
+		}
+	}
+	return legacySecret, confirmedAt, nil
 }
 
 const recoveryCodeCount = 10
@@ -130,8 +197,8 @@ func (s *Service) mintRecoveryCodes(ctx context.Context, tx pgx.Tx, userID uuid.
 
 // TOTPStatus reports whether the account has a *confirmed* TOTP factor. The
 // account UI reads this on load to render an "active" state instead of
-// re-offering enrollment — re-running StartEnroll calls UpsertMFATOTP, which
-// rotates the secret and clears confirmed_at, so a stale "begin enrollment"
+// re-offering enrollment — re-running StartEnroll replaces the encrypted seed
+// and clears confirmed_at, so a stale "begin enrollment"
 // prompt could silently break a working authenticator.
 type TOTPStatus struct {
 	Enrolled bool `json:"enrolled"`
@@ -206,20 +273,39 @@ type VerifyResult struct {
 // are consumed on use. The caller passes a tx so the consumption and any
 // audit row commit together.
 func (s *Service) Verify(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (*VerifyResult, error) {
+	remaining, err := s.reserveMFAAttempt(ctx, userID, "factor-verify")
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.verifyCode(ctx, tx, userID, code)
+	if err != nil {
+		if errors.Is(err, errs.ErrMFACodeInvalid) {
+			return nil, attemptError(errs.ErrMFACodeInvalid, remaining)
+		}
+		s.releaseMFAAttempt(ctx, userID, "factor-verify")
+		return nil, err
+	}
+	if err := clearMFAAttempt(ctx, tx, userID, "factor-verify"); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *Service) verifyCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (*VerifyResult, error) {
 	code = strings.TrimSpace(code)
 	qtx := s.q.WithTx(tx)
 
-	totpRow, err := qtx.GetMFATOTPFull(ctx, userID)
+	secret, confirmedAt, err := s.loadTOTP(ctx, tx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrMFANotEnrolled
 	}
 	if err != nil {
 		return nil, err
 	}
-	if !totpRow.ConfirmedAt.Valid {
+	if !confirmedAt.Valid {
 		return nil, errs.ErrMFANotConfirmed
 	}
-	if totp.Verify(totpRow.Secret, code) {
+	if totp.Verify(secret, code) {
 		return &VerifyResult{}, nil
 	}
 	// Recovery code fallback.
@@ -237,8 +323,15 @@ func (s *Service) Verify(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code 
 	if matchedID == nil {
 		return nil, errs.ErrMFACodeInvalid
 	}
-	if err := qtx.MarkRecoveryCodeUsed(ctx, *matchedID); err != nil {
+	tag, err := tx.Exec(ctx, `
+		UPDATE auth.mfa_recovery_codes SET used_at = NOW()
+		WHERE id = $1 AND used_at IS NULL
+	`, *matchedID)
+	if err != nil {
 		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, errs.ErrMFACodeInvalid
 	}
 	return &VerifyResult{UsedRecoveryCode: true, RecoveryCodeID: matchedID}, nil
 }
@@ -262,13 +355,8 @@ func (s *Service) IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error
 // and records the verification (so a step-up window is open immediately after
 // sign-in). Returns (false, nil) when the code is simply wrong/expired; a
 // non-nil error indicates an infrastructure failure.
-func (s *Service) VerifyForLogin(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback(ctx)
-	res, err := s.Verify(ctx, tx, userID, code)
+func (s *Service) VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error) {
+	res, err := s.verifyCode(ctx, tx, userID, code)
 	if err != nil {
 		// A domain error (wrong/expired code, not-configured) means "not
 		// verified" — surface it as a clean negative, not a 500.
@@ -282,9 +370,6 @@ func (s *Service) VerifyForLogin(ctx context.Context, userID uuid.UUID, code str
 		method = "recovery_code"
 	}
 	if err := s.RecordVerification(ctx, tx, userID, method); err != nil {
-		return false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -385,6 +470,11 @@ func (s *Service) EnrollOTPStart(ctx context.Context, userID uuid.UUID, channel,
 
 // EnrollOTPConfirm verifies the code and marks the factor usable.
 func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, userID, factorID uuid.UUID, code string) error {
+	purpose := "otp-enroll:" + factorID.String()
+	remaining, err := s.reserveMFAAttempt(ctx, userID, purpose)
+	if err != nil {
+		return err
+	}
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForConfirm(ctx, dbgen.GetOTPCodeForConfirmParams{
 		ID:       factorID,
@@ -392,15 +482,23 @@ func (s *Service) EnrollOTPConfirm(ctx context.Context, tx pgx.Tx, userID, facto
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errs.ErrMFAOTPCodeInvalid
+		return attemptError(errs.ErrMFAOTPCodeInvalid, remaining)
 	}
+	if err != nil {
+		s.releaseMFAAttempt(ctx, userID, purpose)
+		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
 	if err != nil {
 		return err
 	}
-	if err := qtx.MarkOTPCodeUsed(ctx, codeID); err != nil {
-		return err
+	if tag.RowsAffected() != 1 {
+		return attemptError(errs.ErrMFAOTPCodeInvalid, remaining)
 	}
 	if err := qtx.MarkOTPFactorVerified(ctx, factorID); err != nil {
+		return err
+	}
+	if err := clearMFAAttempt(ctx, tx, userID, purpose); err != nil {
 		return err
 	}
 	return nil
@@ -458,18 +556,30 @@ func (s *Service) ChallengeOTP(ctx context.Context, userID, factorID uuid.UUID) 
 
 // VerifyOTP consumes a code from any of the user's verified OTP factors.
 func (s *Service) VerifyOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error) {
+	remaining, err := s.reserveMFAAttempt(ctx, userID, "otp-verify")
+	if err != nil {
+		return false, err
+	}
 	qtx := s.q.WithTx(tx)
 	codeID, err := qtx.GetOTPCodeForVerify(ctx, dbgen.GetOTPCodeForVerifyParams{
 		UserID:   userID,
 		CodeHash: codes.Hash(strings.TrimSpace(code)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return false, attemptError(errs.ErrMFACodeInvalid, remaining)
 	}
+	if err != nil {
+		s.releaseMFAAttempt(ctx, userID, "otp-verify")
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL`, codeID)
 	if err != nil {
 		return false, err
 	}
-	if err := qtx.MarkOTPCodeUsed(ctx, codeID); err != nil {
+	if tag.RowsAffected() != 1 {
+		return false, attemptError(errs.ErrMFACodeInvalid, remaining)
+	}
+	if err := clearMFAAttempt(ctx, tx, userID, "otp-verify"); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -2,7 +2,6 @@ package tenant
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -10,7 +9,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -91,14 +90,44 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrEmailNotVerified)
 		return
 	}
-	// The creator becomes the tenant's owner (role + membership) in one tx.
-	t, err := h.Repo.CreateWithOwner(r.Context(), in, *p.UserID)
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Audit + outbox in a follow-up tx so failure there doesn't roll back the create.
-	go h.publishCreated(r, t)
+	defer tx.Rollback(ctx)
+	// The tenant, owner role/membership, audit row, and outbox event are one
+	// durable mutation.
+	t, err := h.Repo.CreateWithOwnerTx(ctx, tx, in, *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id := t.ID
+	actorType := p.ActorType
+	if actorType == "" {
+		actorType = "user"
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &id, ActorUserID: p.UserID, ActorType: actorType,
+		Action: "tenant.created", ResourceType: "tenant", ResourceID: &id,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		Metadata: map[string]any{"slug": t.Slug, "name": t.Name},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: t.ID, Topic: "tenant.events", EventType: "tenant.created", Payload: t,
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 
 	// Mint a pair scoped to the new tenant so the caller switches in; tenant still returned if it fails.
 	resp := map[string]any{
@@ -117,50 +146,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) publishCreated(r *http.Request, t *Tenant) {
-	// Detach from the request context: this runs in a goroutine after the
-	// response is sent, so r.Context() is already cancelled.
-	ctx := context.WithoutCancel(r.Context())
-	tx, err := h.Repo.Pool().Begin(ctx)
-	if err != nil {
-		slog.Warn("tenant.created publish: begin", "err", err, "tenant_id", t.ID)
-		return
-	}
-	defer tx.Rollback(ctx)
-	p := httpx.PrincipalFromCtx(ctx)
-	var actor *uuid.UUID
-	if p != nil {
-		actor = p.UserID
-	}
-	id := t.ID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &id,
-		ActorUserID:  actor,
-		Action:       "tenant.created",
-		ResourceType: "tenant",
-		ResourceID:   &id,
-		IP:           httpx.ClientIP(r),
-		UserAgent:    r.UserAgent(),
-		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"slug": t.Slug, "name": t.Name},
-	}); err != nil {
-		slog.Warn("tenant.created publish: audit", "err", err, "tenant_id", t.ID)
-		return
-	}
-	if err := outbox.Enqueue(ctx, tx, outbox.Event{
-		AggregateID: t.ID,
-		Topic:       "tenant.events",
-		EventType:   "tenant.created",
-		Payload:     t,
-	}); err != nil {
-		slog.Warn("tenant.created publish: outbox", "err", err, "tenant_id", t.ID)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("tenant.created publish: commit", "err", err, "tenant_id", t.ID)
-	}
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {

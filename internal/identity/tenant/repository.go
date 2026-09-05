@@ -70,6 +70,24 @@ func listRowToTenant(id uuid.UUID, slug, name, status, plan, region, logoURL str
 
 // CreateWithOwner creates a tenant and, in one tx, makes ownerID its owner (owner role + permissions + membership + home tenant).
 func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerID uuid.UUID) (*Tenant, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	tenant, err := r.CreateWithOwnerTx(ctx, tx, in, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return tenant, nil
+}
+
+// CreateWithOwnerTx creates the tenant, owner role, permission grants,
+// membership, and home-tenant assignment in the caller's transaction.
+func (r *Repository) CreateWithOwnerTx(ctx context.Context, tx pgx.Tx, in CreateInput, ownerID uuid.UUID) (*Tenant, error) {
 	plan := in.Plan
 	if plan == "" {
 		plan = "free"
@@ -86,12 +104,6 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 	if err != nil {
 		return nil, err
 	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
 	// InsertTenant and the cross-context writes below are all static SQL, so they run
 	// as sqlc queries on the same pgx.Tx via WithTx — one transaction spanning the
 	// tenant, rbac, and user bounded contexts.
@@ -136,9 +148,6 @@ func (r *Repository) CreateWithOwner(ctx context.Context, in CreateInput, ownerI
 		return nil, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
 	return t, nil
 }
 

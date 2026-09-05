@@ -71,6 +71,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -78,19 +79,42 @@ import (
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 )
 
 type namedWorker struct {
-	name string
-	run  worker.Func
+	name   string
+	run    worker.Func
+	always bool
 }
 
 // buildDeps constructs every repository, service, and handler and returns the
 // HTTP dependency set plus the background workers to supervise. Keeping all
 // wiring here lets main() focus on process lifecycle.
 func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, outboxPub outbox.Publisher) (Deps, []namedWorker) {
+	outboundPolicy := egress.NewPolicy(egress.Options{})
+	if cfg.ServiceEnv == "dev" {
+		outboundPolicy = egress.DevelopmentPolicy()
+	}
+	keyProvider, err := SecretsKeyProvider(rootCtx, cfg)
+	if err != nil {
+		slog.Error("init secrets key provider", "err", err)
+		os.Exit(1)
+	}
+	dataKey, err := keyProvider.DataKey(rootCtx)
+	if err != nil {
+		slog.Error("unwrap secrets data key", "err", err)
+		os.Exit(1)
+	}
+	sharedCipher, err := envelope.New(dataKey)
+	if err != nil {
+		slog.Error("init domain encryption", "err", err)
+		os.Exit(1)
+	}
+	keyProvider = secret.StaticKeyProvider{Key: dataKey}
 	signingKeyPEM := cfg.JWTSigningKey
+	ephemeralSigningKey := signingKeyPEM == ""
 	if signingKeyPEM == "" {
 		if cfg.ServiceEnv != "dev" {
 			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
@@ -102,16 +126,25 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 			os.Exit(1)
 		}
 		signingKeyPEM = k
-		slog.Warn("JWT_SIGNING_KEY unset — generated an ephemeral ES256 key; issued tokens will not survive a restart (dev only)")
+		slog.Warn("JWT_SIGNING_KEY unset — generated and activated a new development ES256 key")
 	}
-	issuer, err := tokens.NewIssuer(signingKeyPEM, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	signingKeyRegistry, err := tokens.NewSigningKeyRegistry(pool, sharedCipher)
 	if err != nil {
-		slog.Error("init token issuer", "err", err)
+		slog.Error("init signing key registry", "err", err)
 		os.Exit(1)
 	}
-	if n := issuer.AddRetiredKeysPEM(cfg.JWTRetiredKeys); n > 0 {
-		slog.Info("registered retired signing keys for rotation grace", "count", n)
+	ephemeralEnvelopeKey := cfg.ServiceEnv == "dev" && (cfg.SecretsProvider == "" || cfg.SecretsProvider == "static") && cfg.SecretsKey == ""
+	activateSigningKey := cfg.JWTActivateSigningKey || ephemeralSigningKey || ephemeralEnvelopeKey
+	if err := signingKeyRegistry.Reconcile(rootCtx, signingKeyPEM, cfg.JWTRetiredKeys, activateSigningKey, cfg.JWTSigningKeyRetireGrace); err != nil {
+		slog.Error("reconcile JWT signing key registry", "err", err)
+		os.Exit(1)
 	}
+	issuer, err := signingKeyRegistry.NewIssuer(rootCtx, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
+	if err != nil {
+		slog.Error("init token issuer from registry", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("JWT signing key registry ready", "active_kid", issuer.KID())
 	verifier := &httpx.AuthVerifier{
 		Tokens:          issuer,
 		DevTrustHeaders: cfg.AuthDevTrustHeaders,
@@ -191,10 +224,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	apikeyService := apikey.NewService(pool)
 	principalService := principal.NewService(pool, issuer)
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender, cfg.ExpoPushURL)
+	mfaService.SetCipher(sharedCipher)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + validate new passwords per tenant
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
-	authHookService := authhook.NewService(pool)
+	authHookService := authhook.NewService(pool, outboundPolicy)
+	authHookService.SetCipher(sharedCipher)
 	authService.SetLoginHook(authHookService) // synchronous Actions/Hooks gate (no-op until configured)
 	threatService := threat.NewService(pool)
 	authService.SetAnomalyRecorder(threatService) // record credential-stuffing anomalies on lockout
@@ -203,7 +238,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	riskService := risk.NewService(pool)
 	authService.SetRiskAssessor(riskService) // override trusted-device skip when risk is too high
 	botService := bot.NewService(pool)
-	siemService := siem.NewService(pool)                         // forwards audit events to configured log sinks
+	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
+	siemService.SetCipher(sharedCipher)
 	rebacService := rebac.NewService(pool)                       // fine-grained (relationship) authorization
 	abacService := abac.NewService(pool)                         // attribute-based access control (policy store + PDP)
 	authzenService := authzen.NewService(rbacRepo, rebacService) // OpenID AuthZEN PDP facade over RBAC/ReBAC
@@ -241,7 +277,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// Universal search: read-only fan-out across resource types. Reuses the
 	// rbacRepo for per-type permission checks; no new DB objects required.
 	searchService := search.NewService(pool, rbacRepo)
-	webhookService := webhook.NewService(pool)
+	webhookService := webhook.NewService(pool, outboundPolicy)
+	webhookService.SetCipher(sharedCipher)
 	// Agent lifecycle: emit webhook events on transitions, and let the auth
 	// middleware deny suspended/decommissioned agents' tokens per request.
 	agentService.SetEmitter(webhookService.Enqueue)
@@ -272,7 +309,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 	passkeyService := passkey.NewService(pool, wa, authService)
-	socialService := social.NewService(pool, authService, cfg.AppBaseURL)
+	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
+	socialService.SetCipher(sharedCipher)
 	// Platform-level (tenant-less) social login for the console's own accounts.
 	// Off until credentials are set; Google only for now.
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
@@ -292,14 +330,6 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
-	// Secrets-vault data key: sourced per SECRETS_PROVIDER (static SECRETS_KEY,
-	// AWS KMS, or an ephemeral dev key). Validate() guarantees the required
-	// inputs are present outside dev.
-	keyProvider, err := secretsKeyProvider(rootCtx, cfg)
-	if err != nil {
-		slog.Error("init secrets key provider", "err", err)
-		os.Exit(1)
-	}
 	secretService, err := secret.NewService(rootCtx, pool, keyProvider)
 	if err != nil {
 		slog.Error("init secrets vault", "err", err)
@@ -307,7 +337,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	// Token Vault reuses the same key provider as the secrets vault above —
 	// one KMS/static-key setup backs both encrypted stores.
-	tokenVaultService, err := tokenvault.NewService(rootCtx, pool, keyProvider)
+	tokenVaultService, err := tokenvault.NewService(rootCtx, pool, keyProvider, outboundPolicy)
 	if err != nil {
 		slog.Error("init token vault", "err", err)
 		os.Exit(1)
@@ -368,7 +398,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	adminPortalService := adminportal.NewService(pool, brandingRepo, cfg.LoginBaseURL)
 
-	ldapService := ldap.NewService(pool, authService)
+	ldapService := ldap.NewService(pool, authService, outboundPolicy)
+	ldapService.SetCipher(sharedCipher)
 	ipAllowService := ipallow.NewService(pool)
 
 	// Plan enforcement: inject the entitlement checker into every gated create
@@ -480,7 +511,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Secret:        &secret.Handler{Service: secretService},
 		TokenVault:    &tokenvault.Handler{Service: tokenVaultService},
 		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
-		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService},
+		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: cfg.ServiceEnv != "dev"},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Threat:        &threat.Handler{Service: threatService},
@@ -514,6 +545,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
 	workers := []namedWorker{
+		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
 		{name: "outbox", run: outboxDispatcher.Run},
 		{name: "webhook", run: webhookService.RunDispatcher},
 		{name: "gdpr", run: gdprService.Run},
@@ -615,7 +647,7 @@ func (u entitlementUsageResolver) Usage(ctx context.Context, tenantID uuid.UUID)
 	return out, nil
 }
 
-func secretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
+func SecretsKeyProvider(ctx context.Context, cfg *config.Config) (secret.KeyProvider, error) {
 	switch cfg.SecretsProvider {
 	case "aws-kms":
 		blob, err := base64.StdEncoding.DecodeString(cfg.SecretsWrappedDEK)

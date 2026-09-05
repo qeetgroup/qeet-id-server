@@ -3,6 +3,7 @@ package httpx
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -52,20 +53,12 @@ func AccessLog(next http.Handler) http.Handler {
 		// Sub-millisecond precision: microseconds → float ms.
 		durMS := float64(time.Since(start).Microseconds()) / 1000.0
 
-		// Prefer chi route pattern ("/v1/users/{id}") over raw path to keep
-		// log cardinality bounded — same as the metrics middleware.
-		route := r.URL.Path
-		if rc := chi.RouteContext(r.Context()); rc != nil {
-			if p := rc.RoutePattern(); p != "" {
-				route = p
-			}
-		}
+		route := safeRequestRoute(r)
 
 		attrs := make([]slog.Attr, 0, 16)
 		attrs = append(attrs,
 			slog.String("method", r.Method),
 			slog.String("route", route),
-			slog.String("path", r.URL.Path),
 			slog.Int("status", status),
 			slog.Int("bytes", ww.BytesWritten()),
 			slog.Float64("dur_ms", durMS),
@@ -110,6 +103,29 @@ func AccessLog(next http.Handler) http.Handler {
 		}
 		slog.Default().LogAttrs(r.Context(), level, "http", attrs...)
 	})
+}
+
+func safeRequestRoute(r *http.Request) string {
+	if rc := chi.RouteContext(r.Context()); rc != nil {
+		if pattern := rc.RoutePattern(); pattern != "" {
+			return SanitizeForLog(pattern)
+		}
+	}
+	path := SanitizeForLog(r.URL.Path)
+	parts := strings.Split(path, "/")
+	for index := 0; index+1 < len(parts); index++ {
+		if parts[index] != "admin-portal" {
+			continue
+		}
+		next := parts[index+1]
+		switch next {
+		case "", "session", "context", "saml", "scim", "links":
+		default:
+			parts[index+1] = "{redacted}"
+		}
+		break
+	}
+	return strings.Join(parts, "/")
 }
 
 // permissionsPolicy disables browser features the identity API has no need to

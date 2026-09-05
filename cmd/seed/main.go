@@ -6,8 +6,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -17,39 +15,42 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/agents"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
+	agent "github.com/qeetgroup/qeet-id-server/internal/developer/agents"
+	apikey "github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
+	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
+	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
+	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
+	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/billing"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const seedPassword = "Password123!"
@@ -118,10 +119,20 @@ func main() {
 	must(rbacRepo.SeedBuiltins(ctx), "seed rbac builtins")
 	rbacSvc := rbac.NewService(rbacRepo)
 	authSvc := auth.NewService(pool, userRepo, issuer)
+	outboundPolicy := egress.DevelopmentPolicy()
+	keyProvider, err := bootstrap.SecretsKeyProvider(ctx, cfg)
+	must(err, "init secrets key provider")
+	dataKey, err := keyProvider.DataKey(ctx)
+	must(err, "unwrap secrets data key")
+	sharedCipher, err := envelope.New(dataKey)
+	must(err, "init domain encryption")
+	keyProvider = secret.StaticKeyProvider{Key: dataKey}
 	groupSvc := group.NewService(pool)
 	apikeySvc := apikey.NewService(pool)
-	webhookSvc := webhook.NewService(pool)
-	socialSvc := social.NewService(pool, authSvc, cfg.AppBaseURL)
+	webhookSvc := webhook.NewService(pool, outboundPolicy)
+	webhookSvc.SetCipher(sharedCipher)
+	socialSvc := social.NewService(pool, authSvc, cfg.AppBaseURL, outboundPolicy)
+	socialSvc.SetCipher(sharedCipher)
 	brandingRepo := branding.NewRepository(pool)
 	policyRepo := policy.NewRepository(pool)
 
@@ -134,19 +145,22 @@ func main() {
 	principalSvc := principal.NewService(pool, issuer)
 	agentSvc := agent.NewService(pool, issuer)
 	vcSvc := vc.NewService(pool, issuer)
-	authhookSvc := authhook.NewService(pool)
+	authhookSvc := authhook.NewService(pool, outboundPolicy)
+	authhookSvc.SetCipher(sharedCipher)
 	inviteSvc := invite.NewService(pool, notifier.LogSender{}, 14*24*time.Hour, cfg.AppBaseURL)
 	domainSvc := domainverify.NewService(pool)
 	emailTplSvc := email.NewService(pool)
 	retentionSvc := retention.NewService(pool)
-	siemSvc := siem.NewService(pool)
+	siemSvc := siem.NewService(pool, outboundPolicy)
+	siemSvc.SetCipher(sharedCipher)
 	ipallowSvc := ipallow.NewService(pool)
 	authPolicySvc := authpolicy.NewService(pool)
 	notifySvc := notification.NewService(pool)
-	ldapSvc := ldap.NewService(pool, authSvc)
+	ldapSvc := ldap.NewService(pool, authSvc, outboundPolicy)
+	ldapSvc.SetCipher(sharedCipher)
 	rebacSvc := rebac.NewService(pool)
 	scimSvc := scim.NewService(pool, userRepo)
-	secretSvc, err := secret.NewService(ctx, pool, secretsKeyProvider(cfg))
+	secretSvc, err := secret.NewService(ctx, pool, keyProvider)
 	must(err, "init secrets vault")
 
 	pwHash, err := password.Hash(seedPassword)
@@ -283,7 +297,7 @@ func main() {
 
 	// ---- API keys ----
 	for _, name := range []string{"Production API", "GitHub Actions CI", "qeet-logs ingestion"} {
-		k, full, err := apikeySvc.Create(ctx, apikey.CreateInput{TenantID: qeet.ID, UserID: &founder.ID, Name: name, Scopes: []string{"users:read", "audit:read"}})
+		k, full, err := apikeySvc.Create(ctx, apikey.CreateInput{TenantID: qeet.ID, UserID: &founder.ID, Name: name, Scopes: []string{"user.read", "audit.read"}})
 		must(err, "create api key "+name)
 		fmt.Printf("  • api key %-22q %s\n", k.Name, full)
 	}
@@ -448,7 +462,7 @@ func main() {
 	inTx("service account", func(tx pgx.Tx) error {
 		_, sec, e := principalSvc.Create(ctx, tx, principal.CreateInput{
 			TenantID: qeet.ID, Name: "Platform automation", Description: "Server-to-server access for internal tooling",
-			Scopes: []string{"users:read", "audit:read"},
+			Scopes: []string{"user.read", "audit.read"},
 		})
 		saSecret = sec
 		return e
@@ -467,7 +481,7 @@ func main() {
 	must(err, "auth hook")
 
 	// ---- AI agent (ephemeral scoped tokens) ----
-	_, err = agentSvc.Create(ctx, qeet.ID, "Support Assistant", []string{"users:read"}, 3600, founder.ID)
+	_, err = agentSvc.Create(ctx, qeet.ID, "Support Assistant", []string{"user.read"}, 3600, founder.ID)
 	must(err, "ai agent")
 
 	// ---- Verifiable credential issued to the founder ----
@@ -517,7 +531,7 @@ func main() {
 	})
 
 	// ---- SAML IdP-side service provider (Qeet as IdP, draft). Inserted directly
-	// to avoid building an IdP signer just for a display row (see cmd/server). ----
+	// to avoid building an IdP signer just for a display row (see internal/bootstrap). ----
 	_, err = pool.Exec(ctx, `
 		INSERT INTO tenant.saml_service_providers
 			(tenant_id, name, entity_id, acs_url, name_id_format, name_id_attribute, certificate, status)
@@ -695,18 +709,3 @@ func must(err error, what string) {
 }
 
 func ptr(s string) *string { return &s }
-
-// secretsKeyProvider mirrors cmd/server: decode SECRETS_KEY (base64) for the
-// vault's AES data key, or generate an ephemeral key in dev when it's unset
-// (stored secrets then won't survive a restart — fine for seed data).
-func secretsKeyProvider(cfg *config.Config) secret.KeyProvider {
-	if cfg.SecretsKey != "" {
-		key, err := base64.StdEncoding.DecodeString(cfg.SecretsKey)
-		must(err, "decode SECRETS_KEY")
-		return secret.StaticKeyProvider{Key: key}
-	}
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
-	must(err, "generate ephemeral secrets key")
-	return secret.StaticKeyProvider{Key: key}
-}

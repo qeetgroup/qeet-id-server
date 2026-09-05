@@ -13,52 +13,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createWebhookSubscription = `-- name: CreateWebhookSubscription :one
-
-INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, events)
-VALUES ($1, $2, $3, $4)
-RETURNING id, tenant_id, url, events, disabled_at, created_at
-`
-
-type CreateWebhookSubscriptionParams struct {
-	TenantID uuid.UUID
-	Url      string
-	Secret   string
-	Events   []string
-}
-
-type CreateWebhookSubscriptionRow struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	Url        string
-	Events     []string
-	DisabledAt pgtype.Timestamptz
-	CreatedAt  time.Time
-}
-
-// Queries for the webhooks domain.
-// Create and Disable accept a pgx.Tx from the handler (audit sharing);
-// they are called via q.WithTx(tx). Dispatcher (tick) queries are also
-// static and included here.
-func (q *Queries) CreateWebhookSubscription(ctx context.Context, arg CreateWebhookSubscriptionParams) (CreateWebhookSubscriptionRow, error) {
-	row := q.db.QueryRow(ctx, createWebhookSubscription,
-		arg.TenantID,
-		arg.Url,
-		arg.Secret,
-		arg.Events,
-	)
-	var i CreateWebhookSubscriptionRow
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Url,
-		&i.Events,
-		&i.DisabledAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const deadLetterDelivery = `-- name: DeadLetterDelivery :exec
 UPDATE tenant.webhook_deliveries
 SET attempt = attempt + 1, status_code = $1, response_body = $2,
@@ -106,59 +60,6 @@ func (q *Queries) DisableWebhookSubscription(ctx context.Context, arg DisableWeb
 	var i DisableWebhookSubscriptionRow
 	err := row.Scan(&i.TenantID, &i.Url)
 	return i, err
-}
-
-const getDueDeliveries = `-- name: GetDueDeliveries :many
-
-SELECT d.id, d.subscription_id, d.event_type, d.payload, d.attempt, sub.url, sub.secret
-FROM tenant.webhook_deliveries d
-JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
-WHERE d.delivered_at IS NULL
-  AND d.dead_at IS NULL
-  AND d.next_attempt_at <= NOW()
-  AND sub.disabled_at IS NULL
-ORDER BY d.created_at
-LIMIT 20
-FOR UPDATE SKIP LOCKED
-`
-
-type GetDueDeliveriesRow struct {
-	ID             uuid.UUID
-	SubscriptionID uuid.UUID
-	EventType      string
-	Payload        []byte
-	Attempt        int32
-	Url            string
-	Secret         string
-}
-
-// Dispatcher queries (tick): fetch due deliveries then update outcome.
-func (q *Queries) GetDueDeliveries(ctx context.Context) ([]GetDueDeliveriesRow, error) {
-	rows, err := q.db.Query(ctx, getDueDeliveries)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetDueDeliveriesRow{}
-	for rows.Next() {
-		var i GetDueDeliveriesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.SubscriptionID,
-			&i.EventType,
-			&i.Payload,
-			&i.Attempt,
-			&i.Url,
-			&i.Secret,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getSubscriptionsForEvent = `-- name: GetSubscriptionsForEvent :many

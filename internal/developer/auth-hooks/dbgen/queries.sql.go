@@ -12,47 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const createHook = `-- name: CreateHook :one
-INSERT INTO tenant.auth_hooks (tenant_id, url, secret, fail_open)
-VALUES ($1, $2, $3, $4)
-RETURNING id, trigger, url, enabled, fail_open, created_at
-`
-
-type CreateHookParams struct {
-	TenantID uuid.UUID
-	Url      string
-	Secret   string
-	FailOpen bool
-}
-
-type CreateHookRow struct {
-	ID        uuid.UUID
-	Trigger   string
-	Url       string
-	Enabled   bool
-	FailOpen  bool
-	CreatedAt time.Time
-}
-
-func (q *Queries) CreateHook(ctx context.Context, arg CreateHookParams) (CreateHookRow, error) {
-	row := q.db.QueryRow(ctx, createHook,
-		arg.TenantID,
-		arg.Url,
-		arg.Secret,
-		arg.FailOpen,
-	)
-	var i CreateHookRow
-	err := row.Scan(
-		&i.ID,
-		&i.Trigger,
-		&i.Url,
-		&i.Enabled,
-		&i.FailOpen,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const deleteHook = `-- name: DeleteHook :execrows
 DELETE FROM tenant.auth_hooks WHERE id = $1 AND tenant_id = $2
 `
@@ -68,30 +27,6 @@ func (q *Queries) DeleteHook(ctx context.Context, arg DeleteHookParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const getActiveHook = `-- name: GetActiveHook :one
-
-SELECT url, secret, fail_open FROM tenant.auth_hooks
-WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
-ORDER BY created_at LIMIT 1
-`
-
-type GetActiveHookRow struct {
-	Url      string
-	Secret   string
-	FailOpen bool
-}
-
-// Queries for the auth-hooks domain.
-// All queries are static; no dynamic SQL in this domain.
-// GetActiveHook retrieves the first enabled post_login hook for a tenant,
-// used by Run() during the login flow.
-func (q *Queries) GetActiveHook(ctx context.Context, tenantID uuid.UUID) (GetActiveHookRow, error) {
-	row := q.db.QueryRow(ctx, getActiveHook, tenantID)
-	var i GetActiveHookRow
-	err := row.Scan(&i.Url, &i.Secret, &i.FailOpen)
-	return i, err
 }
 
 const listHooks = `-- name: ListHooks :many

@@ -3029,38 +3029,6 @@
               ]
             }
           }
-        },
-        {
-          "name": "Rotate signing key — POST /v1/oidc/signing-keys/rotate",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/v1/oidc/signing-keys/rotate",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "v1",
-                "oidc",
-                "signing-keys",
-                "rotate"
-              ]
-            },
-            "description": "Authed, operator/admin action (audited: oidc.signing_key_rotated). No body. Generates a fresh EC P-256 (ES256) key, makes it active, and retires the previous key to verify-only for the rotation grace window. WARNING: the new `private_key_pem` is returned ONCE in the response — the operator must persist it as JWT_SIGNING_KEY before the next restart or token issuance breaks. Global/issuer-level (not tenant-scoped). Destructive — don't run casually against a shared environment. Handler: internal/federation/oidc/clients_admin.go rotateKey."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('OK', () => pm.expect(pm.response.code).to.eql(200));",
-                  "try { const b = pm.response.json(); if (b.kid) pm.collectionVariables.set('signingKeyKid', b.kid); } catch(e){}"
-                ]
-              }
-            }
-          ]
         }
       ]
     },
@@ -8824,7 +8792,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"ci-agent-{{$timestamp}}\",\n  \"sponsor_user_id\": \"{{userId}}\",\n  \"scopes\": [\n    \"user.read\",\n    \"audit:read\"\n  ],\n  \"token_ttl_seconds\": 300\n}"
+              "raw": "{\n  \"name\": \"ci-agent-{{$timestamp}}\",\n  \"sponsor_user_id\": \"{{userId}}\",\n  \"scopes\": [\n    \"user.read\",\n    \"audit.read\"\n  ],\n  \"token_ttl_seconds\": 300\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/v1/tenants/{{tenantId}}/agents",
@@ -10965,7 +10933,7 @@
                 "links"
               ]
             },
-            "description": "Sub-group: link management (authed). Mint a WorkOS-style admin-portal link an external IT admin (no Qeet ID account) can follow to configure this tenant's SAML connection and/or rotate its SCIM token, scoped to the given capabilities and expiring after ttl_seconds (clamped 15m-7d, default 24h). The raw token/url are returned exactly once, here only. PHASE-1: this is the source of {{portalToken}} — run it before any /v1/admin-portal/{token}/* request. Response shape: { link: {...id...}, token, url }. Gated by connection.write; must be attributed to a human principal."
+            "description": "Sub-group: link management (authed). Mint a one-time admin-portal link scoped to SAML/SCIM and expiring after ttl_seconds (clamped 15m-24h, default 1h). The URL carries the credential only in its fragment. Run 'Exchange portal link' next; the raw token cannot be exchanged twice."
           },
           "event": [
             {
@@ -10975,6 +10943,45 @@
                 "exec": [
                   "pm.test('Created', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
                   "try { const b = pm.response.json(); if (b.token) pm.collectionVariables.set('portalToken', b.token); if (b.link && b.link.id) pm.collectionVariables.set('portalLinkId', b.link.id); } catch(e){}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Exchange portal link — POST /v1/admin-portal/session",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{portalToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/admin-portal/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "admin-portal",
+                "session"
+              ]
+            },
+            "description": "Consumes {{portalToken}} exactly once and sets the scoped HttpOnly admin-portal session cookie. Postman's cookie jar carries that session for the token-free requests below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Portal session created', () => pm.expect(pm.response.code).to.eql(201));"
                 ]
               }
             }
@@ -10999,7 +11006,7 @@
                 "{{portalLinkId}}"
               ]
             },
-            "description": "Sub-group: link management (authed). Revoke the admin-portal link captured by 'Generate a link' ({{portalLinkId}}); a revoked link is rejected on redemption. NOTE: run this AFTER exercising the token-gated /v1/admin-portal/{token}/* routes, since revoking invalidates {{portalToken}}. Gated by connection.write."
+            "description": "Sub-group: link management (authed). Revoke the link captured by 'Generate a link'. Run this after the cookie-session requests: parent-link revocation invalidates every derived portal session immediately."
           },
           "event": [
             {
@@ -11014,7 +11021,7 @@
           ]
         },
         {
-          "name": "Get portal context — GET /v1/admin-portal/{token}/context",
+          "name": "Get portal context — GET /v1/admin-portal/context",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11022,18 +11029,17 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/context",
+              "raw": "{{baseUrl}}/v1/admin-portal/context",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "context"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC). Authenticated only by the {{portalToken}} path segment (no bearer). Returns tenant name, granted capabilities, expiry and branding — what the hosted portal page renders before the SAML/SCIM forms. PHASE-1: requires {{portalToken}} from 'Generate a link'."
+            "description": "Cookie-authenticated portal context. Returns tenant name, granted capabilities, session expiry and branding. Run 'Exchange portal link' first."
           },
           "event": [
             {
@@ -11048,7 +11054,7 @@
           ]
         },
         {
-          "name": "List connections (portal) — GET /v1/admin-portal/{token}/saml",
+          "name": "List connections (portal) — GET /v1/admin-portal/saml",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11056,18 +11062,17 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/saml",
+              "raw": "{{baseUrl}}/v1/admin-portal/saml",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "saml"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). List the tenant's SAML SP-side connections. Requires the link's capabilities to include \"saml\"."
+            "description": "Cookie-authenticated portal session. Lists SAML SP-side connections and requires the session's saml capability."
           },
           "event": [
             {
@@ -11082,7 +11087,7 @@
           ]
         },
         {
-          "name": "Create connection (portal) — POST /v1/admin-portal/{token}/saml",
+          "name": "Create connection (portal) — POST /v1/admin-portal/saml",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11099,18 +11104,17 @@
               "raw": "{\n  \"name\": \"Acme Okta (portal)\",\n  \"idp_entity_id\": \"https://idp.example.com/entity\",\n  \"idp_sso_url\": \"https://idp.example.com/sso\",\n  \"idp_certificate\": \"{{samlIdpCert}}\",\n  \"email_attribute\": \"email\",\n  \"name_attribute\": \"displayName\",\n  \"status\": \"active\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/saml",
+              "raw": "{{baseUrl}}/v1/admin-portal/saml",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "saml"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Create a SAML connection. name, idp_entity_id, idp_sso_url and idp_certificate are required. Requires capability \"saml\". Captures the new connection id -> {{portalSamlConnId}}."
+            "description": "Cookie-authenticated portal session. Creates a SAML connection and requires the saml capability. Captures the connection id in {{portalSamlConnId}}."
           },
           "event": [
             {
@@ -11126,7 +11130,7 @@
           ]
         },
         {
-          "name": "Get connection (portal) — GET /v1/admin-portal/{token}/saml/{id}",
+          "name": "Get connection (portal) — GET /v1/admin-portal/saml/{id}",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11134,19 +11138,18 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/saml/{{portalSamlConnId}}",
+              "raw": "{{baseUrl}}/v1/admin-portal/saml/{{portalSamlConnId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "saml",
                 "{{portalSamlConnId}}"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Fetch one connection by id ({{portalSamlConnId}} from 'Create connection'). Requires capability \"saml\"."
+            "description": "Cookie-authenticated portal session. Fetches one connection and requires the saml capability."
           },
           "event": [
             {
@@ -11161,7 +11164,7 @@
           ]
         },
         {
-          "name": "Update connection (portal) — PATCH /v1/admin-portal/{token}/saml/{id}",
+          "name": "Update connection (portal) — PATCH /v1/admin-portal/saml/{id}",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11178,19 +11181,18 @@
               "raw": "{\n  \"name\": \"Acme Okta (portal, updated)\",\n  \"status\": \"active\"\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/saml/{{portalSamlConnId}}",
+              "raw": "{{baseUrl}}/v1/admin-portal/saml/{{portalSamlConnId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "saml",
                 "{{portalSamlConnId}}"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Partial update (all fields optional/pointer). status must be draft, active or disabled. Requires capability \"saml\"."
+            "description": "Cookie-authenticated portal session. Partially updates a connection and requires the saml capability."
           },
           "event": [
             {
@@ -11205,7 +11207,7 @@
           ]
         },
         {
-          "name": "Test connection (portal) — POST /v1/admin-portal/{token}/saml/{id}/test",
+          "name": "Test connection (portal) — POST /v1/admin-portal/saml/{id}/test",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11213,20 +11215,19 @@
             "method": "POST",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/saml/{{portalSamlConnId}}/test",
+              "raw": "{{baseUrl}}/v1/admin-portal/saml/{{portalSamlConnId}}/test",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "saml",
                 "{{portalSamlConnId}}",
                 "test"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Offline preflight (no network I/O) of the connection config — returns per-check results. Requires capability \"saml\"."
+            "description": "Cookie-authenticated portal session. Runs the offline SAML preflight and requires the saml capability."
           },
           "event": [
             {
@@ -11241,7 +11242,7 @@
           ]
         },
         {
-          "name": "Delete connection (portal) — DELETE /v1/admin-portal/{token}/saml/{id}",
+          "name": "Delete connection (portal) — DELETE /v1/admin-portal/saml/{id}",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11249,19 +11250,18 @@
             "method": "DELETE",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/saml/{{portalSamlConnId}}",
+              "raw": "{{baseUrl}}/v1/admin-portal/saml/{{portalSamlConnId}}",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "saml",
                 "{{portalSamlConnId}}"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Delete the connection ({{portalSamlConnId}}). Requires capability \"saml\". Run after Get/Update/Test."
+            "description": "Cookie-authenticated portal session. Deletes the connection and requires the saml capability."
           },
           "event": [
             {
@@ -11276,7 +11276,7 @@
           ]
         },
         {
-          "name": "Get SCIM config (portal) — GET /v1/admin-portal/{token}/scim",
+          "name": "Get SCIM config (portal) — GET /v1/admin-portal/scim",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11284,18 +11284,17 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/scim",
+              "raw": "{{baseUrl}}/v1/admin-portal/scim",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "scim"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). SCIM config view (rotate/revoke/status only — never the provisioned-users list). Requires capability \"scim\"."
+            "description": "Cookie-authenticated portal session. Returns SCIM configuration status and requires the scim capability."
           },
           "event": [
             {
@@ -11310,7 +11309,7 @@
           ]
         },
         {
-          "name": "Rotate SCIM token (portal) — POST /v1/admin-portal/{token}/scim/token",
+          "name": "Rotate SCIM token (portal) — POST /v1/admin-portal/scim/token",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11318,19 +11317,18 @@
             "method": "POST",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/scim/token",
+              "raw": "{{baseUrl}}/v1/admin-portal/scim/token",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "scim",
                 "token"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Rotate the SCIM bearer token; returns the full plaintext token exactly once alongside the updated config. Requires capability \"scim\". Response shape: { token, config }. Captures token -> {{scimToken}} for reuse by the SCIM 2.0 folder."
+            "description": "Cookie-authenticated portal session. Rotates the SCIM bearer token, returns it once, and requires the scim capability."
           },
           "event": [
             {
@@ -11346,7 +11344,7 @@
           ]
         },
         {
-          "name": "Revoke SCIM token (portal) — DELETE /v1/admin-portal/{token}/scim/token",
+          "name": "Revoke SCIM token (portal) — DELETE /v1/admin-portal/scim/token",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11354,19 +11352,18 @@
             "method": "DELETE",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/admin-portal/{{portalToken}}/scim/token",
+              "raw": "{{baseUrl}}/v1/admin-portal/scim/token",
               "host": [
                 "{{baseUrl}}"
               ],
               "path": [
                 "v1",
                 "admin-portal",
-                "{{portalToken}}",
                 "scim",
                 "token"
               ]
             },
-            "description": "Sub-group: token-gated self-serve (PUBLIC, {{portalToken}}). Revoke the tenant's SCIM token. Requires capability \"scim\". Run after Rotate."
+            "description": "Cookie-authenticated portal session. Revokes the tenant's SCIM token and requires the scim capability."
           },
           "event": [
             {

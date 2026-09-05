@@ -34,16 +34,18 @@ type Request struct {
 }
 
 type Service struct {
-	pool  *pgxpool.Pool
-	q     *dbgen.Queries
-	grace time.Duration
+	pool     *pgxpool.Pool
+	q        *dbgen.Queries
+	grace    time.Duration
+	workerID uuid.UUID
+	lease    time.Duration
 }
 
 func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
 	if grace <= 0 {
 		grace = 30 * 24 * time.Hour
 	}
-	return &Service{pool: pool, q: dbgen.New(pool), grace: grace}
+	return &Service{pool: pool, q: dbgen.New(pool), grace: grace, workerID: uuid.New(), lease: 15 * time.Minute}
 }
 
 type CreateInput struct {
@@ -54,6 +56,13 @@ type CreateInput struct {
 }
 
 func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error) {
+	owned, err := s.userBelongsToTenant(ctx, in.UserID, in.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, errs.ErrNotFound
+	}
 	// grace_until is pre-computed here (instead of NOW() + $5::interval) to
 	// avoid the pgtype.Interval parameter type mismatch in sqlc-generated code.
 	var reason *string
@@ -71,6 +80,17 @@ func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error)
 		return nil, err
 	}
 	return purgeRequestFromRow(row), nil
+}
+
+func (s *Service) userBelongsToTenant(ctx context.Context, userID, tenantID uuid.UUID) (bool, error) {
+	var owned bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM "user".users
+			WHERE id = $1 AND tenant_id = $2
+		)
+	`, userID, tenantID).Scan(&owned)
+	return owned, err
 }
 
 func (s *Service) Cancel(ctx context.Context, tenantID, id uuid.UUID) error {
@@ -136,11 +156,44 @@ func (s *Service) Run(ctx context.Context) {
 // each tick. Exposed for ops-triggered purges and tests.
 func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
+// SweepExports claims and processes one export batch.
+func (s *Service) SweepExports(ctx context.Context) error { return s.exportSweepTick(ctx) }
+
 func (s *Service) tick(ctx context.Context) error {
-	batch, err := s.q.GetPendingPurgeRequests(ctx)
+	rows, err := s.pool.Query(ctx, `
+		WITH candidates AS (
+			SELECT id
+			FROM "user".purge_requests
+			WHERE status = 'pending' AND grace_until <= NOW()
+			  AND (lease_until IS NULL OR lease_until <= NOW())
+			ORDER BY grace_until, created_at
+			LIMIT 50
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE "user".purge_requests AS request
+		SET lease_owner = $1, lease_until = $2
+		FROM candidates
+		WHERE request.id = candidates.id
+		RETURNING request.id, request.user_id
+	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err
 	}
+	type purgeJob struct{ ID, UserID uuid.UUID }
+	var batch []purgeJob
+	for rows.Next() {
+		var job purgeJob
+		if err := rows.Scan(&job.ID, &job.UserID); err != nil {
+			rows.Close()
+			return err
+		}
+		batch = append(batch, job)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
 	for _, e := range batch {
 		if err := s.purgeOne(ctx, e.ID, e.UserID); err != nil {
 			slog.Warn("gdpr purge", "user", e.UserID, "err", err)
@@ -157,13 +210,85 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	defer tx.Rollback(ctx)
 
 	qTx := dbgen.New(tx)
-	if err := purgeUserData(ctx, qTx, userID); err != nil {
+	var requestTenant uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT tenant_id
+		FROM "user".purge_requests
+		WHERE id = $1 AND user_id = $2 AND status = 'pending' AND lease_owner = $3
+		FOR UPDATE
+	`, requestID, userID, s.workerID).Scan(&requestTenant); errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
 		return err
 	}
-	if err := qTx.CompletePurgeRequest(ctx, requestID); err != nil {
+
+	var userTenant *uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT tenant_id FROM "user".users WHERE id = $1 FOR UPDATE
+	`, userID).Scan(&userTenant); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
+	}
+	if userTenant == nil || *userTenant != requestTenant {
+		if _, err := tx.Exec(ctx, `
+			UPDATE "user".purge_requests
+			SET status = 'quarantined', quarantined_at = NOW(),
+			    quarantine_reason = 'tenant ownership mismatch detected by worker',
+			    lease_owner = NULL, lease_until = NULL
+			WHERE id = $1 AND status = 'pending' AND lease_owner = $2
+		`, requestID, s.workerID); err != nil {
+			return err
+		}
+		slog.Warn("gdpr purge quarantined", "request_id", requestID, "user_id", userID, "tenant_id", requestTenant)
+		return tx.Commit(ctx)
+	}
+
+	if err := purgeTenantUserData(ctx, tx, qTx, requestTenant, userID); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE "user".purge_requests
+		SET status = 'completed', completed_at = NOW(), lease_owner = NULL, lease_until = NULL
+		WHERE id = $1 AND status = 'pending' AND lease_owner = $2
+	`, requestID, s.workerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("GDPR purge lease lost before completion")
 	}
 	return tx.Commit(ctx)
+}
+
+func purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen.Queries, tenantID, userID uuid.UUID) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE "user".users
+		SET email              = 'redacted-' || id::text || '@gdpr.invalid',
+		    phone              = NULL,
+		    display_name       = NULL,
+		    metadata           = '{}'::jsonb,
+		    email_verified_at  = NULL,
+		    phone_verified_at  = NULL,
+		    status             = 'deleted',
+		    deleted_at         = COALESCE(deleted_at, NOW()),
+		    updated_at         = NOW()
+		WHERE id = $1 AND tenant_id = $2
+	`, userID, tenantID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errs.ErrNotFound
+	}
+	if err := qTx.DeletePasswordCredentials(ctx, userID); err != nil {
+		return err
+	}
+	if err := qTx.DeleteMFATOTP(ctx, userID); err != nil {
+		return err
+	}
+	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
+		return err
+	}
+	return qTx.RevokeUserSessions(ctx, userID)
 }
 
 // purgeUserData replaces the user's PII with redacted markers and drops all
@@ -225,6 +350,13 @@ type ExportInput struct {
 // RequestExport queues a data-export job for a user. The background sweep
 // (exportTick) builds the payload asynchronously; poll GetExport for status.
 func (s *Service) RequestExport(ctx context.Context, in ExportInput) (*ExportRequest, error) {
+	owned, err := s.userBelongsToTenant(ctx, in.UserID, in.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !owned {
+		return nil, errs.ErrNotFound
+	}
 	row, err := s.q.InsertExportRequest(ctx, dbgen.InsertExportRequestParams{
 		TenantID:    in.TenantID,
 		UserID:      in.UserID,
@@ -299,18 +431,49 @@ func (s *Service) GetExport(ctx context.Context, tenantID, id uuid.UUID) (*Expor
 // exportSweepTick picks pending export requests and builds their payload.
 // Runs on the same ticker cadence as the purge sweep (see Run).
 func (s *Service) exportSweepTick(ctx context.Context) error {
-	batch, err := s.q.GetPendingExportRequests(ctx)
+	rows, err := s.pool.Query(ctx, `
+		WITH candidates AS (
+			SELECT id
+			FROM "user".export_requests
+			WHERE status = 'pending' AND (lease_until IS NULL OR lease_until <= NOW())
+			ORDER BY created_at
+			LIMIT 20
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE "user".export_requests AS request
+		SET lease_owner = $1, lease_until = $2
+		FROM candidates
+		WHERE request.id = candidates.id
+		RETURNING request.id, request.tenant_id, request.user_id
+	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err
 	}
+	type exportJob struct{ ID, TenantID, UserID uuid.UUID }
+	var batch []exportJob
+	for rows.Next() {
+		var job exportJob
+		if err := rows.Scan(&job.ID, &job.TenantID, &job.UserID); err != nil {
+			rows.Close()
+			return err
+		}
+		batch = append(batch, job)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
 	for _, e := range batch {
 		if err := s.buildExport(ctx, e.ID, e.TenantID, e.UserID); err != nil {
 			slog.Warn("gdpr export", "user", e.UserID, "err", err)
 			msg := err.Error()
-			_ = s.q.FailExportRequest(ctx, dbgen.FailExportRequestParams{
-				ErrorMsg: &msg,
-				ID:       e.ID,
-			})
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE "user".export_requests
+				SET status = 'failed', error = $3, completed_at = NOW(),
+				    lease_owner = NULL, lease_until = NULL
+				WHERE id = $1 AND lease_owner = $2
+			`, e.ID, s.workerID, msg)
 		}
 	}
 	return nil
@@ -325,10 +488,19 @@ func (s *Service) buildExport(ctx context.Context, requestID, tenantID, userID u
 	if err != nil {
 		return err
 	}
-	return s.q.ReadyExportRequest(ctx, dbgen.ReadyExportRequestParams{
-		Payload: raw,
-		ID:      requestID,
-	})
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE "user".export_requests
+		SET status = 'ready', payload = $3, completed_at = NOW(),
+		    lease_owner = NULL, lease_until = NULL
+		WHERE id = $1 AND lease_owner = $2
+	`, requestID, s.workerID, raw)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("GDPR export lease lost before completion")
+	}
+	return nil
 }
 
 type exportProfile struct {

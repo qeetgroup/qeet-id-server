@@ -20,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -127,6 +129,10 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamp
 
 // Add registers a domain for a tenant and returns the DNS record to publish.
 func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Domain, error) {
+	return s.AddWithActor(ctx, tenantID, raw, audit.Actor{Type: "system"})
+}
+
+func (s *Service) AddWithActor(ctx context.Context, tenantID uuid.UUID, raw string, actor audit.Actor) (*Domain, error) {
 	// Plan gate: custom (verified) domains are a paid feature.
 	if s.gate != nil {
 		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "custom_domain")
@@ -145,7 +151,12 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Dom
 	if err != nil {
 		return nil, err
 	}
-	row, err := s.q.InsertDomain(ctx, dbgen.InsertDomainParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).InsertDomain(ctx, dbgen.InsertDomainParams{
 		TenantID:          tenantID,
 		Domain:            domain,
 		VerificationToken: token,
@@ -157,6 +168,15 @@ func (s *Service) Add(ctx context.Context, tenantID uuid.UUID, raw string) (*Dom
 		return nil, err
 	}
 	d := rowToDomain(row.ID, row.Domain, row.VerificationToken, row.VerifiedAt, row.CreatedAt)
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.created", "domain", d.ID, map[string]any{"domain": d.Domain})); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: d.ID, Topic: "domain.events", EventType: "domain.created", Payload: map[string]any{"domain_id": d.ID, "tenant_id": tenantID, "domain": d.Domain}}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return &d, nil
 }
 
@@ -177,6 +197,10 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error
 // domain verified. A missing record returns a friendly 422 (DNS may still be
 // propagating); an already-verified-by-another-tenant collision returns 409.
 func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, error) {
+	return s.VerifyWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
+}
+
+func (s *Service) VerifyWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) (*Domain, error) {
 	row, err := s.q.GetDomainForVerify(ctx, dbgen.GetDomainForVerifyParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrDomainVerifyNotFound
@@ -203,7 +227,12 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, 
 		return nil, errs.ErrDomainVerifyDNSRecordMissing
 	}
 
-	updated, err := s.q.MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, TenantID: tenantID})
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	updated, err := s.q.WithTx(tx).MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_verified_domain") {
 			return nil, errs.ErrDomainVerifyClaimedByOther
@@ -211,22 +240,57 @@ func (s *Service) Verify(ctx context.Context, id, tenantID uuid.UUID) (*Domain, 
 		return nil, err
 	}
 	verified := rowToDomain(updated.ID, updated.Domain, updated.VerificationToken, updated.VerifiedAt, updated.CreatedAt)
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.verified", "domain", verified.ID, map[string]any{"domain": verified.Domain})); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: verified.ID, Topic: "domain.events", EventType: "domain.verified", Payload: map[string]any{"domain_id": verified.ID, "tenant_id": tenantID, "domain": verified.Domain}}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return &verified, nil
 }
 
 func (s *Service) Remove(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.DeleteDomain(ctx, dbgen.DeleteDomainParams{ID: id, TenantID: tenantID})
+	return s.RemoveWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
+}
+
+func (s *Service) RemoveWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).DeleteDomain(ctx, dbgen.DeleteDomainParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrDomainVerifyNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.deleted", "domain", id, nil)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "domain.events", EventType: "domain.deleted", Payload: map[string]any{"domain_id": id, "tenant_id": tenantID}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 type Handler struct {
 	Service *Service
+}
+
+func actorOf(r *http.Request) audit.Actor {
+	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
+		actor.UserID = principal.UserID
+		if principal.ActorType != "" {
+			actor.Type = principal.ActorType
+		}
+	}
+	return actor
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -280,7 +344,7 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	d, err := h.Service.Add(r.Context(), tenantID, in.Domain)
+	d, err := h.Service.AddWithActor(r.Context(), tenantID, in.Domain, actorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -299,7 +363,7 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	d, err := h.Service.Verify(r.Context(), id, tenantID)
+	d, err := h.Service.VerifyWithActor(r.Context(), id, tenantID, actorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -318,7 +382,7 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Remove(r.Context(), id, tenantID); err != nil {
+	if err := h.Service.RemoveWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

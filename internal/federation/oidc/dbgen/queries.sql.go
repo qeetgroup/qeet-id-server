@@ -217,11 +217,12 @@ func (q *Queries) GetClientPostLogoutURIs(ctx context.Context, clientID string) 
 }
 
 const getClientRedirectInfo = `-- name: GetClientRedirectInfo :one
-SELECT tenant_id, scopes, redirect_uris FROM auth.oidc_clients WHERE client_id = $1
+SELECT tenant_id, type, scopes, redirect_uris FROM auth.oidc_clients WHERE client_id = $1
 `
 
 type GetClientRedirectInfoRow struct {
 	TenantID     uuid.UUID
+	Type         string
 	Scopes       []string
 	RedirectUris []string
 }
@@ -229,7 +230,7 @@ type GetClientRedirectInfoRow struct {
 func (q *Queries) GetClientRedirectInfo(ctx context.Context, clientID string) (GetClientRedirectInfoRow, error) {
 	row := q.db.QueryRow(ctx, getClientRedirectInfo, clientID)
 	var i GetClientRedirectInfoRow
-	err := row.Scan(&i.TenantID, &i.Scopes, &i.RedirectUris)
+	err := row.Scan(&i.TenantID, &i.Type, &i.Scopes, &i.RedirectUris)
 	return i, err
 }
 

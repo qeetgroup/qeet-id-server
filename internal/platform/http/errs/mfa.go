@@ -15,6 +15,7 @@ const (
 	CodeMFAWebAuthnUnavailable = "mfa.webauthn_unavailable"
 	CodeMFANotEnrolled         = "mfa.not_enrolled"
 	CodeMFAFactorNotConfirmed  = "mfa.factor_not_confirmed"
+	CodeMFAAttemptsExceeded    = "mfa.attempts_exceeded"
 
 	// Push MFA
 	CodeMFAPushDeviceNotFound   = "mfa.push_device_not_found"
@@ -37,6 +38,7 @@ var (
 	ErrMFAWebAuthnUnavailable = New(CodeMFAWebAuthnUnavailable, "Security-key MFA isn't available yet.")
 	ErrMFANotEnrolled         = New(CodeMFANotEnrolled, "Set up multi-factor authentication first.")
 	ErrMFAFactorNotConfirmed  = New(CodeMFAFactorNotConfirmed, "Confirm this factor before requesting a code.")
+	ErrMFAAttemptsExceeded    = New(CodeMFAAttemptsExceeded, "Too many verification attempts. Start again or wait before retrying.").AsRetryable()
 
 	// Push MFA
 	ErrMFAPushDeviceNotFound   = New(CodeMFAPushDeviceNotFound, "Push device not found.")

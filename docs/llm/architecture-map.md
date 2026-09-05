@@ -160,7 +160,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | Postgres pool | `internal/platform/database/postgres/` |
 | pgx error mapping | `internal/platform/database/postgres/pgxerr/` |
-| **Migrations (0001–0096)** | `internal/platform/database/migrations/` |
+| **Migrations (0001–0104; 0082 absent)** | `internal/platform/database/migrations/` |
 | Migration runner (`//go:embed`) | `internal/platform/database/migrations/runner.go` |
 | Per-domain queries | `internal/<context>/<domain>/queries.sql` (48) |
 | sqlc config | `internal/<context>/<domain>/sqlc.yaml` (48) |

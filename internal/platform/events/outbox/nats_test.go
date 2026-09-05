@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -48,7 +49,8 @@ func TestNATSPublisher_PublishesToSubject(t *testing.T) {
 	defer func() { _ = pub.Close() }()
 
 	payload := []byte(`{"hello":"world"}`)
-	if err := pub.Publish(context.Background(), subject, "test.created", payload); err != nil {
+	eventID := uuid.New()
+	if err := pub.Publish(context.Background(), eventID, subject, "test.created", payload); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -59,6 +61,9 @@ func TestNATSPublisher_PublishesToSubject(t *testing.T) {
 		}
 		if h := m.Header.Get("Qeet-Event-Type"); h != "test.created" {
 			t.Fatalf("event-type header = %q, want test.created", h)
+		}
+		if h := m.Header.Get("Qeet-Event-ID"); h != eventID.String() {
+			t.Fatalf("event-id header = %q, want %s", h, eventID)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("did not receive the published message within 3s")

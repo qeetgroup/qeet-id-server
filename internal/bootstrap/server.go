@@ -13,12 +13,7 @@ import (
 // ErrServerClosed raised during graceful shutdown) triggers stop() to unwind
 // the process.
 func startHTTPServer(cfg *config.Config, router http.Handler, stop func()) *http.Server {
-	srv := &http.Server{
-		Addr:         ":" + cfg.HTTPPort,
-		Handler:      router,
-		ReadTimeout:  cfg.HTTPReadTimeout,
-		WriteTimeout: cfg.HTTPWriteTimeout,
-	}
+	srv := newHTTPServer(cfg, router)
 	go func() {
 		slog.Info("listening", "addr", srv.Addr, "service", cfg.ServiceName, "env", cfg.ServiceEnv)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -27,4 +22,16 @@ func startHTTPServer(cfg *config.Config, router http.Handler, stop func()) *http
 		}
 	}()
 	return srv
+}
+
+func newHTTPServer(cfg *config.Config, router http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              ":" + cfg.HTTPPort,
+		Handler:           router,
+		ReadTimeout:       cfg.HTTPReadTimeout,
+		ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
+		WriteTimeout:      cfg.HTTPWriteTimeout,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
+		MaxHeaderBytes:    cfg.HTTPMaxHeaderBytes,
+	}
 }

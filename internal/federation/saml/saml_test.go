@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	samltypes "github.com/russellhaering/gosaml2/types"
 )
 
 // selfSignedCert returns a throwaway cert in both PEM and bare-base64-DER form.
@@ -106,5 +107,29 @@ func TestPublicBaseScheme(t *testing.T) {
 	r2.Host = "auth.acme.com"
 	if got := publicBase(r2); !strings.HasPrefix(got, "https://") {
 		t.Errorf("non-local should be https, got %q", got)
+	}
+}
+
+func TestTrustedCorrelationIgnoresUnsignedResponseEnvelope(t *testing.T) {
+	response := &samltypes.Response{
+		InResponseTo: "_forged-envelope-request",
+		Assertions: []samltypes.Assertion{{
+			ID:                 "_signed-assertion",
+			SignatureValidated: true,
+			Subject: &samltypes.Subject{SubjectConfirmation: &samltypes.SubjectConfirmation{
+				SubjectConfirmationData: &samltypes.SubjectConfirmationData{InResponseTo: "_trusted-request"},
+			}},
+		}},
+	}
+
+	requestID, assertionIDs, err := trustedCorrelation(response)
+	if err != nil {
+		t.Fatalf("trustedCorrelation: %v", err)
+	}
+	if requestID != "_trusted-request" {
+		t.Fatalf("request ID = %q, want signed assertion value", requestID)
+	}
+	if len(assertionIDs) != 1 || assertionIDs[0] != "_signed-assertion" {
+		t.Fatalf("assertion IDs = %v, want signed assertion ID", assertionIDs)
 	}
 }

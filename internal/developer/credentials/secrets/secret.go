@@ -6,9 +6,6 @@ package secret
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"errors"
 	"net/http"
 	"strings"
@@ -21,6 +18,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -38,7 +36,7 @@ type Secret struct {
 type Service struct {
 	pool *pgxpool.Pool
 	q    *dbgen.Queries
-	gcm  cipher.AEAD
+	box  *envelope.Cipher
 }
 
 // NewService builds the vault, unwrapping the data key from the provider once.
@@ -48,30 +46,21 @@ func NewService(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider) (*Servi
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(key)
+	box, err := envelope.New(key)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return &Service{pool: pool, q: dbgen.New(pool), gcm: gcm}, nil
+	return &Service{pool: pool, q: dbgen.New(pool), box: box}, nil
 }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
-func (s *Service) encrypt(plaintext string) (ciphertext, nonce []byte, err error) {
-	nonce = make([]byte, s.gcm.NonceSize())
-	if _, err = rand.Read(nonce); err != nil {
-		return nil, nil, err
-	}
-	ciphertext = s.gcm.Seal(nil, nonce, []byte(plaintext), nil)
-	return ciphertext, nonce, nil
+func (s *Service) encrypt(tenantID uuid.UUID, name, plaintext string) (ciphertext, nonce []byte, err error) {
+	return s.box.Seal(tenantID, "secret", name, []byte(plaintext))
 }
 
-func (s *Service) decrypt(ciphertext, nonce []byte) (string, error) {
-	pt, err := s.gcm.Open(nil, nonce, ciphertext, nil)
+func (s *Service) decrypt(tenantID uuid.UUID, name string, ciphertext, nonce []byte) (string, error) {
+	pt, err := s.box.Open(tenantID, "secret", name, ciphertext, nonce)
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +104,7 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, name, scope, v
 	if name == "" || value == "" {
 		return nil, errs.ErrSecretNameValueRequired
 	}
-	ct, nonce, err := s.encrypt(value)
+	ct, nonce, err := s.encrypt(tenantID, name, value)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +141,14 @@ func (s *Service) Update(ctx context.Context, tenantID, id uuid.UUID, in UpdateI
 		if *in.Value == "" {
 			return nil, errs.ErrSecretValueRequired
 		}
-		ct, nonce, err := s.encrypt(*in.Value)
+		current, err := s.q.RevealSecret(ctx, dbgen.RevealSecretParams{ID: id, TenantID: tenantID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrSecretNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		ct, nonce, err := s.encrypt(tenantID, current.Name, *in.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -192,7 +188,7 @@ func (s *Service) Reveal(ctx context.Context, tenantID, id uuid.UUID) (string, s
 	if err != nil {
 		return "", "", err
 	}
-	val, err := s.decrypt(row.Ciphertext, row.Nonce)
+	val, err := s.decrypt(tenantID, row.Name, row.Ciphertext, row.Nonce)
 	if err != nil {
 		return "", "", errs.ErrSecretDecryptFailed.Wrap(err)
 	}
@@ -209,7 +205,7 @@ func (s *Service) GetByName(ctx context.Context, tenantID uuid.UUID, name string
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	val, err := s.decrypt(row.Ciphertext, row.Nonce)
+	val, err := s.decrypt(tenantID, name, row.Ciphertext, row.Nonce)
 	if err != nil {
 		return uuid.Nil, "", errs.ErrSecretDecryptFailed.Wrap(err)
 	}

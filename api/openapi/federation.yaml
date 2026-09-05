@@ -5,15 +5,15 @@ info:
   description: 'Qeet ID identity platform — full HTTP surface.
 
 
-    This document is generated to cover EVERY route mounted by the chi router (internal/http/router.go) and is guarded by internal/http/openapi_coverage_test.go, which fails CI if any mounted route is undocumented. Launch-critical families (Auth, OIDC/OAuth, SCIM, SAML, Users, Tenants, RBAC, API Keys) carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies (noted in each operation''s description).
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
 
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
 servers:
+  - url: https://api.id.qeet.in
+    description: Production
   - url: http://localhost:4001
-    description: Local (docker compose)
-  - url: http://localhost:4000
-    description: Local (make dev-backend)
+    description: Local (make dev)
 tags:
   - name: OIDC
     description: 'OpenID Connect / OAuth 2.0 provider: discovery, authorize, token, userinfo, clients, grants, revocation, introspection, RP-initiated logout, and machine-to-machine service principals.'
@@ -1320,7 +1320,7 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Signing keys (active + retired)
+          description: Signing keys (candidate, active, and unexpired retired keys)
           content:
             application/json:
               schema:
@@ -1330,40 +1330,6 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SigningKey'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/oidc/signing-keys/rotate:
-    post:
-      operationId: post_v1_oidc_signing_keys_rotate
-      summary: Rotate signing key
-      description: >-
-        Generates a fresh EC P-256 signing key, makes it active, and retires the
-        previous key to verify-only. The new private key PEM is returned once in
-        the response — the operator must persist it as JWT_SIGNING_KEY before the
-        next restart. Existing tokens remain verifiable during the grace window.
-      tags:
-        - OIDC
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Rotation complete (new private key shown once)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  kid:
-                    type: string
-                  alg:
-                    type: string
-                  private_key_pem:
-                    type: string
-                  warning:
-                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1632,6 +1598,47 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_social_ByProvider_callback
+      summary: Social login callback using form_post
+      description: Sign in with Apple returns the authorization response as a bounded form POST. Successful callbacks redirect with a one-time Qeet login code.
+      tags: [Social]
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [state, code]
+              properties:
+                state: { type: string }
+                code: { type: string }
+      responses:
+        '302': { description: Redirect to the hosted login or account application }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          description: Form body too large
+  /v1/social/platform/providers:
+    get:
+      operationId: get_v1_social_platform_providers
+      summary: List enabled platform social providers
+      tags: [Social]
+      security: []
+      responses:
+        '200':
+          description: Enabled provider names
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
   /v1/social/{provider}/start:
     get:
       operationId: get_v1_social_ByProvIDer_start
@@ -2867,7 +2874,7 @@ paths:
       operationId: post_v1_tenants_ByTenantID_admin_portal_links
       summary: Generate an admin portal link
       description: >-
-        Mints a link an external IT admin (no Qeet ID account) can follow to configure this tenant's SAML connection and/or SCIM token, scoped to the given capabilities and expiring after ttl_seconds (clamped 15m-7d, default 24h). The raw token/url is returned exactly once, in this response only.
+        Mints a one-time link an external IT admin (no Qeet ID account) can exchange for a short-lived portal session, scoped to the given capabilities and expiring after ttl_seconds (clamped 15m-24h, default 1h). The raw token/url is returned exactly once; the URL carries the token only in its fragment.
       tags:
         - Admin Portal
       parameters:
@@ -2946,20 +2953,52 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/admin-portal/{token}/context:
-    get:
-      operationId: get_v1_admin_portal_ByToken_context
-      summary: Get portal context
-      description: Public, unauthenticated except by the token itself. Returns the tenant name, granted capabilities, expiry, and branding — everything the hosted portal page needs to render before showing the SAML/SCIM forms.
+  /v1/admin-portal/session:
+    post:
+      operationId: post_v1_admin_portal_session
+      summary: Exchange a one-time portal link
+      description: 'Consumes the link token from `Authorization: Bearer <token>` and sets a short-lived HttpOnly portal session cookie. The link token cannot be exchanged again.'
       tags:
         - Admin Portal
-      security: []
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      security:
+        - adminPortalLink: []
+      responses:
+        '201':
+          description: Portal session created
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: delete_v1_admin_portal_session
+      summary: Revoke the current portal session
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
+      responses:
+        '204':
+          description: Session revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/admin-portal/context:
+    get:
+      operationId: get_v1_admin_portal_context
+      summary: Get portal context
+      description: Returns the tenant name, granted capabilities, session expiry, and branding for the cookie-authenticated portal.
+      tags:
+        - Admin Portal
+      security:
+        - adminPortalCookie: []
       responses:
         '200':
           description: Portal context
@@ -2969,20 +3008,15 @@ paths:
                 $ref: '#/components/schemas/AdminPortalContext'
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/admin-portal/{token}/saml:
+  /v1/admin-portal/saml:
     get:
-      operationId: get_v1_admin_portal_ByToken_saml
+      operationId: get_v1_admin_portal_saml
       summary: List connections (portal)
       description: Requires the link's capabilities to include "saml".
       tags:
         - Admin Portal
-      security: []
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      security:
+        - adminPortalCookie: []
       responses:
         '200':
           description: Connections
@@ -3000,18 +3034,13 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
     post:
-      operationId: post_v1_admin_portal_ByToken_saml
+      operationId: post_v1_admin_portal_saml
       summary: Create connection (portal)
       description: Requires the link's capabilities to include "saml".
       tags:
         - Admin Portal
-      security: []
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      security:
+        - adminPortalCookie: []
       requestBody:
         required: true
         content:
@@ -3031,19 +3060,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/admin-portal/{token}/saml/{id}:
+  /v1/admin-portal/saml/{id}:
     get:
-      operationId: get_v1_admin_portal_ByToken_saml_ById
+      operationId: get_v1_admin_portal_saml_ById
       summary: Get connection (portal)
       tags:
         - Admin Portal
-      security: []
+      security:
+        - adminPortalCookie: []
       parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
         - name: id
           in: path
           required: true
@@ -3063,17 +3088,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      operationId: patch_v1_admin_portal_ByToken_saml_ById
+      operationId: patch_v1_admin_portal_saml_ById
       summary: Update connection (portal)
       tags:
         - Admin Portal
-      security: []
+      security:
+        - adminPortalCookie: []
       parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
         - name: id
           in: path
           required: true
@@ -3101,17 +3122,13 @@ paths:
         '422':
           $ref: '#/components/responses/Unprocessable'
     delete:
-      operationId: delete_v1_admin_portal_ByToken_saml_ById
+      operationId: delete_v1_admin_portal_saml_ById
       summary: Delete connection (portal)
       tags:
         - Admin Portal
-      security: []
+      security:
+        - adminPortalCookie: []
       parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
         - name: id
           in: path
           required: true
@@ -3126,20 +3143,16 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/admin-portal/{token}/saml/{id}/test:
+  /v1/admin-portal/saml/{id}/test:
     post:
-      operationId: post_v1_admin_portal_ByToken_saml_ById_test
+      operationId: post_v1_admin_portal_saml_ById_test
       summary: Test connection (portal)
       description: Same offline preflight as the admin endpoint — no network I/O.
       tags:
         - Admin Portal
-      security: []
+      security:
+        - adminPortalCookie: []
       parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
         - name: id
           in: path
           required: true
@@ -3159,20 +3172,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/admin-portal/{token}/scim:
+  /v1/admin-portal/scim:
     get:
-      operationId: get_v1_admin_portal_ByToken_scim
+      operationId: get_v1_admin_portal_scim
       summary: Get SCIM config (portal)
       description: Requires the link's capabilities to include "scim". Never exposes the provisioned-users list — only rotate/revoke/status.
       tags:
         - Admin Portal
-      security: []
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      security:
+        - adminPortalCookie: []
       responses:
         '200':
           description: SCIM config
@@ -3185,20 +3193,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/admin-portal/{token}/scim/token:
+  /v1/admin-portal/scim/token:
     post:
-      operationId: post_v1_admin_portal_ByToken_scim_token
+      operationId: post_v1_admin_portal_scim_token
       summary: Rotate SCIM token (portal)
       description: Returns the full plaintext token exactly once, alongside the updated config view.
       tags:
         - Admin Portal
-      security: []
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      security:
+        - adminPortalCookie: []
       responses:
         '200':
           description: '{ token: string, config: object }'
@@ -3212,17 +3215,12 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
     delete:
-      operationId: delete_v1_admin_portal_ByToken_scim_token
+      operationId: delete_v1_admin_portal_scim_token
       summary: Revoke SCIM token (portal)
       tags:
         - Admin Portal
-      security: []
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      security:
+        - adminPortalCookie: []
       responses:
         '204':
           description: Revoked
@@ -3360,6 +3358,15 @@ components:
       in: cookie
       name: qe_ls
       description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+    adminPortalLink:
+      type: http
+      scheme: bearer
+      description: One-time admin-portal link credential. Accepted only by POST /v1/admin-portal/session and invalid after exchange.
+    adminPortalCookie:
+      type: apiKey
+      in: cookie
+      name: qeet_admin_portal_session
+      description: Short-lived HttpOnly, SameSite=Strict admin-portal session cookie. Mutations also require the global CSRF double-submit token.
   responses:
     BadRequest:
       description: Malformed request
@@ -3603,8 +3610,13 @@ components:
         status:
           type: string
           enum:
+            - candidate
             - active
             - retired
+        retire_at:
+          type: string
+          format: date-time
+          nullable: true
     ServicePrincipalCreate:
       type: object
       required:

@@ -505,8 +505,8 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 // token endpoints (form/Basic), CSRF-exempt in the router, and returns the
 // (device_code, user_code) pair plus the verification URIs.
 func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	clientID := r.Form.Get("client_id")

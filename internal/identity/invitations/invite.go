@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -63,7 +63,7 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
-// cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+// internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =

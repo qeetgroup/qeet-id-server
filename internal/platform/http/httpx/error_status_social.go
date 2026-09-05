@@ -24,6 +24,7 @@ func init() {
 		errs.CodeSocialTokenExchangeFailed:   http.StatusUnprocessableEntity,
 		errs.CodeSocialUserinfoFailed:        http.StatusUnprocessableEntity,
 		errs.CodeSocialEmailMissing:          http.StatusBadRequest,
+		errs.CodeSocialEmailUnverified:       http.StatusForbidden,
 		errs.CodeSocialCodeRequired:          http.StatusBadRequest,
 		errs.CodeSocialLoginCodeInvalid:      http.StatusUnauthorized,
 		errs.CodeSocialLoginCodeUsed:         http.StatusUnauthorized,

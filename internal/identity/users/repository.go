@@ -186,6 +186,24 @@ func scanUser(row pgx.Row) (*User, error) {
 // CreateWithCredential inserts the user and (optionally, when passwordHash is
 // non-empty) their password credential inside one tx.
 func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, passwordHash string) (*User, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	u, err := r.CreateWithCredentialTx(ctx, tx, in, passwordHash)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// CreateWithCredentialTx inserts the user and optional password credential in
+// the caller's transaction so audit and outbox evidence can commit atomically.
+func (r *Repository) CreateWithCredentialTx(ctx context.Context, tx pgx.Tx, in CreateInput, passwordHash string) (*User, error) {
 	meta := in.Metadata
 	if meta == nil {
 		meta = map[string]any{}
@@ -204,12 +222,6 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 		d := in.DisplayName
 		displayName = &d
 	}
-
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
 
 	// InsertUser and the cross-context password credential are both static SQL, so
 	// they run as sqlc queries on the same pgx.Tx via WithTx — one transaction across
@@ -239,9 +251,6 @@ func (r *Repository) CreateWithCredential(ctx context.Context, in CreateInput, p
 		}); err != nil {
 			return nil, err
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
 	}
 	return u, nil
 }
