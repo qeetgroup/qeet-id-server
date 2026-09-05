@@ -4,7 +4,7 @@
 
 ### Passkeys-first Identity & Access Platform
 
-**A self-hostable Auth0 / Okta alternative for modern applications and enterprises.**
+**A self-hostable identity platform for modern applications and enterprises.**
 
 Own the identity layer, keep PostgreSQL as the source of truth, and deploy one Go API artifact.
 
@@ -13,9 +13,8 @@ Own the identity layer, keep PostgreSQL as the source of truth, and deploy one G
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539?logo=openapiinitiative&logoColor=white)](./api/openapi/)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](./Dockerfile)
-[![License](https://img.shields.io/badge/License-MIT-F6C344.svg)](./LICENSE)
 
-**[Website](https://id.qeet.in) &middot; [Documentation](https://docs.qeet.in) &middot; [API](./api/openapi/) &middot; [GitHub](https://github.com/qeetgroup/qeet-id-server) &middot; [Contributing](./CONTRIBUTING.md)**
+**[Website](https://id.qeet.in) &middot; [Documentation](https://docs.qeet.in) &middot; [API](./api/openapi/)**
 
 </div>
 
@@ -23,7 +22,7 @@ Own the identity layer, keep PostgreSQL as the source of truth, and deploy one G
 
 ## 🧭 What is Qeet ID?
 
-Qeet ID is an open-source Identity and Access Management platform that combines authentication, authorization, enterprise federation, user lifecycle management, and machine identity behind one API. It is built for teams that need standards-based identity without handing control of users, credentials, and policy to a hosted identity vendor.
+Qeet ID is an Identity and Access Management platform that combines authentication, authorization, enterprise federation, user lifecycle management, and machine identity behind one API. It is built for teams that need standards-based identity without handing control of users, credentials, and policy to a hosted identity vendor.
 
 The backend is a Go modular monolith backed by PostgreSQL. Five bounded contexts share a small platform layer, while a composition root wires HTTP routes, policy enforcement, persistence, event delivery, and background work. The default API process runs as a single binary and embeds its continuous workers; dedicated worker and scheduler entrypoints are available when those workloads need to scale independently.
 
@@ -295,14 +294,10 @@ Report vulnerabilities privately according to [SECURITY.md](./SECURITY.md). Plea
 
 ## 🤝 Contributing
 
-Contributions are welcome. Pull requests target `develop`. Behavior changes need tests, API changes
-must update [api/openapi](./api/openapi/), and schema changes must add immutable `.up.sql` and
-`.down.sql` migrations. See [CONTRIBUTING.md](./CONTRIBUTING.md) and the
-[Code of Conduct](./CODE_OF_CONDUCT.md) for the complete workflow.
-
-## 📄 License
-
-Qeet ID is available under the [MIT License](./LICENSE).
+Pull requests target `develop`. Behavior changes need tests, API changes must update
+[api/openapi](./api/openapi/), and schema changes must add immutable `.up.sql` and `.down.sql`
+migrations. [AGENTS.md](./AGENTS.md) is the source of truth for repository rules and what CI
+enforces.
 
 ---
 
@@ -310,6 +305,6 @@ Qeet ID is available under the [MIT License](./LICENSE).
 
 **🔐 Identity infrastructure you control.**
 
-[Qeet ID](https://id.qeet.in) &middot; Open Source &middot; Self-Hostable &middot; Developer First
+[Qeet ID](https://id.qeet.in) &middot; Self-Hostable &middot; Developer First
 
 </div>

@@ -107,7 +107,7 @@ Deployment infrastructure is owned by the sibling **`qeet-id-deploy`** repositor
 
 ## 🏁 Competitive position
 
-> **Qeet ID in one line:** an open-source, self-hostable, **passkeys-first** identity platform with the developer experience of Clerk, the enterprise model of WorkOS, and a tamper-evident audit log nobody else ships — **without the "SSO tax."**
+> **Qeet ID in one line:** a self-hostable, **passkeys-first** identity platform with the developer experience of Clerk, the enterprise model of WorkOS, and a tamper-evident audit log nobody else ships — **without the "SSO tax."**
 >
 > *(This matrix was merged in from the retired `QEET-ID-STATUS.md` on 2026-07-06 — ROADMAP.md is now the single source for both shipped/pending status and competitive positioning.)* Competitor columns reflect each vendor's flagship offering as of the prior analysis (2026-05) and may have shifted; the Qeet ID column is current as of 2026-07-06. ✅ generally available · 🟡 limited/gated/add-on · ⏳ planned · ❌ not offered.
 
@@ -201,7 +201,6 @@ Deployment infrastructure is owned by the sibling **`qeet-id-deploy`** repositor
 ### Business model
 | Capability | **Qeet ID** | Auth0/Okta | Clerk | WorkOS | Stytch | Keycloak | FusionAuth | Zitadel | Ory |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| **Open source** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | 🟡 | ✅ | ✅ |
 | **Self-hostable** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | **No "SSO tax"** (SAML/SCIM not paywalled) | ✅ | ❌ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Data residency + BYOK | 🟡 | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
@@ -209,7 +208,7 @@ Deployment infrastructure is owned by the sibling **`qeet-id-deploy`** repositor
 
 <sub>² Stripe + Razorpay checkout code complete & webhook-verified; go-live needs env keys.</sub>
 
-**Where Qeet ID wins:** both an OIDC **and** SAML IdP with SCIM Users+Groups (open-source, not paywalled); tamper-evident hash-chained audit with `/verify`; a full agentic-identity stack (AI-agent identities + RFC 8693 delegation + MCP introspection + token vaulting + W3C VCs); ReBAC **and** RBAC both explainable (`?explain=true` on both `/check` endpoints — no other researched platform, including OpenFGA/SpiceDB, ships ReBAC explainability at all); and security-on-by-default (theft detection, lockout, prod boot-gate, bot detection). **Closest peer:** Zitadel. **Remaining gaps vs. the field:** KMS BYOK go-live (ops).
+**Where Qeet ID wins:** both an OIDC **and** SAML IdP with SCIM Users+Groups (not paywalled); tamper-evident hash-chained audit with `/verify`; a full agentic-identity stack (AI-agent identities + RFC 8693 delegation + MCP introspection + token vaulting + W3C VCs); ReBAC **and** RBAC both explainable (`?explain=true` on both `/check` endpoints — no other researched platform, including OpenFGA/SpiceDB, ships ReBAC explainability at all); and security-on-by-default (theft detection, lockout, prod boot-gate, bot detection). **Closest peer:** Zitadel. **Remaining gaps vs. the field:** KMS BYOK go-live (ops).
 
 <details><summary>Competitive research sources (2025–2026)</summary>
 

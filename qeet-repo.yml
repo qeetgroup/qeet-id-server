@@ -24,7 +24,7 @@ repository:
   type: backend
   role: primary
   status: active         # the product is pre-1.0; this repository is actively developed
-  visibility: public
+  visibility: private
   default_branch: main
   working_branch: develop
 
