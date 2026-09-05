@@ -129,7 +129,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 | Events | PostgreSQL transactional outbox, optional NATS |
 | Rate limiting | In-process token buckets, optional Redis |
 | Observability | Prometheus metrics, OpenTelemetry tracing, structured logs |
-| Testing | Go test, Testcontainers, k6, CodeQL, govulncheck |
+| Testing | Go test, Testcontainers, k6, gosec, govulncheck |
 | Container | Multi-stage Docker build, distroless non-root runtime |
 
 ## 🚀 Quick start
@@ -228,7 +228,7 @@ make test-integration      # if the change touched a route
 ```
 
 CI adds race detection, `golangci-lint` on changed code, integration tests, `govulncheck`, and
-CodeQL analysis.
+an advisory `gosec` scan.
 
 > [!NOTE]
 > **`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.12.2 against new and

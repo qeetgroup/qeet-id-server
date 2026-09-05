@@ -1409,7 +1409,7 @@ The following behaviors are deliberate and were not classified as implementation
 
 - JWT negative tests cover unknown/missing `kid`, HS256 confusion, retired keys, tampering, issuer/audience, and expiry.
 - Integration tests cover OIDC PKCE when supplied, code expiry/single use, refresh client binding/expiry, passkey session mismatch, MFA step-up, recovery/magic-link reuse, device authorization, signing-key behavior, admin portal TTL, and several tenant boundaries.
-- CI runs unit tests with the race detector, architecture rules, integration tests, `govulncheck`, CodeQL, and linting.
+- CI runs unit tests with the race detector, architecture rules, integration tests, `govulncheck`, an advisory `gosec` scan, and linting.
 
 ### Missing security tests
 
