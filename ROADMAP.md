@@ -67,7 +67,7 @@ Deployment infrastructure is owned by the sibling **`qeet-id-deploy`** repositor
 ### 🧰 Platform & delivery
 - ✅ 3 React frontends (admin console ~80 screens, hosted login, marketing site) · **6 SDK packages** (TS server + browser, React w/ full `<SignIn/>`/`<OrgSwitcher/>`/… component suite, Next.js, Go, Python) · per-tenant rate-limit overrides (`0064`)
 - ✅ Transactional outbox **+ DLQ** · webhook dispatcher (HMAC, stable delivery IDs, bounded backoff + dead-letter state) · durable PostgreSQL leases for outbox/webhook/GDPR workers with crash recovery · `EMBEDDED_WORKERS` switch for standalone worker deployments · Prometheus/OTel observability · `config.Validate()` boot-gate
-- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, bidirectional OpenAPI route/security coverage, **CodeQL**, `golangci-lint`, `govulncheck`, and gated integration suites (testcontainers) *(gitleaks, coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired)*
+- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, bidirectional OpenAPI route/security coverage, `golangci-lint`, `govulncheck`, advisory `gosec`, and gated integration suites (testcontainers) *(gitleaks, coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired)*
 
 ---
 

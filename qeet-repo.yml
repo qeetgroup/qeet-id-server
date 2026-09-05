@@ -111,8 +111,8 @@ security:
   boot_gate: internal/platform/config/config.go    # Config.Validate()
 
 ci:
-  workflows: [.github/workflows/ci.yml, .github/workflows/codeql.yml, .github/workflows/deploy.yml]
-  jobs: [test, lint, integration, vuln, analyze, deploy]
+  workflows: [.github/workflows/ci.yml, .github/workflows/deploy.yml]
+  jobs: [test, lint, integration, vuln, sast, deploy]
   deploy_trigger: push to main
 
 llm_context:

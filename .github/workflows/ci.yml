@@ -123,7 +123,6 @@ jobs:
     # shell). 42 of the 65 HIGH findings are G101 "hardcoded credentials" on
     # constant names. Promote this to blocking once those are triaged and the
     # genuine false positives carry #nosec justifications.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
@@ -136,6 +135,10 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       # Generated sqlc code is excluded for the same reason golangci-lint
-      # excludes it: it is not hand-authored.
+      # excludes it: it is not hand-authored. Findings surface as a warning
+      # annotation rather than a red job, so the check list stays readable
+      # while the report is still one click away in the log.
       - name: gosec
-        run: gosec -exclude-dir='.*dbgen' -exclude-generated ./...
+        run: |
+          gosec -exclude-dir='.*dbgen' -exclude-generated ./... \
+            || echo "::warning title=gosec::Findings reported - advisory only, see log. Not yet triaged."

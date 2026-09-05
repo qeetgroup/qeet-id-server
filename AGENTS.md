@@ -174,8 +174,8 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 | `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes architecture fitness |
 | `lint` | `golangci-lint` v2.12.2, new code only |
 | `integration` | `go test -tags integration ./tests/integration/...` — **includes the OpenAPI route-coverage gate** |
-| `vuln` | `govulncheck ./...` |
-| `analyze` | CodeQL (separate workflow) |
+| `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
+| `sast` | `gosec` — advisory, reports findings as a warning |
 | `deploy` | On push to `main` only: build, deploy to AWS via OIDC, then tag |
 
 ---

@@ -219,8 +219,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Linter config | `.golangci.yml` |
 | Container | `Dockerfile` |
 | Local dependencies | `docker-compose.yml` — postgres :5001, nats :4222, mailpit :8025 |
-| CI | `.github/workflows/ci.yml` — test · lint · integration · vuln |
-| CodeQL | `.github/workflows/codeql.yml` |
+| CI | `.github/workflows/ci.yml` — test · lint · integration · vuln · sast |
 | Deploy (on `main`) | `.github/workflows/deploy.yml` |
 | Tooling | `tools/` — openapi-split, migration-tools, qa, scripts |
 

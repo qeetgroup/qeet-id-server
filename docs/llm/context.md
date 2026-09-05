@@ -513,8 +513,8 @@ behavioral and database layer — see [subsystems.md](subsystems.md).
 | `test` | `go build ./...` · `go vet ./...` · `go test -race -count=1 ./...` |
 | `lint` | `golangci-lint` v2.12.2 — new code only |
 | `integration` | `go test -tags integration -timeout 10m ./tests/integration/...` |
-| `vuln` | `govulncheck ./...` |
-| `analyze` | CodeQL |
+| `vuln` | `govulncheck ./cmd/... ./internal/...` blocking · advisory full-tree scan |
+| `sast` | `gosec` — advisory |
 | `deploy` | On push to `main`: build, deploy to AWS via GitHub OIDC, then tag |
 
 `.golangci.yml` enables `errcheck`, `govet`, `staticcheck`, `misspell` plus `gofmt`/`goimports`;
