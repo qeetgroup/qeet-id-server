@@ -18,11 +18,13 @@ func init() {
 		errs.CodeAdminPortalCapabilityNotGranted: http.StatusForbidden,
 
 		// Link lifecycle.
-		errs.CodeAdminPortalLinkNotFound: http.StatusNotFound,
-		errs.CodeAdminPortalTokenMissing: http.StatusUnauthorized,
-		errs.CodeAdminPortalLinkInvalid:  http.StatusUnauthorized,
-		errs.CodeAdminPortalLinkRevoked:  http.StatusUnauthorized,
-		errs.CodeAdminPortalLinkExpired:  http.StatusUnauthorized,
+		errs.CodeAdminPortalLinkNotFound:   http.StatusNotFound,
+		errs.CodeAdminPortalTokenMissing:   http.StatusUnauthorized,
+		errs.CodeAdminPortalLinkInvalid:    http.StatusUnauthorized,
+		errs.CodeAdminPortalLinkRevoked:    http.StatusUnauthorized,
+		errs.CodeAdminPortalLinkExpired:    http.StatusUnauthorized,
+		errs.CodeAdminPortalSessionMissing: http.StatusUnauthorized,
+		errs.CodeAdminPortalSessionInvalid: http.StatusUnauthorized,
 
 		// Request shape & path parameters.
 		errs.CodeAdminPortalTenantIDInvalid: http.StatusBadRequest,

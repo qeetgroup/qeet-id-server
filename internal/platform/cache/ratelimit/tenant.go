@@ -78,9 +78,7 @@ func (l *TenantLimiter) SetOverride(ctx context.Context, tenantID uuid.UUID, rat
 	if err != nil {
 		return err
 	}
-	l.mu.Lock()
-	l.overrides[tenantID] = Override{Rate: rate, Capacity: capacity}
-	l.mu.Unlock()
+	l.ApplyOverride(tenantID, rate, capacity)
 	return nil
 }
 
@@ -92,10 +90,23 @@ func (l *TenantLimiter) DeleteOverride(ctx context.Context, tenantID uuid.UUID) 
 	if err != nil {
 		return err
 	}
+	l.ClearOverride(tenantID)
+	return nil
+}
+
+// ApplyOverride updates only the in-memory cache after a caller-owned database
+// transaction commits.
+func (l *TenantLimiter) ApplyOverride(tenantID uuid.UUID, rate float64, capacity int) {
+	l.mu.Lock()
+	l.overrides[tenantID] = Override{Rate: rate, Capacity: capacity}
+	l.mu.Unlock()
+}
+
+// ClearOverride removes only the cached value after a caller-owned delete commits.
+func (l *TenantLimiter) ClearOverride(tenantID uuid.UUID) {
 	l.mu.Lock()
 	delete(l.overrides, tenantID)
 	l.mu.Unlock()
-	return nil
 }
 
 // GetAll returns the default and all tenant-specific overrides for this key.

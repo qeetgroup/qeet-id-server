@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
+	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
@@ -67,6 +69,30 @@ func registerOIDCClient(t *testing.T, ctx context.Context, svc *oidc.Service, te
 	return client, secret
 }
 
+func registerOIDCPublicClient(t *testing.T, ctx context.Context, svc *oidc.Service, tenantID uuid.UUID, redirectURI string) *oidc.Client {
+	t.Helper()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	client, secret, err := svc.RegisterClient(ctx, tx, oidc.CreateClientInput{
+		TenantID: tenantID, Type: "public", Name: "Public RP",
+		RedirectURIs: []string{redirectURI}, GrantTypes: []string{"authorization_code", "refresh_token"},
+	})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("register public client: %v", err)
+	}
+	if secret != "" {
+		_ = tx.Rollback(ctx)
+		t.Fatal("public client must not receive a secret")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return client
+}
+
 // =====================================================================
 // OIDC — PKCE S256, code consumption, redirect/scope validation
 // =====================================================================
@@ -79,6 +105,7 @@ func TestOIDCPKCEExchange(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("pkce"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
@@ -114,28 +141,81 @@ func TestOIDCPKCEExchange(t *testing.T) {
 	}
 }
 
-// TestOIDCPKCEUnsupportedMethod proves only S256 is accepted: a code registered
-// with a "plain" challenge method is rejected at exchange, even with a verifier
-// that would satisfy the plain transform.
+// TestOIDCPKCEUnsupportedMethod proves only S256 is accepted and invalid
+// challenges are rejected before an authorization code is issued.
 func TestOIDCPKCEUnsupportedMethod(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("pkce"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
 	client, secret := registerOIDCClient(t, ctx, svc, tenantID, redirectURI)
 
-	// "plain" PKCE: challenge == verifier. We still store it, but exchange must
-	// refuse because the provider only supports S256.
 	verifier := "plain-verifier-value"
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", verifier, "plain")
-	if err != nil {
-		t.Fatalf("authorize: %v", err)
+	if _, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", verifier, "plain"); !errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported) {
+		t.Fatalf("plain PKCE error = %v, want unsupported method", err)
 	}
-	if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, verifier, ""); err == nil {
-		t.Fatal("a non-S256 code_challenge_method must be rejected")
+	_ = secret
+}
+
+func TestOIDCPublicClientRequiresStrictPKCE(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("public-pkce"))
+	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
+	svc := oidc.NewService(testPool, mustIssuer())
+	redirectURI := "https://public.example/cb"
+	client := registerOIDCPublicClient(t, ctx, svc, tenantID, redirectURI)
+
+	if _, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", ""); !errors.Is(err, errs.ErrOIDCCodeChallengeRequired) {
+		t.Fatalf("missing public-client challenge error = %v", err)
+	}
+	verifier, challenge := newPKCE(t)
+	if _, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", challenge, ""); !errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported) {
+		t.Fatalf("missing PKCE method error = %v", err)
+	}
+	if _, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", strings.Repeat("a", 42), "S256"); !errors.Is(err, errs.ErrOIDCCodeChallengeInvalid) {
+		t.Fatalf("short PKCE challenge error = %v", err)
+	}
+	if _, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", strings.Repeat("a", 42)+"!", "S256"); !errors.Is(err, errs.ErrOIDCCodeChallengeInvalid) {
+		t.Fatalf("malformed PKCE challenge error = %v", err)
+	}
+
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", challenge, "S256")
+	if err != nil {
+		t.Fatalf("authorize public client with S256: %v", err)
+	}
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, "", code, redirectURI, "too-short", ""); !errors.Is(err, errs.ErrOIDCCodeVerifierInvalid) {
+		t.Fatalf("malformed verifier error = %v", err)
+	}
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, "", code, redirectURI, strings.Repeat("a", 42)+"!", ""); !errors.Is(err, errs.ErrOIDCCodeVerifierInvalid) {
+		t.Fatalf("illegal-character verifier error = %v", err)
+	}
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, "", code, redirectURI, verifier, "")
+	if err != nil {
+		t.Fatalf("exchange public-client code with S256: %v", err)
+	}
+	if issued.AccessToken == "" {
+		t.Fatal("public-client S256 exchange returned no access token")
+	}
+
+	legacyCode, legacyHash, err := codes.URLToken()
+	if err != nil {
+		t.Fatalf("legacy authorization code: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO auth.oidc_authorization_codes
+		    (code_hash, client_id, user_id, tenant_id, redirect_uri, scopes, expires_at)
+		VALUES ($1, $2, $3, $4, $5, ARRAY['openid']::text[], NOW() + INTERVAL '5 minutes')
+	`, legacyHash, client.ClientID, userID, tenantID, redirectURI); err != nil {
+		t.Fatalf("seed challenge-less public code: %v", err)
+	}
+	if _, err := svc.ExchangeCode(ctx, client.ClientID, "", legacyCode, redirectURI, verifier, ""); !errors.Is(err, errs.ErrOIDCCodeChallengeRequired) {
+		t.Fatalf("challenge-less public code error = %v", err)
 	}
 }
 
@@ -146,6 +226,7 @@ func TestOIDCAuthorizeValidation(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("authz"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
@@ -169,6 +250,7 @@ func TestOIDCExchangeRedirectMismatch(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("redir"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
@@ -190,6 +272,7 @@ func TestOIDCExchangeExpiredCode(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("exp"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
@@ -216,6 +299,7 @@ func TestOIDCRefreshClientMismatch(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("bind"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
@@ -250,6 +334,7 @@ func TestOIDCRefreshExpired(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("rexp"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	svc := oidc.NewService(testPool, mustIssuer())
 	redirectURI := "https://app.example/cb"
@@ -281,6 +366,7 @@ func TestOIDCIntrospectClaims(t *testing.T) {
 	ctx := context.Background()
 	tenantID := createTenant(t, ctx, uniqueSlug("intro"))
 	userID := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	issuer := mustIssuer()
 	svc := oidc.NewService(testPool, issuer)
@@ -485,6 +571,7 @@ func TestMFATOTPEnrollAndRecoveryCodes(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("mfa"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
 
 	// Start enrollment.
 	tx, err := testPool.Begin(ctx)
@@ -498,62 +585,222 @@ func TestMFATOTPEnrollAndRecoveryCodes(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+	var storedSecret string
+	var secretCiphertext, secretNonce []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT secret, secret_ct, secret_nonce FROM auth.mfa_totp WHERE user_id = $1
+	`, userID).Scan(&storedSecret, &secretCiphertext, &secretNonce); err != nil {
+		t.Fatalf("read stored TOTP: %v", err)
+	}
+	if storedSecret != "" || len(secretCiphertext) == 0 || len(secretNonce) == 0 {
+		t.Fatalf("TOTP must be ciphertext-only: plaintext=%q ciphertext=%d nonce=%d", storedSecret, len(secretCiphertext), len(secretNonce))
+	}
+	if bytes.Contains(secretCiphertext, []byte(enr.Secret)) {
+		t.Fatal("TOTP ciphertext must not contain the plaintext secret")
+	}
 
 	// A wrong code must not confirm.
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, userID, "000000"); err == nil {
+	if _, err := mfaConfirmEnroll(ctx, svc, userID, "000000"); err == nil {
 		t.Fatal("confirm with a wrong TOTP must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Confirm with the real code for the current window.
 	code, err := totp.Code(enr.Secret, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("totp code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	recoveryCodes, err := svc.ConfirmEnroll(ctx, tx, userID, code)
+	recoveryCodes, err := mfaConfirmEnroll(ctx, svc, userID, code)
 	if err != nil {
 		t.Fatalf("confirm enroll: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit confirm: %v", err)
 	}
 	if len(recoveryCodes) != 10 {
 		t.Fatalf("expected 10 recovery codes, got %d", len(recoveryCodes))
 	}
 
 	// Verify accepts a fresh TOTP (not flagged as a recovery code).
-	tx, _ = testPool.Begin(ctx)
 	totpCode, _ := totp.Code(enr.Secret, time.Now().UTC())
-	res, err := svc.Verify(ctx, tx, userID, totpCode)
+	res, err := mfaVerify(ctx, svc, userID, totpCode)
 	if err != nil {
 		t.Fatalf("verify totp: %v", err)
 	}
 	if res.UsedRecoveryCode {
 		t.Error("a TOTP verify must not be flagged as a recovery-code use")
 	}
-	tx.Commit(ctx)
 
 	// Verify consumes a recovery code exactly once.
 	rc := recoveryCodes[0]
-	tx, _ = testPool.Begin(ctx)
-	res, err = svc.Verify(ctx, tx, userID, rc)
+	res, err = mfaVerify(ctx, svc, userID, rc)
 	if err != nil {
 		t.Fatalf("verify recovery code: %v", err)
 	}
 	if !res.UsedRecoveryCode || res.RecoveryCodeID == nil {
 		t.Fatal("expected the recovery-code branch to fire")
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit recovery: %v", err)
-	}
 	// The same recovery code can't be used a second time.
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.Verify(ctx, tx, userID, rc); err == nil {
+	if _, err := mfaVerify(ctx, svc, userID, rc); err == nil {
 		t.Fatal("a recovery code must be single-use")
 	}
-	tx.Rollback(ctx)
+
+	legacyUserID := createUserInTenant(t, ctx, tenantID)
+	legacySecret, err := totp.NewSecret()
+	if err != nil {
+		t.Fatalf("legacy TOTP secret: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO auth.mfa_totp (user_id, secret) VALUES ($1, $2)
+	`, legacyUserID, legacySecret); err != nil {
+		t.Fatalf("seed legacy TOTP: %v", err)
+	}
+	legacyCode, err := totp.Code(legacySecret, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("legacy TOTP code: %v", err)
+	}
+	if _, err := mfaConfirmEnroll(ctx, svc, legacyUserID, legacyCode); err != nil {
+		t.Fatalf("confirm legacy TOTP: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT secret, secret_ct, secret_nonce FROM auth.mfa_totp WHERE user_id = $1
+	`, legacyUserID).Scan(&storedSecret, &secretCiphertext, &secretNonce); err != nil {
+		t.Fatalf("read migrated TOTP: %v", err)
+	}
+	if storedSecret != "" || len(secretCiphertext) == 0 || len(secretNonce) == 0 {
+		t.Fatal("legacy TOTP seed was not migrated to ciphertext-only storage")
+	}
+}
+
+func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("mfa-budget"))
+	userID := createUserInTenant(t, ctx, tenantID)
+	recorder := &recordSender{}
+	service := mfa.NewService(testPool, "qeet-test", recorder, "")
+	service.SetCipher(testEnvelope(t))
+
+	tx, _ := testPool.Begin(ctx)
+	enrollment, err := service.StartEnroll(ctx, tx, userID, "budget@example.com")
+	if err != nil {
+		t.Fatalf("start TOTP enrollment: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit TOTP enrollment: %v", err)
+	}
+	totpCode, _ := totp.Code(enrollment.Secret, time.Now().UTC())
+	if _, err := mfaConfirmEnroll(ctx, service, userID, totpCode); err != nil {
+		t.Fatalf("confirm TOTP enrollment: %v", err)
+	}
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		_, verifyErr := mfaVerify(ctx, service, userID, "not-a-code")
+		if attempt < 5 && !errors.Is(verifyErr, errs.ErrMFACodeInvalid) {
+			t.Fatalf("factor attempt %d error = %v", attempt, verifyErr)
+		}
+		if attempt == 5 && !errors.Is(verifyErr, errs.ErrMFAAttemptsExceeded) {
+			t.Fatalf("fifth factor attempt error = %v, want exhausted", verifyErr)
+		}
+	}
+	if _, err := mfaVerify(ctx, service, userID, totpCode); !errors.Is(err, errs.ErrMFAAttemptsExceeded) {
+		t.Fatalf("correct TOTP after exhaustion error = %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE auth.mfa_attempt_budgets
+		SET locked_until = NOW() - INTERVAL '1 second', window_started_at = NOW() - INTERVAL '11 minutes'
+		WHERE user_id = $1 AND purpose = 'factor-verify'
+	`, userID); err != nil {
+		t.Fatalf("expire factor budget: %v", err)
+	}
+	if _, err := mfaVerify(ctx, service, userID, totpCode); err != nil {
+		t.Fatalf("correct TOTP after lockout expiry: %v", err)
+	}
+
+	factorID, err := service.EnrollOTPStart(ctx, userID, "email", "budget@example.com")
+	if err != nil {
+		t.Fatalf("start email OTP enrollment: %v", err)
+	}
+	enrollmentCode := extractCode(t, recorder.last.Body)
+	if err := mfaEnrollOTPConfirm(ctx, service, userID, factorID, enrollmentCode); err != nil {
+		t.Fatalf("confirm email OTP: %v", err)
+	}
+	if err := service.ChallengeOTP(ctx, userID, factorID); err != nil {
+		t.Fatalf("challenge email OTP: %v", err)
+	}
+	challengeCode := extractCode(t, recorder.last.Body)
+	for attempt := 1; attempt <= 5; attempt++ {
+		_, verifyErr := mfaVerifyOTP(ctx, service, userID, "000000")
+		if attempt == 5 && !errors.Is(verifyErr, errs.ErrMFAAttemptsExceeded) {
+			t.Fatalf("fifth OTP attempt error = %v, want exhausted", verifyErr)
+		}
+	}
+	if _, err := mfaVerifyOTP(ctx, service, userID, challengeCode); !errors.Is(err, errs.ErrMFAAttemptsExceeded) {
+		t.Fatalf("correct OTP after exhaustion error = %v", err)
+	}
+}
+
+func TestMFARecoveryCodeConcurrentSingleUse(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("mfa-recovery-race"))
+	userID := createUserInTenant(t, ctx, tenantID)
+	service := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	service.SetCipher(testEnvelope(t))
+	tx, _ := testPool.Begin(ctx)
+	enrollment, err := service.StartEnroll(ctx, tx, userID, "race@example.com")
+	if err != nil {
+		t.Fatalf("start enrollment: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit enrollment: %v", err)
+	}
+	code, _ := totp.Code(enrollment.Secret, time.Now().UTC())
+	recoveryCodes, err := mfaConfirmEnroll(ctx, service, userID, code)
+	if err != nil {
+		t.Fatalf("confirm enrollment: %v", err)
+	}
+
+	const contenders = 8
+	start := make(chan struct{})
+	results := make(chan bool, contenders)
+	var wait sync.WaitGroup
+	for range contenders {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			attempt, err := service.ReserveAttempt(ctx, userID, mfa.PurposeFactorVerify)
+			if err != nil {
+				results <- false
+				return
+			}
+			tx, err := testPool.Begin(ctx)
+			if err != nil {
+				results <- false
+				return
+			}
+			result, err := service.Verify(ctx, tx, attempt, recoveryCodes[0])
+			if err != nil || result == nil || !result.UsedRecoveryCode {
+				_ = tx.Rollback(ctx)
+				results <- false
+				return
+			}
+			if err := tx.Commit(ctx); err != nil {
+				results <- false
+				return
+			}
+			results <- true
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	successes := 0
+	for success := range results {
+		if success {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent recovery-code successes = %d, want 1", successes)
+	}
 }
 
 // TestMFAVerifyUnconfirmed proves Verify refuses a user whose TOTP enrollment
@@ -564,25 +811,22 @@ func TestMFAVerifyUnconfirmed(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("mfa"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
 
 	// No enrollment at all.
-	tx, _ := testPool.Begin(ctx)
-	if _, err := svc.Verify(ctx, tx, userID, "123456"); err == nil {
+	if _, err := mfaVerify(ctx, svc, userID, "123456"); err == nil {
 		t.Error("verify with no MFA configured must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Start (but never confirm) enrollment.
-	tx, _ = testPool.Begin(ctx)
+	tx, _ := testPool.Begin(ctx)
 	if _, err := svc.StartEnroll(ctx, tx, userID, "a@b.c"); err != nil {
 		t.Fatalf("start enroll: %v", err)
 	}
 	tx.Commit(ctx)
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.Verify(ctx, tx, userID, "123456"); err == nil {
+	if _, err := mfaVerify(ctx, svc, userID, "123456"); err == nil {
 		t.Error("verify before confirmation must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Regenerate requires a confirmed factor.
 	tx, _ = testPool.Begin(ctx)
@@ -590,6 +834,75 @@ func TestMFAVerifyUnconfirmed(t *testing.T) {
 		t.Error("regenerate before confirmation must fail")
 	}
 	tx.Rollback(ctx)
+}
+
+func TestMFAPushSecretsEncryptedAndMigrated(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("mfa-push"))
+	userID := createUserInTenant(t, ctx, tenantID)
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
+
+	device, firstCredential, err := svc.RegisterPushDevice(ctx, userID, "phone", "ExponentPushToken[new-device]", "ios")
+	if err != nil {
+		t.Fatalf("register push device: %v", err)
+	}
+	var pushPlaintext, devicePlaintext *string
+	var ciphertext, nonce []byte
+	var pushHash, deviceHash *string
+	if err := testPool.QueryRow(ctx, `
+		SELECT push_token, device_token, push_token_ct, push_token_nonce,
+		       push_token_hash, device_token_hash
+		FROM auth.mfa_push_devices WHERE id = $1
+	`, device.ID).Scan(&pushPlaintext, &devicePlaintext, &ciphertext, &nonce, &pushHash, &deviceHash); err != nil {
+		t.Fatalf("read stored push device: %v", err)
+	}
+	if pushPlaintext != nil || devicePlaintext != nil || len(ciphertext) == 0 || len(nonce) == 0 || pushHash == nil || deviceHash == nil {
+		t.Fatalf("push credentials must use ciphertext/hash storage: push=%v device=%v ciphertext=%d nonce=%d", pushPlaintext, devicePlaintext, len(ciphertext), len(nonce))
+	}
+
+	rotated, secondCredential, err := svc.RegisterPushDevice(ctx, userID, "phone updated", "ExponentPushToken[new-device]", "ios")
+	if err != nil {
+		t.Fatalf("rotate push device credential: %v", err)
+	}
+	if rotated.ID != device.ID || secondCredential == firstCredential {
+		t.Fatalf("re-registration must retain device and rotate credential: first=%s second=%s", device.ID, rotated.ID)
+	}
+	challengeID, err := svc.CreatePushChallenge(ctx, userID, "login", mfa.PushChallengeContext{Timestamp: time.Now().UTC().Format(time.RFC3339)})
+	if err != nil {
+		t.Fatalf("create push challenge: %v", err)
+	}
+	if err := svc.RespondToPushChallenge(ctx, challengeID, userID, firstCredential, true); err == nil {
+		t.Fatal("rotated device credential must no longer authorize a response")
+	}
+	if err := svc.RespondToPushChallenge(ctx, challengeID, userID, secondCredential, true); err != nil {
+		t.Fatalf("current device credential should authorize response: %v", err)
+	}
+
+	legacyPush := "ExponentPushToken[legacy-device]"
+	legacyCredential := "legacy-device-credential"
+	var legacyID uuid.UUID
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO auth.mfa_push_devices (user_id, name, push_token, platform, device_token)
+		VALUES ($1, 'legacy phone', $2, 'android', $3)
+		RETURNING id
+	`, userID, legacyPush, legacyCredential).Scan(&legacyID); err != nil {
+		t.Fatalf("seed legacy push device: %v", err)
+	}
+	if _, err := svc.CreatePushChallenge(ctx, userID, "legacy-login", mfa.PushChallengeContext{Timestamp: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatalf("migrate legacy push device: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT push_token, device_token, push_token_ct, push_token_nonce,
+		       push_token_hash, device_token_hash
+		FROM auth.mfa_push_devices WHERE id = $1
+	`, legacyID).Scan(&pushPlaintext, &devicePlaintext, &ciphertext, &nonce, &pushHash, &deviceHash); err != nil {
+		t.Fatalf("read migrated push device: %v", err)
+	}
+	if pushPlaintext != nil || devicePlaintext != nil || len(ciphertext) == 0 || len(nonce) == 0 || pushHash == nil || deviceHash == nil {
+		t.Fatal("legacy push credentials were not migrated to ciphertext/hash storage")
+	}
 }
 
 // TestMFAEmailOTP exercises the email OTP factor: enroll sends a code (captured
@@ -603,6 +916,7 @@ func TestMFAEmailOTP(t *testing.T) {
 	userID := createUserInTenant(t, ctx, tenantID)
 	rec := &recordSender{}
 	svc := mfa.NewService(testPool, "qeet-test", rec, "")
+	svc.SetCipher(testEnvelope(t))
 
 	dest := "user@example.com"
 	factorID, err := svc.EnrollOTPStart(ctx, userID, "email", dest)
@@ -612,18 +926,14 @@ func TestMFAEmailOTP(t *testing.T) {
 	enrollCode := extractCode(t, rec.last.Body)
 
 	// Wrong code does not confirm.
-	tx, _ := testPool.Begin(ctx)
-	if err := svc.EnrollOTPConfirm(ctx, tx, userID, factorID, "000000"); err == nil {
+	if err := mfaEnrollOTPConfirm(ctx, svc, userID, factorID, "000000"); err == nil {
 		t.Error("confirm with a wrong OTP must fail")
 	}
-	tx.Rollback(ctx)
 
 	// Correct code confirms.
-	tx, _ = testPool.Begin(ctx)
-	if err := svc.EnrollOTPConfirm(ctx, tx, userID, factorID, enrollCode); err != nil {
+	if err := mfaEnrollOTPConfirm(ctx, svc, userID, factorID, enrollCode); err != nil {
 		t.Fatalf("confirm otp: %v", err)
 	}
-	tx.Commit(ctx)
 
 	// Channel/destination validation.
 	if _, err := svc.EnrollOTPStart(ctx, userID, "carrier-pigeon", "x"); err == nil {
@@ -638,18 +948,14 @@ func TestMFAEmailOTP(t *testing.T) {
 		t.Fatalf("challenge otp: %v", err)
 	}
 	challengeCode := extractCode(t, rec.last.Body)
-	tx, _ = testPool.Begin(ctx)
-	ok, err := svc.VerifyOTP(ctx, tx, userID, challengeCode)
+	ok, err := mfaVerifyOTP(ctx, svc, userID, challengeCode)
 	if err != nil || !ok {
 		t.Fatalf("verify otp = %v, %v; want true", ok, err)
 	}
-	tx.Commit(ctx)
 	// Re-using the consumed code fails.
-	tx, _ = testPool.Begin(ctx)
-	if ok, _ := svc.VerifyOTP(ctx, tx, userID, challengeCode); ok {
+	if ok, _ := mfaVerifyOTP(ctx, svc, userID, challengeCode); ok {
 		t.Error("an OTP code must be single-use")
 	}
-	tx.Rollback(ctx)
 
 	// Expired code is rejected: send one, then push it into the past.
 	if err := svc.ChallengeOTP(ctx, userID, factorID); err != nil {
@@ -661,11 +967,9 @@ func TestMFAEmailOTP(t *testing.T) {
 		codes.Hash(staleCode)); err != nil {
 		t.Fatalf("expire code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	if ok, _ := svc.VerifyOTP(ctx, tx, userID, staleCode); ok {
+	if ok, _ := mfaVerifyOTP(ctx, svc, userID, staleCode); ok {
 		t.Error("an expired OTP code must be rejected")
 	}
-	tx.Rollback(ctx)
 
 	// Listing masks the destination.
 	factors, err := svc.ListOTPFactors(ctx, userID)
@@ -766,6 +1070,7 @@ func TestMFAEnrollSatisfiesStepUp(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("mfa-stepup"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
 
 	// No verification before enrollment.
 	ok, _, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
@@ -787,11 +1092,9 @@ func TestMFAEnrollSatisfiesStepUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("totp code: %v", err)
 	}
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, svc, userID, code); err != nil {
 		t.Fatalf("confirm enroll: %v", err)
 	}
-	tx.Commit(ctx)
 
 	// The fix: enrollment itself counts as a recent verification.
 	ok, at, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
@@ -823,6 +1126,7 @@ func TestMFAStepUpWindow(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("step"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
 
 	// No verification yet.
 	ok, at, err := svc.RecentlyVerified(ctx, userID, time.Minute)
@@ -896,6 +1200,7 @@ func TestMFARequireRecentMFAMiddleware(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("gate"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
 
 	hit := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hit = true; w.WriteHeader(http.StatusOK) })
@@ -953,6 +1258,7 @@ func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
 	tenantID := createTenant(t, ctx, uniqueSlug("gated"))
 	userID := createUserInTenant(t, ctx, tenantID)
 	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
 
 	// Enroll + confirm TOTP so the user has real factors to disable/regenerate.
 	tx, _ := testPool.Begin(ctx)
@@ -962,11 +1268,9 @@ func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
 	}
 	tx.Commit(ctx)
 	code, _ := totp.Code(enr.Secret, time.Now().UTC())
-	tx, _ = testPool.Begin(ctx)
-	if _, err := svc.ConfirmEnroll(ctx, tx, userID, code); err != nil {
+	if _, err := mfaConfirmEnroll(ctx, svc, userID, code); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
-	tx.Commit(ctx)
 
 	// Enrollment now records a verification (QID-17 fix), which satisfies the
 	// step-up window. Clear it so the "without step-up" assertions below still

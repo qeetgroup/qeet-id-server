@@ -100,35 +100,6 @@ func (q *Queries) GetMFATOTPConfirmed(ctx context.Context, userID uuid.UUID) (pg
 	return confirmed_at, err
 }
 
-const getMFATOTPFull = `-- name: GetMFATOTPFull :one
-
-SELECT secret, confirmed_at FROM auth.mfa_totp WHERE user_id = $1
-`
-
-type GetMFATOTPFullRow struct {
-	Secret      string
-	ConfirmedAt pgtype.Timestamptz
-}
-
-// GetMFATOTPFull returns the secret and confirmed_at for the Verify path.
-func (q *Queries) GetMFATOTPFull(ctx context.Context, userID uuid.UUID) (GetMFATOTPFullRow, error) {
-	row := q.db.QueryRow(ctx, getMFATOTPFull, userID)
-	var i GetMFATOTPFullRow
-	err := row.Scan(&i.Secret, &i.ConfirmedAt)
-	return i, err
-}
-
-const getMFATOTPSecret = `-- name: GetMFATOTPSecret :one
-SELECT secret FROM auth.mfa_totp WHERE user_id = $1
-`
-
-func (q *Queries) GetMFATOTPSecret(ctx context.Context, userID uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, getMFATOTPSecret, userID)
-	var secret string
-	err := row.Scan(&secret)
-	return secret, err
-}
-
 const getMFAVerification = `-- name: GetMFAVerification :one
 SELECT verified_at FROM auth.mfa_verifications WHERE user_id = $1
 `
@@ -277,6 +248,7 @@ func (q *Queries) ListOTPFactors(ctx context.Context, userID uuid.UUID) ([]AuthM
 const listUnusedRecoveryCodes = `-- name: ListUnusedRecoveryCodes :many
 SELECT id, code_hash FROM auth.mfa_recovery_codes
 WHERE user_id = $1 AND used_at IS NULL
+FOR UPDATE
 `
 
 type ListUnusedRecoveryCodesRow struct {
@@ -305,7 +277,7 @@ func (q *Queries) ListUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID)
 }
 
 const markOTPCodeUsed = `-- name: MarkOTPCodeUsed :exec
-UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1
+UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL
 `
 
 func (q *Queries) MarkOTPCodeUsed(ctx context.Context, id uuid.UUID) error {
@@ -323,7 +295,7 @@ func (q *Queries) MarkOTPFactorVerified(ctx context.Context, id uuid.UUID) error
 }
 
 const markRecoveryCodeUsed = `-- name: MarkRecoveryCodeUsed :exec
-UPDATE auth.mfa_recovery_codes SET used_at = NOW() WHERE id = $1
+UPDATE auth.mfa_recovery_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL
 `
 
 func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id uuid.UUID) error {
@@ -349,52 +321,6 @@ func (q *Queries) UpsertMFAOTPFactor(ctx context.Context, arg UpsertMFAOTPFactor
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const upsertMFATOTP = `-- name: UpsertMFATOTP :exec
-
-INSERT INTO auth.mfa_totp (user_id, secret) VALUES ($1, $2)
-ON CONFLICT (user_id) DO UPDATE SET secret = EXCLUDED.secret, confirmed_at = NULL
-`
-
-type UpsertMFATOTPParams struct {
-	UserID uuid.UUID
-	Secret string
-}
-
-// Queries for the access/mfa domain.
-// All static queries are compiled by sqlc into ./dbgen.
-func (q *Queries) UpsertMFATOTP(ctx context.Context, arg UpsertMFATOTPParams) error {
-	_, err := q.db.Exec(ctx, upsertMFATOTP, arg.UserID, arg.Secret)
-	return err
-}
-
-// ── Push MFA ─────────────────────────────────────────────────────────────────
-
-const upsertPushDevice = `-- name: UpsertPushDevice :one
-INSERT INTO auth.mfa_push_devices (user_id, name, push_token, platform, device_token)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (user_id, push_token) DO UPDATE
-    SET name         = EXCLUDED.name,
-        platform     = EXCLUDED.platform,
-        device_token = EXCLUDED.device_token,
-        last_seen_at = NOW()
-RETURNING id, user_id, name, platform, created_at, last_seen_at
-`
-
-type UpsertPushDeviceParams struct {
-	UserID      uuid.UUID
-	Name        string
-	PushToken   string
-	Platform    string
-	DeviceToken string
-}
-
-func (q *Queries) UpsertPushDevice(ctx context.Context, arg UpsertPushDeviceParams) (AuthMfaPushDevice, error) {
-	row := q.db.QueryRow(ctx, upsertPushDevice, arg.UserID, arg.Name, arg.PushToken, arg.Platform, arg.DeviceToken)
-	var i AuthMfaPushDevice
-	err := row.Scan(&i.ID, &i.UserID, &i.Name, &i.Platform, &i.CreatedAt, &i.LastSeenAt)
-	return i, err
 }
 
 const listPushDevices = `-- name: ListPushDevices :many
@@ -434,27 +360,6 @@ func (q *Queries) DeletePushDevice(ctx context.Context, arg DeletePushDevicePara
 		return 0, err
 	}
 	return result.RowsAffected(), nil
-}
-
-const listPushTokensByUser = `-- name: ListPushTokensByUser :many
-SELECT push_token FROM auth.mfa_push_devices WHERE user_id = $1
-`
-
-func (q *Queries) ListPushTokensByUser(ctx context.Context, userID uuid.UUID) ([]string, error) {
-	rows, err := q.db.Query(ctx, listPushTokensByUser, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var push_token string
-		if err := rows.Scan(&push_token); err != nil {
-			return nil, err
-		}
-		items = append(items, push_token)
-	}
-	return items, rows.Err()
 }
 
 const insertPushChallenge = `-- name: InsertPushChallenge :one
@@ -506,22 +411,6 @@ func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (
 	var i GetPushChallengeForUpdateRow
 	err := row.Scan(&i.ID, &i.UserID, &i.Status, &i.ExpiresAt)
 	return i, err
-}
-
-const verifyDeviceToken = `-- name: VerifyDeviceToken :one
-SELECT id FROM auth.mfa_push_devices WHERE user_id = $1 AND device_token = $2
-`
-
-type VerifyDeviceTokenParams struct {
-	UserID      uuid.UUID
-	DeviceToken string
-}
-
-func (q *Queries) VerifyDeviceToken(ctx context.Context, arg VerifyDeviceTokenParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, verifyDeviceToken, arg.UserID, arg.DeviceToken)
-	var id uuid.UUID
-	err := row.Scan(&id)
-	return id, err
 }
 
 const updatePushChallengeStatus = `-- name: UpdatePushChallengeStatus :exec

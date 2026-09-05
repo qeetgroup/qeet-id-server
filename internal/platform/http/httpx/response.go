@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -46,7 +47,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		} else {
 			attrs := []any{
 				"err", err,
-				"path", r.URL.Path,
+				"route", safeRequestRoute(r),
 				"req_id", RequestID(r),
 				"client_ip", ClientIP(r),
 			}
@@ -71,7 +72,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Warn("request error",
 			"code", e.Code,
 			"cause", cause,
-			"path", SanitizeForLog(r.URL.Path),
+			"route", safeRequestRoute(r),
 			"req_id", RequestID(r),
 			"client_ip", ClientIP(r),
 		)
@@ -164,11 +165,59 @@ func validationMessage(fe validator.FieldError) string {
 	}
 }
 
+const (
+	MaxJSONBodyBytes = int64(1 << 20)
+	MaxFormBodyBytes = int64(64 << 10)
+	MaxSAMLBodyBytes = int64(1 << 20)
+)
+
 func DecodeJSON(r *http.Request, out any) error {
-	dec := json.NewDecoder(r.Body)
+	return DecodeJSONLimit(r, out, MaxJSONBodyBytes)
+}
+
+func DecodeJSONLimit(r *http.Request, out any, maxBytes int64) error {
+	if maxBytes <= 0 {
+		maxBytes = MaxJSONBodyBytes
+	}
+	if r.ContentLength > maxBytes {
+		return errs.ErrRequestBodyTooLarge
+	}
+	limited := &io.LimitedReader{R: r.Body, N: maxBytes + 1}
+	dec := json.NewDecoder(limited)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(out); err != nil {
+		if limited.N == 0 {
+			return errs.ErrRequestBodyTooLarge
+		}
 		return errs.ErrBadRequest.WithDetail(err.Error())
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if limited.N == 0 {
+			return errs.ErrRequestBodyTooLarge
+		}
+		return errs.ErrBadRequest.WithDetail("request body must contain exactly one JSON value")
+	}
+	if limited.N == 0 {
+		return errs.ErrRequestBodyTooLarge
+	}
+	return nil
+}
+
+func ParseForm(r *http.Request, maxBytes int64) error {
+	if maxBytes <= 0 {
+		maxBytes = MaxFormBodyBytes
+	}
+	if r.ContentLength > maxBytes {
+		return errs.ErrRequestBodyTooLarge
+	}
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBytes)
+	if err := r.ParseForm(); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return errs.ErrRequestBodyTooLarge
+		}
+		return errs.ErrBadRequest.WithDetail("invalid form body")
 	}
 	return nil
 }

@@ -20,8 +20,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/api-keys/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -143,6 +144,9 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Key, string, error) {
+	if err := rbac.ValidateMachineScopes(in.Scopes); err != nil {
+		return nil, "", err
+	}
 	// Plan gate: refuse once the tenant's plan cap for API keys is reached. The
 	// resource key ("api_keys") matches the entitlements catalog.
 	if s.limits != nil {

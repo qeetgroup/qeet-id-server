@@ -16,7 +16,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -57,7 +57,7 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
-// cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+// internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 // StartPasswordReset issues a reset token for the account with this email, if

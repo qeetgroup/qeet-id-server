@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -242,11 +242,17 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	var in CreateInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	in.TenantID = tenantID
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
@@ -260,32 +266,40 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		hash = ph
 	}
-	u, err := h.Repo.CreateWithCredential(r.Context(), in, hash)
+	u, err := h.createWithEvidence(r, in, hash)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	go h.publishCreated(r, u)
 	httpx.WriteJSON(w, http.StatusCreated, u)
 }
 
-func (h *Handler) publishCreated(r *http.Request, u *User) {
+func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHash string) (*User, error) {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
-		return
+		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	u, err := h.Repo.CreateWithCredentialTx(ctx, tx, in, passwordHash)
+	if err != nil {
+		return nil, err
+	}
 	actor := httpx.PrincipalFromCtx(ctx)
 	var actorID *uuid.UUID
+	actorType := "system"
 	if actor != nil {
 		actorID = actor.UserID
+		if actor.ActorType != "" {
+			actorType = actor.ActorType
+		}
 	}
 	id := u.ID
 	tenant := u.TenantID
-	_ = audit.Record(ctx, tx, audit.Event{
+	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tenant,
 		ActorUserID:  actorID,
+		ActorType:    actorType,
 		Action:       "user.created",
 		ResourceType: "user",
 		ResourceID:   &id,
@@ -293,14 +307,21 @@ func (h *Handler) publishCreated(r *http.Request, u *User) {
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
 		Metadata:     map[string]any{"email": u.Email},
-	})
-	_ = outbox.Enqueue(ctx, tx, outbox.Event{
+	}); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
 		AggregateID: u.ID,
 		Topic:       "user.events",
 		EventType:   "user.created",
 		Payload:     u,
-	})
-	_ = tx.Commit(ctx)
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -445,9 +466,80 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.SetPassword(r.Context(), id, hash); err != nil {
+	if err := h.setPasswordWithEvidence(r, tenantID, id, hash); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// setPasswordWithEvidence writes the credential, evicts the target's sessions,
+// and records the act — all in one transaction.
+//
+// An administrator resetting a password is nearly always incident response, so
+// leaving the compromised sessions live defeats the point of the reset. This is
+// the same guarantee ChangePassword gives for self-service; the two paths had
+// drifted, and this one additionally recorded nothing at all.
+func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid.UUID, hash string) error {
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+		    password_hash = EXCLUDED.password_hash, updated_at = NOW()
+	`, userID, hash); err != nil {
+		return err
+	}
+	// Every session, including any the admin is not aware of. Unlike the
+	// self-service change there is no session to preserve here: the caller is a
+	// different person from the account holder.
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND revoked_at IS NULL
+	`, userID); err != nil {
+		return err
+	}
+
+	actor := httpx.PrincipalFromCtx(ctx)
+	var actorID *uuid.UUID
+	actorType := "system"
+	if actor != nil {
+		actorID = actor.UserID
+		if actor.ActorType != "" {
+			actorType = actor.ActorType
+		}
+	}
+	target := userID
+	tenant := tenantID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenant,
+		ActorUserID:  actorID,
+		ActorType:    actorType,
+		Action:       "user.password_set",
+		ResourceType: "user",
+		ResourceID:   &target,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"sessions_revoked": true},
+	}); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: userID,
+		Topic:       "user.events",
+		EventType:   "user.password_set",
+		Payload: map[string]any{
+			"user_id": userID, "tenant_id": tenantID, "sessions_revoked": true,
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

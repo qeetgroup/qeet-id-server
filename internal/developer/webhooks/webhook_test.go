@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // sign, truncate, and deliver carry the security-critical webhook contract
@@ -41,7 +43,9 @@ func TestSign_MatchesHMACSHA256Hex(t *testing.T) {
 
 func TestSign_Deterministic(t *testing.T) {
 	secret, body := "s", []byte("payload")
-	if sign(secret, body) != sign(secret, body) {
+	first := sign(secret, body)
+	second := sign(secret, body)
+	if first != second {
 		t.Error("sign must be deterministic for the same secret+body")
 	}
 }
@@ -88,13 +92,14 @@ func TestDeliver_SignsBodyAndSetsHeaders(t *testing.T) {
 	eventType := "webhook.test"
 
 	var (
-		gotMethod, gotCT, gotEvent, gotSig string
-		gotBody                            []byte
+		gotMethod, gotCT, gotEvent, gotDeliveryID, gotSig string
+		gotBody                                           []byte
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotCT = r.Header.Get("Content-Type")
 		gotEvent = r.Header.Get("X-Qeet-Event")
+		gotDeliveryID = r.Header.Get("X-Qeet-Delivery-ID")
 		gotSig = r.Header.Get("X-Qeet-Signature")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -103,7 +108,8 @@ func TestDeliver_SignsBodyAndSetsHeaders(t *testing.T) {
 	defer srv.Close()
 
 	s := &Service{client: &http.Client{Timeout: 5 * time.Second}}
-	status, respBody, err := s.deliver(context.Background(), srv.URL, secret, eventType, body)
+	deliveryID := uuid.New()
+	status, respBody, err := s.deliver(context.Background(), deliveryID, srv.URL, secret, eventType, body)
 	if err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
@@ -121,6 +127,9 @@ func TestDeliver_SignsBodyAndSetsHeaders(t *testing.T) {
 	}
 	if gotEvent != eventType {
 		t.Errorf("X-Qeet-Event = %q; want %q", gotEvent, eventType)
+	}
+	if gotDeliveryID != deliveryID.String() {
+		t.Errorf("X-Qeet-Delivery-ID = %q; want %q", gotDeliveryID, deliveryID)
 	}
 	if string(gotBody) != string(body) {
 		t.Errorf("delivered body = %q; want %q", gotBody, body)
@@ -140,7 +149,7 @@ func TestDeliver_Non2xxReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	s := &Service{client: &http.Client{Timeout: 5 * time.Second}}
-	status, respBody, err := s.deliver(context.Background(), srv.URL, "secret", "evt", []byte("{}"))
+	status, respBody, err := s.deliver(context.Background(), uuid.New(), srv.URL, "secret", "evt", []byte("{}"))
 	if err == nil {
 		t.Error("expected an error for a non-2xx response")
 	}

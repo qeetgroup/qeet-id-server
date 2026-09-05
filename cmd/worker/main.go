@@ -1,5 +1,5 @@
 // Command worker runs the Qeet ID background workers standalone. They normally
-// run embedded in cmd/server; run this binary to scale workers independently
+// run embedded in cmd/api; run this binary to scale workers independently
 // (N worker replicas + M API replicas sharing one Postgres database).
 package main
 
@@ -11,17 +11,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
+	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit/anomaly"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 )
 
 func main() {
@@ -64,12 +67,33 @@ func main() {
 	}
 	defer func() { _ = closeOutboxPub() }()
 
-	// Mirror the workers registered in cmd/server/main.go buildDeps().
+	// Mirror the workers registered in internal/bootstrap/dependencies.go.
+	outboundPolicy := egress.NewPolicy(egress.Options{})
+	if cfg.ServiceEnv == "dev" {
+		outboundPolicy = egress.DevelopmentPolicy()
+	}
+	keyProvider, err := bootstrap.SecretsKeyProvider(rootCtx, cfg)
+	if err != nil {
+		slog.Error("init secrets key provider", "err", err)
+		os.Exit(1)
+	}
+	dataKey, err := keyProvider.DataKey(rootCtx)
+	if err != nil {
+		slog.Error("unwrap secrets data key", "err", err)
+		os.Exit(1)
+	}
+	sharedCipher, err := envelope.New(dataKey)
+	if err != nil {
+		slog.Error("init domain encryption", "err", err)
+		os.Exit(1)
+	}
 	outboxDispatcher := outbox.NewDispatcher(pool, outboxPub, 2*time.Second, 50)
-	webhookService := webhook.NewService(pool)
+	webhookService := webhook.NewService(pool, outboundPolicy)
+	webhookService.SetCipher(sharedCipher)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
 	retentionService := retention.NewService(pool)
-	siemService := siem.NewService(pool)
+	siemService := siem.NewService(pool, outboundPolicy)
+	siemService.SetCipher(sharedCipher)
 	auditAnomalyService := anomaly.NewService(pool)
 
 	sup := worker.New()

@@ -1000,8 +1000,8 @@ func (h *Handler) sandboxPay(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrNotFound)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrBadRequest)
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	successURL := r.PostForm.Get("success_url")

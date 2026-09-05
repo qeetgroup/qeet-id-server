@@ -8,7 +8,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
@@ -16,20 +16,20 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
+	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
 	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/bot"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/threat"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/agents"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
+	agent "github.com/qeetgroup/qeet-id-server/internal/developer/agents"
+	apikey "github.com/qeetgroup/qeet-id-server/internal/developer/api-keys"
+	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
+	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
@@ -37,11 +37,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/federation/scim"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/domainverify"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
+	group "github.com/qeetgroup/qeet-id-server/internal/identity/groups"
+	invite "github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant/branding"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/verification"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/activity"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/analytics"
@@ -51,7 +51,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/email"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/entitlements"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/gdpr"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
+	notification "github.com/qeetgroup/qeet-id-server/internal/operations/notifications"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/qeetai"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/retention"
@@ -188,39 +188,18 @@ func NewRouter(d Deps) http.Handler {
 			//     already gate them — so the double-submit only adds friction.
 			//     NB: /v1/auth/session (the cookie-session creator) is deliberately
 			//     NOT exempt — it stays CSRF-protected.
-			ExemptPaths: []string{
-				"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
-				"/v1/oauth/token-code", "/v1/oauth/device_authorization", "/v1/oauth/bc-authorize",
-				"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
-				"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
-				"/v1/passkeys/login/", "/v1/social/", "/v1/invites/accept",
-				"/v1/billing/webhooks/",  // provider-signed (Stripe/Razorpay), no cookie session
-				"/v1/billing/sandbox/",   // dev-only mock hosted-checkout page + pay (no cookie session)
-				"/v1/agents/token",       // agent-credential auth (no cookie session)
-				"/v1/credentials/verify", // public JWT-VC verification (no cookie session)
-				"/v1/admin-portal/",      // token-in-path auth (no cookie session) — see adminportal
-			},
+			// Entries are exact paths unless they end in "/" (prefix) or contain
+			// "*" (one path segment). Keep them narrow: a prefix over a whole
+			// feature area also exempts every authenticated mutation later added
+			// under it. Two such cases were found and closed here — "/v1/social/"
+			// was exempting POST /v1/social/providers (a connection.write that
+			// overwrites a tenant's social IdP), and "/v1/oauth/bc-authorize" as
+			// a prefix was exempting the authenticated .../decision endpoint.
+			ExemptPaths: csrfExemptPaths(),
 		}))
 	}
 
-	r.Get("/healthz", d.Health.Liveness)
-	r.Get("/readyz", d.Health.Readiness)
-	// Prometheus scrape endpoint — restrict to the scrape network in prod.
-	r.Handle("/metrics", metrics.Handler())
-
-	// OIDC well-known + JWKS live at the root, per spec.
-	d.OIDC.MountPublic(r)
-
-	// SCIM 2.0 lives at /scim/v2 with its own per-tenant bearer-token auth
-	// (IdPs present a token, not a user JWT), so it mounts outside /v1.
-	d.SCIM.MountPublic(r)
-
-	// SAML SSO ceremony (metadata, login redirect, ACS, code exchange) is
-	// IdP/browser-facing — no user JWT — so it also mounts at the root.
-	d.SAML.MountPublic(r)
-
-	// LDAP username/password login is end-user-facing (no JWT).
-	d.LDAP.MountPublic(r)
+	mountRootPublicRoutes(r, d)
 
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
 	// shared store is configured (so limits hold across replicas).
@@ -252,20 +231,7 @@ func NewRouter(d Deps) http.Handler {
 		// Public (no JWT required).
 		r.Group(func(r chi.Router) {
 			r.Use(loginLimiter.Middleware)
-			d.Auth.Mount(r)              // /auth/login, /auth/refresh
-			d.Recovery.Mount(r)          // forgot password, magic links
-			d.Invite.MountPublic(r)      // accept-invite
-			d.Principal.MountPublic(r)   // /oauth/token (client_credentials)
-			d.Social.MountPublic(r)      // social OAuth start/callback/exchange
-			d.Billing.MountPublic(r)     // /billing/webhooks/{provider}: Stripe/Razorpay (signature-verified)
-			d.Agent.MountPublic(r)       // /agents/token: AI-agent credential → ephemeral scoped token
-			d.VC.MountPublic(r)          // /credentials/verify: verify a presented JWT-VC (any relying party)
-			d.Audit.MountPublic(r)       // /audit/verify: platform-chain integrity check (any external party, no auth)
-			d.Passkey.MountPublic(r)     // passwordless passkey login
-			d.AdminPortal.MountPublic(r) // /admin-portal/{token}/...: token-gated SAML/SCIM self-serve config
-			d.OIDC.MountBrowser(r)       // /oauth/authorize (SSO cookie) + decision + token-code
-			d.TokenVault.MountPublic(r)  // /vault/tokens/callback: 3rd-party OAuth2 redirect target
-			d.MFA.MountPublic(r)         // /mfa/push/challenges/{id}: poll + respond (no session needed)
+			mountV1PublicRoutes(r, d)
 		})
 
 		// Authenticated. Accepts either user JWT, service JWT, or API key.
@@ -288,60 +254,121 @@ func NewRouter(d Deps) http.Handler {
 			// RBAC permission enforcement for end-user principals. Gates the
 			// routes listed in permissionMap(); API-key/service actors and
 			// unmapped (self-service / public) routes pass through.
-			r.Use(rbac.Enforce(d.RBACChecker, permissionMap()))
+			r.Use(rbac.Enforce(d.RBACChecker, routePolicyMap()))
 
-			d.Auth.MountAuthed(r)
-			d.Tenant.Mount(r)
-			d.User.Mount(r)
-			d.RBAC.Mount(r)
-			d.Verification.Mount(r)
-			d.Invite.MountAuthed(r)
-			d.Branding.Mount(r)
-			d.EmailTemplate.Mount(r) // /tenants/{id}/email-templates: transactional email overrides
-			d.APIKey.Mount(r)
-			d.Principal.Mount(r)
-			d.MFA.Mount(r)
-			d.Webhook.Mount(r)
-			d.Policy.Mount(r)
-			d.AuthPolicy.Mount(r) // /tenants/{id}/auth-policy: password rules + login methods
-			d.GDPR.Mount(r)
-			d.Retention.Mount(r) // /tenants/{id}/retention: auto-purge soft-deleted users
-			d.Audit.Mount(r)
-			d.AuditAnomaly.Mount(r) // /tenants/{id}/audit/anomalies: behavioral-baseline anomaly detection
-			d.Billing.Mount(r)      // /billing/plans + /tenants/{id}/billing/*
-			d.Entitlement.Mount(r)  // /tenants/{id}/entitlements: resolved plan capability set
-			d.Sales.Mount(r)        // /sales/leads: in-app "Contact sales" (Enterprise)
-			d.Analytics.Mount(r)
-			d.Outbox.Mount(r)
-			d.OIDC.Mount(r)
-			d.Passkey.Mount(r)
-			d.Social.Mount(r)
-			d.Group.Mount(r)
-			d.SCIM.Mount(r)         // /tenants/{id}/scim admin: token rotate/revoke/status
-			d.Secret.Mount(r)       // /tenants/{id}/secrets: encrypted secrets vault
-			d.TokenVault.Mount(r)   // /vault/tokens: 3rd-party OAuth token vault (connect/refresh/disconnect)
-			d.SAML.Mount(r)         // /tenants/{id}/saml admin: connection CRUD
-			d.AdminPortal.Mount(r)  // /tenants/{id}/admin-portal/links: self-serve SSO/SCIM link generate/list/revoke
-			d.LDAP.Mount(r)         // /tenants/{id}/ldap admin: connection CRUD + test bind
-			d.IPAllow.Mount(r)      // /tenants/{id}/ip-rules: allow/deny CIDR rules + check
-			d.Threat.Mount(r)       // /tenants/{id}/security/anomalies: detected security events
-			d.Bot.Mount(r)          // /tenants/{id}/security/bots: bot-detection telemetry + settings
-			d.Risk.Mount(r)         // /tenants/{id}/security/risk-settings: adaptive MFA thresholds
-			d.RateLimits.Mount(r)   // /tenants/{id}/rate-limits: per-tenant rate limit overrides
-			d.Notification.Mount(r) // /notifications: in-app inbox (principal-scoped)
-			d.DomainVerify.Mount(r) // /tenants/{id}/domains: DNS domain verification
-			d.SIEM.Mount(r)         // /tenants/{id}/log-sinks: SIEM / log streaming
-			d.AuthHook.Mount(r)     // /tenants/{id}/auth-hooks: synchronous login Actions/Hooks
-			d.ABAC.Mount(r)         // /tenants/{id}/abac/policies + /abac/evaluate: ABAC policy store + PDP
-			d.ReBAC.Mount(r)        // /tenants/{id}/relation-tuples: fine-grained (ReBAC) authz
-			d.AuthZEN.Mount(r)      // /tenants/{id}/access/v1/evaluation: OpenID AuthZEN PDP facade over RBAC/ReBAC
-			d.Agent.Mount(r)        // /tenants/{id}/agents: AI-agent identity admin
-			d.VC.Mount(r)           // /tenants/{id}/credentials: verifiable credential issuance
-			d.Qeetai.Mount(r)       // /qeetai/status + /qeetai/conversations: AI qeetai
-			d.Search.Mount(r)       // /search: universal tenant-scoped, RBAC-gated fuzzy search
-			d.Activity.Mount(r)     // /activity + /activity/stream: live activity feed (audit.read gated)
+			mountAuthenticatedRoutes(r, d)
 		})
 	})
 
 	return r
+}
+
+// mountRootPublicRoutes is the single production registration point for
+// protocol and operational routes mounted outside /v1.
+func mountRootPublicRoutes(r chi.Router, d Deps) {
+	r.Get("/healthz", d.Health.Liveness)
+	r.Get("/readyz", d.Health.Readiness)
+	r.Get("/metrics", metrics.Handler().ServeHTTP)
+	d.OIDC.MountPublic(r)
+	d.SCIM.MountPublic(r)
+	d.SAML.MountPublic(r)
+	d.LDAP.MountPublic(r)
+}
+
+// mountV1PublicRoutes is the single production registration point for routes
+// under /v1 that authenticate with protocol credentials, cookies, one-time
+// state, or no credential rather than the API JWT/API-key middleware.
+func mountV1PublicRoutes(r chi.Router, d Deps) {
+	d.Auth.Mount(r)
+	d.Recovery.Mount(r)
+	d.Invite.MountPublic(r)
+	d.Principal.MountPublic(r)
+	d.Social.MountPublic(r)
+	d.Billing.MountPublic(r)
+	d.Agent.MountPublic(r)
+	d.VC.MountPublic(r)
+	d.Audit.MountPublic(r)
+	d.Passkey.MountPublic(r)
+	d.AdminPortal.MountPublic(r)
+	d.OIDC.MountBrowser(r)
+	d.TokenVault.MountPublic(r)
+	d.MFA.MountPublic(r)
+}
+
+// mountAuthenticatedRoutes is the single production registration point for
+// routes protected by RequireAuth and the route policy catalogue. Keeping the
+// mounts in one helper lets the coverage test walk the exact production route
+// set without duplicating it or changing the load-bearing middleware nesting.
+func mountAuthenticatedRoutes(r chi.Router, d Deps) {
+	d.Auth.MountAuthed(r)
+	d.Tenant.Mount(r)
+	d.User.Mount(r)
+	d.RBAC.Mount(r)
+	d.Verification.Mount(r)
+	d.Invite.MountAuthed(r)
+	d.Branding.Mount(r)
+	d.EmailTemplate.Mount(r)
+	d.APIKey.Mount(r)
+	d.Principal.Mount(r)
+	d.MFA.Mount(r)
+	d.Webhook.Mount(r)
+	d.Policy.Mount(r)
+	d.AuthPolicy.Mount(r)
+	d.GDPR.Mount(r)
+	d.Retention.Mount(r)
+	d.Audit.Mount(r)
+	d.AuditAnomaly.Mount(r)
+	d.Billing.Mount(r)
+	d.Entitlement.Mount(r)
+	d.Sales.Mount(r)
+	d.Analytics.Mount(r)
+	d.Outbox.Mount(r)
+	d.OIDC.Mount(r)
+	d.Passkey.Mount(r)
+	d.Social.Mount(r)
+	d.Group.Mount(r)
+	d.SCIM.Mount(r)
+	d.Secret.Mount(r)
+	d.TokenVault.Mount(r)
+	d.SAML.Mount(r)
+	d.AdminPortal.Mount(r)
+	d.LDAP.Mount(r)
+	d.IPAllow.Mount(r)
+	d.Threat.Mount(r)
+	d.Bot.Mount(r)
+	d.Risk.Mount(r)
+	d.RateLimits.Mount(r)
+	d.Notification.Mount(r)
+	d.DomainVerify.Mount(r)
+	d.SIEM.Mount(r)
+	d.AuthHook.Mount(r)
+	d.ABAC.Mount(r)
+	d.ReBAC.Mount(r)
+	d.AuthZEN.Mount(r)
+	d.Agent.Mount(r)
+	d.VC.Mount(r)
+	d.Qeetai.Mount(r)
+	d.Search.Mount(r)
+	d.Activity.Mount(r)
+}
+
+// csrfExemptPaths lists the paths that skip the double-submit/origin check.
+// Extracted so TestNoAuthenticatedRouteIsCSRFExempt can assert the list never
+// covers a route in the authenticated tree.
+func csrfExemptPaths() []string {
+	return []string{
+		"/saml/acs/", "/saml/idp/sso", "/oauth/revoke", "/oauth/introspect",
+		"/v1/oauth/token-code", "/v1/oauth/device_authorization",
+		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
+		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
+		"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
+		"/v1/passkeys/login/",
+		"/v1/social/exchange",    // one-time code exchange, no cookie session
+		"/v1/social/*/callback",  // Apple response_mode=form_post lands cross-site
+		"/v1/invites/accept",     //
+		"/v1/billing/webhooks/",  // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/billing/sandbox/",   // dev-only mock hosted-checkout page + pay (no cookie session)
+		"/v1/agents/token",       // agent-credential auth (no cookie session)
+		"/v1/credentials/verify", // public JWT-VC verification (no cookie session)
+	}
 }

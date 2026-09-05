@@ -17,9 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
-	"github.com/qeetgroup/qeet-id-server/internal/identity/users"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
@@ -69,7 +69,7 @@ func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *S
 type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
 
 // SetEmitter wires webhook delivery for session-revocation signals. Called
-// from cmd/server/main.go.
+// from internal/bootstrap/dependencies.go.
 func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
 
 // emit is a best-effort webhook delivery: a failure here must never fail the
@@ -86,29 +86,30 @@ func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string
 }
 
 // MFAEnroller is the slice of the MFA service the auth package needs to enforce
-// a second factor at login. Wired in cmd/server/main.go via SetMFA.
+// a second factor at login. Wired in internal/bootstrap/dependencies.go via SetMFA.
 type MFAEnroller interface {
 	// IsEnrolled reports whether the user has a usable login second factor.
 	IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error)
-	// VerifyForLogin verifies a TOTP/recovery code for the pending login;
+	// VerifyForLoginTx verifies a TOTP/recovery code inside the challenge
+	// transaction so recovery-code and challenge consumption are atomic;
 	// (false, nil) means the code was wrong, a non-nil error is infrastructure.
-	VerifyForLogin(ctx context.Context, userID uuid.UUID, code string) (bool, error)
+	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error)
 }
 
-// SetMFA wires the MFA-at-login checker. Called from cmd/server/main.go.
+// SetMFA wires the MFA-at-login checker. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
 
 // RegistrationPolicy is the slice of the auth-policy service the auth package
 // needs to run hosted self-registration: the per-tenant on/off gate and the
 // per-tenant password validation (length/complexity + breach). Satisfied by
-// *authpolicy.Service. Wired in cmd/server/main.go via SetRegistrationPolicy.
+// *authpolicy.Service. Wired in internal/bootstrap/dependencies.go via SetRegistrationPolicy.
 type RegistrationPolicy interface {
 	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw string) error
 }
 
 // SetRegistrationPolicy wires the hosted self-registration gate + password
-// policy. Called from cmd/server/main.go.
+// policy. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
 
 // SelfRegistrationEnabled reports whether tenantID allows hosted self-service
@@ -131,7 +132,7 @@ type AnomalyRecorder interface {
 }
 
 // SetAnomalyRecorder wires the security-anomaly recorder. Called from
-// cmd/server/main.go.
+// internal/bootstrap/dependencies.go.
 func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 
 // DevicePolicy reports whether a tenant has opted into adaptive MFA (skipping
@@ -143,7 +144,7 @@ type DevicePolicy interface {
 }
 
 // SetDevicePolicy wires the adaptive-MFA (trusted-device) gate. Called from
-// cmd/server/main.go.
+// internal/bootstrap/dependencies.go.
 func (s *Service) SetDevicePolicy(d DevicePolicy) { s.devicePolicy = d }
 
 // RiskAssessor checks whether the risk level of an auth request should force
@@ -158,7 +159,7 @@ type RiskAssessor interface {
 	ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool
 }
 
-// SetRiskAssessor wires the adaptive-MFA risk override. Called from cmd/server/main.go.
+// SetRiskAssessor wires the adaptive-MFA risk override. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
 
 // LoginHook is a synchronous policy gate run after credentials verify: it
@@ -171,7 +172,7 @@ type LoginHook interface {
 }
 
 // SetLoginHook wires the post-credential Actions/Hooks gate. Called from
-// cmd/server/main.go.
+// internal/bootstrap/dependencies.go.
 func (s *Service) SetLoginHook(h LoginHook) { s.loginHook = h }
 
 // mfaChallengeTTL bounds how long a pending second-factor login stays valid.
@@ -199,7 +200,7 @@ type LoginSessionResult struct {
 }
 
 // SetBreachChecker wires the breached-password checker. Called from
-// cmd/server/main.go only when BREACHED_PASSWORD_CHECK is enabled.
+// internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
 type LoginInput struct {
@@ -555,9 +556,18 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 	var tenantID *uuid.UUID
 	var expiresAt time.Time
 	var rawClaims []byte
-	err = s.pool.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at, claims FROM auth.mfa_login_challenges WHERE id = $1
-	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims)
+	var challengeFailures int16
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, nil, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		SELECT user_id, tenant_id, expires_at, claims, failed_attempts
+		FROM auth.mfa_login_challenges
+		WHERE id = $1
+		FOR UPDATE
+	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
 	}
@@ -565,18 +575,51 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if time.Now().After(expiresAt) {
-		_ = s.q.DeleteMFALoginChallenge(ctx, id)
+		if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
+			return uuid.Nil, uuid.Nil, nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return uuid.Nil, uuid.Nil, nil, err
+		}
 		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
 	}
-	ok, err := s.mfa.VerifyForLogin(ctx, userID, code)
+	accountRemaining, err := reserveLoginMFAAttempt(ctx, tx, userID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, nil, err
+	}
+	ok, err := s.mfa.VerifyForLoginTx(ctx, tx, userID, code)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, nil, err
 	}
 	if !ok {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrMFACodeInvalid
+		next := challengeFailures + 1
+		remaining := maxMFALoginAttempts - int(next)
+		if next >= maxMFALoginAttempts {
+			if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
+				return uuid.Nil, uuid.Nil, nil, err
+			}
+		} else if _, err := tx.Exec(ctx, `
+			UPDATE auth.mfa_login_challenges SET failed_attempts = $2 WHERE id = $1
+		`, id, next); err != nil {
+			return uuid.Nil, uuid.Nil, nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return uuid.Nil, uuid.Nil, nil, err
+		}
+		if remaining <= 0 || accountRemaining <= 0 {
+			return uuid.Nil, uuid.Nil, nil, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
+		}
+		if accountRemaining < remaining {
+			remaining = accountRemaining
+		}
+		return uuid.Nil, uuid.Nil, nil, errs.ErrMFACodeInvalid.WithMetadata(map[string]any{"remaining_attempts": remaining})
 	}
-	// Consume the challenge only on success.
-	_ = s.q.DeleteMFALoginChallenge(ctx, id)
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
+		return uuid.Nil, uuid.Nil, nil, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = 'login'`, userID); err != nil {
+		return uuid.Nil, uuid.Nil, nil, err
+	}
 	var tid uuid.UUID
 	if tenantID != nil {
 		tid = *tenantID
@@ -585,7 +628,57 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, co
 	if len(rawClaims) > 0 {
 		_ = json.Unmarshal(rawClaims, &claims)
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, uuid.Nil, nil, err
+	}
 	return userID, tid, claims, nil
+}
+
+const (
+	maxMFALoginAttempts   = 5
+	mfaLoginAttemptWindow = 10 * time.Minute
+)
+
+func reserveLoginMFAAttempt(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (int, error) {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.mfa_attempt_budgets (user_id, purpose)
+		VALUES ($1, 'login')
+		ON CONFLICT DO NOTHING
+	`, userID); err != nil {
+		return 0, err
+	}
+	var failed int16
+	var windowStarted time.Time
+	var lockedUntil pgtype.Timestamptz
+	if err := tx.QueryRow(ctx, `
+		SELECT failed_attempts, window_started_at, locked_until
+		FROM auth.mfa_attempt_budgets
+		WHERE user_id = $1 AND purpose = 'login'
+		FOR UPDATE
+	`, userID).Scan(&failed, &windowStarted, &lockedUntil); err != nil {
+		return 0, err
+	}
+	now := time.Now().UTC()
+	if lockedUntil.Valid && now.Before(lockedUntil.Time) {
+		return 0, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
+	}
+	if now.Sub(windowStarted) >= mfaLoginAttemptWindow || (lockedUntil.Valid && !now.Before(lockedUntil.Time)) {
+		failed = 0
+		windowStarted = now
+	}
+	next := failed + 1
+	var lock any
+	if next >= maxMFALoginAttempts {
+		lock = now.Add(mfaLoginAttemptWindow)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE auth.mfa_attempt_budgets
+		SET failed_attempts = $2, window_started_at = $3, locked_until = $4
+		WHERE user_id = $1 AND purpose = 'login'
+	`, userID, next, windowStarted, lock); err != nil {
+		return 0, err
+	}
+	return maxMFALoginAttempts - int(next), nil
 }
 
 // CompleteMFALogin verifies the second-factor code for a pending token-flow
@@ -989,41 +1082,77 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 	return nil
 }
 
-// ChangePassword swaps a signed-in user's password after re-verifying their
-// current one. Tenant-independent, so an org-less user can rotate their
-// password without the emailed reset flow. Runs the breached-password gate on
-// the new secret (no-op when the checker is disabled).
-func (s *Service) ChangePassword(ctx context.Context, userID, keepSessionID uuid.UUID, current, next string) error {
-	hash, err := s.users.PasswordHash(ctx, userID)
-	if err != nil {
-		return err
-	}
-	// If a password is already set, re-verify it. A password-less account
-	// (social / passkey signup) may SET one without a current password — the
-	// caller is already authenticated by their session.
-	if hash != "" && !password.Verify(hash, current) {
-		return errs.ErrAuthInvalidCredentials
-	}
-	if s.breach.PwnedAllowOnError(ctx, next) {
+type ChangePasswordInput struct {
+	UserID        uuid.UUID
+	KeepSessionID uuid.UUID
+	TenantID      *uuid.UUID
+	Current       string
+	Next          string
+	IP            string
+	UserAgent     string
+	RequestID     string
+}
+
+// ChangePassword atomically updates the credential, revokes every other
+// session, and records durable audit/outbox evidence. The authenticated current
+// session remains active so the user is not signed out of the initiating flow.
+func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
+	if s.breach.PwnedAllowOnError(ctx, in.Next) {
 		return errs.ErrAuthPasswordBreached
 	}
-	nh, err := password.Hash(next)
+	nh, err := password.Hash(in.Next)
 	if err != nil {
 		return err
 	}
-	// Upsert so a password-less account gets a credential created.
-	if err := s.users.SetPassword(ctx, userID, nh); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	// Invalidate every other session so a compromised one can't survive the
-	// credential rotation; keep the caller's current session signed in.
-	if _, err := s.q.RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
-		UserID:        userID,
-		KeepSessionID: keepSessionID,
+	defer tx.Rollback(ctx)
+	var lockedUser uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM "user".users WHERE id = $1 FOR UPDATE`, in.UserID).Scan(&lockedUser); err != nil {
+		return err
+	}
+	var currentHash string
+	err = tx.QueryRow(ctx, `SELECT password_hash FROM auth.password_credentials WHERE user_id = $1`, in.UserID).Scan(&currentHash)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if currentHash != "" && !password.Verify(currentHash, in.Current) {
+		return errs.ErrAuthInvalidCredentials
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.password_credentials (user_id, password_hash)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW()
+	`, in.UserID, nh); err != nil {
+		return err
+	}
+	revoked, err := s.q.WithTx(tx).RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
+		UserID:        in.UserID,
+		KeepSessionID: in.KeepSessionID,
+	})
+	if err != nil {
+		return err
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
+		Action: "auth.password_changed", ResourceType: "user", ResourceID: &in.UserID,
+		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
+		Metadata: map[string]any{"revoked_sessions": revoked, "kept_session_id": in.KeepSessionID},
 	}); err != nil {
 		return err
 	}
-	return nil
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: in.UserID, Topic: "auth", EventType: "auth.password.changed",
+		Payload: map[string]any{
+			"user_id": in.UserID, "tenant_id": in.TenantID,
+			"kept_session_id": in.KeepSessionID, "revoked_sessions": revoked,
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // HasPassword reports whether the user has a password credential set — lets the
@@ -1063,6 +1192,46 @@ type Session struct {
 }
 
 func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session, error) {
+	page, err := s.ListSessionsPage(ctx, userID, 100, "")
+	if err != nil {
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+type SessionPage struct {
+	Items      []Session `json:"items"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+	HasMore    bool      `json:"has_more"`
+	Total      int       `json:"total"`
+}
+
+func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit int, cursor string) (*SessionPage, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	var cursorID uuid.UUID
+	var cursorAt time.Time
+	if cursor != "" {
+		parsed, err := uuid.Parse(cursor)
+		if err != nil {
+			return nil, errs.ErrBadRequest.WithDetail("invalid session cursor")
+		}
+		cursorID = parsed
+		if err := s.pool.QueryRow(ctx, `
+			SELECT sess.created_at
+			FROM auth.sessions sess
+			JOIN "user".users u ON u.id = sess.user_id
+			WHERE sess.id = $1 AND sess.user_id = $2 AND u.deleted_at IS NULL
+		`, cursorID, userID).Scan(&cursorAt); errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrBadRequest.WithDetail("invalid session cursor")
+		} else if err != nil {
+			return nil, err
+		}
+	}
 	// Soft-deleted users keep their session rows for audit purposes but
 	// must not surface them via admin or self-service listings. Filter
 	// at the join rather than relying on the caller to know about
@@ -1073,20 +1242,44 @@ func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session
 		FROM auth.sessions sess
 		JOIN "user".users u ON u.id = sess.user_id
 		WHERE sess.user_id = $1 AND u.deleted_at IS NULL
-		ORDER BY sess.created_at DESC
-		LIMIT 100
-	`, userID)
+		  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3, $4))
+		ORDER BY sess.created_at DESC, sess.id DESC
+		LIMIT $5
+	`, userID, cursor != "", cursorAt, cursorID, limit+1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Session
+	out := make([]Session, 0, limit+1)
 	for rows.Next() {
-		var s Session
-		if err := rows.Scan(&s.ID, &s.UserID, &s.TenantID, &s.IP, &s.UserAgent, &s.CreatedAt, &s.LastSeenAt, &s.RevokedAt); err != nil {
+		var session Session
+		var tenantID pgtype.UUID
+		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+		if tenantID.Valid {
+			session.TenantID = uuid.UUID(tenantID.Bytes)
+		}
+		out = append(out, session)
 	}
-	return out, nil
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	nextCursor := ""
+	if hasMore && len(out) > 0 {
+		nextCursor = out[len(out)-1].ID.String()
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM auth.sessions sess
+		JOIN "user".users u ON u.id = sess.user_id
+		WHERE sess.user_id = $1 AND u.deleted_at IS NULL
+	`, userID).Scan(&total); err != nil {
+		return nil, err
+	}
+	return &SessionPage{Items: out, NextCursor: nextCursor, HasMore: hasMore, Total: total}, nil
 }

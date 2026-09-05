@@ -12,17 +12,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/ratelimits/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Limiter is the subset of ratelimit.TenantLimiter used by this package.
 type Limiter interface {
-	SetOverride(ctx context.Context, tenantID uuid.UUID, rate float64, capacity int) error
-	DeleteOverride(ctx context.Context, tenantID uuid.UUID) error
+	ApplyOverride(tenantID uuid.UUID, rate float64, capacity int)
+	ClearOverride(tenantID uuid.UUID)
 	GetAll(ctx context.Context, pool *pgxpool.Pool) ([]ratelimit.TenantLimit, error)
+}
+
+func actorOf(r *http.Request) audit.Actor {
+	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
+		actor.UserID = principal.UserID
+		if principal.ActorType != "" {
+			actor.Type = principal.ActorType
+		}
+	}
+	return actor
 }
 
 // Defaults are the platform-level fallback values shown in the UI when no
@@ -131,23 +144,60 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if in.Tenant.Rate != nil && in.Tenant.Capacity != nil {
-		if err := h.TenantLim.SetOverride(ctx, tenantID, *in.Tenant.Rate, *in.Tenant.Capacity); err != nil {
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	type appliedOverride struct {
+		key      string
+		limiter  Limiter
+		rate     float64
+		capacity int
+	}
+	var applied []appliedOverride
+	metadata := map[string]any{}
+	store := func(key string, limiter Limiter, cfg LimitConfig) error {
+		if cfg.Rate == nil || cfg.Capacity == nil {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO platform.rate_limit_overrides (tenant_id, limit_key, rate, capacity, updated_at)
+			VALUES ($1, $2, $3, $4, NOW())
+			ON CONFLICT (tenant_id, limit_key) DO UPDATE SET
+			    rate = EXCLUDED.rate, capacity = EXCLUDED.capacity, updated_at = NOW()
+		`, tenantID, key, *cfg.Rate, *cfg.Capacity); err != nil {
+			return err
+		}
+		applied = append(applied, appliedOverride{key: key, limiter: limiter, rate: *cfg.Rate, capacity: *cfg.Capacity})
+		metadata[key] = map[string]any{"rate": *cfg.Rate, "capacity": *cfg.Capacity}
+		return nil
+	}
+	for _, item := range []struct {
+		key string
+		lim Limiter
+		cfg LimitConfig
+	}{{"tenant", h.TenantLim, in.Tenant}, {"user", h.UserLim, in.User}, {"api_key", h.APIKeyLim, in.APIKey}} {
+		if err := store(item.key, item.lim, item.cfg); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
 	}
-	if in.User.Rate != nil && in.User.Capacity != nil {
-		if err := h.UserLim.SetOverride(ctx, tenantID, *in.User.Rate, *in.User.Capacity); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
+	if err := audit.Record(ctx, tx, actorOf(r).Event(tenantID, "rate_limits.updated", "tenant", tenantID, metadata)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	if in.APIKey.Rate != nil && in.APIKey.Capacity != nil {
-		if err := h.APIKeyLim.SetOverride(ctx, tenantID, *in.APIKey.Rate, *in.APIKey.Capacity); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tenantID, Topic: "rate-limit.events", EventType: "rate_limits.updated", Payload: map[string]any{"tenant_id": tenantID, "overrides": metadata}}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	for _, item := range applied {
+		item.limiter.ApplyOverride(tenantID, item.rate, item.capacity)
 	}
 	limits, err := h.effectiveLimits(ctx, tenantID)
 	if err != nil {
@@ -164,11 +214,30 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.rate_limit_overrides WHERE tenant_id = $1`, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := audit.Record(ctx, tx, actorOf(r).Event(tenantID, "rate_limits.deleted", "tenant", tenantID, nil)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: tenantID, Topic: "rate-limit.events", EventType: "rate_limits.deleted", Payload: map[string]any{"tenant_id": tenantID}}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	for _, lim := range []Limiter{h.TenantLim, h.UserLim, h.APIKeyLim} {
-		if err := lim.DeleteOverride(ctx, tenantID); err != nil {
-			httpx.WriteError(w, r, err)
-			return
-		}
+		lim.ClearOverride(tenantID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

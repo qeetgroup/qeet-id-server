@@ -12,17 +12,18 @@ import (
 // mapping. Keep this in sync with the errs catalog.
 var statusByCode = map[string]int{
 	// Generic platform errors.
-	errs.CodeBadRequest:      http.StatusBadRequest,
-	errs.CodeUnauthorized:    http.StatusUnauthorized,
-	errs.CodeForbidden:       http.StatusForbidden,
-	errs.CodeStepUpRequired:  http.StatusForbidden,
-	errs.CodeNotFound:        http.StatusNotFound,
-	errs.CodeConflict:        http.StatusConflict,
-	errs.CodeUnprocessable:   http.StatusUnprocessableEntity,
-	errs.CodeValidation:      http.StatusUnprocessableEntity,
-	errs.CodeTooManyRequests: http.StatusTooManyRequests,
-	errs.CodeInternal:        http.StatusInternalServerError,
-	errs.CodeNotImplemented:  http.StatusNotImplemented,
+	errs.CodeBadRequest:          http.StatusBadRequest,
+	errs.CodeUnauthorized:        http.StatusUnauthorized,
+	errs.CodeForbidden:           http.StatusForbidden,
+	errs.CodeStepUpRequired:      http.StatusForbidden,
+	errs.CodeNotFound:            http.StatusNotFound,
+	errs.CodeConflict:            http.StatusConflict,
+	errs.CodeUnprocessable:       http.StatusUnprocessableEntity,
+	errs.CodeValidation:          http.StatusUnprocessableEntity,
+	errs.CodeTooManyRequests:     http.StatusTooManyRequests,
+	errs.CodeRequestBodyTooLarge: http.StatusRequestEntityTooLarge,
+	errs.CodeInternal:            http.StatusInternalServerError,
+	errs.CodeNotImplemented:      http.StatusNotImplemented,
 
 	// MFA.
 	errs.CodeMFATOTPCodeInvalid:     http.StatusBadRequest,

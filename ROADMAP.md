@@ -4,18 +4,18 @@ The full picture of **what's available today** and **what's planned next** — p
 package structure that lands with future work. The [README](./README.md) links here.
 
 **Legend:** ✅ shipped · 🟠 planned (high) · 🟡 planned (medium) · 🟢 planned (later) · ⏳ external ops (not code)
-**Status:** pre-1.0, **July 2026 GA** target — reconciled against source on 2026-07-06; migration range refreshed 2026-07-17 (migrations 0001–0081, latest `0081_compliance_evidence`; `internal/`/`apps/`/`sdk/`). Every ✅ below is backed by real code; remaining gaps live in the 🔭 Planned section.
+**Status:** pre-1.0, **July 2026 GA** target — reconciled against source on 2026-09-05 (104 migration pairs, `0001`–`0105`, with `0082` intentionally absent). Every ✅ below is backed by real code; remaining gaps live in the 🔭 Planned section.
 This file is the **single source of truth** for shipped-vs-pending status and the competitive matrix (see 🏁 Competitive position below) — it absorbed the retired `QEET-ID-STATUS.md` on 2026-07-06. The competitive backlog is distilled by the [`product-manager`](./.claude/agents/product-manager.md) agent into `qeet-files/qeet-id/FEATURE-PROPOSALS.md`.
 
 ---
 
 ## 🚢 Deployment (current → future)
 
-**Current:** live on **EC2 + Docker Compose + Caddy (auto-TLS) + AWS RDS** (`ap-south-2`); image built/pushed to GHCR and shipped over SSH. Config lives in `deploy/` (`Caddyfile`, `docker-compose.yml`, runbook `README.md`).
+**Current:** live on **EC2 + Docker Compose + Caddy (auto-TLS) + AWS RDS** (`ap-south-2`); deployment configuration and runbooks live in the sibling `qeet-id-deploy` repository.
 
-**Restored in-tree 2026-07-13** under `deploy/base/` + `deploy/environments/` (Helm chart, Terraform RDS/ECR/KMS modules, Kubernetes + kustomize overlays, Prometheus/Grafana/OTel). Structurally validated; run `helm lint` / `terraform validate` on a machine with those CLIs before first use. The **live** deployment is still Docker Compose + Caddy on EC2 — these are staged for the K8s migration when ready:
+Deployment infrastructure is owned by the sibling **`qeet-id-deploy`** repository. The live environment is Docker Compose + Caddy on EC2; Kubernetes/Helm remain future deployment work:
 - 🟡 **Kubernetes + Helm** — chart with Deployment/Service/Ingress/HPA/PDB + pre-upgrade migration Job + ExternalSecrets; per-env `values.yaml` for stage + prod
-- 🟡 **AWS Terraform** — RDS, ECR, KMS CMK, Secrets Manager; root module + per-env `tfvars`
+- 🟡 **Kubernetes-era Terraform expansion** — the current EC2/RDS/ECR/SES deployment is already Terraform-managed in `qeet-id-deploy`; cluster-oriented modules remain future work
 - 🟢 **Multi-env staging** — `environments/stage/` overlay; promote dev → stage → prod pipeline
 - 🟢 **Observability stack** — Prometheus scrape rules, Grafana dashboard, OTel Collector config
 
@@ -27,7 +27,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 - ✅ Email + password (Argon2id, OWASP params, per-account lockout, enumeration-safe)
 - ✅ Passkeys / WebAuthn (FIDO2, resident credentials, cross-device) · **passkey-first signup** — a passkey can found a new account directly, no password required (`/signup/passkey/*` tenant-less, `/register/passkey/*` hosted signup UI; password stays available as an alternative)
 - ✅ Magic links · email OTP · SMS OTP
-- ✅ TOTP (RFC 6238) + 8 recovery codes · MFA step-up (per-operation elevation)
+- ✅ TOTP (RFC 6238) + 10 recovery codes · MFA step-up (per-operation elevation)
 - ✅ Adaptive / risk-based MFA — per-tenant risk thresholds drive step-up / force-MFA (`0063_risk_settings`), extended with two additive, independently-togglable signals on top of the base bot-score engine (`0077_adaptive_risk`, off by default): **impossible travel** (a login from a new country sooner than a configurable minimum plausible travel time after the last one — geo comes from a trusted upstream proxy header, e.g. Cloudflare's `CF-IPCountry`; no signal configured = the check never fires, fail-open) and **device reputation** (a login from a browser+OS combination never seen before for that user)
 - ✅ Session management — refresh rotation + theft detection + silent revocation, plus a pragmatic, CAEP/SSF-*shaped* real-time revocation path (not full protocol interop): a 10-minute access-token TTL bounds how long a revoked-but-unexpired token stays usable (access tokens are stateless JWTs — no per-request DB check); `POST /auth/refresh` now also rejects a suspended or soft-deleted user's still-valid refresh token (previously only the session's own `revoked_at` was checked — a plain status change never touched `auth.sessions`); and two signals ride the existing webhook dispatcher so a subscribed tenant reacts immediately instead of waiting out the TTL — `session.revoked` (logout, explicit session revoke, and refresh-token-reuse theft detection) and `token.claims_change` (a direct role grant/revoke). Both are opt-in via the webhook's own `events` filter, no new settings surface
 - ✅ Breached-password detection (HIBP k-anonymity, env-gated) · password reset
@@ -36,7 +36,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 - ✅ OIDC / OAuth 2.0 provider — discovery, JWKS, Auth Code + PKCE, `/userinfo`, refresh, revoke, introspect, logout, signing-key rotation, RFC 9728 PRM + **RFC 8707 resource indicators bound into the token audience** across authorization_code, refresh_token (preserved across rotation, or switched via an explicit `resource`), and token-exchange · RFC 9207 `iss` on the authorize redirect (success and error) *(device grant doesn't collect a resource indicator yet)*
 - ✅ Device Authorization Grant (RFC 8628) · Token Exchange (RFC 8693 — downscope + `act` delegation) · **CIBA** (poll mode — a client resolves the user via `login_hint`, no browser redirect; async consent via an in-app notification + `/oauth/bc-authorize/{pending,decision}`)
 - ✅ SAML 2.0 — **SP and IdP** modes · SCIM 2.0 (users + groups + PatchOp) · LDAP / Active Directory
-- ✅ **Self-serve Admin Portal** — a tenant admin generates a capability-scoped (`saml`/`scim`), time-limited link (`POST /tenants/{id}/admin-portal/links`) their *own* IT admin follows to configure the SAML connection and/or roll the SCIM token directly — no Qeet ID account, no console login. Possession of the link is the sole credential (hashed at rest, revocable, not single-use); the hosted page at `{LoginBaseURL}/admin-portal/{token}` renders on the tenant's brand. Closes the gap against WorkOS's Admin Portal, the category leader for this pattern
+- ✅ **Self-serve Admin Portal** — a tenant admin generates a capability-scoped (`saml`/`scim`), time-limited one-time link. Its token stays in the URL fragment, exchanges once for a hashed 30-minute HttpOnly/SameSite=Strict session, and all configuration calls use token-free paths with CSRF protection. Parent-link revocation invalidates derived sessions immediately.
 - ✅ Social login (Google, GitHub, Microsoft, Apple, custom) · account linking · SSO test-connection
 
 ### 🛡️ Authorization
@@ -66,8 +66,8 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 ### 🧰 Platform & delivery
 - ✅ 3 React frontends (admin console ~80 screens, hosted login, marketing site) · **6 SDK packages** (TS server + browser, React w/ full `<SignIn/>`/`<OrgSwitcher/>`/… component suite, Next.js, Go, Python) · per-tenant rate-limit overrides (`0064`)
-- ✅ Transactional outbox **+ DLQ** · webhook dispatcher (HMAC, backoff retry, own dead-letter `dead_at` state — not yet unified with the platform outbox's DLQ, but no longer unbounded) · Prometheus/OTel observability · `config.Validate()` boot-gate
-- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, 100% OpenAPI route coverage, **CodeQL**, `golangci-lint`, `govulncheck`, `gitleaks`, gated integration suite (testcontainers), frontend bun lint/typecheck/build/test *(Helm/Terraform/kustomize are in git history, not the tree — see 🚢 Deployment above; coverage-floor enforcement, Spectral spec-lint, Postman/Newman contract tests are not wired)*
+- ✅ Transactional outbox **+ DLQ** · webhook dispatcher (HMAC, stable delivery IDs, bounded backoff + dead-letter state) · durable PostgreSQL leases for outbox/webhook/GDPR workers with crash recovery · `EMBEDDED_WORKERS` switch for standalone worker deployments · Prometheus/OTel observability · `config.Validate()` boot-gate
+- ✅ Docker Compose + Caddy (auto-TLS) on EC2 deploy · CI gates: arch fitness R1/R2, bidirectional OpenAPI route/security coverage, **CodeQL**, `golangci-lint`, `govulncheck`, and gated integration suites (testcontainers) *(gitleaks, coverage-floor enforcement, Spectral spec-lint, and Postman/Newman contract tests are not wired)*
 
 ---
 
@@ -107,7 +107,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 ## 🏁 Competitive position
 
-> **Qeet ID in one line:** an open-source, self-hostable, **passkeys-first** identity platform with the developer experience of Clerk, the enterprise model of WorkOS, and a tamper-evident audit log nobody else ships — **without the "SSO tax."**
+> **Qeet ID in one line:** a self-hostable, **passkeys-first** identity platform with the developer experience of Clerk, the enterprise model of WorkOS, and a tamper-evident audit log nobody else ships — **without the "SSO tax."**
 >
 > *(This matrix was merged in from the retired `QEET-ID-STATUS.md` on 2026-07-06 — ROADMAP.md is now the single source for both shipped/pending status and competitive positioning.)* Competitor columns reflect each vendor's flagship offering as of the prior analysis (2026-05) and may have shifted; the Qeet ID column is current as of 2026-07-06. ✅ generally available · 🟡 limited/gated/add-on · ⏳ planned · ❌ not offered.
 
@@ -196,12 +196,11 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 | **AI-agent / MCP identity + delegation** | ✅ | 🟡 | ❌ | 🟡 | 🟡 | ❌ | ❌ | 🟡 | ✅ |
 | **Verifiable Credentials (W3C JWT-VC)** | ✅ | ❌ | ❌ | ❌ | ❌ | 🟡 | ❌ | ❌ | ❌ |
 
-<sub>⁸ Ships as Docker Compose + Caddy on EC2 + a DR runbook; a Helm chart + Terraform live in git history (see 🚢 Deployment above), not the current tree.</sub>
+<sub>⁸ Ships as Docker Compose + Caddy on EC2 + a DR runbook; Terraform lives in the sibling `qeet-id-deploy` repository (see 🚢 Deployment above).</sub>
 
 ### Business model
 | Capability | **Qeet ID** | Auth0/Okta | Clerk | WorkOS | Stytch | Keycloak | FusionAuth | Zitadel | Ory |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| **Open source** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | 🟡 | ✅ | ✅ |
 | **Self-hostable** | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
 | **No "SSO tax"** (SAML/SCIM not paywalled) | ✅ | ❌ | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | ✅ | ✅ |
 | Data residency + BYOK | 🟡 | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ✅ | 🟡 |
@@ -209,7 +208,7 @@ This file is the **single source of truth** for shipped-vs-pending status and th
 
 <sub>² Stripe + Razorpay checkout code complete & webhook-verified; go-live needs env keys.</sub>
 
-**Where Qeet ID wins:** both an OIDC **and** SAML IdP with SCIM Users+Groups (open-source, not paywalled); tamper-evident hash-chained audit with `/verify`; a full agentic-identity stack (AI-agent identities + RFC 8693 delegation + MCP introspection + token vaulting + W3C VCs); ReBAC **and** RBAC both explainable (`?explain=true` on both `/check` endpoints — no other researched platform, including OpenFGA/SpiceDB, ships ReBAC explainability at all); and security-on-by-default (theft detection, lockout, prod boot-gate, bot detection). **Closest peer:** Zitadel. **Remaining gaps vs. the field:** KMS BYOK go-live (ops).
+**Where Qeet ID wins:** both an OIDC **and** SAML IdP with SCIM Users+Groups (not paywalled); tamper-evident hash-chained audit with `/verify`; a full agentic-identity stack (AI-agent identities + RFC 8693 delegation + MCP introspection + token vaulting + W3C VCs); ReBAC **and** RBAC both explainable (`?explain=true` on both `/check` endpoints — no other researched platform, including OpenFGA/SpiceDB, ships ReBAC explainability at all); and security-on-by-default (theft detection, lockout, prod boot-gate, bot detection). **Closest peer:** Zitadel. **Remaining gaps vs. the field:** KMS BYOK go-live (ops).
 
 <details><summary>Competitive research sources (2025–2026)</summary>
 

@@ -85,18 +85,16 @@ func (c *oauthClient) githubUserinfo(ctx context.Context, accessToken string) (u
 	}
 	ui := userInfo{
 		Subject: strconv.FormatInt(gh.ID, 10),
-		Email:   gh.Email,
 		Name:    gh.Name,
 		Picture: gh.AvatarURL,
 	}
 	if ui.Name == "" {
 		ui.Name = gh.Login
 	}
-	if ui.Email == "" {
-		if ui.Email, err = c.githubPrimaryEmail(ctx, accessToken); err != nil {
-			return userInfo{}, err
-		}
+	if ui.Email, err = c.githubPrimaryEmail(ctx, accessToken); err != nil {
+		return userInfo{}, err
 	}
+	ui.EmailVerified = ui.Email != ""
 	return ui, nil
 }
 

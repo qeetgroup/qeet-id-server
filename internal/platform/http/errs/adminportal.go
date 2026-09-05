@@ -13,11 +13,13 @@ const (
 	CodeAdminPortalCapabilityNotGranted = "adminportal.capability_not_granted"
 
 	// Link lifecycle.
-	CodeAdminPortalLinkNotFound = "adminportal.link_not_found"
-	CodeAdminPortalTokenMissing = "adminportal.token_missing"
-	CodeAdminPortalLinkInvalid  = "adminportal.link_invalid"
-	CodeAdminPortalLinkRevoked  = "adminportal.link_revoked"
-	CodeAdminPortalLinkExpired  = "adminportal.link_expired"
+	CodeAdminPortalLinkNotFound   = "adminportal.link_not_found"
+	CodeAdminPortalTokenMissing   = "adminportal.token_missing"
+	CodeAdminPortalLinkInvalid    = "adminportal.link_invalid"
+	CodeAdminPortalLinkRevoked    = "adminportal.link_revoked"
+	CodeAdminPortalLinkExpired    = "adminportal.link_expired"
+	CodeAdminPortalSessionMissing = "adminportal.session_missing"
+	CodeAdminPortalSessionInvalid = "adminportal.session_invalid"
 
 	// Request shape & path parameters.
 	CodeAdminPortalTenantIDInvalid = "adminportal.tenant_id_invalid"
@@ -40,11 +42,13 @@ var (
 	ErrAdminPortalCapabilityNotGranted = New(CodeAdminPortalCapabilityNotGranted, "This admin portal link doesn't include that access.")
 
 	// Link lifecycle.
-	ErrAdminPortalLinkNotFound = New(CodeAdminPortalLinkNotFound, "We couldn't find that admin portal link.")
-	ErrAdminPortalTokenMissing = New(CodeAdminPortalTokenMissing, "This admin portal link is missing its token.")
-	ErrAdminPortalLinkInvalid  = New(CodeAdminPortalLinkInvalid, "This admin portal link is invalid.")
-	ErrAdminPortalLinkRevoked  = New(CodeAdminPortalLinkRevoked, "This admin portal link has been revoked.")
-	ErrAdminPortalLinkExpired  = New(CodeAdminPortalLinkExpired, "This admin portal link has expired. Ask for a new one.")
+	ErrAdminPortalLinkNotFound   = New(CodeAdminPortalLinkNotFound, "We couldn't find that admin portal link.")
+	ErrAdminPortalTokenMissing   = New(CodeAdminPortalTokenMissing, "This admin portal link is missing its token.")
+	ErrAdminPortalLinkInvalid    = New(CodeAdminPortalLinkInvalid, "This admin portal link is invalid.")
+	ErrAdminPortalLinkRevoked    = New(CodeAdminPortalLinkRevoked, "This admin portal link has been revoked.")
+	ErrAdminPortalLinkExpired    = New(CodeAdminPortalLinkExpired, "This admin portal link has expired. Ask for a new one.")
+	ErrAdminPortalSessionMissing = New(CodeAdminPortalSessionMissing, "An admin portal session is required.")
+	ErrAdminPortalSessionInvalid = New(CodeAdminPortalSessionInvalid, "This admin portal session is invalid or expired. Ask for a new link.")
 
 	// Request shape & path parameters.
 	ErrAdminPortalTenantIDInvalid = New(CodeAdminPortalTenantIDInvalid, "That tenant ID is invalid.")

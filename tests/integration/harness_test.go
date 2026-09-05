@@ -23,11 +23,18 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 )
 
 // testPool is the shared pool for the whole package; nil means setup was
 // skipped (no Docker), in which case requireDB skips each test.
 var testPool *pgxpool.Pool
+
+// testDSN is the container's connection string, exposed so a test can build a
+// deliberately constrained pool (see the MFA pool-exhaustion test).
+var testDSN string
 
 func TestMain(m *testing.M) {
 	os.Exit(run(m))
@@ -71,6 +78,7 @@ func run(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "integration: connection string: %v\n", err)
 		return 1
 	}
+	testDSN = dsn
 	testPool, err = pgxpool.New(ctx, dsn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "integration: pool: %v\n", err)
@@ -111,6 +119,15 @@ func requireDB(t *testing.T) {
 	}
 }
 
+func testEnvelope(t *testing.T) *envelope.Cipher {
+	t.Helper()
+	box, err := envelope.New([]byte("01234567890123456789012345678901"))
+	if err != nil {
+		t.Fatalf("create test envelope: %v", err)
+	}
+	return box
+}
+
 // uniqueSlug returns a short, collision-resistant identifier for test data.
 func uniqueSlug(prefix string) string {
 	return prefix + "-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:10]
@@ -128,4 +145,101 @@ func createTenant(t *testing.T, ctx context.Context, slug string) uuid.UUID {
 		t.Fatalf("createTenant: %v", err)
 	}
 	return id
+}
+
+func addTenantMembership(t *testing.T, ctx context.Context, userID, tenantID uuid.UUID) {
+	t.Helper()
+	var roleID uuid.UUID
+	err := testPool.QueryRow(ctx, `
+		INSERT INTO rbac.roles (tenant_id, name, description, is_system)
+		VALUES ($1, $2, 'integration membership', FALSE)
+		RETURNING id
+	`, tenantID, uniqueSlug("member")).Scan(&roleID)
+	if err != nil {
+		t.Fatalf("create membership role: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
+		VALUES ($1, $2, $3)
+	`, userID, tenantID, roleID); err != nil {
+		t.Fatalf("assign tenant membership: %v", err)
+	}
+}
+
+// --- MFA attempt-budget helpers ---
+//
+// The MFA service takes a pre-reserved attempt slot rather than claiming one
+// itself, so the budget's own transaction never nests inside the caller's (see
+// mfa.Attempt). These mirror what the HTTP handlers do — reserve first, then
+// run the verification in its own transaction — so tests exercise the real
+// ordering instead of a shape production never uses.
+
+func mfaConfirmEnroll(ctx context.Context, svc *mfa.Service, userID uuid.UUID, code string) ([]string, error) {
+	attempt, err := svc.ReserveAttempt(ctx, userID, mfa.PurposeTOTPEnroll)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	out, err := svc.ConfirmEnroll(ctx, tx, attempt, code)
+	if err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func mfaVerify(ctx context.Context, svc *mfa.Service, userID uuid.UUID, code string) (*mfa.VerifyResult, error) {
+	attempt, err := svc.ReserveAttempt(ctx, userID, mfa.PurposeFactorVerify)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	out, err := svc.Verify(ctx, tx, attempt, code)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func mfaEnrollOTPConfirm(ctx context.Context, svc *mfa.Service, userID, factorID uuid.UUID, code string) error {
+	attempt, err := svc.ReserveAttempt(ctx, userID, mfa.PurposeOTPEnroll(factorID))
+	if err != nil {
+		return err
+	}
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := svc.EnrollOTPConfirm(ctx, tx, attempt, factorID, code); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func mfaVerifyOTP(ctx context.Context, svc *mfa.Service, userID uuid.UUID, code string) (bool, error) {
+	attempt, err := svc.ReserveAttempt(ctx, userID, mfa.PurposeOTPVerify)
+	if err != nil {
+		return false, err
+	}
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	ok, err := svc.VerifyOTP(ctx, tx, attempt, code)
+	if err != nil || !ok {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }

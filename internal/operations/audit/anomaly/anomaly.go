@@ -253,6 +253,20 @@ func (s *Service) scoreOne(ctx context.Context, e unscoredEvent) error {
 	defer tx.Rollback(ctx)
 
 	qTx := s.q.WithTx(tx)
+	var alreadyScored bool
+	if err := tx.QueryRow(ctx, `
+		SELECT scored_at IS NOT NULL
+		FROM audit.events
+		WHERE id = $1
+		FOR UPDATE
+	`, e.ID).Scan(&alreadyScored); errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if alreadyScored {
+		return nil
+	}
 
 	// No human actor (agent/service/system) — nothing to baseline. Mark
 	// scored and move on.

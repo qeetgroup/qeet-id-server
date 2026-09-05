@@ -18,9 +18,10 @@ paths use) plus the shared `securitySchemes`, so every file validates standalone
 ## Adding or changing routes
 
 1. Edit the file for the relevant bounded context (match the operation's `tags`).
-2. The CI guard ([`platform/api/rest/openapi_coverage_test.go`](../../platform/api/rest/openapi_coverage_test.go))
-   reads the **union** of these files and fails the build if any mounted route is
-   undocumented — keep it green.
+2. The CI guard ([`internal/bootstrap/openapi_coverage_test.go`](../../internal/bootstrap/openapi_coverage_test.go))
+   reads the **union** of these files and walks the exact production mount
+   helpers. It fails on undocumented routes, stale operations, and API-auth
+   security mismatches.
 
 ## Tooling
 

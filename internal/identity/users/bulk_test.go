@@ -38,16 +38,13 @@ func TestRunBulkImport_PartialSuccess(t *testing.T) {
 		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
 	}
 
-	res, created := runBulkImport(context.Background(), v, tenant, rows, create)
+	res := runBulkImport(context.Background(), v, tenant, rows, create)
 
 	if res.Succeeded != 2 {
 		t.Errorf("Succeeded = %d, want 2", res.Succeeded)
 	}
 	if res.Failed != 3 {
 		t.Errorf("Failed = %d, want 3", res.Failed)
-	}
-	if len(created) != 2 {
-		t.Errorf("len(created) = %d, want 2", len(created))
 	}
 	// create must run only for the 3 rows that passed validation (1, 3, 5).
 	if calls != 3 {
@@ -77,9 +74,9 @@ func TestRunBulkImport_AllValid(t *testing.T) {
 	create := func(_ context.Context, in CreateInput) (*User, error) {
 		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
 	}
-	res, created := runBulkImport(context.Background(), v, tenant, rows, create)
-	if res.Succeeded != 2 || res.Failed != 0 || len(res.Errors) != 0 || len(created) != 2 {
-		t.Errorf("all-valid: got succeeded=%d failed=%d errors=%d created=%d, want 2/0/0/2",
-			res.Succeeded, res.Failed, len(res.Errors), len(created))
+	res := runBulkImport(context.Background(), v, tenant, rows, create)
+	if res.Succeeded != 2 || res.Failed != 0 || len(res.Errors) != 0 {
+		t.Errorf("all-valid: got succeeded=%d failed=%d errors=%d, want 2/0/0",
+			res.Succeeded, res.Failed, len(res.Errors))
 	}
 }

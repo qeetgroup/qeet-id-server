@@ -1,16 +1,6 @@
 -- Queries for the social domain.
 -- All queries are STATIC and compiled by sqlc into ./dbgen.
 
--- name: UpsertSocialProvider :one
-INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, discovery_url)
-VALUES (@tenant_id, @provider, @client_id, @client_secret, NULLIF(@discovery_url,''))
-ON CONFLICT (tenant_id, provider) DO UPDATE SET
-    client_id     = EXCLUDED.client_id,
-    client_secret = EXCLUDED.client_secret,
-    discovery_url = EXCLUDED.discovery_url,
-    enabled       = TRUE
-RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at;
-
 -- name: ListSocialProviders :many
 SELECT id, tenant_id, provider, client_id, discovery_url, enabled, created_at
 FROM tenant.social_providers WHERE tenant_id = @tenant_id ORDER BY provider;
@@ -67,10 +57,6 @@ DELETE FROM auth.platform_social_identities WHERE id = @id AND user_id = @user_i
 
 -- name: GetTenantIDBySlug :one
 SELECT id FROM tenant.tenants WHERE slug = @slug;
-
--- name: LoadSocialProvider :one
-SELECT client_id, client_secret, discovery_url, enabled
-FROM tenant.social_providers WHERE tenant_id = @tenant_id AND provider = @provider;
 
 -- name: InsertSocialOAuthState :exec
 INSERT INTO auth.social_oauth_states

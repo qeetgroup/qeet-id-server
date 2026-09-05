@@ -1,17 +1,23 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // prodOK is a config that passes all production gates; tests mutate one field
 // at a time to assert each gate fires.
 func prodOK() *Config {
 	return &Config{
-		ServiceEnv:        "prod",
-		JWTSecret:         "a-32-byte-or-longer-random-server-secret",
-		JWTSigningKey:     "-----BEGIN PRIVATE KEY-----\nMIG...\n-----END PRIVATE KEY-----",
-		SecretsKey:        "c2VjcmV0cy1rZXktMzItYnl0ZXMtYmFzZTY0LXh4eHg=",
-		AllowedOriginsRaw: "https://app.acme.com",
-		AppBaseURL:        "https://app.acme.com",
+		ServiceEnv:                   "prod",
+		JWTSecret:                    "a-32-byte-or-longer-random-server-secret",
+		JWTSigningKey:                "-----BEGIN PRIVATE KEY-----\nMIG...\n-----END PRIVATE KEY-----",
+		AccessTokenTTL:               10 * time.Minute,
+		JWTSigningKeyRetireGrace:     30 * 24 * time.Hour,
+		JWTSigningKeyRefreshInterval: 5 * time.Second,
+		SecretsKey:                   "c2VjcmV0cy1rZXktMzItYnl0ZXMtYmFzZTY0LXh4eHg=",
+		AllowedOriginsRaw:            "https://app.acme.com",
+		AppBaseURL:                   "https://app.acme.com",
 	}
 }
 
@@ -30,15 +36,17 @@ func TestValidate_ProdHappyPath(t *testing.T) {
 
 func TestValidate_ProdRejectsInsecure(t *testing.T) {
 	cases := map[string]func(*Config){
-		"csrf disabled":       func(c *Config) { c.CSRFDisabled = true },
-		"dev trust headers":   func(c *Config) { c.AuthDevTrustHeaders = true },
-		"placeholder secret":  func(c *Config) { c.JWTSecret = "please-change-me-please-change-me" },
-		"short secret":        func(c *Config) { c.JWTSecret = "too-short" },
-		"missing signing key": func(c *Config) { c.JWTSigningKey = "" },
-		"missing secrets key": func(c *Config) { c.SecretsKey = "" },
-		"wildcard origins":    func(c *Config) { c.AllowedOriginsRaw = "*" },
-		"empty origins":       func(c *Config) { c.AllowedOriginsRaw = "" },
-		"localhost base url":  func(c *Config) { c.AppBaseURL = "http://localhost:3000" },
+		"csrf disabled":            func(c *Config) { c.CSRFDisabled = true },
+		"dev trust headers":        func(c *Config) { c.AuthDevTrustHeaders = true },
+		"placeholder secret":       func(c *Config) { c.JWTSecret = "please-change-me-please-change-me" },
+		"short secret":             func(c *Config) { c.JWTSecret = "too-short" },
+		"missing signing key":      func(c *Config) { c.JWTSigningKey = "" },
+		"short signing key grace":  func(c *Config) { c.JWTSigningKeyRetireGrace = time.Minute },
+		"zero signing key refresh": func(c *Config) { c.JWTSigningKeyRefreshInterval = 0 },
+		"missing secrets key":      func(c *Config) { c.SecretsKey = "" },
+		"wildcard origins":         func(c *Config) { c.AllowedOriginsRaw = "*" },
+		"empty origins":            func(c *Config) { c.AllowedOriginsRaw = "" },
+		"localhost base url":       func(c *Config) { c.AppBaseURL = "http://localhost:3000" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

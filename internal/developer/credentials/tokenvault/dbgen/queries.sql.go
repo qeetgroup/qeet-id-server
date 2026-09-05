@@ -75,39 +75,6 @@ func (q *Queries) DeleteProvider(ctx context.Context, arg DeleteProviderParams) 
 	return result.RowsAffected(), nil
 }
 
-const getProviderConfig = `-- name: GetProviderConfig :one
-SELECT client_id, client_secret, authorize_url, token_url, scopes
-FROM tenant.token_vault_providers WHERE tenant_id = $1 AND provider = $2
-`
-
-type GetProviderConfigParams struct {
-	TenantID uuid.UUID
-	Provider string
-}
-
-type GetProviderConfigRow struct {
-	ClientID     string
-	ClientSecret string
-	AuthorizeUrl string
-	TokenUrl     string
-	Scopes       string
-}
-
-// GetProviderConfig fetches full config including client_secret for the
-// token-exchange; client_secret is never surfaced to end users.
-func (q *Queries) GetProviderConfig(ctx context.Context, arg GetProviderConfigParams) (GetProviderConfigRow, error) {
-	row := q.db.QueryRow(ctx, getProviderConfig, arg.TenantID, arg.Provider)
-	var i GetProviderConfigRow
-	err := row.Scan(
-		&i.ClientID,
-		&i.ClientSecret,
-		&i.AuthorizeUrl,
-		&i.TokenUrl,
-		&i.Scopes,
-	)
-	return i, err
-}
-
 const getTokenGrant = `-- name: GetTokenGrant :one
 SELECT access_token_ct, access_token_nonce, refresh_token_ct, refresh_token_nonce, expires_at
 FROM tenant.token_vault_grants
@@ -255,65 +222,6 @@ func (q *Queries) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]List
 		return nil, err
 	}
 	return items, nil
-}
-
-const registerProvider = `-- name: RegisterProvider :one
-
-INSERT INTO tenant.token_vault_providers (tenant_id, provider, client_id, client_secret, authorize_url, token_url, scopes)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (tenant_id, provider) DO UPDATE SET
-    client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret,
-    authorize_url = EXCLUDED.authorize_url, token_url = EXCLUDED.token_url,
-    scopes = EXCLUDED.scopes, updated_at = NOW()
-RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
-`
-
-type RegisterProviderParams struct {
-	TenantID     uuid.UUID
-	Provider     string
-	ClientID     string
-	ClientSecret string
-	AuthorizeUrl string
-	TokenUrl     string
-	Scopes       string
-}
-
-type RegisterProviderRow struct {
-	ID           uuid.UUID
-	Provider     string
-	ClientID     string
-	AuthorizeUrl string
-	TokenUrl     string
-	Scopes       string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-// Queries for the token-vault domain.
-// storeGrant (upsert with nullable []byte params) is converted below using
-// pointer types; the encrypt/decrypt/HTTP-exchange logic stays in the Service.
-func (q *Queries) RegisterProvider(ctx context.Context, arg RegisterProviderParams) (RegisterProviderRow, error) {
-	row := q.db.QueryRow(ctx, registerProvider,
-		arg.TenantID,
-		arg.Provider,
-		arg.ClientID,
-		arg.ClientSecret,
-		arg.AuthorizeUrl,
-		arg.TokenUrl,
-		arg.Scopes,
-	)
-	var i RegisterProviderRow
-	err := row.Scan(
-		&i.ID,
-		&i.Provider,
-		&i.ClientID,
-		&i.AuthorizeUrl,
-		&i.TokenUrl,
-		&i.Scopes,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }
 
 const upsertTokenGrant = `-- name: UpsertTokenGrant :exec

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -68,7 +69,7 @@ func TestAgentSponsorRequiredAndTransferable(t *testing.T) {
 		t.Fatal("Create with a non-member sponsor should fail")
 	}
 
-	a1, err := svc.Create(ctx, tenantID, "agent-one", []string{"users:read"}, 0, sponsor)
+	a1, err := svc.Create(ctx, tenantID, "agent-one", []string{"user.read"}, 0, sponsor)
 	if err != nil {
 		t.Fatalf("create agent-one: %v", err)
 	}
@@ -115,4 +116,103 @@ func TestAgentSponsorRequiredAndTransferable(t *testing.T) {
 	if e := errs.As(transferErr); e == nil {
 		t.Fatalf("expected a typed errs.Error, got %v", transferErr)
 	}
+}
+
+// Agent lifecycle transitions run raw SQL against auth.agents and write audit +
+// outbox evidence in the same transaction. Nothing exercised that path before,
+// which is how a transition querying a non-existent table shipped: the code
+// compiled, and every other agent test went through sqlc-generated queries.
+func TestAgentLifecycleTransitionsWriteEvidence(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("agentlc"))
+	svc := agent.NewService(testPool, mustIssuer())
+
+	sponsor := createUserIn(t, ctx, tenantID)
+	addTenantMember(t, ctx, tenantID, sponsor)
+
+	created, err := svc.Create(ctx, tenantID, "lifecycle", []string{"user.read"}, 0, sponsor)
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	for _, step := range []struct {
+		name     string
+		call     func() (string, error)
+		previous string
+		want     string
+	}{
+		{"suspend", func() (string, error) { return svc.Suspend(ctx, created.ID, tenantID) }, "active", "suspended"},
+		{"resume", func() (string, error) { return svc.Resume(ctx, created.ID, tenantID) }, "suspended", "active"},
+		{"decommission", func() (string, error) { return svc.Decommission(ctx, created.ID, tenantID) }, "active", "decommissioned"},
+	} {
+		previous, err := step.call()
+		if err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		if previous != step.previous {
+			t.Errorf("%s returned previous status %q, want %q", step.name, previous, step.previous)
+		}
+		var status string
+		if err := testPool.QueryRow(ctx,
+			`SELECT status FROM auth.agents WHERE id = $1`, created.ID).Scan(&status); err != nil {
+			t.Fatalf("%s: read back status: %v", step.name, err)
+		}
+		if status != step.want {
+			t.Errorf("%s left status %q, want %q", step.name, status, step.want)
+		}
+	}
+
+	// A transition is only durable alongside its evidence, so both rows must
+	// exist for every step above. Assert the exact sequence rather than a count:
+	// creation writes evidence too, and a bare count would hide a transition
+	// silently reusing the wrong action name.
+	wantActions := []string{"agent.created", "agent.suspended", "agent.resumed", "agent.decommissioned"}
+
+	auditActions, err := collectStrings(ctx, `
+		SELECT action FROM audit.events
+		WHERE tenant_id = $1 AND resource_type = 'agent' AND resource_id = $2
+		ORDER BY created_at, action
+	`, tenantID, created.ID)
+	if err != nil {
+		t.Fatalf("read audit actions: %v", err)
+	}
+	if !slices.Equal(auditActions, wantActions) {
+		t.Errorf("audit actions = %v, want %v", auditActions, wantActions)
+	}
+
+	outboxTypes, err := collectStrings(ctx, `
+		SELECT event_type FROM platform.outbox
+		WHERE aggregate_id = $1 AND topic = 'agent.events'
+		ORDER BY created_at, event_type
+	`, created.ID)
+	if err != nil {
+		t.Fatalf("read outbox event types: %v", err)
+	}
+	if !slices.Equal(outboxTypes, wantActions) {
+		t.Errorf("outbox event types = %v, want %v", outboxTypes, wantActions)
+	}
+
+	// Decommissioned is terminal.
+	if _, err := svc.Resume(ctx, created.ID, tenantID); err == nil {
+		t.Error("resuming a decommissioned agent should fail")
+	}
+}
+
+// collectStrings runs a single-column query and returns the values in order.
+func collectStrings(ctx context.Context, sql string, args ...any) ([]string, error) {
+	rows, err := testPool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+	}
+	return out, rows.Err()
 }

@@ -41,7 +41,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 }
 
 // SetNotifier wires the in-app notifier so security events can also alert the
-// affected user. Called from cmd/server/main.go.
+// affected user. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // Event is a detection's input. TenantID is required; UserID/IP/UserAgent are

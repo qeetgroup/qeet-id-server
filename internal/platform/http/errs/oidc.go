@@ -28,6 +28,8 @@ const (
 	CodeOIDCAuthCodeInvalid                = "oidc.auth_code_invalid"
 	CodeOIDCAuthCodeUsed                   = "oidc.auth_code_used"
 	CodeOIDCAuthCodeExpired                = "oidc.auth_code_expired"
+	CodeOIDCCodeChallengeRequired          = "oidc.code_challenge_required"
+	CodeOIDCCodeChallengeInvalid           = "oidc.code_challenge_invalid"
 	CodeOIDCCodeVerifierRequired           = "oidc.code_verifier_required"
 	CodeOIDCCodeVerifierInvalid            = "oidc.code_verifier_invalid"
 	CodeOIDCCodeChallengeMethodUnsupported = "oidc.code_challenge_method_unsupported"
@@ -101,6 +103,8 @@ var (
 	ErrOIDCAuthCodeInvalid                = New(CodeOIDCAuthCodeInvalid, "That authorization code is invalid.")
 	ErrOIDCAuthCodeUsed                   = New(CodeOIDCAuthCodeUsed, "That authorization code has already been used.")
 	ErrOIDCAuthCodeExpired                = New(CodeOIDCAuthCodeExpired, "That authorization code has expired. Start again to get a new one.")
+	ErrOIDCCodeChallengeRequired          = New(CodeOIDCCodeChallengeRequired, "A PKCE code_challenge is required for this client.")
+	ErrOIDCCodeChallengeInvalid           = New(CodeOIDCCodeChallengeInvalid, "The PKCE code_challenge is invalid.")
 	ErrOIDCCodeVerifierRequired           = New(CodeOIDCCodeVerifierRequired, "A PKCE code_verifier is required.")
 	ErrOIDCCodeVerifierInvalid            = New(CodeOIDCCodeVerifierInvalid, "The PKCE code_verifier is invalid.")
 	ErrOIDCCodeChallengeMethodUnsupported = New(CodeOIDCCodeChallengeMethodUnsupported, "That PKCE code_challenge_method isn't supported.")

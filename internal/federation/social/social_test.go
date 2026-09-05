@@ -1,9 +1,11 @@
 package social
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,13 +77,59 @@ func TestSocialScopes(t *testing.T) {
 // TestUserInfoClaimMapping verifies the subset of userinfo claims we map onto a
 // local identity: sub/email/name are decoded; extra claims are ignored.
 func TestUserInfoClaimMapping(t *testing.T) {
-	raw := `{"sub":"abc-123","email":"u@example.com","name":"Jane","picture":"x","extra":1}`
+	raw := `{"sub":"abc-123","email":"u@example.com","email_verified":true,"name":"Jane","picture":"x","extra":1}`
 	var ui userInfo
 	if err := json.Unmarshal([]byte(raw), &ui); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if ui.Subject != "abc-123" || ui.Email != "u@example.com" || ui.Name != "Jane" {
+	if ui.Subject != "abc-123" || ui.Email != "u@example.com" || !ui.EmailVerified || ui.Name != "Jane" {
 		t.Errorf("claim mapping wrong: %+v", ui)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+func githubTestClient(t *testing.T, emails string) *oauthClient {
+	t.Helper()
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body := `{"id":123,"login":"alice","name":"Alice","email":"unverified-profile@example.com"}`
+		if request.URL.String() == githubEmailsURL {
+			body = emails
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	})
+	return &oauthClient{http: &http.Client{Transport: transport}}
+}
+
+func TestGitHubUserinfoUsesOnlyVerifiedEmail(t *testing.T) {
+	client := githubTestClient(t, `[
+		{"email":"unverified-profile@example.com","primary":true,"verified":false},
+		{"email":"verified@example.com","primary":false,"verified":true}
+	]`)
+	info, err := client.githubUserinfo(context.Background(), "token")
+	if err != nil {
+		t.Fatalf("github userinfo: %v", err)
+	}
+	if info.Email != "verified@example.com" || !info.EmailVerified {
+		t.Fatalf("GitHub assurance = %+v, want verified endpoint email", info)
+	}
+}
+
+func TestGitHubUserinfoRejectsProfileEmailWithoutVerification(t *testing.T) {
+	client := githubTestClient(t, `[{"email":"unverified-profile@example.com","primary":true,"verified":false}]`)
+	info, err := client.githubUserinfo(context.Background(), "token")
+	if err != nil {
+		t.Fatalf("github userinfo: %v", err)
+	}
+	if info.Email != "" || info.EmailVerified {
+		t.Fatalf("unverified GitHub profile email was trusted: %+v", info)
 	}
 }
 

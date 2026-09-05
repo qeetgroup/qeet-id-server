@@ -3,11 +3,6 @@
 -- they are called via q.WithTx(tx). Dispatcher (tick) queries are also
 -- static and included here.
 
--- name: CreateWebhookSubscription :one
-INSERT INTO tenant.webhook_subscriptions (tenant_id, url, secret, events)
-VALUES (@tenant_id, @url, @secret, @events)
-RETURNING id, tenant_id, url, events, disabled_at, created_at;
-
 -- name: ListWebhookSubscriptions :many
 SELECT id, tenant_id, url, events, disabled_at, created_at
 FROM tenant.webhook_subscriptions
@@ -51,20 +46,6 @@ WHERE tenant_id = @tenant_id AND disabled_at IS NULL
 -- name: InsertDelivery :exec
 INSERT INTO tenant.webhook_deliveries (subscription_id, event_type, payload, next_attempt_at)
 VALUES (@subscription_id, @event_type, @payload, NOW());
-
--- Dispatcher queries (tick): fetch due deliveries then update outcome.
-
--- name: GetDueDeliveries :many
-SELECT d.id, d.subscription_id, d.event_type, d.payload, d.attempt, sub.url, sub.secret
-FROM tenant.webhook_deliveries d
-JOIN tenant.webhook_subscriptions sub ON sub.id = d.subscription_id
-WHERE d.delivered_at IS NULL
-  AND d.dead_at IS NULL
-  AND d.next_attempt_at <= NOW()
-  AND sub.disabled_at IS NULL
-ORDER BY d.created_at
-LIMIT 20
-FOR UPDATE SKIP LOCKED;
 
 -- name: MarkDeliverySucceeded :exec
 UPDATE tenant.webhook_deliveries

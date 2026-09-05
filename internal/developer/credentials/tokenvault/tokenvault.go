@@ -7,8 +7,6 @@ package tokenvault
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -29,8 +27,10 @@ import (
 	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const connectStateTTL = 10 * time.Minute
@@ -63,29 +63,27 @@ type GrantMeta struct {
 }
 
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	gcm  cipher.AEAD
-	http *http.Client
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	box    *envelope.Cipher
+	http   *http.Client
+	egress *egress.Policy
 }
 
 // NewService builds the vault, unwrapping the data key from kp once — the
 // same KeyProvider interface (and typically the same provider instance) the
 // secrets vault uses, so both are keyed off one KMS/static-key setup.
-func NewService(ctx context.Context, pool *pgxpool.Pool, kp secret.KeyProvider) (*Service, error) {
+func NewService(ctx context.Context, pool *pgxpool.Pool, kp secret.KeyProvider, policies ...*egress.Policy) (*Service, error) {
 	key, err := kp.DataKey(ctx)
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(key)
+	box, err := envelope.New(key)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	return &Service{pool: pool, q: dbgen.New(pool), gcm: gcm, http: &http.Client{Timeout: 10 * time.Second}}, nil
+	policy := egress.PublicPolicy(policies...)
+	return &Service{pool: pool, q: dbgen.New(pool), box: box, http: policy.HTTPClient(10 * time.Second), egress: policy}, nil
 }
 
 // pgtTS converts a *time.Time to pgtype.Timestamptz (null when nil).
@@ -105,17 +103,14 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-func (s *Service) encrypt(plaintext string) (ciphertext, nonce []byte, err error) {
-	nonce = make([]byte, s.gcm.NonceSize())
-	if _, err = rand.Read(nonce); err != nil {
-		return nil, nil, err
-	}
-	ciphertext = s.gcm.Seal(nil, nonce, []byte(plaintext), nil)
-	return ciphertext, nonce, nil
+func (s *Service) encrypt(tenantID, userID uuid.UUID, provider, purpose, plaintext string) (ciphertext, nonce []byte, err error) {
+	resource := userID.String() + ":" + provider
+	return s.box.Seal(tenantID, purpose, resource, []byte(plaintext))
 }
 
-func (s *Service) decrypt(ciphertext, nonce []byte) (string, error) {
-	pt, err := s.gcm.Open(nil, nonce, ciphertext, nil)
+func (s *Service) decrypt(tenantID, userID uuid.UUID, provider, purpose string, ciphertext, nonce []byte) (string, error) {
+	resource := userID.String() + ":" + provider
+	pt, err := s.box.Open(tenantID, purpose, resource, ciphertext, nonce)
 	if err != nil {
 		return "", err
 	}
@@ -134,23 +129,38 @@ type RegisterProviderInput struct {
 }
 
 func (s *Service) RegisterProvider(ctx context.Context, tenantID uuid.UUID, in RegisterProviderInput) (*Provider, error) {
-	row, err := s.q.RegisterProvider(ctx, dbgen.RegisterProviderParams{
-		TenantID:     tenantID,
-		Provider:     in.Provider,
-		ClientID:     in.ClientID,
-		ClientSecret: in.ClientSecret,
-		AuthorizeUrl: in.AuthorizeURL,
-		TokenUrl:     in.TokenURL,
-		Scopes:       in.Scopes,
-	})
+	if _, err := s.egress.ValidateHTTPURL(in.AuthorizeURL); err != nil {
+		return nil, errs.ErrTokenVaultProviderAuthorizeInvalid
+	}
+	if _, err := s.egress.ValidateHTTPURL(in.TokenURL); err != nil {
+		return nil, errs.ErrTokenVaultProviderAuthorizeInvalid
+	}
+	ct, nonce, err := s.box.Seal(tenantID, "token-vault-provider", in.Provider, []byte(in.ClientSecret))
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{
-		ID: row.ID, Provider: row.Provider, ClientID: row.ClientID,
-		AuthorizeURL: row.AuthorizeUrl, TokenURL: row.TokenUrl, Scopes: row.Scopes,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	}, nil
+	var provider Provider
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO tenant.token_vault_providers
+		    (tenant_id, provider, client_id, client_secret, client_secret_ct,
+		     client_secret_nonce, encryption_version, authorize_url, token_url, scopes)
+		VALUES ($1, $2, $3, '', $4, $5, 1, $6, $7, $8)
+		ON CONFLICT (tenant_id, provider) DO UPDATE SET
+		    client_id = EXCLUDED.client_id,
+		    client_secret = '',
+		    client_secret_ct = EXCLUDED.client_secret_ct,
+		    client_secret_nonce = EXCLUDED.client_secret_nonce,
+		    encryption_version = 1,
+		    authorize_url = EXCLUDED.authorize_url,
+		    token_url = EXCLUDED.token_url,
+		    scopes = EXCLUDED.scopes,
+		    updated_at = NOW()
+		RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
+	`, tenantID, in.Provider, in.ClientID, ct, nonce, in.AuthorizeURL, in.TokenURL, in.Scopes).Scan(
+		&provider.ID, &provider.Provider, &provider.ClientID, &provider.AuthorizeURL,
+		&provider.TokenURL, &provider.Scopes, &provider.CreatedAt, &provider.UpdatedAt,
+	)
+	return &provider, err
 }
 
 func (s *Service) ListProviders(ctx context.Context, tenantID uuid.UUID) ([]Provider, error) {
@@ -181,14 +191,40 @@ func (s *Service) DeleteProvider(ctx context.Context, tenantID uuid.UUID, provid
 }
 
 func (s *Service) providerConfig(ctx context.Context, tenantID uuid.UUID, provider string) (clientID, clientSecret, authorizeURL, tokenURL, scopes string, err error) {
-	row, err := s.q.GetProviderConfig(ctx, dbgen.GetProviderConfigParams{TenantID: tenantID, Provider: provider})
+	var legacy string
+	var ciphertext, nonce []byte
+	err = s.pool.QueryRow(ctx, `
+		SELECT client_id, client_secret, client_secret_ct, client_secret_nonce,
+		       authorize_url, token_url, scopes
+		FROM tenant.token_vault_providers
+		WHERE tenant_id = $1 AND provider = $2
+	`, tenantID, provider).Scan(&clientID, &legacy, &ciphertext, &nonce, &authorizeURL, &tokenURL, &scopes)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", "", "", errs.ErrTokenVaultProviderNotFound
 	}
 	if err != nil {
 		return "", "", "", "", "", err
 	}
-	return row.ClientID, row.ClientSecret, row.AuthorizeUrl, row.TokenUrl, row.Scopes, nil
+	if len(ciphertext) > 0 {
+		plain, openErr := s.box.Open(tenantID, "token-vault-provider", provider, ciphertext, nonce)
+		return clientID, string(plain), authorizeURL, tokenURL, scopes, openErr
+	}
+	if legacy == "" {
+		return "", "", "", "", "", errs.ErrTokenVaultProviderNotFound
+	}
+	ct, newNonce, sealErr := s.box.Seal(tenantID, "token-vault-provider", provider, []byte(legacy))
+	if sealErr != nil {
+		return "", "", "", "", "", sealErr
+	}
+	if _, updateErr := s.pool.Exec(ctx, `
+		UPDATE tenant.token_vault_providers
+		SET client_secret = '', client_secret_ct = $3, client_secret_nonce = $4,
+		    encryption_version = 1, updated_at = NOW()
+		WHERE tenant_id = $1 AND provider = $2 AND client_secret_ct IS NULL
+	`, tenantID, provider, ct, newNonce); updateErr != nil {
+		return "", "", "", "", "", updateErr
+	}
+	return clientID, legacy, authorizeURL, tokenURL, scopes, nil
 }
 
 // --- connect ceremony ---
@@ -289,14 +325,14 @@ func (s *Service) FinishConnect(ctx context.Context, state, code, base string) e
 }
 
 func (s *Service) storeGrant(ctx context.Context, tenantID, userID uuid.UUID, provider string, tok *oauthTokenResponse) error {
-	accessCT, accessNonce, err := s.encrypt(tok.AccessToken)
+	accessCT, accessNonce, err := s.encrypt(tenantID, userID, provider, "token-vault-access", tok.AccessToken)
 	if err != nil {
 		return err
 	}
 	// nil []byte == SQL NULL for nullable bytea columns.
 	var refreshCT, refreshNonce []byte
 	if tok.RefreshToken != "" {
-		ct, nonce, err := s.encrypt(tok.RefreshToken)
+		ct, nonce, err := s.encrypt(tenantID, userID, provider, "token-vault-refresh", tok.RefreshToken)
 		if err != nil {
 			return err
 		}
@@ -375,13 +411,13 @@ func (s *Service) GetAccessToken(ctx context.Context, tenantID, userID uuid.UUID
 	expiresAt := tsPtr(grant.ExpiresAt)
 
 	if expiresAt == nil || time.Now().Before(expiresAt.Add(-expirySkew)) {
-		return s.decrypt(accessCT, accessNonce)
+		return s.decrypt(tenantID, userID, provider, "token-vault-access", accessCT, accessNonce)
 	}
 	if refreshCT == nil {
 		// Expired with no refresh token on file — the caller must reconnect.
 		return "", errs.ErrTokenVaultTokenExpired
 	}
-	refreshToken, err := s.decrypt(refreshCT, refreshNonce)
+	refreshToken, err := s.decrypt(tenantID, userID, provider, "token-vault-refresh", refreshCT, refreshNonce)
 	if err != nil {
 		return "", err
 	}

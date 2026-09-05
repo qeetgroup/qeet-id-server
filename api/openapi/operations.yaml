@@ -5,15 +5,15 @@ info:
   description: 'Qeet ID identity platform — full HTTP surface.
 
 
-    This document is generated to cover EVERY route mounted by the chi router (internal/http/router.go) and is guarded by internal/http/openapi_coverage_test.go, which fails CI if any mounted route is undocumented. Launch-critical families (Auth, OIDC/OAuth, SCIM, SAML, Users, Tenants, RBAC, API Keys) carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies (noted in each operation''s description).
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
 
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
 servers:
+  - url: https://api.id.qeet.in
+    description: Production
   - url: http://localhost:4001
-    description: Local (docker compose)
-  - url: http://localhost:4000
-    description: Local (make dev-backend)
+    description: Local (make dev)
 tags:
   - name: Audit
     description: Append-only, hash-chained audit log query and integrity verification.
@@ -2393,6 +2393,295 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /v1/account/export:
+    post:
+      operationId: post_v1_account_export
+      summary: Export the authenticated user's portable account data
+      tags: [GDPR]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Portable account data excluding credential material
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/account/delete:
+    post:
+      operationId: post_v1_account_delete
+      summary: Delete the authenticated user's account
+      tags: [GDPR]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Account data erased and sessions revoked }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/signup/checkout:
+    post:
+      operationId: post_v1_signup_checkout
+      summary: Start paid-plan checkout before tenant creation
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Hosted checkout information
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/billing/razorpay/verify:
+    post:
+      operationId: post_v1_billing_razorpay_verify
+      summary: Verify a Razorpay payment-link callback
+      tags: [Billing]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Signed callback accepted }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/billing/sandbox/checkout:
+    get:
+      operationId: get_v1_billing_sandbox_checkout
+      summary: Render the development-only sandbox checkout page
+      tags: [Billing]
+      security: []
+      responses:
+        '200':
+          description: Sandbox checkout HTML
+          content:
+            text/html:
+              schema: { type: string }
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/billing/sandbox/pay:
+    post:
+      operationId: post_v1_billing_sandbox_pay
+      summary: Complete a development-only sandbox checkout
+      tags: [Billing]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '302': { description: Redirect to checkout success URL }
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413': { description: Form body too large }
+  /v1/tenants/{tenantID}/billing/profile:
+    get:
+      operationId: get_v1_tenants_ByTenantID_billing_profile
+      summary: Get tenant billing profile
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Billing profile
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_billing_profile
+      summary: Update tenant billing profile
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Updated billing profile
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/billing/trial:
+    post:
+      operationId: post_v1_tenants_ByTenantID_billing_trial
+      summary: Start a tenant plan trial
+      tags: [Billing]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Trial subscription
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/entitlements/usage:
+    get:
+      operationId: get_v1_tenants_ByTenantID_entitlements_usage
+      summary: Get tenant resource usage against plan limits
+      tags: [Entitlements]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Resource usage by limit key
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/qeetai/provider-config:
+    get:
+      operationId: get_v1_qeetai_provider_config
+      summary: Get masked tenant AI provider configuration
+      tags: [Qeet AI]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Masked provider configuration
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      operationId: put_v1_qeetai_provider_config
+      summary: Store tenant AI provider configuration
+      tags: [Qeet AI]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Updated provider configuration
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: delete_v1_qeetai_provider_config
+      summary: Delete tenant AI provider configuration
+      tags: [Qeet AI]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204': { description: Provider configuration deleted }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/qeetai/provider-config/test:
+    post:
+      operationId: post_v1_qeetai_provider_config_test
+      summary: Test tenant AI provider credentials
+      tags: [Qeet AI]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Provider connectivity result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/sales/leads:
+    post:
+      operationId: post_v1_sales_leads
+      summary: Submit a contact-sales lead
+      tags: [Sales]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '202': { description: Lead accepted }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 components:
   securitySchemes:
     bearerAuth:

@@ -9,11 +9,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,9 +21,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/siem/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const (
@@ -64,13 +68,19 @@ type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	client *http.Client
+	egress *egress.Policy
+	box    *envelope.Cipher
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
+func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
+
+func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+	policy := egress.PublicPolicy(policies...)
 	return &Service{
 		pool:   pool,
 		q:      dbgen.New(pool),
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: policy.HTTPClient(10 * time.Second),
+		egress: policy,
 	}
 }
 
@@ -81,15 +91,47 @@ func validType(t string) bool {
 // Create registers a sink. It starts streaming from now (cursor = creation
 // time), so enabling a sink never dumps the entire audit history downstream.
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string) (*Sink, error) {
+	return s.CreateWithActor(ctx, tenantID, typ, endpoint, token, audit.Actor{Type: "system"})
+}
+
+func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, typ, endpoint, token string, actor audit.Actor) (*Sink, error) {
 	if !validType(typ) {
 		return nil, errs.ErrSIEMSinkTypeInvalid
 	}
-	if !strings.HasPrefix(endpoint, "https://") && !strings.HasPrefix(endpoint, "http://") {
+	if _, err := s.egress.ValidateHTTPURL(endpoint); err != nil {
 		return nil, errs.ErrSIEMEndpointInvalid
 	}
-	row, err := s.q.InsertLogSink(ctx, dbgen.InsertLogSinkParams{
-		TenantID: tenantID, Type: typ, Endpoint: endpoint, Token: token,
-	})
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("SIEM token encryption is unavailable")
+	}
+	id := uuid.New()
+	ciphertext, nonce, err := s.box.Seal(tenantID, "siem-token", id.String(), []byte(token))
+	if err != nil {
+		return nil, err
+	}
+	var row struct {
+		ID              uuid.UUID
+		Type            string
+		Endpoint        string
+		Enabled         bool
+		LastForwardedAt pgtype.Timestamptz
+		LastError       string
+		CreatedAt       time.Time
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO tenant.log_sinks
+		    (id, tenant_id, type, endpoint, token, token_ct, token_nonce,
+		     encryption_version, cursor_created_at, cursor_id)
+		VALUES ($1, $2, $3, $4, '', $5, $6, 1, NOW(), '00000000-0000-0000-0000-000000000000')
+		RETURNING id, type, endpoint, enabled, last_forwarded_at, last_error, created_at
+	`, id, tenantID, typ, endpoint, ciphertext, nonce).Scan(
+		&row.ID, &row.Type, &row.Endpoint, &row.Enabled, &row.LastForwardedAt, &row.LastError, &row.CreatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +142,19 @@ func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, typ, endpoint,
 	if row.LastForwardedAt.Valid {
 		t := row.LastForwardedAt.Time
 		sk.LastForwardedAt = &t
+	}
+	metadata := map[string]any{"type": sk.Type, "endpoint": sk.Endpoint}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "siem.sink_created", "log_sink", sk.ID, metadata)); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: sk.ID, Topic: "siem.events", EventType: "siem.sink_created",
+		Payload: map[string]any{"sink_id": sk.ID, "tenant_id": tenantID, "type": sk.Type, "endpoint": sk.Endpoint},
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 	return sk, nil
 }
@@ -125,7 +180,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Sink, error) 
 }
 
 func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enabled bool) error {
-	n, err := s.q.SetLogSinkEnabled(ctx, dbgen.SetLogSinkEnabledParams{
+	return s.SetEnabledWithActor(ctx, id, tenantID, enabled, audit.Actor{Type: "system"})
+}
+
+func (s *Service) SetEnabledWithActor(ctx context.Context, id, tenantID uuid.UUID, enabled bool, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).SetLogSinkEnabled(ctx, dbgen.SetLogSinkEnabledParams{
 		Enabled: enabled, ID: id, TenantID: tenantID,
 	})
 	if err != nil {
@@ -134,11 +198,27 @@ func (s *Service) SetEnabled(ctx context.Context, id, tenantID uuid.UUID, enable
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	metadata := map[string]any{"enabled": enabled}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "siem.sink_updated", "log_sink", id, metadata)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "siem.events", EventType: "siem.sink_updated", Payload: map[string]any{"sink_id": id, "tenant_id": tenantID, "enabled": enabled}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.DeleteLogSink(ctx, dbgen.DeleteLogSinkParams{
+	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
+}
+
+func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).DeleteLogSink(ctx, dbgen.DeleteLogSinkParams{
 		ID: id, TenantID: tenantID,
 	})
 	if err != nil {
@@ -147,7 +227,13 @@ func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "siem.sink_deleted", "log_sink", id, nil)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "siem.events", EventType: "siem.sink_deleted", Payload: map[string]any{"sink_id": id, "tenant_id": tenantID}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Run is the background forwarder. It is a no-op when no sinks are enabled.
@@ -155,13 +241,16 @@ func (s *Service) Run(ctx context.Context) {
 	tk := time.NewTicker(10 * time.Second)
 	defer tk.Stop()
 	for {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if err := s.forwardDue(ctx); err != nil {
+			slog.Warn("siem forward tick", "err", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-tk.C:
-			if err := s.forwardDue(ctx); err != nil {
-				slog.Warn("siem forward tick", "err", err)
-			}
 		}
 	}
 }
@@ -174,26 +263,79 @@ type sinkRow struct {
 	cursorID      uuid.UUID
 }
 
+type storedSink struct {
+	id, tenantID        uuid.UUID
+	typ, endpoint       string
+	legacyToken         string
+	tokenCT, tokenNonce []byte
+	cursorAt            pgtype.Timestamptz
+	cursorID            pgtype.UUID
+}
+
 func (s *Service) forwardDue(ctx context.Context) error {
-	rows, err := s.q.ListEnabledLogSinks(ctx)
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, tenant_id, type, endpoint, token, token_ct, token_nonce,
+		       cursor_created_at, cursor_id
+		FROM tenant.log_sinks
+		WHERE enabled
+	`)
 	if err != nil {
 		return err
 	}
-	var sinks []sinkRow
-	for _, r := range rows {
+	var stored []storedSink
+	for rows.Next() {
+		var r storedSink
+		if err := rows.Scan(&r.id, &r.tenantID, &r.typ, &r.endpoint, &r.legacyToken,
+			&r.tokenCT, &r.tokenNonce, &r.cursorAt, &r.cursorID); err != nil {
+			rows.Close()
+			return err
+		}
+		stored = append(stored, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	sinks := make([]sinkRow, 0, len(stored))
+	for _, r := range stored {
+		tokenValue := r.legacyToken
+		if len(r.tokenCT) > 0 {
+			if s.box == nil {
+				return errors.New("SIEM token encryption is unavailable")
+			}
+			plain, openErr := s.box.Open(r.tenantID, "siem-token", r.id.String(), r.tokenCT, r.tokenNonce)
+			if openErr != nil {
+				return openErr
+			}
+			tokenValue = string(plain)
+		} else if tokenValue != "" && s.box != nil {
+			ct, nonce, sealErr := s.box.Seal(r.tenantID, "siem-token", r.id.String(), []byte(tokenValue))
+			if sealErr != nil {
+				return sealErr
+			}
+			if _, updateErr := s.pool.Exec(ctx, `
+				UPDATE tenant.log_sinks
+				SET token = '', token_ct = $2, token_nonce = $3, encryption_version = 1
+				WHERE id = $1 AND token_ct IS NULL
+			`, r.id, ct, nonce); updateErr != nil {
+				return updateErr
+			}
+		}
 		sk := sinkRow{
-			id: r.ID, tenantID: r.TenantID,
-			typ: r.Type, endpoint: r.Endpoint, token: r.Token,
+			id: r.id, tenantID: r.tenantID,
+			typ: r.typ, endpoint: r.endpoint, token: tokenValue,
 			// Apply COALESCE defaults in Go: null cursor_created_at → NOW(),
 			// null cursor_id → zero UUID (matches the INSERT default).
 			cursorAt: time.Now(),
 			cursorID: uuid.UUID{},
 		}
-		if r.CursorCreatedAt.Valid {
-			sk.cursorAt = r.CursorCreatedAt.Time
+		if r.cursorAt.Valid {
+			sk.cursorAt = r.cursorAt.Time
 		}
-		if r.CursorID.Valid {
-			sk.cursorID = uuid.UUID(r.CursorID.Bytes)
+		if r.cursorID.Valid {
+			sk.cursorID = uuid.UUID(r.cursorID.Bytes)
 		}
 		sinks = append(sinks, sk)
 	}
@@ -371,6 +513,17 @@ type Handler struct {
 	Service *Service
 }
 
+func actorOf(r *http.Request) audit.Actor {
+	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
+		actor.UserID = principal.UserID
+		if principal.ActorType != "" {
+			actor.Type = principal.ActorType
+		}
+	}
+	return actor
+}
+
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/log-sinks", h.list)
 	r.Post("/tenants/{tenantID}/log-sinks", h.create)
@@ -422,7 +575,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	sk, err := h.Service.Create(r.Context(), tenantID, in.Type, in.Endpoint, in.Token)
+	sk, err := h.Service.CreateWithActor(r.Context(), tenantID, in.Type, in.Endpoint, in.Token, actorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -448,7 +601,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.SetEnabled(r.Context(), id, tenantID, in.Enabled); err != nil {
+	if err := h.Service.SetEnabledWithActor(r.Context(), id, tenantID, in.Enabled, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -466,7 +619,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSIEMIDInvalid)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID); err != nil {
+	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

@@ -34,6 +34,10 @@ type Config struct {
 	DBURL      string `envconfig:"DB_URL" required:"true"`
 	DBMinConns int32  `envconfig:"DB_MIN_CONNS" default:"2"`
 	DBMaxConns int32  `envconfig:"DB_MAX_CONNS" default:"10"`
+	// EmbeddedWorkers runs background dispatchers inside the API process. Set
+	// false when cmd/worker is deployed separately; database leases remain the
+	// correctness backstop during rollout and mixed-version overlap.
+	EmbeddedWorkers bool `envconfig:"EMBEDDED_WORKERS" default:"true"`
 
 	JWTSecret   string `envconfig:"JWT_SECRET" required:"true"`
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
@@ -55,6 +59,14 @@ type Config struct {
 	// certificate) of previously-active signing keys. They stay verifiable
 	// during the rotation grace window; new tokens are never signed with them.
 	JWTRetiredKeys string `envconfig:"JWT_RETIRED_KEYS" default:""`
+	// JWTActivateSigningKey promotes JWT_SIGNING_KEY from candidate to active in
+	// the shared registry. Leave false while pre-staging a key on every replica;
+	// set true only for the activation rollout.
+	JWTActivateSigningKey bool `envconfig:"JWT_ACTIVATE_SIGNING_KEY" default:"false"`
+	// JWTSigningKeyRetireGrace keeps the previous public key verifiable after
+	// activation. It must exceed the longest access-token lifetime in use.
+	JWTSigningKeyRetireGrace     time.Duration `envconfig:"JWT_SIGNING_KEY_RETIRE_GRACE" default:"720h"`
+	JWTSigningKeyRefreshInterval time.Duration `envconfig:"JWT_SIGNING_KEY_REFRESH_INTERVAL" default:"5s"`
 
 	// SAMLIdPKey / SAMLIdPCert are the RSA private key + X.509 certificate (PEM)
 	// used to sign issued SAML assertions when Qeet acts as an IdP (an SSO
@@ -80,8 +92,17 @@ type Config struct {
 	// (output of `aws kms generate-data-key`), unwrapped at boot (aws-kms only).
 	SecretsWrappedDEK string `envconfig:"SECRETS_WRAPPED_DEK" default:""`
 
-	HTTPReadTimeout  time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
-	HTTPWriteTimeout time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
+	HTTPReadTimeout       time.Duration `envconfig:"HTTP_READ_TIMEOUT" default:"15s"`
+	HTTPWriteTimeout      time.Duration `envconfig:"HTTP_WRITE_TIMEOUT" default:"30s"`
+	HTTPReadHeaderTimeout time.Duration `envconfig:"HTTP_READ_HEADER_TIMEOUT" default:"5s"`
+	HTTPIdleTimeout       time.Duration `envconfig:"HTTP_IDLE_TIMEOUT" default:"60s"`
+	HTTPMaxHeaderBytes    int           `envconfig:"HTTP_MAX_HEADER_BYTES" default:"65536"`
+
+	// EgressProxyURL routes tenant-configured outbound HTTP (webhooks, auth
+	// hooks, SIEM sinks, social/token-vault calls) through a forward proxy.
+	// Ambient HTTPS_PROXY is ignored on purpose — see egress.Options.ProxyURL.
+	// When set, the proxy resolves destinations, so it owns address filtering.
+	EgressProxyURL string `envconfig:"EGRESS_PROXY_URL" default:""`
 
 	AllowedOriginsRaw   string `envconfig:"ALLOWED_ORIGINS" default:""`
 	AuthDevTrustHeaders bool   `envconfig:"AUTH_DEV_TRUST_HEADERS" default:"false"`
@@ -272,6 +293,18 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.JWTSigningKey) == "" {
 		problems = append(problems, "JWT_SIGNING_KEY is required (PEM EC P-256 private key for ES256 token signing)")
+	}
+	if c.JWTSigningKeyRetireGrace < c.AccessTokenTTL || c.JWTSigningKeyRetireGrace < time.Hour {
+		problems = append(problems, "JWT_SIGNING_KEY_RETIRE_GRACE must cover ACCESS_TOKEN_TTL and be at least 1h")
+	}
+	if c.JWTSigningKeyRefreshInterval <= 0 {
+		problems = append(problems, "JWT_SIGNING_KEY_REFRESH_INTERVAL must be positive")
+	}
+	if raw := strings.TrimSpace(c.EgressProxyURL); raw != "" {
+		u, err := url.Parse(raw)
+		if err != nil || !u.IsAbs() || u.Host == "" {
+			problems = append(problems, "EGRESS_PROXY_URL must be an absolute URL with a host")
+		}
 	}
 	switch c.SecretsProvider {
 	case "", "static":

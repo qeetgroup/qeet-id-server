@@ -24,9 +24,11 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 type Subscription struct {
@@ -48,22 +50,32 @@ type PlanGate interface {
 }
 
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *dbgen.Queries
-	client *http.Client
-	gate   PlanGate
+	pool     *pgxpool.Pool
+	q        *dbgen.Queries
+	client   *http.Client
+	gate     PlanGate
+	egress   *egress.Policy
+	box      *envelope.Cipher
+	workerID uuid.UUID
+	lease    time.Duration
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
+func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+	policy := egress.PublicPolicy(policies...)
 	return &Service{
-		pool:   pool,
-		q:      dbgen.New(pool),
-		client: &http.Client{Timeout: 10 * time.Second},
+		pool:     pool,
+		q:        dbgen.New(pool),
+		client:   policy.HTTPClient(10 * time.Second),
+		egress:   policy,
+		workerID: uuid.New(),
+		lease:    2 * time.Minute,
 	}
 }
 
 // SetPlanGate wires the plan-feature gate. nil (default) allows all features.
 func (s *Service) SetPlanGate(g PlanGate) { s.gate = g }
+
+func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
@@ -106,6 +118,9 @@ type CreateInput struct {
 }
 
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subscription, error) {
+	if _, err := s.egress.ValidateHTTPURL(in.URL); err != nil {
+		return nil, errs.ErrBadRequest.WithDetail("webhook URL is not an allowed outbound destination")
+	}
 	// Plan gate: webhooks are a paid feature (not included on Free).
 	if s.gate != nil {
 		ok, err := s.gate.FeatureAllowed(ctx, in.TenantID, "webhooks")
@@ -120,17 +135,35 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, in CreateInput) (*Subsc
 	if err != nil {
 		return nil, err
 	}
-	row, err := s.q.WithTx(tx).CreateWebhookSubscription(ctx, dbgen.CreateWebhookSubscriptionParams{
-		TenantID: in.TenantID,
-		Url:      in.URL,
-		Secret:   secret,
-		Events:   in.Events,
-	})
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("webhook secret encryption is unavailable")
+	}
+	id := uuid.New()
+	ciphertext, nonce, err := s.box.Seal(in.TenantID, "webhook-signing", id.String(), []byte(secret))
+	if err != nil {
+		return nil, err
+	}
+	var row struct {
+		ID         uuid.UUID
+		TenantID   uuid.UUID
+		URL        string
+		Events     []string
+		DisabledAt pgtype.Timestamptz
+		CreatedAt  time.Time
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO tenant.webhook_subscriptions
+		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, events)
+		VALUES ($1, $2, $3, '', $4, $5, 1, $6)
+		RETURNING id, tenant_id, url, events, disabled_at, created_at
+	`, id, in.TenantID, in.URL, ciphertext, nonce, in.Events).Scan(
+		&row.ID, &row.TenantID, &row.URL, &row.Events, &row.DisabledAt, &row.CreatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &Subscription{
-		ID: row.ID, TenantID: row.TenantID, URL: row.Url,
+		ID: row.ID, TenantID: row.TenantID, URL: row.URL,
 		Events: row.Events, DisabledAt: tsPtr(row.DisabledAt), CreatedAt: row.CreatedAt,
 		Secret: secret,
 	}, nil
@@ -244,11 +277,19 @@ func (s *Service) ListDeliveries(ctx context.Context, subscriptionID, tenantID u
 // (clears delivered_at + error and sets next_attempt_at to now). Tenant-scoped
 // via the subscription join. ErrWebhookDeliveryNotFound when the delivery isn't the tenant's.
 func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.UUID) error {
-	n, err := s.q.RetryWebhookDelivery(ctx, dbgen.RetryWebhookDeliveryParams{DeliveryID: deliveryID, TenantID: tenantID})
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tenant.webhook_deliveries AS delivery
+		SET delivered_at = NULL, dead_at = NULL, error = NULL, next_attempt_at = NOW(),
+		    lease_owner = NULL, lease_until = NULL
+		FROM tenant.webhook_subscriptions AS subscription
+		WHERE delivery.id = $1 AND delivery.subscription_id = subscription.id
+		  AND subscription.tenant_id = $2
+		  AND (delivery.lease_until IS NULL OR delivery.lease_until <= NOW())
+	`, deliveryID, tenantID)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if tag.RowsAffected() == 0 {
 		return errs.ErrWebhookDeliveryNotFound
 	}
 	return nil
@@ -302,19 +343,87 @@ func (s *Service) RunDispatcher(ctx context.Context) {
 func (s *Service) Sweep(ctx context.Context) error { return s.tick(ctx) }
 
 func (s *Service) tick(ctx context.Context) error {
-	batch, err := s.q.GetDueDeliveries(ctx)
+	rows, err := s.pool.Query(ctx, `
+		WITH candidates AS (
+			SELECT delivery.id
+			FROM tenant.webhook_deliveries AS delivery
+			JOIN tenant.webhook_subscriptions AS subscription ON subscription.id = delivery.subscription_id
+			WHERE delivery.delivered_at IS NULL AND delivery.dead_at IS NULL
+			  AND delivery.next_attempt_at <= NOW()
+			  AND (delivery.lease_until IS NULL OR delivery.lease_until <= NOW())
+			  AND subscription.disabled_at IS NULL
+			ORDER BY delivery.created_at
+			LIMIT 20
+			FOR UPDATE OF delivery SKIP LOCKED
+		)
+		UPDATE tenant.webhook_deliveries AS delivery
+		SET lease_owner = $1, lease_until = $2
+		FROM candidates, tenant.webhook_subscriptions AS subscription
+		WHERE delivery.id = candidates.id AND subscription.id = delivery.subscription_id
+		RETURNING delivery.id, delivery.subscription_id, delivery.event_type,
+		          delivery.payload, delivery.attempt, subscription.id,
+		          subscription.tenant_id, subscription.url, subscription.secret,
+		          subscription.secret_ct, subscription.secret_nonce
+	`, s.workerID, time.Now().UTC().Add(s.lease))
 	if err != nil {
 		return err
 	}
+	type dueDelivery struct {
+		ID, SubscriptionID, SecretID, TenantID uuid.UUID
+		EventType, URL, LegacySecret           string
+		Payload, SecretCT, SecretNonce         []byte
+		Attempt                                int32
+	}
+	var batch []dueDelivery
+	for rows.Next() {
+		var item dueDelivery
+		if err := rows.Scan(&item.ID, &item.SubscriptionID, &item.EventType, &item.Payload, &item.Attempt,
+			&item.SecretID, &item.TenantID, &item.URL, &item.LegacySecret, &item.SecretCT, &item.SecretNonce); err != nil {
+			return err
+		}
+		batch = append(batch, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
 	for _, it := range batch {
-		status, respBody, derr := s.deliver(ctx, it.Url, it.Secret, it.EventType, it.Payload)
+		secretValue := it.LegacySecret
+		if len(it.SecretCT) > 0 {
+			if s.box == nil {
+				return errors.New("webhook secret encryption is unavailable")
+			}
+			plain, openErr := s.box.Open(it.TenantID, "webhook-signing", it.SecretID.String(), it.SecretCT, it.SecretNonce)
+			if openErr != nil {
+				return openErr
+			}
+			secretValue = string(plain)
+		} else if secretValue != "" && s.box != nil {
+			ct, nonce, sealErr := s.box.Seal(it.TenantID, "webhook-signing", it.SecretID.String(), []byte(secretValue))
+			if sealErr != nil {
+				return sealErr
+			}
+			if _, updateErr := s.pool.Exec(ctx, `
+				UPDATE tenant.webhook_subscriptions
+				SET secret = '', secret_ct = $2, secret_nonce = $3, encryption_version = 1
+				WHERE id = $1 AND secret_ct IS NULL
+			`, it.SecretID, ct, nonce); updateErr != nil {
+				return updateErr
+			}
+		}
+		status, respBody, derr := s.deliver(ctx, it.ID, it.URL, secretValue, it.EventType, it.Payload)
 		now := time.Now()
 		if derr == nil && status >= 200 && status < 300 {
-			_ = s.q.MarkDeliverySucceeded(ctx, dbgen.MarkDeliverySucceededParams{
-				StatusCode:   int32Ptr(status),
-				ResponseBody: strPtr(truncate(respBody, 4000)),
-				ID:           it.ID,
-			})
+			if _, err := s.pool.Exec(ctx, `
+				UPDATE tenant.webhook_deliveries
+				SET delivered_at = NOW(), status_code = $3, response_body = $4,
+				    attempt = attempt + 1, error = NULL,
+				    lease_owner = NULL, lease_until = NULL
+				WHERE id = $1 AND lease_owner = $2
+			`, it.ID, s.workerID, int32Ptr(status), strPtr(truncate(respBody, 4000))); err != nil {
+				return err
+			}
 			continue
 		}
 		errStr := ""
@@ -326,25 +435,29 @@ func (s *Service) tick(ctx context.Context) error {
 		// forever at the 1h backoff ceiling. dead_at marks it dead-lettered;
 		// RetryDelivery clears it for a manual re-send.
 		if int(it.Attempt)+1 >= maxDeliveryAttempts {
-			_ = s.q.DeadLetterDelivery(ctx, dbgen.DeadLetterDeliveryParams{
-				StatusCode:   int32Ptr(status),
-				ResponseBody: strPtr(truncate(respBody, 4000)),
-				Error:        strPtr(errStr),
-				ID:           it.ID,
-			})
+			if _, err := s.pool.Exec(ctx, `
+				UPDATE tenant.webhook_deliveries
+				SET attempt = attempt + 1, status_code = $3, response_body = $4,
+				    error = $5, dead_at = NOW(), lease_owner = NULL, lease_until = NULL
+				WHERE id = $1 AND lease_owner = $2
+			`, it.ID, s.workerID, int32Ptr(status), strPtr(truncate(respBody, 4000)), strPtr(errStr)); err != nil {
+				return err
+			}
 			continue
 		}
 		backoff := time.Duration(1<<min(int(it.Attempt), 8)) * 30 * time.Second
 		if backoff > time.Hour {
 			backoff = time.Hour
 		}
-		_ = s.q.ScheduleDeliveryRetry(ctx, dbgen.ScheduleDeliveryRetryParams{
-			StatusCode:    int32Ptr(status),
-			ResponseBody:  strPtr(truncate(respBody, 4000)),
-			Error:         strPtr(errStr),
-			NextAttemptAt: toTS(now.Add(backoff)),
-			ID:            it.ID,
-		})
+		if _, err := s.pool.Exec(ctx, `
+			UPDATE tenant.webhook_deliveries
+			SET attempt = attempt + 1, status_code = $3, response_body = $4,
+			    error = $5, next_attempt_at = $6,
+			    lease_owner = NULL, lease_until = NULL
+			WHERE id = $1 AND lease_owner = $2
+		`, it.ID, s.workerID, int32Ptr(status), strPtr(truncate(respBody, 4000)), strPtr(errStr), now.Add(backoff)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -355,13 +468,14 @@ func (s *Service) tick(ctx context.Context) error {
 // before giving up — in line with common webhook-retry conventions.
 const maxDeliveryAttempts = 60
 
-func (s *Service) deliver(ctx context.Context, url, secret, eventType string, body []byte) (int, string, error) {
+func (s *Service) deliver(ctx context.Context, deliveryID uuid.UUID, url, secret, eventType string, body []byte) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Qeet-Event", eventType)
+	req.Header.Set("X-Qeet-Delivery-ID", deliveryID.String())
 	req.Header.Set("X-Qeet-Signature", "sha256="+sign(secret, body))
 	resp, err := s.client.Do(req)
 	if err != nil {

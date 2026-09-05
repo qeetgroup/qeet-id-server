@@ -23,8 +23,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const hookTimeout = 3 * time.Second
@@ -42,11 +46,16 @@ type Service struct {
 	pool   *pgxpool.Pool
 	q      *dbgen.Queries
 	client *http.Client
+	egress *egress.Policy
+	box    *envelope.Cipher
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), client: &http.Client{Timeout: hookTimeout}}
+func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
+	policy := egress.PublicPolicy(policies...)
+	return &Service{pool: pool, q: dbgen.New(pool), client: policy.HTTPClient(hookTimeout), egress: policy}
 }
+
+func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 // Run implements auth.LoginHook. It returns a non-nil (ErrAuthHookDenied) error to
 // DENY the sign-in, or nil to allow — in which case the returned map (possibly
@@ -58,9 +67,38 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 	if tenantID == uuid.Nil {
 		return nil, nil
 	}
-	row, err := s.q.GetActiveHook(ctx, tenantID)
+	var hookID uuid.UUID
+	var url, legacySecret string
+	var ciphertext, nonce []byte
+	var failOpen bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, url, secret, secret_ct, secret_nonce, fail_open
+		FROM tenant.auth_hooks
+		WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
+		ORDER BY created_at LIMIT 1
+	`, tenantID).Scan(&hookID, &url, &legacySecret, &ciphertext, &nonce, &failOpen)
 	if errors.Is(err, pgx.ErrNoRows) || err != nil {
 		return nil, nil // no hook (or can't load it) → never block login on infra
+	}
+	secretValue := legacySecret
+	if len(ciphertext) > 0 {
+		if s.box == nil {
+			return nil, nil
+		}
+		plain, openErr := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), ciphertext, nonce)
+		if openErr != nil {
+			return nil, nil
+		}
+		secretValue = string(plain)
+	} else if legacySecret != "" && s.box != nil {
+		ct, newNonce, sealErr := s.box.Seal(tenantID, "auth-hook-signing", hookID.String(), []byte(legacySecret))
+		if sealErr == nil {
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE tenant.auth_hooks
+				SET secret = '', secret_ct = $2, secret_nonce = $3, encryption_version = 1
+				WHERE id = $1 AND secret_ct IS NULL
+			`, hookID, ct, newNonce)
+		}
 	}
 
 	payload, _ := json.Marshal(map[string]any{
@@ -70,8 +108,8 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		"email":     email,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
-	body, callErr := s.call(ctx, row.Url, row.Secret, payload)
-	msg, denied, claims := decide(row.FailOpen, callErr, body)
+	body, callErr := s.call(ctx, url, secretValue, payload)
+	msg, denied, claims := decide(failOpen, callErr, body)
 	if denied {
 		return nil, errs.ErrAuthHookDenied.WithMessage(msg)
 	}
@@ -136,26 +174,67 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 }
 
 func (s *Service) Create(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool) (*Hook, error) {
-	if !strings.HasPrefix(url, "https://") && !strings.HasPrefix(url, "http://") {
+	return s.CreateWithActor(ctx, tenantID, url, secret, failOpen, audit.Actor{Type: "system"})
+}
+
+func (s *Service) CreateWithActor(ctx context.Context, tenantID uuid.UUID, url, secret string, failOpen bool, actor audit.Actor) (*Hook, error) {
+	if _, err := s.egress.ValidateHTTPURL(url); err != nil {
 		return nil, errs.ErrAuthHookURLInvalid
 	}
-	row, err := s.q.CreateHook(ctx, dbgen.CreateHookParams{
-		TenantID: tenantID,
-		Url:      url,
-		Secret:   secret,
-		FailOpen: failOpen,
-	})
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("auth-hook secret encryption is unavailable")
+	}
+	id := uuid.New()
+	ciphertext, nonce, err := s.box.Seal(tenantID, "auth-hook-signing", id.String(), []byte(secret))
 	if err != nil {
 		return nil, err
 	}
-	return &Hook{
+	var row struct {
+		ID        uuid.UUID
+		Trigger   string
+		URL       string
+		Enabled   bool
+		FailOpen  bool
+		CreatedAt time.Time
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO tenant.auth_hooks
+		    (id, tenant_id, url, secret, secret_ct, secret_nonce, encryption_version, fail_open)
+		VALUES ($1, $2, $3, '', $4, $5, 1, $6)
+		RETURNING id, trigger, url, enabled, fail_open, created_at
+	`, id, tenantID, url, ciphertext, nonce, failOpen).Scan(
+		&row.ID, &row.Trigger, &row.URL, &row.Enabled, &row.FailOpen, &row.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	hook := &Hook{
 		ID:        row.ID,
 		Trigger:   row.Trigger,
-		URL:       row.Url,
+		URL:       row.URL,
 		Enabled:   row.Enabled,
 		FailOpen:  row.FailOpen,
 		CreatedAt: row.CreatedAt,
-	}, nil
+	}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.created", "auth_hook", hook.ID,
+		map[string]any{"url": hook.URL, "fail_open": hook.FailOpen})); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: hook.ID, Topic: "auth-hook.events", EventType: "auth_hook.created",
+		Payload: map[string]any{"hook_id": hook.ID, "tenant_id": tenantID, "url": hook.URL, "fail_open": hook.FailOpen},
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return hook, nil
 }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) {
@@ -178,7 +257,16 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Hook, error) 
 }
 
 func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool) error {
-	n, err := s.q.UpdateHook(ctx, dbgen.UpdateHookParams{
+	return s.UpdateWithActor(ctx, id, tenantID, enabled, failOpen, audit.Actor{Type: "system"})
+}
+
+func (s *Service) UpdateWithActor(ctx context.Context, id, tenantID uuid.UUID, enabled, failOpen bool, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).UpdateHook(ctx, dbgen.UpdateHookParams{
 		Enabled:  enabled,
 		FailOpen: failOpen,
 		ID:       id,
@@ -190,22 +278,55 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, enabled, f
 	if n == 0 {
 		return errs.ErrAuthHookNotFound
 	}
-	return nil
+	metadata := map[string]any{"enabled": enabled, "fail_open": failOpen}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.updated", "auth_hook", id, metadata)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.updated", Payload: metadata}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.DeleteHook(ctx, dbgen.DeleteHookParams{ID: id, TenantID: tenantID})
+	return s.DeleteWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
+}
+
+func (s *Service) DeleteWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).DeleteHook(ctx, dbgen.DeleteHookParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrAuthHookNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "auth_hook.deleted", "auth_hook", id, nil)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "auth-hook.events", EventType: "auth_hook.deleted", Payload: map[string]any{"hook_id": id, "tenant_id": tenantID}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 type Handler struct {
 	Service *Service
+}
+
+func actorOf(r *http.Request) audit.Actor {
+	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
+		actor.UserID = principal.UserID
+		if principal.ActorType != "" {
+			actor.Type = principal.ActorType
+		}
+	}
+	return actor
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -263,7 +384,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if in.FailOpen != nil {
 		failOpen = *in.FailOpen
 	}
-	hook, err := h.Service.Create(r.Context(), tenantID, in.URL, in.Secret, failOpen)
+	hook, err := h.Service.CreateWithActor(r.Context(), tenantID, in.URL, in.Secret, failOpen, actorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -290,7 +411,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Update(r.Context(), id, tenantID, in.Enabled, in.FailOpen); err != nil {
+	if err := h.Service.UpdateWithActor(r.Context(), id, tenantID, in.Enabled, in.FailOpen, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -308,7 +429,7 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrAuthHookInvalidID)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, tenantID); err != nil {
+	if err := h.Service.DeleteWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

@@ -9,7 +9,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,11 +21,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 const (
@@ -60,16 +61,20 @@ type connFull struct {
 }
 
 type Service struct {
-	pool *pgxpool.Pool
-	q    *dbgen.Queries
-	auth *auth.Service
+	pool   *pgxpool.Pool
+	q      *dbgen.Queries
+	auth   *auth.Service
+	egress *egress.Policy
+	box    *envelope.Cipher
 	// gate enforces the plan LDAP feature on connection creation (nil = off).
 	gate PlanGate
 }
 
-func NewService(pool *pgxpool.Pool, authSvc *auth.Service) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), auth: authSvc}
+func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.Policy) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), auth: authSvc, egress: egress.PublicPolicy(policies...)}
 }
+
+func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
 // tenant's plan. Satisfied by operations/entitlements.Service, injected via
@@ -136,6 +141,9 @@ func defaulted(v, def string) string {
 }
 
 func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Connection, error) {
+	if _, err := s.egress.ValidateLDAPURL(in.ServerURL); err != nil {
+		return nil, errs.ErrLDAPServerURLInvalid
+	}
 	// Plan gate: LDAP/AD directory sync is an Enterprise feature.
 	if s.gate != nil {
 		ok, err := s.gate.FeatureAllowed(ctx, tenantID, "ldap")
@@ -146,20 +154,47 @@ func (s *Service) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 			return nil, errs.ErrUpgradeRequired.WithMetadata(map[string]any{"feature": "ldap"})
 		}
 	}
-	r, err := s.q.WithTx(tx).InsertLdapConnection(ctx, dbgen.InsertLdapConnectionParams{
-		TenantID:       tenantID,
-		Name:           in.Name,
-		ServerUrl:      in.ServerURL,
-		StartTls:       in.StartTLS,
-		SkipTlsVerify:  in.SkipTLSVerify,
-		BindDn:         in.BindDN,
-		BindPassword:   in.BindPassword,
-		BaseDn:         in.BaseDN,
-		UserFilter:     defaulted(in.UserFilter, "(uid=%s)"),
-		EmailAttribute: defaulted(in.EmailAttribute, "mail"),
-		NameAttribute:  defaulted(in.NameAttribute, "cn"),
-		Status:         defaulted(in.Status, "draft"),
-	})
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
+	}
+	id := uuid.New()
+	ciphertext, nonce, err := s.box.Seal(tenantID, "ldap-bind", id.String(), []byte(in.BindPassword))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		ID             uuid.UUID
+		TenantID       uuid.UUID
+		Name           string
+		ServerUrl      string
+		StartTls       bool
+		SkipTlsVerify  bool
+		BindDn         string
+		BaseDn         string
+		UserFilter     string
+		EmailAttribute string
+		NameAttribute  string
+		Status         string
+		CreatedAt      time.Time
+		UpdatedAt      time.Time
+		LastLoginAt    pgtype.Timestamptz
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO tenant.ldap_connections
+		    (id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+		     bind_password, bind_password_ct, bind_password_nonce, encryption_version,
+		     base_dn, user_filter, email_attribute, name_attribute, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, '', $8, $9, 1, $10, $11, $12, $13, $14)
+		RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
+		          base_dn, user_filter, email_attribute, name_attribute, status,
+		          created_at, updated_at, last_login_at
+	`, id, tenantID, in.Name, in.ServerURL, in.StartTLS, in.SkipTLSVerify, in.BindDN,
+		ciphertext, nonce, in.BaseDN, defaulted(in.UserFilter, "(uid=%s)"),
+		defaulted(in.EmailAttribute, "mail"), defaulted(in.NameAttribute, "cn"), defaulted(in.Status, "draft")).Scan(
+		&r.ID, &r.TenantID, &r.Name, &r.ServerUrl, &r.StartTls, &r.SkipTlsVerify, &r.BindDn,
+		&r.BaseDn, &r.UserFilter, &r.EmailAttribute, &r.NameAttribute, &r.Status,
+		&r.CreatedAt, &r.UpdatedAt, &r.LastLoginAt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +240,8 @@ func (s *Service) Get(ctx context.Context, id, tenantID uuid.UUID) (*Connection,
 func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFull, error) {
 	const base = `SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
 	              base_dn, user_filter, email_attribute, name_attribute, status,
-	              created_at, updated_at, last_login_at, bind_password
+	              created_at, updated_at, last_login_at, bind_password,
+	              bind_password_ct, bind_password_nonce
 	              FROM tenant.ldap_connections WHERE id = $1`
 	q := base
 	args := []any{id}
@@ -214,14 +250,42 @@ func (s *Service) getFull(ctx context.Context, id, tenantID uuid.UUID) (*connFul
 		args = append(args, tenantID)
 	}
 	var c connFull
+	var legacyPassword string
+	var ciphertext, nonce []byte
 	err := s.pool.QueryRow(ctx, q, args...).Scan(&c.ID, &c.TenantID, &c.Name, &c.ServerURL, &c.StartTLS,
 		&c.SkipTLSVerify, &c.BindDN, &c.BaseDN, &c.UserFilter, &c.EmailAttribute, &c.NameAttribute,
-		&c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt, &c.BindPassword)
+		&c.Status, &c.CreatedAt, &c.UpdatedAt, &c.LastLoginAt, &legacyPassword, &ciphertext, &nonce)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if len(ciphertext) > 0 {
+		if s.box == nil {
+			return nil, errors.New("LDAP secret encryption is unavailable")
+		}
+		plain, openErr := s.box.Open(c.TenantID, "ldap-bind", c.ID.String(), ciphertext, nonce)
+		if openErr != nil {
+			return nil, openErr
+		}
+		c.BindPassword = string(plain)
+	} else {
+		c.BindPassword = legacyPassword
+		if legacyPassword != "" && s.box != nil {
+			ct, newNonce, sealErr := s.box.Seal(c.TenantID, "ldap-bind", c.ID.String(), []byte(legacyPassword))
+			if sealErr != nil {
+				return nil, sealErr
+			}
+			if _, updateErr := s.pool.Exec(ctx, `
+				UPDATE tenant.ldap_connections
+				SET bind_password = '', bind_password_ct = $2, bind_password_nonce = $3,
+				    encryption_version = 1
+				WHERE id = $1 AND bind_password_ct IS NULL
+			`, c.ID, ct, newNonce); updateErr != nil {
+				return nil, updateErr
+			}
+		}
 	}
 	return &c, nil
 }
@@ -241,6 +305,12 @@ type UpdateInput struct {
 }
 
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID, in UpdateInput) (*Connection, error) {
+	if in.ServerURL != nil {
+		if _, err := s.egress.ValidateLDAPURL(*in.ServerURL); err != nil {
+			return nil, errs.ErrLDAPServerURLInvalid
+		}
+	}
+	bindPassword := in.BindPassword
 	r, err := s.q.WithTx(tx).UpdateLdapConnection(ctx, dbgen.UpdateLdapConnectionParams{
 		ID:             id,
 		TenantID:       tenantID,
@@ -249,7 +319,6 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 		StartTls:       in.StartTLS,
 		SkipTlsVerify:  in.SkipTLSVerify,
 		BindDn:         in.BindDN,
-		BindPassword:   in.BindPassword,
 		BaseDn:         in.BaseDN,
 		UserFilter:     in.UserFilter,
 		EmailAttribute: in.EmailAttribute,
@@ -261,6 +330,23 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID,
 	}
 	if err != nil {
 		return nil, err
+	}
+	if bindPassword != nil {
+		if s.box == nil {
+			return nil, errs.ErrInternalServer.WithDetail("LDAP secret encryption is unavailable")
+		}
+		ciphertext, nonce, sealErr := s.box.Seal(tenantID, "ldap-bind", id.String(), []byte(*bindPassword))
+		if sealErr != nil {
+			return nil, sealErr
+		}
+		if _, updateErr := tx.Exec(ctx, `
+			UPDATE tenant.ldap_connections
+			SET bind_password = '', bind_password_ct = $3, bind_password_nonce = $4,
+			    encryption_version = 1, updated_at = NOW()
+			WHERE id = $1 AND tenant_id = $2
+		`, id, tenantID, ciphertext, nonce); updateErr != nil {
+			return nil, updateErr
+		}
 	}
 	var c Connection
 	connFields(&c, r.ID, r.TenantID, r.Name, r.ServerUrl, r.StartTls, r.SkipTlsVerify,
@@ -299,8 +385,15 @@ func hostOnly(serverURL string) string {
 }
 
 // dial opens a connection, applying LDAPS or StartTLS as configured.
-func (c *connFull) dial() (*goldap.Conn, error) {
-	conn, err := goldap.DialURL(c.ServerURL, goldap.DialWithDialer(&net.Dialer{Timeout: dialTimeout}), goldap.DialWithTLSConfig(c.tlsConfig()))
+func (c *connFull) dial(ctx context.Context, policy *egress.Policy) (*goldap.Conn, error) {
+	u, err := policy.ValidateLDAPURL(c.ServerURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := policy.ValidateHost(ctx, u.Hostname()); err != nil {
+		return nil, err
+	}
+	conn, err := goldap.DialURL(c.ServerURL, goldap.DialWithDialer(policy.NetDialer(dialTimeout)), goldap.DialWithTLSConfig(c.tlsConfig()))
 	if err != nil {
 		return nil, err
 	}
@@ -315,8 +408,8 @@ func (c *connFull) dial() (*goldap.Conn, error) {
 
 // TestBind dials and binds with the service account — proving the connection
 // settings are correct without authenticating any end user.
-func (s *Service) TestBind(c *connFull) error {
-	conn, err := c.dial()
+func (s *Service) TestBind(ctx context.Context, c *connFull) error {
+	conn, err := c.dial(ctx, s.egress)
 	if err != nil {
 		return errs.ErrLDAPDialFailed.Wrap(err)
 	}
@@ -335,11 +428,11 @@ type ldapUser struct {
 
 // authenticate binds the service account, finds the user, then verifies the
 // password by binding as the user's DN. Returns the resolved directory user.
-func (s *Service) authenticate(c *connFull, username, password string) (*ldapUser, error) {
+func (s *Service) authenticate(ctx context.Context, c *connFull, username, password string) (*ldapUser, error) {
 	if username == "" || password == "" {
 		return nil, errs.ErrLDAPCredentialsRequired
 	}
-	conn, err := c.dial()
+	conn, err := c.dial(ctx, s.egress)
 	if err != nil {
 		return nil, errs.ErrLDAPDirectoryUnreachable.Wrap(err)
 	}
@@ -366,7 +459,7 @@ func (s *Service) authenticate(c *connFull, username, password string) (*ldapUse
 
 	// Verify the password by binding as the user. A fresh conn keeps the
 	// service-account binding intact and side-steps connection-state quirks.
-	userConn, err := c.dial()
+	userConn, err := c.dial(ctx, s.egress)
 	if err != nil {
 		return nil, errs.ErrLDAPDirectoryUnreachable.Wrap(err)
 	}
@@ -444,7 +537,7 @@ func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, passwor
 	if c.Status == "disabled" {
 		return nil, errs.ErrLDAPConnectionDisabled
 	}
-	du, err := s.authenticate(c, username, password)
+	du, err := s.authenticate(ctx, c, username, password)
 	if err != nil {
 		return nil, err
 	}
@@ -688,7 +781,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.TestBind(c); err != nil {
+	if err := h.Service.TestBind(r.Context(), c); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

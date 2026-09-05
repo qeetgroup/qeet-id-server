@@ -17,9 +17,6 @@ package qeetai
 import (
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,7 +34,9 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/anthropic"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/ai/openai"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 // KeyProvider supplies the AES data-encryption key used to encrypt tenant BYOK
@@ -96,55 +95,89 @@ func (p PlatformProvider) configured() bool {
 type ProviderConfig struct {
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
-	gcm      cipher.AEAD
+	box      *envelope.Cipher
 	platform PlatformProvider
+	// egress bounds every call to a tenant-supplied base_url. BYOK lets a tenant
+	// admin name the endpoint this server talks to, which is the same
+	// tenant-controlled outbound surface as webhooks and log sinks.
+	egress *egress.Policy
 	// httpClient is used only by Test() for the live key-validation probe.
 	httpClient *http.Client
 }
 
-// NewProviderConfig builds the service, unwrapping the AES data key from the
-// provider once (identical to the secrets vault). The key must be 16/24/32
-// bytes (AES-128/192/256).
-func NewProviderConfig(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider, platform PlatformProvider) (*ProviderConfig, error) {
+// NewProviderConfig builds the service, deriving its envelope cipher from the
+// deployment data key (identical to the secrets vault).
+func NewProviderConfig(ctx context.Context, pool *pgxpool.Pool, kp KeyProvider, platform PlatformProvider, policies ...*egress.Policy) (*ProviderConfig, error) {
 	key, err := kp.DataKey(ctx)
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(key)
+	box, err := envelope.New(key)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
+	policy := egress.PublicPolicy(policies...)
 	return &ProviderConfig{
 		pool:       pool,
 		q:          dbgen.New(pool),
-		gcm:        gcm,
+		box:        box,
 		platform:   platform,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		egress:     policy,
+		httpClient: policy.HTTPClient(15 * time.Second),
 	}, nil
 }
 
 // PlatformConfigured reports whether a deployment-level fallback key is set.
 func (c *ProviderConfig) PlatformConfigured() bool { return c.platform.configured() }
 
-func (c *ProviderConfig) encrypt(plaintext string) (ciphertext, nonce []byte, err error) {
-	nonce = make([]byte, c.gcm.NonceSize())
-	if _, err = rand.Read(nonce); err != nil {
-		return nil, nil, err
+// qeetaiKeyPurpose / qeetaiKeyResource bind a tenant's provider key to its own
+// encryption context. Before this, every tenant's key was sealed with one
+// process-wide AES-GCM and a nil AAD, so ciphertext copied from one tenant's row
+// into another's decrypted happily into the second tenant's inference path.
+// The tenant id is the part that actually closes that; the resource is constant
+// because there is exactly one provider row per tenant.
+const (
+	qeetaiKeyPurpose  = "qeetai-provider"
+	qeetaiKeyResource = "api-key"
+)
+
+func (c *ProviderConfig) encrypt(tenantID uuid.UUID, plaintext string) (ciphertext, nonce []byte, err error) {
+	if c.box == nil {
+		return nil, nil, errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
 	}
-	ciphertext = c.gcm.Seal(nil, nonce, []byte(plaintext), nil)
-	return ciphertext, nonce, nil
+	return c.box.Seal(tenantID, qeetaiKeyPurpose, qeetaiKeyResource, []byte(plaintext))
 }
 
-func (c *ProviderConfig) decrypt(ciphertext, nonce []byte) (string, error) {
-	pt, err := c.gcm.Open(nil, nonce, ciphertext, nil)
+// decrypt opens a tenant's provider key. Rows written before the envelope
+// switch carry no version prefix and fall back to the legacy nil-AAD path
+// inside envelope.Open — the deployment DEK is the same, so no migration is
+// needed; reseal() then upgrades the row in place on first read.
+func (c *ProviderConfig) decrypt(tenantID uuid.UUID, ciphertext, nonce []byte) (string, error) {
+	if c.box == nil {
+		return "", errs.ErrInternalServer.WithDetail("Qeet AI key encryption is unavailable")
+	}
+	plaintext, err := c.box.Open(tenantID, qeetaiKeyPurpose, qeetaiKeyResource, ciphertext, nonce)
 	if err != nil {
 		return "", err
 	}
-	return string(pt), nil
+	return string(plaintext), nil
+}
+
+// reseal upgrades a legacy row to context-bound ciphertext. Best-effort: a
+// failure here must not break the inference path that just decrypted fine.
+func (c *ProviderConfig) reseal(ctx context.Context, tenantID uuid.UUID, plaintext string, existing []byte) {
+	if c.box == nil || c.box.IsCurrent(existing) {
+		return
+	}
+	ct, nonce, err := c.encrypt(tenantID, plaintext)
+	if err != nil {
+		return
+	}
+	_, _ = c.pool.Exec(ctx, `
+		UPDATE qeetai.provider_settings
+		SET key_ciphertext = $2, key_nonce = $3
+		WHERE tenant_id = $1
+	`, tenantID, ct, nonce)
 }
 
 // hint returns the last 4 characters of a key, but only when it is long enough
@@ -208,14 +241,15 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (a
 		return nil, err
 	}
 	if ok && row.Enabled {
-		key, derr := c.decrypt(row.KeyCiphertext, row.KeyNonce)
+		key, derr := c.decrypt(tenantID, row.KeyCiphertext, row.KeyNonce)
 		if derr != nil {
 			return nil, fmt.Errorf("qeetai: decrypt tenant provider key: %w", derr)
 		}
-		return buildProvider(row.Provider, key, row.BaseUrl, row.Model, int(row.MaxTokens)), nil
+		c.reseal(ctx, tenantID, key, row.KeyCiphertext)
+		return c.buildProvider(row.Provider, key, row.BaseUrl, row.Model, int(row.MaxTokens)), nil
 	}
 	if c.platform.configured() {
-		return buildProvider(c.platform.Provider, c.platform.APIKey, c.platform.BaseURL, c.platform.Model, c.platform.MaxTokens), nil
+		return c.buildProvider(c.platform.Provider, c.platform.APIKey, c.platform.BaseURL, c.platform.Model, c.platform.MaxTokens), nil
 	}
 	return nil, errs.New("qeetai_unconfigured", "AI qeetai is not configured for this organization")
 }
@@ -223,12 +257,16 @@ func (c *ProviderConfig) ProviderFor(ctx context.Context, tenantID uuid.UUID) (a
 // buildProvider constructs an ai.Provider for the given provider identifier.
 // "azure" is served by the OpenAI-compatible client (the admin supplies the
 // Azure endpoint via base_url).
-func buildProvider(provider, apiKey, baseURL, model string, maxTokens int) ai.Provider {
+// buildProvider wires the model client to the egress-bounded transport, so a
+// tenant-supplied base_url cannot reach the internal network at inference time
+// any more than it can at configuration time.
+func (c *ProviderConfig) buildProvider(provider, apiKey, baseURL, model string, maxTokens int) ai.Provider {
+	client := c.httpClient
 	switch strings.ToLower(provider) {
 	case "openai", "azure":
-		return openai.New(apiKey, baseURL, model, maxTokens, nil)
+		return openai.New(apiKey, baseURL, model, maxTokens, client)
 	default: // "anthropic"
-		return anthropic.NewProvider(anthropic.New(apiKey, baseURL, model, maxTokens, nil))
+		return anthropic.NewProvider(anthropic.New(apiKey, baseURL, model, maxTokens, client))
 	}
 }
 
@@ -243,7 +281,7 @@ type SetProviderInput struct {
 	UpdatedBy uuid.UUID
 }
 
-func (in *SetProviderInput) normalize() error {
+func (in *SetProviderInput) normalize(policy *egress.Policy) error {
 	in.Provider = strings.ToLower(strings.TrimSpace(in.Provider))
 	in.Model = strings.TrimSpace(in.Model)
 	in.APIKey = strings.TrimSpace(in.APIKey)
@@ -260,6 +298,11 @@ func (in *SetProviderInput) normalize() error {
 	if in.Provider == "azure" && in.BaseURL == "" {
 		return errs.ErrBadRequest.WithDetail("base_url is required for the azure provider")
 	}
+	if in.BaseURL != "" {
+		if _, err := policy.ValidateHTTPURL(in.BaseURL); err != nil {
+			return errs.ErrBadRequest.WithDetail("base_url is not an allowed outbound destination: " + err.Error())
+		}
+	}
 	if in.MaxTokens <= 0 {
 		in.MaxTokens = 4096
 	}
@@ -272,10 +315,10 @@ func (in *SetProviderInput) normalize() error {
 // Set validates and upserts the tenant's provider config, encrypting the key.
 // Returns the effective (non-secret) config.
 func (c *ProviderConfig) Set(ctx context.Context, tenantID uuid.UUID, in SetProviderInput) (EffectiveConfig, error) {
-	if err := in.normalize(); err != nil {
+	if err := in.normalize(c.egress); err != nil {
 		return EffectiveConfig{}, err
 	}
-	ct, nonce, err := c.encrypt(in.APIKey)
+	ct, nonce, err := c.encrypt(tenantID, in.APIKey)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
@@ -315,7 +358,7 @@ func (c *ProviderConfig) Clear(ctx context.Context, tenantID uuid.UUID) error {
 // key + endpoint before it is saved. Returns nil on success, or a
 // client-facing error describing the failure.
 func (c *ProviderConfig) Test(ctx context.Context, in SetProviderInput) error {
-	if err := in.normalize(); err != nil {
+	if err := in.normalize(c.egress); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)

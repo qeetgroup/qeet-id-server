@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -414,7 +415,11 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.Service.ChangePassword(r.Context(), *p.UserID, *p.SessionID, in.CurrentPassword, in.NewPassword); err != nil {
+	if err := h.Service.ChangePassword(r.Context(), ChangePasswordInput{
+		UserID: *p.UserID, KeepSessionID: *p.SessionID, TenantID: p.TenantID,
+		Current: in.CurrentPassword, Next: in.NewPassword,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -481,12 +486,13 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
-	out, err := h.Service.ListSessions(r.Context(), *p.UserID)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	out, err := h.Service.ListSessionsPage(r.Context(), *p.UserID, limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {

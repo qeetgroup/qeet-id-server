@@ -31,6 +31,8 @@ func init() {
 		errs.CodeOIDCAuthCodeInvalid:                http.StatusBadRequest,
 		errs.CodeOIDCAuthCodeUsed:                   http.StatusBadRequest,
 		errs.CodeOIDCAuthCodeExpired:                http.StatusBadRequest,
+		errs.CodeOIDCCodeChallengeRequired:          http.StatusBadRequest,
+		errs.CodeOIDCCodeChallengeInvalid:           http.StatusBadRequest,
 		errs.CodeOIDCCodeVerifierRequired:           http.StatusBadRequest,
 		errs.CodeOIDCCodeVerifierInvalid:            http.StatusBadRequest,
 		errs.CodeOIDCCodeChallengeMethodUnsupported: http.StatusBadRequest,

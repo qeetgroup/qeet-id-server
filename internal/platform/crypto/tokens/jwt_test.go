@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,6 +40,110 @@ func publicPEM(t *testing.T, priv *ecdsa.PrivateKey) string {
 		t.Fatalf("marshal pub: %v", err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+}
+
+func privatePEM(t *testing.T, priv *ecdsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatalf("marshal private key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+func TestIssuerConfigurationIsRestartStableAcrossInstances(t *testing.T) {
+	_, privateKey := testIssuer(t)
+	configured := privatePEM(t, privateKey)
+	first, err := NewIssuer(configured, "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("first issuer: %v", err)
+	}
+	second, err := NewIssuer(configured, "qeet-test", "qeet-test", time.Hour, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("second issuer: %v", err)
+	}
+	if first.KID() != second.KID() {
+		t.Fatalf("same configured key produced different kids: %s != %s", first.KID(), second.KID())
+	}
+	raw, _, err := first.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "user.read")
+	if err != nil {
+		t.Fatalf("issue on first instance: %v", err)
+	}
+	if _, err := second.VerifyAccess(raw); err != nil {
+		t.Fatalf("second instance could not verify configured key token: %v", err)
+	}
+}
+
+func TestIssuerConcurrentVerificationSnapshotAccess(t *testing.T) {
+	issuer, _ := testIssuer(t)
+	type retiredFixture struct {
+		public string
+		token  string
+	}
+	fixtures := make([]retiredFixture, 8)
+	for index := range fixtures {
+		retired, privateKey := testIssuer(t)
+		raw, _, err := retired.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "user.read")
+		if err != nil {
+			t.Fatalf("issue retired fixture: %v", err)
+		}
+		fixtures[index] = retiredFixture{public: publicPEM(t, privateKey), token: raw}
+	}
+
+	start := make(chan struct{})
+	errorsCh := make(chan error, 32)
+	var wait sync.WaitGroup
+	for _, fixture := range fixtures {
+		fixture := fixture
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			issuer.AddRetiredKeysPEM(fixture.public)
+		}()
+	}
+	for range 16 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			for range 100 {
+				raw, _, err := issuer.IssueAccess(uuid.New(), uuid.New(), uuid.New(), "user.read")
+				if err != nil {
+					errorsCh <- err
+					return
+				}
+				if _, err := issuer.VerifyAccess(raw); err != nil {
+					errorsCh <- err
+					return
+				}
+				_ = issuer.JWKS()
+				_ = issuer.KeyInfo()
+			}
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatalf("concurrent issuer operation: %v", err)
+	}
+	for _, fixture := range fixtures {
+		if _, err := issuer.VerifyAccess(fixture.token); err != nil {
+			t.Fatalf("retired token did not verify after snapshot update: %v", err)
+		}
+	}
+}
+
+func TestLoadRetiredKeysPEMIsStrict(t *testing.T) {
+	issuer, _ := testIssuer(t)
+	if _, err := issuer.LoadRetiredKeysPEM("-----BEGIN PUBLIC KEY-----\nnot-base64\n-----END PUBLIC KEY-----"); err == nil {
+		t.Fatal("malformed configured verification key must fail startup loading")
+	}
+	_, retiredKey := testIssuer(t)
+	if count, err := issuer.LoadRetiredKeysPEM(publicPEM(t, retiredKey)); err != nil || count != 1 {
+		t.Fatalf("valid configured verification key: count=%d err=%v", count, err)
+	}
 }
 
 func decodeHeader(t *testing.T, token string) map[string]any {

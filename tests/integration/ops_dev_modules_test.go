@@ -59,7 +59,7 @@ func TestPrincipalService_ClientCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	p, secret, err := svc.Create(ctx, tx, principal.CreateInput{TenantID: tid, Name: "ci-bot", Scopes: []string{"users:read"}})
+	p, secret, err := svc.Create(ctx, tx, principal.CreateInput{TenantID: tid, Name: "ci-bot", Scopes: []string{"user.read"}})
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("Create: %v", err)

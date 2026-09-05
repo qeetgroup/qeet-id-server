@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func testService(t *testing.T) *Service {
@@ -18,15 +20,16 @@ func testService(t *testing.T) *Service {
 
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	s := testService(t)
+	tenantID := uuid.New()
 	for _, plain := range []string{"", "short", "sk_live_0123456789abcdef", strings.Repeat("x", 4096)} {
-		ct, nonce, err := s.encrypt(plain)
+		ct, nonce, err := s.encrypt(tenantID, "api-key", plain)
 		if err != nil {
 			t.Fatalf("encrypt: %v", err)
 		}
 		if plain != "" && bytes.Contains(ct, []byte(plain)) {
 			t.Error("ciphertext must not contain plaintext")
 		}
-		got, err := s.decrypt(ct, nonce)
+		got, err := s.decrypt(tenantID, "api-key", ct, nonce)
 		if err != nil {
 			t.Fatalf("decrypt: %v", err)
 		}
@@ -38,9 +41,10 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 
 func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 	s := testService(t)
-	ct, nonce, _ := s.encrypt("sk_live_secret_value")
+	tenantID := uuid.New()
+	ct, nonce, _ := s.encrypt(tenantID, "api-key", "sk_live_secret_value")
 	ct[0] ^= 0xff // flip a byte
-	if _, err := s.decrypt(ct, nonce); err == nil {
+	if _, err := s.decrypt(tenantID, "api-key", ct, nonce); err == nil {
 		t.Error("GCM must reject tampered ciphertext")
 	}
 }
@@ -48,9 +52,22 @@ func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 func TestDecryptRejectsWrongKey(t *testing.T) {
 	s1 := testService(t)
 	s2, _ := NewService(context.Background(), nil, StaticKeyProvider{Key: bytes.Repeat([]byte("z"), 32)})
-	ct, nonce, _ := s1.encrypt("secret")
-	if _, err := s2.decrypt(ct, nonce); err == nil {
+	tenantID := uuid.New()
+	ct, nonce, _ := s1.encrypt(tenantID, "api-key", "secret")
+	if _, err := s2.decrypt(tenantID, "api-key", ct, nonce); err == nil {
 		t.Error("decrypting with the wrong key must fail")
+	}
+}
+
+func TestDecryptRejectsWrongTenantOrName(t *testing.T) {
+	s := testService(t)
+	tenantID := uuid.New()
+	ct, nonce, _ := s.encrypt(tenantID, "api-key", "secret")
+	if _, err := s.decrypt(uuid.New(), "api-key", ct, nonce); err == nil {
+		t.Error("ciphertext transplanted to another tenant must fail")
+	}
+	if _, err := s.decrypt(tenantID, "other", ct, nonce); err == nil {
+		t.Error("ciphertext transplanted to another secret must fail")
 	}
 }
 

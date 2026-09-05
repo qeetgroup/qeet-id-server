@@ -18,7 +18,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/vc/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -70,6 +72,10 @@ func tsPtr(p pgtype.Timestamptz) *time.Time {
 // Issue records a credential and returns its signed JWT-VC. ttlSeconds <= 0
 // issues a non-expiring credential.
 func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credType string, claims map[string]any, ttlSeconds int) (*IssueResult, error) {
+	return s.IssueWithActor(ctx, tenantID, subject, credType, claims, ttlSeconds, audit.Actor{Type: "system"})
+}
+
+func (s *Service) IssueWithActor(ctx context.Context, tenantID uuid.UUID, subject, credType string, claims map[string]any, ttlSeconds int, actor audit.Actor) (*IssueResult, error) {
 	subject = strings.TrimSpace(subject)
 	credType = strings.TrimSpace(credType)
 	if subject == "" || credType == "" {
@@ -89,7 +95,12 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 		expiresAt = &e
 	}
 
-	row, err := s.q.CreateCredential(ctx, dbgen.CreateCredentialParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	row, err := s.q.WithTx(tx).CreateCredential(ctx, dbgen.CreateCredentialParams{
 		TenantID:  tenantID,
 		Subject:   subject,
 		Type:      credType,
@@ -134,7 +145,18 @@ func (s *Service) Issue(ctx context.Context, tenantID uuid.UUID, subject, credTy
 	if err != nil {
 		return nil, err
 	}
-	return &IssueResult{CredentialID: id, JWT: signed, ExpiresAt: expiresAt}, nil
+	result := &IssueResult{CredentialID: id, JWT: signed, ExpiresAt: expiresAt}
+	metadata := map[string]any{"subject": subject, "type": credType, "expires_at": expiresAt}
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "credential.issued", "credential", id, metadata)); err != nil {
+		return nil, err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "credential.events", EventType: "credential.issued", Payload: map[string]any{"credential_id": id, "tenant_id": tenantID, "subject": subject, "type": credType, "expires_at": expiresAt}}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 type VerifyResult struct {
@@ -195,18 +217,44 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Credential, e
 }
 
 func (s *Service) Revoke(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.RevokeCredential(ctx, dbgen.RevokeCredentialParams{ID: id, TenantID: tenantID})
+	return s.RevokeWithActor(ctx, id, tenantID, audit.Actor{Type: "system"})
+}
+
+func (s *Service) RevokeWithActor(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	n, err := s.q.WithTx(tx).RevokeCredential(ctx, dbgen.RevokeCredentialParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		return err
 	}
 	if n == 0 {
 		return errs.ErrVCCredentialNotFound
 	}
-	return nil
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "credential.revoked", "credential", id, nil)); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "credential.events", EventType: "credential.revoked", Payload: map[string]any{"credential_id": id, "tenant_id": tenantID}}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 type Handler struct {
 	Service *Service
+}
+
+func actorOf(r *http.Request) audit.Actor {
+	actor := audit.Actor{Type: "system", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if principal := httpx.PrincipalFromCtx(r.Context()); principal != nil {
+		actor.UserID = principal.UserID
+		if principal.ActorType != "" {
+			actor.Type = principal.ActorType
+		}
+	}
+	return actor
 }
 
 // Mount registers tenant-scoped admin endpoints (require a user JWT / API key).
@@ -267,7 +315,7 @@ func (h *Handler) issue(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.Issue(r.Context(), tenantID, in.Subject, in.Type, in.Claims, in.TTLSeconds)
+	res, err := h.Service.IssueWithActor(r.Context(), tenantID, in.Subject, in.Type, in.Claims, in.TTLSeconds, actorOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -286,7 +334,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.Revoke(r.Context(), id, tenantID); err != nil {
+	if err := h.Service.RevokeWithActor(r.Context(), id, tenantID, actorOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

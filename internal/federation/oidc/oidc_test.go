@@ -14,6 +14,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func testIssuer(t *testing.T) *tokens.Issuer {
@@ -101,6 +102,27 @@ func TestDiscovery_AdvertisesAlgIssuerS256(t *testing.T) {
 	}
 }
 
+func TestClientAuthenticatedEndpointsRejectOversizedForms(t *testing.T) {
+	handler := &Handler{}
+	router := chi.NewRouter()
+	handler.MountPublic(router)
+	body := "token=" + strings.Repeat("x", int(httpx.MaxFormBodyBytes)+1)
+
+	for _, path := range []string{"/oauth/revoke", "/oauth/introspect"} {
+		t.Run(path, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413: %s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestContains(t *testing.T) {
 	hay := []string{"openid", "profile", "email"}
 	for _, want := range hay {
@@ -173,5 +195,81 @@ func TestCurrentURL(t *testing.T) {
 	req.Host = "id.test"
 	if got := currentURL(req); got != "https://id.test/v1/oauth/authorize?client_id=rp&scope=openid" {
 		t.Errorf("currentURL = %q", got)
+	}
+}
+
+func TestValidateClientInput(t *testing.T) {
+	valid := CreateClientInput{
+		Type:           "confidential",
+		RedirectURIs:   []string{"https://client.example/callback"},
+		PostLogoutURIs: []string{"https://client.example/signed-out"},
+		GrantTypes:     []string{"authorization_code", "refresh_token"},
+	}
+	if err := validateClientInput(valid); err != nil {
+		t.Fatalf("valid client rejected: %v", err)
+	}
+	loopback := valid
+	loopback.Type = "public"
+	loopback.RedirectURIs = []string{"http://127.0.0.1:49152/callback", "http://localhost:3000/callback"}
+	if err := validateClientInput(loopback); err != nil {
+		t.Fatalf("loopback native callback rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*CreateClientInput)
+	}{
+		{"unknown client type", func(in *CreateClientInput) { in.Type = "browser" }},
+		{"unknown grant", func(in *CreateClientInput) { in.GrantTypes = []string{"password"} }},
+		{"authorization code without redirect", func(in *CreateClientInput) { in.RedirectURIs = nil }},
+		{"non-loopback http redirect", func(in *CreateClientInput) { in.RedirectURIs = []string{"http://client.example/callback"} }},
+		{"redirect fragment", func(in *CreateClientInput) { in.RedirectURIs = []string{"https://client.example/callback#fragment"} }},
+		{"redirect userinfo", func(in *CreateClientInput) { in.RedirectURIs = []string{"https://user@client.example/callback"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := valid
+			tc.mutate(&in)
+			if err := validateClientInput(in); err == nil {
+				t.Fatal("invalid client input was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateRegisteredRedirectURI(t *testing.T) {
+	valid := []string{
+		"https://app.example.com/callback",
+		"https://app.example.com/callback?next=%2Fhome",
+		"http://127.0.0.1:8080/cb",
+		"http://[::1]:8080/cb",
+		"http://localhost:3000/cb",
+		"com.example.app:/oauth2redirect",
+		"com.example.app://oauth2redirect",
+		"in.qeet.console:/cb",
+	}
+	for _, uri := range valid {
+		if err := validateRegisteredRedirectURI(uri); err != nil {
+			t.Errorf("validateRegisteredRedirectURI(%q) = %v, want nil", uri, err)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"/callback",                          // relative
+		"https://app.example.com/cb#frag",    // fragment is the response's
+		"https://user:pw@app.example.com/cb", // userinfo
+		"http://example.com/cb",              // non-loopback cleartext
+		"http://169.254.169.254/cb",          // link-local, not loopback
+		"myapp:/cb",                          // no dot: not reverse-DNS
+		"javascript:alert(1)",                // reserved scheme
+		"data:text/html,x",                   // reserved scheme
+		"ftp://example.com/cb",               // reserved scheme
+		".com.example:/cb",                   // malformed scheme
+		"com..example:/cb",                   // malformed scheme
+	}
+	for _, uri := range invalid {
+		if err := validateRegisteredRedirectURI(uri); err == nil {
+			t.Errorf("validateRegisteredRedirectURI(%q) = nil, want error", uri)
+		}
 	}
 }

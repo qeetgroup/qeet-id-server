@@ -10,7 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -26,12 +27,11 @@ const maxImportRows = 1000
 type userCreator func(ctx context.Context, in CreateInput) (*User, error)
 
 // runBulkImport validates and creates each row, continuing past per-row
-// failures (partial success). It returns the summary plus the users that were
-// created, so the caller can emit created events. HTTP/DB specifics are kept
+// failures (partial success). `create` writes each user's own audit and outbox
+// evidence, so only the summary comes back here. HTTP/DB specifics are kept
 // out — `create` is injected — so this is pure and testable.
-func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) (BulkImportResult, []*User) {
+func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUID, rows []BulkUserInput, create userCreator) BulkImportResult {
 	var res BulkImportResult
-	created := make([]*User, 0, len(rows))
 	for i, row := range rows {
 		line := i + 1
 		if v != nil {
@@ -41,7 +41,7 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 				continue
 			}
 		}
-		u, err := create(ctx, CreateInput{
+		_, err := create(ctx, CreateInput{
 			TenantID:    tenantID,
 			Email:       row.Email,
 			Password:    row.Password,
@@ -60,9 +60,8 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			continue
 		}
 		res.Succeeded++
-		created = append(created, u)
 	}
-	return res, created
+	return res
 }
 
 // firstValidationMsg renders a concise message from a validator error.
@@ -109,14 +108,14 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			hash = ph
 		}
-		return h.Repo.CreateWithCredential(ctx, ci, hash)
+		return h.createWithEvidence(r, ci, hash)
 	}
 
-	res, created := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
-	for _, u := range created {
-		h.publishCreated(r, u) // audit user.created + outbox, per created user
+	res := runBulkImport(r.Context(), h.Validate, tenantID, in.Users, create)
+	if err := h.auditBulkImport(r, tenantID, res); err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	h.auditBulkImport(r, tenantID, res)
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
@@ -159,43 +158,63 @@ func (h *Handler) bulkImportFromVendor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	create := func(ctx context.Context, ci CreateInput) (*User, error) {
-		return h.Repo.CreateWithCredential(ctx, ci, "")
+		return h.createWithEvidence(r, ci, "")
 	}
-	res, created := runBulkImport(r.Context(), h.Validate, tenantID, rows, create)
+	res := runBulkImport(r.Context(), h.Validate, tenantID, rows, create)
 	// Parse-level failures (rows that never reached validation) count toward
 	// the same summary, with their own line numbers from the source file.
 	res.Failed += len(parseErrs)
 	res.Errors = append(parseErrs, res.Errors...)
 
-	for _, u := range created {
-		h.publishCreated(r, u)
+	if err := h.auditBulkImport(r, tenantID, res); err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	h.auditBulkImport(r, tenantID, res)
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
 // auditBulkImport records a single summary row for the batch.
-func (h *Handler) auditBulkImport(r *http.Request, tenantID uuid.UUID, res BulkImportResult) {
+func (h *Handler) auditBulkImport(r *http.Request, tenantID uuid.UUID, res BulkImportResult) error {
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	defer tx.Rollback(ctx)
 	var actorID *uuid.UUID
+	actorType := "system"
 	if p := httpx.PrincipalFromCtx(ctx); p != nil {
 		actorID = p.UserID
+		if p.ActorType != "" {
+			actorType = p.ActorType
+		}
 	}
 	tid := tenantID
-	_ = audit.Record(ctx, tx, audit.Event{
+	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     &tid,
 		ActorUserID:  actorID,
+		ActorType:    actorType,
 		Action:       "user.bulk_imported",
-		ResourceType: "user",
+		ResourceType: "tenant",
+		ResourceID:   &tenantID,
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
 		Metadata:     map[string]any{"succeeded": res.Succeeded, "failed": res.Failed},
-	})
-	_ = tx.Commit(ctx)
+	}); err != nil {
+		return err
+	}
+	if err := outbox.Enqueue(ctx, tx, outbox.Event{
+		AggregateID: tenantID,
+		Topic:       "user.events",
+		EventType:   "user.bulk_imported",
+		Payload: map[string]any{
+			"tenant_id": tenantID,
+			"succeeded": res.Succeeded,
+			"failed":    res.Failed,
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

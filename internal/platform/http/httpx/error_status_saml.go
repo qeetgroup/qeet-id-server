@@ -28,6 +28,8 @@ func init() {
 		errs.CodeSAMLAssertionInvalid:         http.StatusUnauthorized,
 		errs.CodeSAMLAssertionConditions:      http.StatusUnauthorized,
 		errs.CodeSAMLAssertionNoEmail:         http.StatusBadRequest,
+		errs.CodeSAMLRequestCorrelation:       http.StatusUnauthorized,
+		errs.CodeSAMLReplayDetected:           http.StatusUnauthorized,
 		errs.CodeSAMLIdPNotConfigured:         http.StatusNotImplemented,
 		errs.CodeSAMLAuthnRequestInvalid:      http.StatusBadRequest,
 		errs.CodeSAMLRequestParamMissing:      http.StatusBadRequest,

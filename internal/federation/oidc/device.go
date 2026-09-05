@@ -227,6 +227,18 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	if !ok {
 		return errs.ErrOIDCUserTenantMismatch
 	}
+	// CheckUserInDeviceTenant only compares users.tenant_id; it says nothing
+	// about whether the user or tenant is still active. Without this, a
+	// suspended user holding a live SSO cookie could still approve a device
+	// grant and be issued a tenant-stamped token — which the authorization-code
+	// path already refuses.
+	live, err := s.activeTenantPrincipal(ctx, userID, row.TenantID)
+	if err != nil {
+		return err
+	}
+	if !live {
+		return errs.ErrOIDCUserTenantMismatch
+	}
 
 	// Record consent for the requested scopes so the grant is consistent with
 	// the authorization_code flow (skips re-consent on later flows).
@@ -505,8 +517,8 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request) {
 // token endpoints (form/Basic), CSRF-exempt in the router, and returns the
 // (device_code, user_code) pair plus the verification URIs.
 func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	clientID := r.Form.Get("client_id")

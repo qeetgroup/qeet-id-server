@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./run.sh                          # full run against http://localhost:4001
-#   ./run.sh --base http://localhost:4000
+#   ./run.sh --base http://localhost:4001
 #   ./run.sh --folder Auth            # run one folder
 #   ./run.sh --folder Auth --folder Tenants  # run multiple folders (repeat flag)
 #   ./run.sh --ci                     # JUnit + HTML reports under ./reports

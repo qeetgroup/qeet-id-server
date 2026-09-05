@@ -39,7 +39,7 @@ type Notifier interface {
 	Notify(ctx context.Context, tenantID, userID uuid.UUID, kind, title, description, href string) error
 }
 
-// SetNotifier wires the CIBA consent-prompt notifier. Called from cmd/server/main.go.
+// SetNotifier wires the CIBA consent-prompt notifier. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetNotifier(n Notifier) { s.notifier = n }
 
 // CIBAAuthResponse is the OpenID CIBA §7 backchannel-authentication response.
@@ -91,6 +91,16 @@ func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecr
 	}
 	if err != nil {
 		return nil, err
+	}
+	// GetUserByEmailInTenant filters soft-deletes but not suspension, and the
+	// tenant's own state is never consulted. Match the authorization-code
+	// path's liveness requirement before minting anything.
+	live, err := s.activeTenantPrincipal(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !live {
+		return nil, oauthErr("unknown_user_id", "login_hint does not resolve to a known user")
 	}
 
 	raw, hash, err := codes.URLToken()
@@ -310,8 +320,8 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 }
 
 func (h *Handler) backchannelAuthorize(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrOIDCFormInvalid)
+	if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	clientID := r.Form.Get("client_id")

@@ -1,11 +1,6 @@
-// Package adminportal implements a WorkOS-style Admin Portal: a unique,
-// time-limited, capability-scoped link a tenant admin hands to their (account-less)
-// IT admin to configure the tenant's SAML connection and/or rotate its SCIM token
-// without logging in. The link carries no identity — only a capability set
-// ("saml"/"scim") and an expiry; the raw token (hashed at rest) is the sole
-// credential, so redemption bypasses the connection.* RBAC check. Unlike an invite
-// it is reusable until it expires or is revoked. Out of scope: the SCIM
-// provisioned-users list (PII) and the SAML IdP-side registry.
+// Package adminportal implements capability-scoped, account-less SAML/SCIM
+// administration. A one-time link token is exchanged for a short-lived browser
+// session cookie; subsequent requests never carry credentials in their URL.
 package adminportal
 
 import (
@@ -35,9 +30,12 @@ const (
 	CapabilitySAML = "saml"
 	CapabilitySCIM = "scim"
 
-	minTTL     = 15 * time.Minute
-	maxTTL     = 7 * 24 * time.Hour
-	defaultTTL = 24 * time.Hour
+	minTTL              = 15 * time.Minute
+	maxTTL              = 24 * time.Hour
+	defaultTTL          = time.Hour
+	portalSessionTTL    = 30 * time.Minute
+	portalSessionCookie = "qeet_admin_portal_session"
+	portalCookiePath    = "/v1/admin-portal"
 )
 
 var validCapabilities = []string{CapabilitySAML, CapabilitySCIM}
@@ -166,8 +164,10 @@ func (s *Service) Generate(ctx context.Context, tx pgx.Tx, tenantID, createdBy u
 
 // URL builds the shareable link for a freshly-generated raw token.
 func (s *Service) URL(rawToken string) string {
-	return s.loginBaseURL + "/admin-portal/" + rawToken
+	return s.loginBaseURL + "/admin-portal#token=" + rawToken
 }
+
+func (s *Service) PortalURL() string { return s.loginBaseURL + "/admin-portal" }
 
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Link, error) {
 	rows, err := s.q.ListAdminPortalLinksByTenant(ctx, tenantID)
@@ -204,20 +204,42 @@ func (s *Service) Revoke(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID)
 	return nil
 }
 
-// Resolve maps a presented raw token to its Link, rejecting a revoked or
-// expired one, and stamps last_used_at. Every public redemption endpoint
-// calls this first.
-func (s *Service) Resolve(ctx context.Context, rawToken string) (*Link, error) {
+// Exchange atomically consumes a one-time link token and creates a separately
+// hashed, short-lived portal session. Concurrent redemption has one winner.
+func (s *Service) Exchange(ctx context.Context, rawToken string) (*Link, string, time.Time, error) {
 	if rawToken == "" {
-		return nil, errs.ErrAdminPortalTokenMissing
+		return nil, "", time.Time{}, errs.ErrAdminPortalTokenMissing
 	}
 	hash := codes.Hash(rawToken)
-	row, err := s.q.GetAdminPortalLinkByHash(ctx, hash)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	defer tx.Rollback(ctx)
+	var row struct {
+		ID           uuid.UUID
+		TenantID     uuid.UUID
+		Capabilities []string
+		CreatedBy    pgtype.UUID
+		ExpiresAt    time.Time
+		RevokedAt    pgtype.Timestamptz
+		LastUsedAt   pgtype.Timestamptz
+		CreatedAt    time.Time
+		RedeemedAt   pgtype.Timestamptz
+	}
+	err = tx.QueryRow(ctx, `
+		SELECT id, tenant_id, capabilities, created_by, expires_at, revoked_at,
+		       last_used_at, created_at, redeemed_at
+		FROM tenant.admin_portal_links
+		WHERE token_hash = $1
+		FOR UPDATE
+	`, hash).Scan(&row.ID, &row.TenantID, &row.Capabilities, &row.CreatedBy, &row.ExpiresAt,
+		&row.RevokedAt, &row.LastUsedAt, &row.CreatedAt, &row.RedeemedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrAdminPortalLinkInvalid
+		return nil, "", time.Time{}, errs.ErrAdminPortalLinkInvalid
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", time.Time{}, err
 	}
 	l := &Link{
 		ID:           row.ID,
@@ -230,13 +252,100 @@ func (s *Service) Resolve(ctx context.Context, rawToken string) (*Link, error) {
 		CreatedAt:    row.CreatedAt,
 	}
 	if l.RevokedAt != nil {
-		return nil, errs.ErrAdminPortalLinkRevoked
+		return nil, "", time.Time{}, errs.ErrAdminPortalLinkRevoked
 	}
 	if time.Now().After(l.ExpiresAt) {
-		return nil, errs.ErrAdminPortalLinkExpired
+		return nil, "", time.Time{}, errs.ErrAdminPortalLinkExpired
 	}
-	_ = s.q.TouchAdminPortalLinkUsed(ctx, l.ID)
-	return l, nil
+	if row.RedeemedAt.Valid {
+		return nil, "", time.Time{}, errs.ErrAdminPortalLinkInvalid
+	}
+	rawSession, sessionHash, err := codes.URLToken()
+	if err != nil {
+		return nil, "", time.Time{}, err
+	}
+	sessionExpires := time.Now().UTC().Add(portalSessionTTL)
+	if l.ExpiresAt.Before(sessionExpires) {
+		sessionExpires = l.ExpiresAt
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO auth.admin_portal_sessions (link_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, l.ID, sessionHash, sessionExpires); err != nil {
+		return nil, "", time.Time{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE tenant.admin_portal_links
+		SET redeemed_at = NOW(), last_used_at = NOW()
+		WHERE id = $1
+	`, l.ID); err != nil {
+		return nil, "", time.Time{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, "", time.Time{}, err
+	}
+	l.ExpiresAt = sessionExpires
+	return l, rawSession, sessionExpires, nil
+}
+
+// ResolveSession validates a portal session and its parent link on every
+// request so expiry or administrator revocation takes effect immediately.
+func (s *Service) ResolveSession(ctx context.Context, rawSession string) (*Link, error) {
+	if rawSession == "" {
+		return nil, errs.ErrAdminPortalSessionMissing
+	}
+	var l Link
+	var createdBy pgtype.UUID
+	var linkRevoked, sessionRevoked pgtype.Timestamptz
+	var sessionID uuid.UUID
+	var sessionExpires time.Time
+	err := s.pool.QueryRow(ctx, `
+		SELECT s.id, s.expires_at, s.revoked_at,
+		       l.id, l.tenant_id, l.capabilities, l.created_by, l.expires_at,
+		       l.revoked_at, l.last_used_at, l.created_at
+		FROM auth.admin_portal_sessions s
+		JOIN tenant.admin_portal_links l ON l.id = s.link_id
+		WHERE s.token_hash = $1
+	`, codes.Hash(rawSession)).Scan(&sessionID, &sessionExpires, &sessionRevoked,
+		&l.ID, &l.TenantID, &l.Capabilities, &createdBy, &l.ExpiresAt,
+		&linkRevoked, &l.LastUsedAt, &l.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrAdminPortalSessionInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	l.CreatedBy = pgUUIDToPtr(createdBy)
+	l.RevokedAt = pgTimeToPtr(linkRevoked)
+	now := time.Now()
+	if sessionRevoked.Valid || linkRevoked.Valid {
+		return nil, errs.ErrAdminPortalSessionInvalid
+	}
+	if now.After(sessionExpires) || now.After(l.ExpiresAt) {
+		return nil, errs.ErrAdminPortalSessionInvalid
+	}
+	l.ExpiresAt = sessionExpires
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE auth.admin_portal_sessions SET last_used_at = NOW() WHERE id = $1
+	`, sessionID)
+	return &l, nil
+}
+
+func (s *Service) RevokeSession(ctx context.Context, rawSession string) error {
+	if rawSession == "" {
+		return errs.ErrAdminPortalSessionMissing
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE auth.admin_portal_sessions SET revoked_at = NOW()
+		WHERE token_hash = $1 AND revoked_at IS NULL
+	`, codes.Hash(rawSession))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errs.ErrAdminPortalSessionInvalid
+	}
+	return nil
 }
 
 func (s *Service) tenantName(ctx context.Context, tenantID uuid.UUID) (string, error) {
@@ -296,9 +405,10 @@ type scimService interface {
 }
 
 type Handler struct {
-	Service *Service
-	SAML    samlService
-	SCIM    scimService
+	Service      *Service
+	SAML         samlService
+	SCIM         scimService
+	CookieSecure bool
 }
 
 // Mount registers the authed link-management endpoints (generate/list/revoke)
@@ -311,22 +421,34 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Delete("/tenants/{tenantID}/admin-portal/links/{id}", h.revoke)
 }
 
-// MountPublic registers the token-gated redemption endpoints the external IT
-// admin's browser calls — no user JWT, no RBAC, no cookie session. The
-// {token} path segment is the sole credential.
+// MountPublic registers the one-time link exchange and the cookie-authenticated,
+// token-free portal endpoints used by the external IT administrator.
 func (h *Handler) MountPublic(r chi.Router) {
-	r.Get("/admin-portal/{token}/context", h.context)
+	r.Group(func(r chi.Router) {
+		r.Use(adminPortalHeaders)
+		r.Post("/admin-portal/session", h.exchange)
+		r.Delete("/admin-portal/session", h.logout)
+		r.Get("/admin-portal/context", h.context)
 
-	r.Get("/admin-portal/{token}/saml", h.samlList)
-	r.Post("/admin-portal/{token}/saml", h.samlCreate)
-	r.Get("/admin-portal/{token}/saml/{id}", h.samlGet)
-	r.Patch("/admin-portal/{token}/saml/{id}", h.samlUpdate)
-	r.Post("/admin-portal/{token}/saml/{id}/test", h.samlTest)
-	r.Delete("/admin-portal/{token}/saml/{id}", h.samlDelete)
+		r.Get("/admin-portal/saml", h.samlList)
+		r.Post("/admin-portal/saml", h.samlCreate)
+		r.Get("/admin-portal/saml/{id}", h.samlGet)
+		r.Patch("/admin-portal/saml/{id}", h.samlUpdate)
+		r.Post("/admin-portal/saml/{id}/test", h.samlTest)
+		r.Delete("/admin-portal/saml/{id}", h.samlDelete)
 
-	r.Get("/admin-portal/{token}/scim", h.scimConfig)
-	r.Post("/admin-portal/{token}/scim/token", h.scimRotate)
-	r.Delete("/admin-portal/{token}/scim/token", h.scimRevoke)
+		r.Get("/admin-portal/scim", h.scimConfig)
+		r.Post("/admin-portal/scim/token", h.scimRotate)
+		r.Delete("/admin-portal/scim/token", h.scimRevoke)
+	})
+}
+
+func adminPortalHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -473,10 +595,14 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 
 // --- public: resolve helpers ---
 
-// resolve loads the link for the {token} path param and, if capability is
-// non-empty, rejects the request when the link doesn't authorize it.
+// resolve authenticates the short-lived portal session cookie and enforces the
+// capability required by the requested operation.
 func (h *Handler) resolve(r *http.Request, capability string) (*Link, error) {
-	l, err := h.Service.Resolve(r.Context(), chi.URLParam(r, "token"))
+	cookie, err := r.Cookie(portalSessionCookie)
+	if err != nil || cookie.Value == "" {
+		return nil, errs.ErrAdminPortalSessionMissing
+	}
+	l, err := h.Service.ResolveSession(r.Context(), cookie.Value)
 	if err != nil {
 		return nil, err
 	}
@@ -484,6 +610,66 @@ func (h *Handler) resolve(r *http.Request, capability string) (*Link, error) {
 		return nil, errs.ErrAdminPortalCapabilityNotGranted
 	}
 	return l, nil
+}
+
+func bearerCredential(r *http.Request) string {
+	const prefix = "Bearer "
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(header, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(header, prefix))
+}
+
+func (h *Handler) setSessionCookie(w http.ResponseWriter, raw string, expiresAt time.Time) {
+	maxAge := int(time.Until(expiresAt).Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: portalSessionCookie, Value: raw, Path: portalCookiePath,
+		Expires: expiresAt, MaxAge: maxAge, HttpOnly: true,
+		Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: portalSessionCookie, Path: portalCookiePath,
+		Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true,
+		Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
+	link, rawSession, expiresAt, err := h.Service.Exchange(r.Context(), bearerCredential(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	portalContext, err := h.Service.Context(r.Context(), link)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.setSessionCookie(w, rawSession, expiresAt)
+	httpx.WriteJSON(w, http.StatusCreated, map[string]any{
+		"context": portalContext, "expires_at": expiresAt, "redirect_url": h.Service.PortalURL(),
+	})
+}
+
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie(portalSessionCookie)
+	if err != nil || cookie.Value == "" {
+		httpx.WriteError(w, r, errs.ErrAdminPortalSessionMissing)
+		return
+	}
+	if err := h.Service.RevokeSession(r.Context(), cookie.Value); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func portalAudit(action string, resourceID *uuid.UUID) func(ctx context.Context, tx pgx.Tx, l *Link, r *http.Request, meta map[string]any) error {

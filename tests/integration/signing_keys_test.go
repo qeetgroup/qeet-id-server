@@ -75,3 +75,36 @@ func TestSigningKeysEndpoint(t *testing.T) {
 		t.Errorf("signing-keys must not expose key material: x=%q y=%q d=%q", k.X, k.Y, k.D)
 	}
 }
+
+// TestSigningKeyRotationIsNotMounted proves that process-local signing-key
+// rotation and private-key export are not exposed through the application API.
+func TestSigningKeyRotationIsNotMounted(t *testing.T) {
+	requireDB(t)
+
+	issuer := mustIssuer()
+	svc := oidc.NewService(testPool, issuer)
+	h := &oidc.Handler{Service: svc}
+
+	r := chi.NewRouter()
+	r.Route("/v1", func(r chi.Router) {
+		h.Mount(r)
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/oidc/signing-keys/rotate", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post signing-key rotation: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for removed signing-key rotation route", resp.StatusCode)
+	}
+	if issuer.KID() == "" {
+		t.Fatal("configured issuer must remain usable after the rejected request")
+	}
+}

@@ -2,16 +2,6 @@
 -- All queries below are STATIC and compiled by sqlc into ./dbgen.
 -- getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
 
--- name: InsertLdapConnection :one
-INSERT INTO tenant.ldap_connections
-    (tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn, bind_password,
-     base_dn, user_filter, email_attribute, name_attribute, status)
-VALUES (@tenant_id, @name, @server_url, @start_tls, @skip_tls_verify, @bind_dn, @bind_password,
-        @base_dn, @user_filter, @email_attribute, @name_attribute, @status)
-RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
-          base_dn, user_filter, email_attribute, name_attribute, status,
-          created_at, updated_at, last_login_at;
-
 -- name: ListLdapConnections :many
 SELECT id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
        base_dn, user_filter, email_attribute, name_attribute, status,
@@ -31,7 +21,6 @@ UPDATE tenant.ldap_connections SET
     start_tls       = COALESCE(sqlc.narg('start_tls'), start_tls),
     skip_tls_verify = COALESCE(sqlc.narg('skip_tls_verify'), skip_tls_verify),
     bind_dn         = COALESCE(sqlc.narg('bind_dn'), bind_dn),
-    bind_password   = COALESCE(sqlc.narg('bind_password'), bind_password),
     base_dn         = COALESCE(sqlc.narg('base_dn'), base_dn),
     user_filter     = COALESCE(sqlc.narg('user_filter'), user_filter),
     email_attribute = COALESCE(sqlc.narg('email_attribute'), email_attribute),

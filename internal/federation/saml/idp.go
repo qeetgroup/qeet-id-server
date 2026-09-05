@@ -34,7 +34,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -652,8 +652,8 @@ func (h *Handler) idpSSO(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrSAMLIdPNotConfigured)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		httpx.WriteError(w, r, errs.ErrSAMLRequestInvalid)
+	if err := httpx.ParseForm(r, httpx.MaxSAMLBodyBytes); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	relayState := r.FormValue("RelayState")

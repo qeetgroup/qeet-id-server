@@ -112,90 +112,6 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (uuid.UUID, 
 	return id, err
 }
 
-const insertLdapConnection = `-- name: InsertLdapConnection :one
-
-INSERT INTO tenant.ldap_connections
-    (tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn, bind_password,
-     base_dn, user_filter, email_attribute, name_attribute, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12)
-RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
-          base_dn, user_filter, email_attribute, name_attribute, status,
-          created_at, updated_at, last_login_at
-`
-
-type InsertLdapConnectionParams struct {
-	TenantID       uuid.UUID
-	Name           string
-	ServerUrl      string
-	StartTls       bool
-	SkipTlsVerify  bool
-	BindDn         string
-	BindPassword   string
-	BaseDn         string
-	UserFilter     string
-	EmailAttribute string
-	NameAttribute  string
-	Status         string
-}
-
-type InsertLdapConnectionRow struct {
-	ID             uuid.UUID
-	TenantID       uuid.UUID
-	Name           string
-	ServerUrl      string
-	StartTls       bool
-	SkipTlsVerify  bool
-	BindDn         string
-	BaseDn         string
-	UserFilter     string
-	EmailAttribute string
-	NameAttribute  string
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastLoginAt    pgtype.Timestamptz
-}
-
-// Queries for the ldap domain.
-// All queries below are STATIC and compiled by sqlc into ./dbgen.
-// getFull (conditional WHERE tenant_id) stays hand-written in ldap.go.
-func (q *Queries) InsertLdapConnection(ctx context.Context, arg InsertLdapConnectionParams) (InsertLdapConnectionRow, error) {
-	row := q.db.QueryRow(ctx, insertLdapConnection,
-		arg.TenantID,
-		arg.Name,
-		arg.ServerUrl,
-		arg.StartTls,
-		arg.SkipTlsVerify,
-		arg.BindDn,
-		arg.BindPassword,
-		arg.BaseDn,
-		arg.UserFilter,
-		arg.EmailAttribute,
-		arg.NameAttribute,
-		arg.Status,
-	)
-	var i InsertLdapConnectionRow
-	err := row.Scan(
-		&i.ID,
-		&i.TenantID,
-		&i.Name,
-		&i.ServerUrl,
-		&i.StartTls,
-		&i.SkipTlsVerify,
-		&i.BindDn,
-		&i.BaseDn,
-		&i.UserFilter,
-		&i.EmailAttribute,
-		&i.NameAttribute,
-		&i.Status,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.LastLoginAt,
-	)
-	return i, err
-}
-
 const insertUserWithEmail = `-- name: InsertUserWithEmail :one
 INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
 VALUES ($1, $2, NOW(), $3, 'active')
@@ -317,14 +233,13 @@ UPDATE tenant.ldap_connections SET
     start_tls       = COALESCE($3, start_tls),
     skip_tls_verify = COALESCE($4, skip_tls_verify),
     bind_dn         = COALESCE($5, bind_dn),
-    bind_password   = COALESCE($6, bind_password),
-    base_dn         = COALESCE($7, base_dn),
-    user_filter     = COALESCE($8, user_filter),
-    email_attribute = COALESCE($9, email_attribute),
-    name_attribute  = COALESCE($10, name_attribute),
-    status          = COALESCE($11, status),
+	base_dn         = COALESCE($6, base_dn),
+	user_filter     = COALESCE($7, user_filter),
+	email_attribute = COALESCE($8, email_attribute),
+	name_attribute  = COALESCE($9, name_attribute),
+	status          = COALESCE($10, status),
     updated_at      = NOW()
-WHERE id = $12 AND tenant_id = $13
+WHERE id = $11 AND tenant_id = $12
 RETURNING id, tenant_id, name, server_url, start_tls, skip_tls_verify, bind_dn,
           base_dn, user_filter, email_attribute, name_attribute, status,
           created_at, updated_at, last_login_at
@@ -336,7 +251,6 @@ type UpdateLdapConnectionParams struct {
 	StartTls       *bool
 	SkipTlsVerify  *bool
 	BindDn         *string
-	BindPassword   *string
 	BaseDn         *string
 	UserFilter     *string
 	EmailAttribute *string
@@ -371,7 +285,6 @@ func (q *Queries) UpdateLdapConnection(ctx context.Context, arg UpdateLdapConnec
 		arg.StartTls,
 		arg.SkipTlsVerify,
 		arg.BindDn,
-		arg.BindPassword,
 		arg.BaseDn,
 		arg.UserFilter,
 		arg.EmailAttribute,

@@ -25,7 +25,7 @@ SELECT tenant_id, scopes FROM auth.oidc_clients WHERE client_id = @client_id;
 SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientRedirectInfo :one
-SELECT tenant_id, scopes, redirect_uris FROM auth.oidc_clients WHERE client_id = @client_id;
+SELECT tenant_id, type, scopes, redirect_uris FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientPostLogoutURIs :one
 SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = @client_id;

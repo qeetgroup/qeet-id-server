@@ -120,7 +120,12 @@ func Run() {
 
 	sup := worker.New()
 	for _, w := range workers {
-		sup.Register(w.name, w.run)
+		if cfg.EmbeddedWorkers || w.always {
+			sup.Register(w.name, w.run)
+		}
+	}
+	if !cfg.EmbeddedWorkers {
+		slog.Info("embedded workers disabled; expecting standalone worker deployment")
 	}
 	waitWorkers := sup.Start(rootCtx)
 

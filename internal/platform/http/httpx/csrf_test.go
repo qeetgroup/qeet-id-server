@@ -191,3 +191,35 @@ func TestCSRF_ExemptPathBypassesMutationCheck(t *testing.T) {
 		t.Fatalf("non-exempt path must still enforce CSRF, got %d", rec2.Code)
 	}
 }
+
+func TestMatchExemptPath(t *testing.T) {
+	cases := []struct {
+		pattern, path string
+		want          bool
+	}{
+		// Exact entries must not behave like prefixes. This is the regression
+		// that let POST /v1/social/providers ride a "/v1/social/" exemption.
+		{"/v1/oauth/bc-authorize", "/v1/oauth/bc-authorize", true},
+		{"/v1/oauth/bc-authorize", "/v1/oauth/bc-authorize/decision", false},
+		{"/v1/social/exchange", "/v1/social/exchange", true},
+		{"/v1/social/exchange", "/v1/social/providers", false},
+
+		// Trailing slash keeps prefix behaviour where a family really is public.
+		{"/v1/auth/magic-link/", "/v1/auth/magic-link/start", true},
+		{"/v1/auth/magic-link/", "/v1/auth/magic-link/consume", true},
+		{"/v1/auth/magic-link/", "/v1/auth/magic-linkX", false},
+		{"/saml/acs/", "/saml/acs/2f1c8b4e-0000-0000-0000-000000000000", true},
+
+		// "*" spans exactly one segment.
+		{"/v1/social/*/callback", "/v1/social/apple/callback", true},
+		{"/v1/social/*/callback", "/v1/social/google/callback", true},
+		{"/v1/social/*/callback", "/v1/social/apple/link/start", false},
+		{"/v1/social/*/callback", "/v1/social/callback", false},
+		{"/v1/social/*/callback", "/v1/social/a/b/callback", false},
+	}
+	for _, tc := range cases {
+		if got := matchExemptPath(tc.pattern, tc.path); got != tc.want {
+			t.Errorf("matchExemptPath(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}

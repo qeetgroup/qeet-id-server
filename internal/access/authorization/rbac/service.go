@@ -41,7 +41,7 @@ func (s *Service) SetPlanLimiter(l PlanLimiter) { s.limits = l }
 type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
 
 // SetEmitter wires webhook delivery for token.claims_change signals. Called
-// from cmd/server/main.go.
+// from internal/bootstrap/dependencies.go.
 func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
 
 // emit is a best-effort webhook delivery — a failure here must never fail

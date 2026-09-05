@@ -126,15 +126,6 @@ WHERE tenant_id = @tenant_id
 ORDER BY created_at DESC
 LIMIT 200;
 
--- name: GetPendingPurgeRequests :many
--- Pick a batch of ripe purge requests for the background sweep.
--- FOR UPDATE SKIP LOCKED prevents concurrent sweepers from double-processing.
-SELECT id, user_id
-FROM "user".purge_requests
-WHERE status = 'pending' AND grace_until <= NOW()
-LIMIT 50
-FOR UPDATE SKIP LOCKED;
-
 -- name: PurgeUserPII :exec
 -- Replace PII fields with redacted markers and soft-delete the user row.
 -- Audit references are intentionally preserved; only personal data is erased.
@@ -190,14 +181,6 @@ SELECT id, tenant_id, user_id, requested_by, status, payload, error,
        completed_at, created_at
 FROM "user".export_requests
 WHERE id = @id AND tenant_id = @tenant_id;
-
--- name: GetPendingExportRequests :many
--- Pick a batch of pending export jobs for the background sweep.
-SELECT id, tenant_id, user_id
-FROM "user".export_requests
-WHERE status = 'pending'
-LIMIT 20
-FOR UPDATE SKIP LOCKED;
 
 -- name: FailExportRequest :exec
 UPDATE "user".export_requests

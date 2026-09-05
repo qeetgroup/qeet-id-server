@@ -25,7 +25,7 @@ import (
 
 // permissionChecker is a narrow read-only interface over rbac.Repository.
 // Declared here so the search package does not import the rbac concrete
-// package — the caller (cmd/server) wires the concrete repo at boot.
+// package — the composition root wires the concrete repo at boot.
 type permissionChecker interface {
 	Check(ctx context.Context, userID, tenantID uuid.UUID, permKey string) (bool, error)
 }

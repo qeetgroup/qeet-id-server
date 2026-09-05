@@ -5,15 +5,15 @@ info:
   description: 'Qeet ID identity platform — full HTTP surface.
 
 
-    This document is generated to cover EVERY route mounted by the chi router (internal/http/router.go) and is guarded by internal/http/openapi_coverage_test.go, which fails CI if any mounted route is undocumented. Launch-critical families (Auth, OIDC/OAuth, SCIM, SAML, Users, Tenants, RBAC, API Keys) carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies (noted in each operation''s description).
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
 
 
     Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
 servers:
+  - url: https://api.id.qeet.in
+    description: Production
   - url: http://localhost:4001
-    description: Local (docker compose)
-  - url: http://localhost:4000
-    description: Local (make dev-backend)
+    description: Local (make dev)
 tags:
   - name: Auth
     description: Login, signup, refresh, sessions, hosted-login SSO cookie.
@@ -532,6 +532,22 @@ paths:
       summary: List sessions
       tags:
         - Auth
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Opaque owner-scoped cursor returned by the previous page.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -547,6 +563,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Session'
+                  next_cursor:
+                    type: string
+                    description: Opaque owner-scoped cursor for the next page; omitted on the final page.
+                  has_more:
+                    type: boolean
+                  total:
+                    type: integer
+                    minimum: 0
         '401':
           $ref: '#/components/responses/Unauthorized'
   /v1/auth/sessions/{id}:
@@ -3146,6 +3170,120 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/mfa/push/devices:
+    get:
+      operationId: get_v1_mfa_push_devices
+      summary: List registered push-MFA devices
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Registered devices
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_v1_mfa_push_devices
+      summary: Register or rotate a push-MFA device
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [push_token, platform]
+              properties:
+                name: { type: string }
+                push_token: { type: string }
+                platform: { type: string, enum: [ios, android] }
+      responses:
+        '201':
+          description: Device registered; device_token is returned once
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/mfa/push/devices/{id}:
+    delete:
+      operationId: delete_v1_mfa_push_devices_ById
+      summary: Revoke a push-MFA device
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Device revoked }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/challenges/{id}:
+    get:
+      operationId: get_v1_mfa_push_challenges_ById
+      summary: Poll a push-MFA challenge
+      tags: [MFA]
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Challenge status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/challenges/{id}/respond:
+    post:
+      operationId: post_v1_mfa_push_challenges_ById_respond
+      summary: Approve or deny a push-MFA challenge
+      tags: [MFA]
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, device_token, approved]
+              properties:
+                user_id: { type: string, format: uuid }
+                device_token: { type: string }
+                approved: { type: boolean }
+      responses:
+        '204': { description: Challenge response recorded }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     bearerAuth:

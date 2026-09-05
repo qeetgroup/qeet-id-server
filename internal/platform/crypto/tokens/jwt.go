@@ -14,10 +14,12 @@
 // retired keys; a token with a missing or unknown kid is rejected. Retired
 // keys are verify-only public keys kept during a rotation grace window so
 // tokens minted under the previous key stay valid until they expire — register
-// them with AddRetiredKeysPEM.
+// them through the shared signing-key registry. AddRetiredKeysPEM remains only
+// as a compatibility helper for legacy deployment configuration.
 package tokens
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -29,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -69,14 +72,17 @@ type ActClaim struct {
 // signingKey couples a key with its JWS algorithm. priv is nil for verify-only
 // (retired) keys; pub is always present and is what we publish in the JWKS.
 type signingKey struct {
-	kid    string
-	alg    string
-	method jwt.SigningMethod
-	priv   crypto.Signer    // signing — active key only
-	pub    crypto.PublicKey // verification + JWKS
+	kid      string
+	alg      string
+	status   string
+	retireAt *time.Time
+	method   jwt.SigningMethod
+	priv     crypto.Signer    // signing — active key only
+	pub      crypto.PublicKey // verification + JWKS
 }
 
 type Issuer struct {
+	mu         sync.RWMutex
 	active     *signingKey            // the key new tokens are signed with
 	verifiers  map[string]*signingKey // kid -> key (active + retired)
 	issuer     string
@@ -107,6 +113,7 @@ func newIssuerFromKey(priv *ecdsa.PrivateKey, issuer, audience string, accessTTL
 	active := &signingKey{
 		kid:    kid,
 		alg:    "ES256",
+		status: "active",
 		method: jwt.SigningMethodES256,
 		priv:   priv,
 		pub:    &priv.PublicKey,
@@ -127,11 +134,19 @@ func (i *Issuer) JWTIssuer() string         { return i.issuer }
 func (i *Issuer) JWTAudience() string       { return i.audience }
 
 // KID is the active signing key's id (its RFC 7638 JWK thumbprint).
-func (i *Issuer) KID() string { return i.active.kid }
+func (i *Issuer) KID() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.active.kid
+}
 
 // Alg is the active signing algorithm (e.g. "ES256"); exposed for the OIDC
 // discovery document's id_token_signing_alg_values_supported.
-func (i *Issuer) Alg() string { return i.active.alg }
+func (i *Issuer) Alg() string {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.active.alg
+}
 
 // AddRetiredKeysPEM registers verify-only public keys so tokens signed under a
 // previously-active key still verify during the rotation grace window. The
@@ -140,6 +155,8 @@ func (i *Issuer) Alg() string { return i.active.alg }
 // to supply the public key. Returns the number of keys registered. Unparseable
 // blocks and duplicates are skipped.
 func (i *Issuer) AddRetiredKeysPEM(raw string) int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
 	rest := []byte(raw)
 	n := 0
 	for {
@@ -163,10 +180,46 @@ func (i *Issuer) AddRetiredKeysPEM(raw string) int {
 		if _, exists := i.verifiers[kid]; exists {
 			continue
 		}
-		i.verifiers[kid] = &signingKey{kid: kid, alg: "ES256", method: jwt.SigningMethodES256, pub: ec}
+		i.verifiers[kid] = &signingKey{kid: kid, alg: "ES256", status: "retired", method: jwt.SigningMethodES256, pub: ec}
 		n++
 	}
 	return n
+}
+
+// LoadRetiredKeysPEM strictly loads deployment-configured verification keys.
+// Unlike the lenient AddRetiredKeysPEM compatibility helper, any malformed or
+// unsupported PEM block is an error so startup cannot silently lose rotation
+// grace on one replica.
+func (i *Issuer) LoadRetiredKeysPEM(raw string) (int, error) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	rest := []byte(raw)
+	count := 0
+	for len(bytes.TrimSpace(rest)) > 0 {
+		block, remaining := pem.Decode(rest)
+		if block == nil {
+			return count, errors.New("invalid JWT verification-key PEM")
+		}
+		rest = remaining
+		pub, err := publicKeyFromBlock(block)
+		if err != nil {
+			return count, fmt.Errorf("parse JWT verification key: %w", err)
+		}
+		ec, ok := pub.(*ecdsa.PublicKey)
+		if !ok || ec.Curve != elliptic.P256() {
+			return count, errors.New("JWT verification keys must use P-256")
+		}
+		kid, err := thumbprint(ec)
+		if err != nil {
+			return count, err
+		}
+		if _, exists := i.verifiers[kid]; exists {
+			continue
+		}
+		i.verifiers[kid] = &signingKey{kid: kid, alg: "ES256", status: "retired", method: jwt.SigningMethodES256, pub: ec}
+		count++
+	}
+	return count, nil
 }
 
 // Sign returns a compact JWS bearing the given claims, signed with the active
@@ -174,9 +227,81 @@ func (i *Issuer) AddRetiredKeysPEM(raw string) int {
 // tokens, service-principal access tokens) use this rather than calling
 // jwt.NewWithClaims directly so the kid is always set.
 func (i *Issuer) Sign(claims jwt.Claims) (string, error) {
-	tok := jwt.NewWithClaims(i.active.method, claims)
-	tok.Header["kid"] = i.active.kid
-	return tok.SignedString(i.active.priv)
+	i.mu.RLock()
+	active := i.active
+	i.mu.RUnlock()
+	if active == nil || active.priv == nil {
+		return "", errors.New("no active signing key")
+	}
+	tok := jwt.NewWithClaims(active.method, claims)
+	tok.Header["kid"] = active.kid
+	return tok.SignedString(active.priv)
+}
+
+type verificationKeyPEM struct {
+	KID      string
+	PEM      string
+	Status   string
+	RetireAt *time.Time
+}
+
+// replaceKeyring parses a complete registry snapshot before atomically
+// publishing it. In-flight sign/verify/JWKS calls see either the old snapshot
+// or the new one, never a partially-updated map.
+func (i *Issuer) replaceKeyring(activePrivatePEM string, verificationKeys []verificationKeyPEM) error {
+	priv, err := parseECPrivateKey(activePrivatePEM)
+	if err != nil {
+		return fmt.Errorf("parse active signing key: %w", err)
+	}
+	if priv.Curve != elliptic.P256() {
+		return errors.New("active signing key must use P-256")
+	}
+	activeKID, err := thumbprint(&priv.PublicKey)
+	if err != nil {
+		return err
+	}
+	active := &signingKey{
+		kid: activeKID, alg: "ES256", status: "active",
+		method: jwt.SigningMethodES256, priv: priv, pub: &priv.PublicKey,
+	}
+	verifiers := map[string]*signingKey{activeKID: active}
+	for _, entry := range verificationKeys {
+		block, rest := pem.Decode([]byte(entry.PEM))
+		if block == nil || len(bytes.TrimSpace(rest)) != 0 {
+			return errors.New("invalid registry verification-key PEM")
+		}
+		publicKey, err := publicKeyFromBlock(block)
+		if err != nil {
+			return fmt.Errorf("parse registry verification key: %w", err)
+		}
+		ec, ok := publicKey.(*ecdsa.PublicKey)
+		if !ok || ec.Curve != elliptic.P256() {
+			return errors.New("registry verification keys must use P-256")
+		}
+		kid, err := thumbprint(ec)
+		if err != nil {
+			return err
+		}
+		if entry.KID != "" && entry.KID != kid {
+			return errors.New("registry verification key does not match its kid")
+		}
+		if kid == activeKID {
+			continue
+		}
+		status := entry.Status
+		if status != "candidate" && status != "retired" {
+			return fmt.Errorf("invalid registry key status %q", status)
+		}
+		verifiers[kid] = &signingKey{
+			kid: kid, alg: "ES256", status: status,
+			retireAt: entry.RetireAt, method: jwt.SigningMethodES256, pub: ec,
+		}
+	}
+	i.mu.Lock()
+	i.active = active
+	i.verifiers = verifiers
+	i.mu.Unlock()
+	return nil
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
@@ -256,9 +381,14 @@ func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 	if !ok || kid == "" {
 		return nil, errors.New("missing kid header")
 	}
+	i.mu.RLock()
 	k, ok := i.verifiers[kid]
+	i.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("unknown kid: %s", kid)
+	}
+	if k.status == "retired" && k.retireAt != nil && !time.Now().Before(*k.retireAt) {
+		return nil, fmt.Errorf("expired retired kid: %s", kid)
 	}
 	return k.pub, nil
 }
@@ -310,10 +440,11 @@ func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
 // It deliberately carries no key material (the public coordinates live in the
 // JWKS); it only reports the key's id, algorithm, use, and rotation status.
 type KeyMeta struct {
-	Kid    string `json:"kid"`
-	Alg    string `json:"alg"`
-	Use    string `json:"use"`
-	Status string `json:"status"` // "active" | "retired"
+	Kid      string     `json:"kid"`
+	Alg      string     `json:"alg"`
+	Use      string     `json:"use"`
+	Status   string     `json:"status"` // "candidate" | "active" | "retired"
+	RetireAt *time.Time `json:"retire_at,omitempty"`
 }
 
 // KeyInfo returns metadata for every signing key the issuer knows about: the
@@ -321,66 +452,29 @@ type KeyMeta struct {
 // their rotation grace window (status "retired"). Unlike JWKS it exposes no key
 // material, so it's safe to surface in an admin UI.
 func (i *Issuer) KeyInfo() []KeyMeta {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
 	out := make([]KeyMeta, 0, len(i.verifiers))
 	for _, k := range i.verifiers {
-		status := "retired"
+		if k.status == "retired" && k.retireAt != nil && !time.Now().Before(*k.retireAt) {
+			continue
+		}
+		status := k.status
+		if status == "" {
+			status = "retired"
+		}
 		if i.active != nil && k.kid == i.active.kid {
 			status = "active"
 		}
 		out = append(out, KeyMeta{
-			Kid:    k.kid,
-			Alg:    k.alg,
-			Use:    "sig",
-			Status: status,
+			Kid:      k.kid,
+			Alg:      k.alg,
+			Use:      "sig",
+			Status:   status,
+			RetireAt: k.retireAt,
 		})
 	}
 	return out
-}
-
-// Rotate generates a fresh EC P-256 signing key, retires the current active key
-// to verify-only status (tokens it signed remain verifiable), and returns the new
-// private key's PEM and kid. The caller MUST persist the returned PEM as the new
-// JWT_SIGNING_KEY before the process restarts; until then the new key is in-memory
-// only. This method is safe to call at runtime — new tokens will immediately be
-// signed by the new key.
-func (i *Issuer) Rotate() (privKeyPEM string, newKID string, err error) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return "", "", fmt.Errorf("generate key: %w", err)
-	}
-	kid, err := thumbprint(&priv.PublicKey)
-	if err != nil {
-		return "", "", fmt.Errorf("thumbprint: %w", err)
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return "", "", fmt.Errorf("marshal key: %w", err)
-	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-
-	newKey := &signingKey{
-		kid:    kid,
-		alg:    "ES256",
-		method: jwt.SigningMethodES256,
-		priv:   priv,
-		pub:    &priv.PublicKey,
-	}
-
-	// Retire the current active key: keep a verify-only copy in verifiers so
-	// tokens signed by the old key continue to verify during the grace window.
-	if old := i.active; old != nil {
-		i.verifiers[old.kid] = &signingKey{
-			kid:    old.kid,
-			alg:    old.alg,
-			method: old.method,
-			pub:    old.pub,
-			// priv intentionally nil — verify-only
-		}
-	}
-
-	i.verifiers[kid] = newKey
-	i.active = newKey
-	return string(pemBytes), kid, nil
 }
 
 // JWK is a public JSON Web Key as published at /.well-known/jwks.json.
@@ -398,8 +492,13 @@ type JWK struct {
 // token: the active signing key plus any retired keys still inside their grace
 // window.
 func (i *Issuer) JWKS() []JWK {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
 	out := make([]JWK, 0, len(i.verifiers))
 	for _, k := range i.verifiers {
+		if k.status == "retired" && k.retireAt != nil && !time.Now().Before(*k.retireAt) {
+			continue
+		}
 		ec, ok := k.pub.(*ecdsa.PublicKey)
 		if !ok {
 			continue
@@ -447,9 +546,9 @@ func GenerateES256KeyPEM() (string, error) {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
 }
 
-// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for the given EC private-key
-// PEM. During rotation, feed the retiring key's output here into
-// JWT_RETIRED_KEYS so in-flight tokens keep verifying.
+// PublicKeyPEM returns the SPKI ("PUBLIC KEY") PEM for an EC private key. It is
+// useful for offline inspection and legacy JWT_RETIRED_KEYS migration; normal
+// rotations publish public material through the shared key registry.
 func PublicKeyPEM(privateKeyPEM string) (string, error) {
 	priv, err := parseECPrivateKey(privateKeyPEM)
 	if err != nil {

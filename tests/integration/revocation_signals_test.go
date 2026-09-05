@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
-	"github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
+	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
@@ -97,6 +97,7 @@ func TestLogout_EmitsSessionRevokedWebhook(t *testing.T) {
 
 	authSvc, _ := newAuth()
 	wh := webhook.NewService(testPool)
+	wh.SetCipher(testEnvelope(t))
 	authSvc.SetEmitter(wh.Enqueue)
 	subscribeTo(t, ctx, wh, tenantID, []string{"session.revoked"})
 
@@ -137,6 +138,7 @@ func TestRefreshReuse_EmitsSessionRevokedWebhook(t *testing.T) {
 
 	authSvc, _ := newAuth()
 	wh := webhook.NewService(testPool)
+	wh.SetCipher(testEnvelope(t))
 	authSvc.SetEmitter(wh.Enqueue)
 	subscribeTo(t, ctx, wh, tenantID, []string{"session.revoked"})
 
@@ -201,6 +203,7 @@ func TestAssignUnassignRole_EmitsTokenClaimsChangeWebhook(t *testing.T) {
 	repo := rbac.NewRepository(testPool)
 	svc := rbac.NewService(repo)
 	wh := webhook.NewService(testPool)
+	wh.SetCipher(testEnvelope(t))
 	svc.SetEmitter(wh.Enqueue)
 	subscribeTo(t, ctx, wh, tenantID, []string{"token.claims_change"})
 

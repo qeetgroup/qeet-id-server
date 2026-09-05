@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // failingPublisher fails the first N publish calls then succeeds. Used
@@ -14,7 +16,7 @@ type failingPublisher struct {
 	publishes    []string
 }
 
-func (p *failingPublisher) Publish(_ context.Context, _, eventType string, _ []byte) error {
+func (p *failingPublisher) Publish(_ context.Context, _ uuid.UUID, _, eventType string, _ []byte) error {
 	p.publishes = append(p.publishes, eventType)
 	if p.failuresLeft > 0 {
 		p.failuresLeft--
@@ -24,7 +26,7 @@ func (p *failingPublisher) Publish(_ context.Context, _, eventType string, _ []b
 }
 
 func TestLogPublisher_AlwaysSucceeds(t *testing.T) {
-	if err := (LogPublisher{}).Publish(context.Background(), "t", "e", []byte("{}")); err != nil {
+	if err := (LogPublisher{}).Publish(context.Background(), uuid.New(), "t", "e", []byte("{}")); err != nil {
 		t.Fatalf("LogPublisher must never fail, got %v", err)
 	}
 }
@@ -41,9 +43,9 @@ func TestDefaultMaxAttempts_IsReasonable(t *testing.T) {
 func TestPublisherAdapter_RecordsEventTypes(t *testing.T) {
 	p := &failingPublisher{failuresLeft: 2}
 	ctx := context.Background()
-	_ = p.Publish(ctx, "topic", "type-1", []byte("{}"))
-	_ = p.Publish(ctx, "topic", "type-2", []byte("{}"))
-	_ = p.Publish(ctx, "topic", "type-3", []byte("{}"))
+	_ = p.Publish(ctx, uuid.New(), "topic", "type-1", []byte("{}"))
+	_ = p.Publish(ctx, uuid.New(), "topic", "type-2", []byte("{}"))
+	_ = p.Publish(ctx, uuid.New(), "topic", "type-3", []byte("{}"))
 	if len(p.publishes) != 3 {
 		t.Errorf("publishes recorded = %v, want 3", p.publishes)
 	}

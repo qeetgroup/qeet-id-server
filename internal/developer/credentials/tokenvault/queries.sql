@@ -2,27 +2,12 @@
 -- storeGrant (upsert with nullable []byte params) is converted below using
 -- pointer types; the encrypt/decrypt/HTTP-exchange logic stays in the Service.
 
--- name: RegisterProvider :one
-INSERT INTO tenant.token_vault_providers (tenant_id, provider, client_id, client_secret, authorize_url, token_url, scopes)
-VALUES (@tenant_id, @provider, @client_id, @client_secret, @authorize_url, @token_url, @scopes)
-ON CONFLICT (tenant_id, provider) DO UPDATE SET
-    client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret,
-    authorize_url = EXCLUDED.authorize_url, token_url = EXCLUDED.token_url,
-    scopes = EXCLUDED.scopes, updated_at = NOW()
-RETURNING id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at;
-
 -- name: ListProviders :many
 SELECT id, provider, client_id, authorize_url, token_url, scopes, created_at, updated_at
 FROM tenant.token_vault_providers WHERE tenant_id = $1 ORDER BY provider;
 
 -- name: DeleteProvider :execrows
 DELETE FROM tenant.token_vault_providers WHERE tenant_id = @tenant_id AND provider = @provider;
-
--- GetProviderConfig fetches full config including client_secret for the
--- token-exchange; client_secret is never surfaced to end users.
--- name: GetProviderConfig :one
-SELECT client_id, client_secret, authorize_url, token_url, scopes
-FROM tenant.token_vault_providers WHERE tenant_id = @tenant_id AND provider = @provider;
 
 -- name: InsertConnectState :exec
 INSERT INTO tenant.token_vault_connect_states (state, tenant_id, user_id, provider, expires_at)

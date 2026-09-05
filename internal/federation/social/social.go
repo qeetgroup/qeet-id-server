@@ -15,14 +15,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 type Provider struct {
@@ -51,19 +52,25 @@ type Service struct {
 	auth       *auth.Service
 	appBaseURL string
 	oauth      *oauthClient
+	egress     *egress.Policy
+	box        *envelope.Cipher
 	// platform holds tenant-less social providers for the console's own Qeet ID
 	// sign-in (env-configured, e.g. Google). Distinct from the per-tenant
 	// social_providers table used for tenants' end users. See platform.go.
 	platform map[string]providerConfig
 }
 
-func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string) *Service {
+func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
+
+func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, policies ...*egress.Policy) *Service {
+	policy := egress.PublicPolicy(policies...)
 	return &Service{
 		pool:       pool,
 		q:          dbgen.New(pool),
 		auth:       authSvc,
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
-		oauth:      newOAuthClient(),
+		oauth:      newOAuthClient(policy),
+		egress:     policy,
 	}
 }
 
@@ -76,13 +83,41 @@ type CreateProviderInput struct {
 }
 
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
-	r, err := s.q.UpsertSocialProvider(ctx, dbgen.UpsertSocialProviderParams{
-		TenantID:     in.TenantID,
-		Provider:     in.Provider,
-		ClientID:     in.ClientID,
-		ClientSecret: in.ClientSecret,
-		DiscoveryUrl: in.DiscoveryURL,
-	})
+	if _, err := s.egress.ValidateHTTPURL(in.DiscoveryURL); err != nil {
+		return nil, errs.ErrSocialProviderNoDiscovery
+	}
+	if s.box == nil {
+		return nil, errs.ErrInternalServer.WithDetail("social provider secret encryption is unavailable")
+	}
+	ciphertext, nonce, err := s.box.Seal(in.TenantID, "social-provider", in.Provider, []byte(in.ClientSecret))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		ID                 uuid.UUID
+		TenantID           uuid.UUID
+		Provider, ClientID string
+		DiscoveryURL       *string
+		Enabled            bool
+		CreatedAt          time.Time
+	}
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO tenant.social_providers
+		    (tenant_id, provider, client_id, client_secret, client_secret_ct,
+		     client_secret_nonce, encryption_version, discovery_url)
+		VALUES ($1, $2, $3, '', $4, $5, 1, NULLIF($6, ''))
+		ON CONFLICT (tenant_id, provider) DO UPDATE SET
+		    client_id = EXCLUDED.client_id,
+		    client_secret = '',
+		    client_secret_ct = EXCLUDED.client_secret_ct,
+		    client_secret_nonce = EXCLUDED.client_secret_nonce,
+		    encryption_version = 1,
+		    discovery_url = EXCLUDED.discovery_url,
+		    enabled = TRUE
+		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
+	`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL).Scan(
+		&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +126,7 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 		TenantID:     r.TenantID,
 		Provider:     r.Provider,
 		ClientID:     r.ClientID,
-		DiscoveryURL: r.DiscoveryUrl,
+		DiscoveryURL: r.DiscoveryURL,
 		Enabled:      r.Enabled,
 		CreatedAt:    r.CreatedAt,
 	}
@@ -239,25 +274,56 @@ func (s *Service) resolveTenant(ctx context.Context, ref string) (uuid.UUID, err
 // loadProvider returns an enabled, discovery-based provider config for a tenant.
 func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider string) (providerConfig, error) {
 	var pc providerConfig
-	r, err := s.q.LoadSocialProvider(ctx, dbgen.LoadSocialProviderParams{
-		TenantID: tenantID,
-		Provider: provider,
-	})
+	var enabled bool
+	var clientID, legacySecret string
+	var discoveryURL *string
+	var ciphertext, nonce []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT client_id, client_secret, client_secret_ct, client_secret_nonce,
+		       discovery_url, enabled
+		FROM tenant.social_providers
+		WHERE tenant_id = $1 AND provider = $2
+	`, tenantID, provider).Scan(&clientID, &legacySecret, &ciphertext, &nonce, &discoveryURL, &enabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return pc, errs.ErrSocialProviderNotConfigured
 	}
 	if err != nil {
 		return pc, err
 	}
-	if !r.Enabled {
+	if !enabled {
 		return pc, errs.ErrSocialProviderDisabled
 	}
-	if r.DiscoveryUrl == nil || *r.DiscoveryUrl == "" {
+	if discoveryURL == nil || *discoveryURL == "" {
 		return pc, errs.ErrSocialProviderNoDiscovery
 	}
-	pc.clientID = r.ClientID
-	pc.clientSecret = r.ClientSecret
-	pc.discoveryURL = *r.DiscoveryUrl
+	pc.clientID = clientID
+	pc.discoveryURL = *discoveryURL
+	if len(ciphertext) > 0 {
+		if s.box == nil {
+			return pc, errs.ErrSocialProviderNotConfigured
+		}
+		plain, openErr := s.box.Open(tenantID, "social-provider", provider, ciphertext, nonce)
+		if openErr != nil {
+			return pc, openErr
+		}
+		pc.clientSecret = string(plain)
+	} else {
+		pc.clientSecret = legacySecret
+		if legacySecret != "" && s.box != nil {
+			ct, newNonce, sealErr := s.box.Seal(tenantID, "social-provider", provider, []byte(legacySecret))
+			if sealErr != nil {
+				return pc, sealErr
+			}
+			if _, updateErr := s.pool.Exec(ctx, `
+				UPDATE tenant.social_providers
+				SET client_secret = '', client_secret_ct = $3, client_secret_nonce = $4,
+				    encryption_version = 1
+				WHERE tenant_id = $1 AND provider = $2 AND client_secret_ct IS NULL
+			`, tenantID, provider, ct, newNonce); updateErr != nil {
+				return pc, updateErr
+			}
+		}
+	}
 	return pc, nil
 }
 
@@ -362,10 +428,6 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 	if err != nil {
 		return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 	}
-	if ui.Email == "" {
-		return nil, errs.ErrSocialEmailMissing
-	}
-
 	userID, err := s.findOrCreateUser(ctx, st.TenantID, provider, ui)
 	if err != nil {
 		return nil, err
@@ -421,25 +483,68 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, err
 	}
+	if ui.Email == "" {
+		return uuid.Nil, errs.ErrSocialEmailMissing
+	}
 
 	// No linked identity yet: reuse a user with the same (globally-unique)
-	// email, else create one.
+	// email, else create one. Only the reuse branch needs a verified address —
+	// see the comments below.
 	userID, err = q.GetUserByEmail(ctx, ui.Email)
-	if errors.Is(err, pgx.ErrNoRows) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Provisioning a fresh account. An unverified assertion may *name* the
+		// account — refusing would lock out every provider that omits the claim
+		// — but it must not mark the address verified. Other flows treat a
+		// verified address as proof of control, so the provider's word is only
+		// carried through when the provider actually vouched for it.
+		//
+		// Written as raw SQL rather than InsertUserWithEmail because that query
+		// hardcodes email_verified_at = NOW(); fold this parameter into
+		// queries.sql at the next `sqlc generate`.
 		var displayName *string
 		if ui.Name != "" {
 			displayName = &ui.Name
 		}
-		userID, err = q.InsertUserWithEmail(ctx, dbgen.InsertUserWithEmailParams{
-			TenantID:    pgtype.UUID{Bytes: tenantID, Valid: true},
-			Email:       ui.Email,
-			DisplayName: displayName,
-		})
+		var verifiedAt *time.Time
+		if ui.EmailVerified {
+			now := time.Now().UTC()
+			verifiedAt = &now
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO "user".users (tenant_id, email, email_verified_at, display_name, status)
+			VALUES ($1, $2, $3, $4, 'active')
+			RETURNING id
+		`, tenantID, ui.Email, verifiedAt, displayName).Scan(&userID); err != nil {
+			return uuid.Nil, err
+		}
+	case err != nil:
+		return uuid.Nil, err
+	default:
+		// Adopting an account that already exists. Two things have to hold.
+		//
+		// First, the assertion must be verified: otherwise anyone who can
+		// persuade a provider to emit the victim's address inherits their
+		// account.
+		if !ui.EmailVerified {
+			return uuid.Nil, errs.ErrSocialEmailUnverified
+		}
+		// Second — and this is the one a verified assertion does NOT cover —
+		// the account must already belong to the tenant this login is for.
+		// Emails are globally unique platform-wide (migration 0022), so
+		// GetUserByEmail above can return a user owned by a completely
+		// different tenant. Without this check, a tenant admin could register
+		// an IdP they control, assert another tenant's user's address with
+		// email_verified=true, and be handed a token pair carrying that user's
+		// id — enough to change their password, read their profile, and
+		// switch-tenant into their org.
+		belongs, err := userInTenant(ctx, tx, userID, tenantID)
 		if err != nil {
 			return uuid.Nil, err
 		}
-	} else if err != nil {
-		return uuid.Nil, err
+		if !belongs {
+			return uuid.Nil, errs.ErrSocialAccountNotInTenant
+		}
 	}
 
 	var emailPtr *string
@@ -744,6 +849,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
 	// Apple uses response_mode=form_post (params in the POST body); the other
 	// providers use a GET query. r.FormValue reads whichever applies.
+	if r.Method == http.MethodPost {
+		if err := httpx.ParseForm(r, httpx.MaxFormBodyBytes); err != nil {
+			h.redirectSocialError(w, r, err)
+			return
+		}
+	}
 	state, code := r.FormValue("state"), r.FormValue("code")
 
 	// Platform (tenant-less) console sign-in: complete it and bounce the SPA to
@@ -822,4 +933,25 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+// userInTenant reports whether a user is one this tenant can sign in.
+//
+// Two things count: the user's home tenant (users.tenant_id, which is what a
+// social-provisioned user gets and what a repeat login has to match), and an
+// rbac.user_roles grant (which is how a guest becomes a member). Requiring only
+// the latter would reject a user this very flow provisioned, since provisioning
+// grants no role.
+func userInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (bool, error) {
+	var ok bool
+	err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM "user".users u
+			WHERE u.id = $1 AND u.deleted_at IS NULL AND u.tenant_id = $2
+			UNION ALL
+			SELECT 1 FROM rbac.user_roles ur
+			WHERE ur.user_id = $1 AND ur.tenant_id = $2
+		)
+	`, userID, tenantID).Scan(&ok)
+	return ok, err
 }
