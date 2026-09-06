@@ -14,6 +14,7 @@ const (
 	CodePasskeyNoCredentials      = "passkey.no_credentials"
 	CodePasskeyMFAFailed          = "passkey.mfa_failed"
 	CodePasskeyCeremonyFailed     = "passkey.ceremony_failed"
+	CodePasskeyCloneDetected      = "passkey.clone_detected"
 )
 
 var (
@@ -28,4 +29,10 @@ var (
 	ErrPasskeyNoCredentials      = New(CodePasskeyNoCredentials, "No passkeys are registered for this account.")
 	ErrPasskeyMFAFailed          = New(CodePasskeyMFAFailed, "Passkey verification failed. Please try again.")
 	ErrPasskeyCeremonyFailed     = New(CodePasskeyCeremonyFailed, "We couldn't start the passkey process. Please try again.")
+	// ErrPasskeyCloneDetected is returned when the authenticator's signature
+	// counter fails to advance, which indicates the credential's private key
+	// may have been extracted and cloned. The message is deliberately vague to
+	// the end user; the detail is in the server log.
+	ErrPasskeyCloneDetected = New(CodePasskeyCloneDetected,
+		"We couldn't verify that passkey. Please contact your administrator.")
 )

@@ -48,6 +48,28 @@ func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender, pushU
 
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 
+// consumeTOTPStep atomically marks a TOTP time-step as used, returning false if
+// that step (or a later one) was already consumed.
+//
+// totp.Verify accepts the current 30s step plus one either side, so without
+// this a correct code remained valid for ~90s and could be presented twice for
+// two independent authentications — the replay RFC 6238 §5.2 requires us to
+// reject. The check and the write are a single conditional UPDATE so two
+// concurrent submissions of the same code cannot both win: exactly one updates
+// a row, the other sees RowsAffected() == 0.
+func consumeTOTPStep(ctx context.Context, tx pgx.Tx, userID uuid.UUID, step int64) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE auth.mfa_totp
+		SET last_used_step = $2
+		WHERE user_id = $1
+		  AND (last_used_step IS NULL OR last_used_step < $2)
+	`, userID, step)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 const otpTTL = 10 * time.Minute
 
 // Pool exposes the connection pool so handlers can begin their own
@@ -101,7 +123,17 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt,
 	if err != nil {
 		return nil, err
 	}
-	if !totp.Verify(secret, code) {
+	step, ok := totp.VerifyStep(secret, code)
+	if !ok {
+		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, attempt.remaining)
+	}
+	// Burn the step here too, so the code that completed enrollment cannot be
+	// immediately replayed against the login/step-up path below.
+	fresh, err := consumeTOTPStep(ctx, tx, userID, step)
+	if err != nil {
+		return nil, err
+	}
+	if !fresh {
 		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, attempt.remaining)
 	}
 	if err := qtx.ConfirmMFATOTP(ctx, userID); err != nil {
@@ -296,7 +328,16 @@ func (s *Service) verifyCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID, c
 	if !confirmedAt.Valid {
 		return nil, errs.ErrMFANotConfirmed
 	}
-	if totp.Verify(secret, code) {
+	if step, ok := totp.VerifyStep(secret, code); ok {
+		fresh, cerr := consumeTOTPStep(ctx, tx, userID, step)
+		if cerr != nil {
+			return nil, cerr
+		}
+		if !fresh {
+			// Already-used code. Reported as an ordinary invalid code so the
+			// response does not distinguish "wrong" from "replayed".
+			return nil, errs.ErrMFACodeInvalid
+		}
 		return &VerifyResult{}, nil
 	}
 	// Recovery code fallback.

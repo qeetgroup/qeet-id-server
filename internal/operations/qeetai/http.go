@@ -319,7 +319,11 @@ func (h *Handler) streamMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Keep-alive pings every 15s so proxies don't drop the connection.
+	// stopKeepAlive runs first (defers are LIFO), so the ping goroutine has
+	// exited before this handler returns and can never write to a released
+	// ResponseWriter.
 	donePing := make(chan struct{})
+	defer sse.stopKeepAlive()
 	defer close(donePing)
 	sse.startKeepAlive(donePing, 15*time.Second)
 

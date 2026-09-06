@@ -250,11 +250,9 @@ func TestMFAAttemptAccountingAcrossOutcomes(t *testing.T) {
 		t.Fatalf("after refund failed_attempts = %d, want 1", got)
 	}
 
-	// A correct code clears the budget completely.
-	code, err := totp.Code(secret, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("totp code: %v", err)
-	}
+	// A correct code clears the budget completely. Step +1: enrollConfirmedTOTP
+	// already consumed the current step.
+	code := totpCodeAtStep(t, secret, 1)
 	if err := verifyOnPool(ctx, testPool, svc, userID, code); err != nil {
 		t.Fatalf("correct code error = %v, want success", err)
 	}
@@ -272,5 +270,57 @@ func TestMFAAttemptAccountingAcrossOutcomes(t *testing.T) {
 	}
 	if got := budget(); got != 0 {
 		t.Errorf("a cancelled reservation must not count: failed_attempts = %d, want 0", got)
+	}
+}
+
+// TestMFATOTPCodeIsSingleUse is the regression test for TOTP replay.
+//
+// totp.Verify accepts the current 30s step plus one either side, so before
+// migration 0107 + consumeTOTPStep a correct code stayed valid for roughly 90
+// seconds and could be presented twice for two independent authentications.
+// RFC 6238 §5.2 requires the verifier to reject a previously-accepted code.
+// The attempt budget does not help here: a *correct* code clears it.
+//
+// Practical exposure: any code observed once — shoulder-surfed, captured on a
+// screen share, or relayed through a phishing proxy — was good for a second
+// sign-in.
+func TestMFATOTPCodeIsSingleUse(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("mfa-replay"))
+	userID := createUserInTenant(t, ctx, tenantID)
+
+	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
+	svc.SetCipher(testEnvelope(t))
+	secret := enrollConfirmedTOTP(t, ctx, testPool, svc, userID) // consumes step 0
+
+	code := totpCodeAtStep(t, secret, 1)
+
+	// First use succeeds.
+	if err := verifyOnPool(ctx, testPool, svc, userID, code); err != nil {
+		t.Fatalf("first use of a fresh TOTP: %v", err)
+	}
+
+	// Replaying the very same code must fail, even though it is still inside
+	// the acceptance window and is arithmetically correct.
+	if err := verifyOnPool(ctx, testPool, svc, userID, code); !errors.Is(err, errs.ErrMFACodeInvalid) {
+		t.Fatalf("replayed TOTP error = %v, want %v", err, errs.ErrMFACodeInvalid)
+	}
+
+	// The consumed step is recorded, which is what makes the rejection durable
+	// rather than an artefact of in-process state.
+	var lastStep *int64
+	if err := testPool.QueryRow(ctx,
+		`SELECT last_used_step FROM auth.mfa_totp WHERE user_id = $1`, userID).Scan(&lastStep); err != nil {
+		t.Fatalf("read last_used_step: %v", err)
+	}
+	if lastStep == nil {
+		t.Fatal("last_used_step was never recorded, so replay protection is not persisted")
+	}
+
+	// A code from an EARLIER step must also be refused — accepting it would
+	// reopen the window backwards.
+	if err := verifyOnPool(ctx, testPool, svc, userID, totpCodeAtStep(t, secret, 0)); !errors.Is(err, errs.ErrMFACodeInvalid) {
+		t.Fatalf("older-step TOTP error = %v, want %v", err, errs.ErrMFACodeInvalid)
 	}
 }

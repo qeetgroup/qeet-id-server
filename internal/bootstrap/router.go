@@ -142,7 +142,12 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	// NOTE: chimw.RealIP is deliberately NOT used. It rewrites r.RemoteAddr from
+	// X-Forwarded-For / X-Real-IP unconditionally, with no notion of a trusted
+	// proxy — which would re-introduce the spoofing that httpx.ClientIP now
+	// defends against by making the transport peer (our safe fallback) equally
+	// caller-controlled. Client IP resolution lives in httpx.ClientIP, governed
+	// by TRUSTED_PROXY_HOPS.
 	r.Use(chimw.Recoverer)
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
@@ -199,8 +204,6 @@ func NewRouter(d Deps) http.Handler {
 		}))
 	}
 
-	mountRootPublicRoutes(r, d)
-
 	// newLimiter builds an in-process limiter, or a Redis-backed one when a
 	// shared store is configured (so limits hold across replicas).
 	newLimiter := func(rate float64, capacity int) *ratelimit.Limiter {
@@ -218,6 +221,27 @@ func NewRouter(d Deps) http.Handler {
 	tenantLimiter := newLimiter(100, 500)
 	userLimiter := newLimiter(30, 100)
 	apiKeyLimiter := newLimiter(50, 200)
+
+	// Root-mounted protocol routes (OIDC discovery/revoke/introspect, SCIM,
+	// SAML, LDAP) sit OUTSIDE the /v1 group and therefore inherited no rate
+	// limit at all — mountRootPublicRoutes used to run before any limiter even
+	// existed. Two of those are unauthenticated or near-free to call:
+	//
+	//   POST /ldap/{id}/authenticate  verifies a username+password against the
+	//     customer's own directory. Unthrottled, it is a password-spray gateway
+	//     into a tenant's Active Directory that will also trip AD's lockout
+	//     policy and take the customer's directory down.
+	//   POST /oauth/introspect        needs only a public client_id (no secret),
+	//     making it a token-liveness oracle.
+	//
+	// credentialLimiter matches the /v1 login throttle. protocolLimiter is
+	// deliberately generous: SCIM sync and SAML SSO are legitimate machine
+	// traffic and must not be throttled into failure — it exists to bound abuse,
+	// not to shape normal load.
+	credentialLimiter := newLimiter(5, 20)
+	protocolLimiter := newLimiter(50, 200)
+
+	mountRootPublicRoutes(r, d, credentialLimiter, protocolLimiter)
 
 	// Tight per-user throttle for the endpoints that dispatch an SMS/email to a
 	// caller-supplied address or guess a credential (~6/min sustained, burst 5):
@@ -265,14 +289,30 @@ func NewRouter(d Deps) http.Handler {
 
 // mountRootPublicRoutes is the single production registration point for
 // protocol and operational routes mounted outside /v1.
-func mountRootPublicRoutes(r chi.Router, d Deps) {
+//
+// The chi.Group wrappers attach rate limiting without altering any route
+// pattern — Group only composes middleware onto the same mux, so path matching,
+// path parameters and the OpenAPI route set are unchanged. Probes are left
+// unlimited on purpose: throttling /healthz or /readyz would make an
+// orchestrator kill a pod that is merely busy.
+func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimiter *ratelimit.Limiter) {
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
 	r.Get("/metrics", metrics.Handler().ServeHTTP)
-	d.OIDC.MountPublic(r)
-	d.SCIM.MountPublic(r)
-	d.SAML.MountPublic(r)
-	d.LDAP.MountPublic(r)
+
+	// Directory credential verification — same throttle as /v1 login.
+	r.Group(func(r chi.Router) {
+		r.Use(credentialLimiter.Middleware)
+		d.LDAP.MountPublic(r)
+	})
+
+	// Protocol surfaces: machine traffic, generously bounded.
+	r.Group(func(r chi.Router) {
+		r.Use(protocolLimiter.Middleware)
+		d.OIDC.MountPublic(r)
+		d.SCIM.MountPublic(r)
+		d.SAML.MountPublic(r)
+	})
 }
 
 // mountV1PublicRoutes is the single production registration point for routes

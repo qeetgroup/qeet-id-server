@@ -1,7 +1,9 @@
 package notifier
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,5 +143,66 @@ func TestTwilioSender_ErrorsOnNon2xx(t *testing.T) {
 	s := TwilioSender{AccountSID: "AC", AuthToken: "t", From: "+1", BaseURL: srv.URL, Client: srv.Client()}
 	if err := s.Send(context.Background(), Message{Channel: "sms", To: "+1", Body: "x"}); err == nil {
 		t.Error("expected an error on HTTP 400")
+	}
+}
+
+// TestLogSenderDoesNotLeakCredentialsOutsideDev is the regression test for the
+// credential-logging leak.
+//
+// LogSender is the fallback for any channel with no provider configured. It
+// used to log the message body unconditionally, and every credential-bearing
+// message the product sends flows through this struct: MFA sign-in OTPs, email
+// and SMS verification codes, password-reset links, magic links and invitation
+// tokens. slog's redacting handler does not save us — it matches attribute
+// keys, and "body" is just a string.
+//
+// This is not a dev-only path. A deployment with no Twilio credentials routes
+// every SMS OTP here, and an SES init failure downgrades email to it at boot.
+func TestLogSenderDoesNotLeakCredentialsOutsideDev(t *testing.T) {
+	const secret = "Reset your password: https://app.example/forgot-password?token=SUPERSECRET123"
+
+	capture := func(s LogSender) string {
+		var buf bytes.Buffer
+		prev := slog.Default()
+		slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+		t.Cleanup(func() { slog.SetDefault(prev) })
+		if err := s.Send(context.Background(), Message{
+			Channel: "sms", To: "+15550000000", Subject: "Your code", Body: secret,
+		}); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		return buf.String()
+	}
+
+	// Production shape: zero value, and whatever Router falls back to.
+	if out := capture(LogSender{}); strings.Contains(out, "SUPERSECRET123") {
+		t.Errorf("zero-value LogSender leaked the message body:\n%s", out)
+	}
+	if out := capture(LogSender{Reveal: false}); strings.Contains(out, "SUPERSECRET123") {
+		t.Errorf("LogSender{Reveal:false} leaked the message body:\n%s", out)
+	}
+
+	// Development keeps the body — reading the OTP from the console is the
+	// entire purpose of the fallback, so this must not regress either.
+	if out := capture(LogSender{Reveal: true}); !strings.Contains(out, "SUPERSECRET123") {
+		t.Errorf("LogSender{Reveal:true} dropped the body; dev DX regressed:\n%s", out)
+	}
+}
+
+// TestNewRouterRevealsOnlyInDev pins the wiring: notifier.New must not hand the
+// fallback a revealing LogSender unless Config.Dev is set.
+func TestNewRouterRevealsOnlyInDev(t *testing.T) {
+	for _, dev := range []bool{false, true} {
+		r, ok := New(Config{Dev: dev}).(Router)
+		if !ok {
+			t.Fatalf("New did not return a Router")
+		}
+		ls, ok := r.Default.(LogSender)
+		if !ok {
+			t.Fatalf("Router.Default is %T, want LogSender", r.Default)
+		}
+		if ls.Reveal != dev {
+			t.Errorf("Config{Dev:%v} produced LogSender{Reveal:%v}", dev, ls.Reveal)
+		}
 	}
 }

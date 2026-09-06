@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"io"
 	"os/exec"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -123,6 +124,143 @@ func TestContextsDoNotImportCmdOrBootstrap(t *testing.T) {
 			case underBootstrap(dep):
 				t.Errorf("R2 violation: %s imports %s — bounded contexts must not depend on the composition root internal/bootstrap (import internal/platform/* utilities instead)", self, dep)
 			}
+		}
+	}
+}
+
+// ── R3: cross-context coupling ───────────────────────────────────────────────
+//
+// R1/R2 above constrain the layering (platform below contexts, contexts below
+// wiring) but say nothing about contexts importing each other. That gap let 37
+// cross-context edges accumulate unnoticed. R3 closes it.
+//
+// A bounded context may import another context ONLY through a package named in
+// sharedKernel. Everything else is a violation. Keeping the rule as an
+// allowlist of *targets* (4 entries) rather than of edges (37) keeps it
+// readable and still fails on any genuinely new coupling.
+//
+// Adding an entry here is an architecture decision, not a formality: it makes
+// the target a de-facto shared dependency of the whole monolith. Prefer a
+// consumer-declared interface satisfied by the composition root
+// (internal/bootstrap) — that is how a context depends on another context's
+// behaviour without depending on its types.
+var sharedKernel = []string{
+	// Audit is a cross-cutting write primitive: every context records security
+	// events through audit.Record. It is a bounded context by location only —
+	// see the note on TestCrossContextCycle below.
+	"internal/operations/audit",
+	// Token issuance. Federation (saml/oidc/social/ldap) and identity
+	// (tenant/invitations) complete a login by minting a session here.
+	"internal/access/authentication",
+	// Permission checks for machine principals (agents, API keys, service
+	// principals) live in developer/ but authorize against the access model.
+	"internal/access/authorization/rbac",
+	// The user aggregate, read by authentication and by SCIM provisioning.
+	"internal/identity/users",
+}
+
+// contextOf returns the bounded context a package belongs to ("access",
+// "identity", …), or "" for anything outside the five contexts.
+func contextOf(p string) string {
+	for _, c := range contexts {
+		if p == c || strings.HasPrefix(p, c+"/") {
+			return strings.TrimPrefix(c, "internal/")
+		}
+	}
+	return ""
+}
+
+func inSharedKernel(dep string) bool {
+	for _, k := range sharedKernel {
+		if dep == k || strings.HasPrefix(dep, k+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// R3 — a bounded context reaches another context only via the shared kernel.
+func TestCrossContextImportsGoThroughSharedKernel(t *testing.T) {
+	for _, p := range loadPackages(t) {
+		self := rel(p.ImportPath)
+		selfCtx := contextOf(self)
+		if selfCtx == "" {
+			continue
+		}
+		for _, imp := range p.Imports {
+			dep := rel(imp)
+			depCtx := contextOf(dep)
+			if depCtx == "" || depCtx == selfCtx || inSharedKernel(dep) {
+				continue
+			}
+			t.Errorf("R3 violation: %s (context %q) imports %s (context %q) — "+
+				"cross-context imports must target a sharedKernel package. Declare a "+
+				"consumer-side interface and wire it in internal/bootstrap instead, or "+
+				"extend sharedKernel deliberately.", self, selfCtx, dep, depCtx)
+		}
+	}
+}
+
+// TestCrossContextCycle pins the context-level dependency graph.
+//
+// R3 constrains which *packages* may be imported across contexts; this pins the
+// resulting context→context edge set. It exists because the graph is not a DAG:
+//
+//	access → identity   (authentication reads the user aggregate)
+//	identity → access   (tenant + invitations mint a session)
+//
+// access and identity are therefore mutually dependent and cannot be separated
+// or extracted independently. That is accepted for now — it is recorded here so
+// it stays visible, and so a *second* cycle (e.g. federation ↔ developer) fails
+// the build instead of quietly appearing.
+//
+// A failure here means the coupling shape changed. Update the map only with a
+// deliberate decision about the new edge.
+func TestCrossContextCycle(t *testing.T) {
+	want := map[string][]string{
+		"access":     {"identity", "operations"},
+		"developer":  {"access", "operations"},
+		"federation": {"access", "identity", "operations"},
+		"identity":   {"access", "operations"},
+	}
+
+	got := map[string]map[string]bool{}
+	for _, p := range loadPackages(t) {
+		selfCtx := contextOf(rel(p.ImportPath))
+		if selfCtx == "" {
+			continue
+		}
+		for _, imp := range p.Imports {
+			depCtx := contextOf(rel(imp))
+			if depCtx == "" || depCtx == selfCtx {
+				continue
+			}
+			if got[selfCtx] == nil {
+				got[selfCtx] = map[string]bool{}
+			}
+			got[selfCtx][depCtx] = true
+		}
+	}
+
+	for from, targets := range got {
+		var list []string
+		for to := range targets {
+			list = append(list, to)
+		}
+		sort.Strings(list)
+		expected, ok := want[from]
+		if !ok {
+			t.Errorf("context %q gained cross-context dependencies %v — none were expected", from, list)
+			continue
+		}
+		if strings.Join(list, ",") != strings.Join(expected, ",") {
+			t.Errorf("context %q depends on %v, want %v", from, list, expected)
+		}
+	}
+	for from := range want {
+		if _, ok := got[from]; !ok {
+			t.Errorf("context %q no longer has cross-context dependencies %v — "+
+				"if the coupling was removed, delete its entry here", from, want[from])
 		}
 	}
 }

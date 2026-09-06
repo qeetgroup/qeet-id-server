@@ -179,11 +179,9 @@ func TestLoginMFAEnforcement(t *testing.T) {
 		t.Fatal("wrong mfa code should fail")
 	}
 
-	// Correct code completes the login.
-	good, err := totp.Code(enr.Secret, time.Now())
-	if err != nil {
-		t.Fatalf("totp code: %v", err)
-	}
+	// Correct code completes the login. Step +1: the enrollment confirm above
+	// consumed the current step, and a consumed step is rejected as a replay.
+	good := totpCodeAtStep(t, enr.Secret, 1)
 	pair, err := svc.CompleteMFALogin(ctx, res.MFAToken, good, "", "")
 	if err != nil {
 		t.Fatalf("complete mfa: %v", err)
@@ -222,7 +220,11 @@ func TestMFALoginAttemptBudgetAndConcurrentConsumption(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit enrollment: %v", err)
 	}
-	code, _ := totp.Code(enrollment.Secret, time.Now().UTC())
+	// This test authenticates three separate times with one secret. A consumed
+	// TOTP step is now rejected as a replay, and verification only accepts
+	// now-1/now/now+1 — so the three uses must walk the window in ascending
+	// order: -1 here, 0 after lockout expiry, +1 for the concurrency race.
+	code := totpCodeAtStep(t, enrollment.Secret, -1)
 	if _, err := mfaConfirmEnroll(ctx, mfaService, userID, code); err != nil {
 		t.Fatalf("confirm enrollment: %v", err)
 	}
@@ -257,7 +259,9 @@ func TestMFALoginAttemptBudgetAndConcurrentConsumption(t *testing.T) {
 	`, userID); err != nil {
 		t.Fatalf("expire login MFA budget: %v", err)
 	}
-	code, _ = totp.Code(enrollment.Secret, time.Now().UTC())
+	// Step +1 — enrollment consumed the current step, and a consumed step is
+	// rejected as a replay.
+	code = totpCodeAtStep(t, enrollment.Secret, 0)
 	if _, err := authService.CompleteMFALogin(ctx, lockedLogin.MFAToken, code, "203.0.113.3", "test"); err != nil {
 		t.Fatalf("complete login after lockout expiry: %v", err)
 	}
@@ -269,7 +273,10 @@ func TestMFALoginAttemptBudgetAndConcurrentConsumption(t *testing.T) {
 	if err != nil || !raceLogin.MFARequired {
 		t.Fatalf("start raced MFA login: result=%+v err=%v", raceLogin, err)
 	}
-	code, _ = totp.Code(enrollment.Secret, time.Now().UTC())
+	// Step +1 — the last unconsumed step in the acceptance window. Exactly one
+	// contender may win; both the single-use MFA challenge and the single-use
+	// TOTP step independently guarantee that.
+	code = totpCodeAtStep(t, enrollment.Secret, 1)
 	const contenders = 12
 	start := make(chan struct{})
 	results := make(chan bool, contenders)
@@ -1481,6 +1488,10 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 
 	redirectURI := "http://api.local/v1/social/" + provider + "/callback"
 	const wantReturnTo = "https://app.example/oauth/authorize?client_id=rp"
+	// Mirror the production wiring: return_to is validated against an origin
+	// allowlist, because the callback sets the SSO cookie before redirecting
+	// and an unvalidated value is an open redirect on the auth domain.
+	svc.SetAllowedReturnOrigins("https://app.example")
 	authURL, err := svc.BeginLogin(ctx, provider, tenantID.String(), redirectURI, wantReturnTo)
 	if err != nil {
 		t.Fatalf("begin login: %v", err)

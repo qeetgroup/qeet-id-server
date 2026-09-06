@@ -580,6 +580,22 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
+	// The subject token must belong to the calling client's own tenant.
+	//
+	// This function's contract says it "never crosses subject/tenant", and it is
+	// true that the issued token preserves claims.TenantID. What was missing is
+	// the check that the CALLER is entitled to the subject at all: any
+	// confidential client in any tenant that holds the token_exchange grant could
+	// present a live access token captured from another tenant and mint a fresh,
+	// full-TTL one — repeatedly. That turns a single stolen access token into
+	// indefinite renewal without ever holding a refresh token.
+	caller, err := s.q.GetClientName(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+	if claims.TenantID != caller.TenantID {
+		return nil, errs.ErrOIDCSubjectTokenInvalid
+	}
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenNoSubject
@@ -599,6 +615,11 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		}
 		actorClaims, aerr := s.issuer.VerifyAccess(actorToken)
 		if aerr != nil {
+			return nil, errs.ErrOIDCActorTokenInvalid
+		}
+		// The delegating actor must also be inside the caller's tenant, or the
+		// `act` claim could name a principal from another organisation.
+		if actorClaims.TenantID != caller.TenantID {
 			return nil, errs.ErrOIDCActorTokenInvalid
 		}
 		actorSubject = actorClaims.Subject
@@ -1613,9 +1634,26 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 		return inactive, nil
 	}
 
+	// RFC 7662 §2.1 requires the endpoint to establish that the token was issued
+	// to the client presenting it. Without that this endpoint is a token oracle:
+	// a `public` client authenticates with only a client_id (no secret, and the
+	// id is visible in every authorize URL), so anyone could confirm liveness and
+	// read sub / tenant_id / scope / sid / agent_id for tokens belonging to OTHER
+	// tenants. A mismatch returns `active: false` rather than an error, which is
+	// the RFC's own answer and avoids leaking that the token exists at all.
+	caller, err := s.q.GetClientName(ctx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Access token (stateless JWT) — unless the hint says it's a refresh token.
 	if hint != "refresh_token" {
 		if claims, err := s.issuer.VerifyAccess(token); err == nil {
+			// Access tokens carry no client_id, so bind at tenant granularity:
+			// a client may only introspect tokens issued within its own tenant.
+			if claims.TenantID != caller.TenantID {
+				return inactive, nil
+			}
 			out := map[string]any{
 				"active":     true,
 				"token_type": "Bearer",
@@ -1662,6 +1700,11 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 		}
 		// Active = not revoked, not yet rotated (used), and unexpired.
 		if row.RevokedAt.Valid || row.UsedAt.Valid || !time.Now().Before(row.ExpiresAt) {
+			return inactive, nil
+		}
+		// Refresh tokens record their issuing client, so bind exactly — this is
+		// the same check RevokeToken already performs.
+		if row.ClientID != clientID {
 			return inactive, nil
 		}
 		return map[string]any{

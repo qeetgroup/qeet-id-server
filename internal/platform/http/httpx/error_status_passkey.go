@@ -18,6 +18,7 @@ func init() {
 		errs.CodePasskeyAttestationInvalid: http.StatusBadRequest,
 		errs.CodePasskeyAssertionInvalid:   http.StatusBadRequest,
 		errs.CodePasskeyNoCredentials:      http.StatusBadRequest,
+		errs.CodePasskeyCloneDetected:      http.StatusUnauthorized,
 		errs.CodePasskeyMFAFailed:          http.StatusUnauthorized,
 		errs.CodePasskeyCeremonyFailed:     http.StatusBadRequest,
 	})

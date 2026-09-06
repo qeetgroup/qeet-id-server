@@ -58,9 +58,18 @@ func (l *TenantLimiter) LoadOverrides(ctx context.Context) {
 	for rows.Next() {
 		var tid uuid.UUID
 		var o Override
-		if err := rows.Scan(&tid, &o.Rate, &o.Capacity); err == nil {
-			m[tid] = o
+		if err := rows.Scan(&tid, &o.Rate, &o.Capacity); err != nil {
+			// Silently skipping a row reverts that tenant to the platform
+			// default with no signal. Abandon the refresh and keep the previous
+			// snapshot rather than installing a partial one.
+			slog.Warn("ratelimit: could not scan override", "key", l.key, "err", err)
+			return
 		}
+		m[tid] = o
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("ratelimit: override read truncated", "key", l.key, "err", err)
+		return
 	}
 	l.mu.Lock()
 	l.overrides = m

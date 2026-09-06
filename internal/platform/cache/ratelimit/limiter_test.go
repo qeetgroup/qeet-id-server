@@ -127,11 +127,57 @@ func TestMiddlewareBy_429HasRetryAfter(t *testing.T) {
 	}
 }
 
-func TestPerIP_UsesXForwardedFor(t *testing.T) {
+// TestPerIP_IgnoresXForwardedForWithoutTrustedProxy pins the security property
+// that makes the per-IP login limiter meaningful.
+//
+// This test previously asserted the OPPOSITE — that PerIP returns the
+// X-Forwarded-For value — which codified a rate-limit bypass: the header is
+// caller-supplied, so an attacker rotating it got a fresh token bucket per
+// request and could brute-force logins without limit. With no trusted proxy
+// declared, the header must be ignored entirely.
+func TestPerIP_IgnoresXForwardedForWithoutTrustedProxy(t *testing.T) {
+	httpx.SetTrustedProxyHops(0)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.7:34567"
 	req.Header.Set("X-Forwarded-For", "9.9.9.9")
-	if got := PerIP(req); got != "9.9.9.9" {
-		t.Errorf("PerIP = %q, want 9.9.9.9", got)
+	if got := PerIP(req); got != "203.0.113.7" {
+		t.Errorf("PerIP = %q, want the transport peer 203.0.113.7 (spoofed XFF must be ignored)", got)
+	}
+}
+
+// TestPerIP_SpoofedXForwardedForCannotSplitBuckets is the regression test for
+// the bypass itself: with one trusted proxy appending the real peer, a caller
+// who forges the left-hand side of the chain must still land in ONE bucket.
+func TestPerIP_SpoofedXForwardedForCannotSplitBuckets(t *testing.T) {
+	httpx.SetTrustedProxyHops(1)
+	t.Cleanup(func() { httpx.SetTrustedProxyHops(0) })
+
+	seen := map[string]struct{}{}
+	for _, forged := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.1:1234" // the proxy
+		// What the origin sees when a caller sends "X-Forwarded-For: <forged>"
+		// and the proxy appends the address it actually accepted from.
+		req.Header.Set("X-Forwarded-For", forged+", 203.0.113.7")
+		seen[PerIP(req)] = struct{}{}
+	}
+	if len(seen) != 1 {
+		t.Fatalf("forged X-Forwarded-For produced %d distinct buckets, want 1: %v", len(seen), seen)
+	}
+	if _, ok := seen["203.0.113.7"]; !ok {
+		t.Errorf("bucket key = %v, want the proxy-observed peer 203.0.113.7", seen)
+	}
+}
+
+// TestPerIP_TrustedProxyReadsRealClient covers the normal, unforged case.
+func TestPerIP_TrustedProxyReadsRealClient(t *testing.T) {
+	httpx.SetTrustedProxyHops(1)
+	t.Cleanup(func() { httpx.SetTrustedProxyHops(0) })
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "198.51.100.4")
+	if got := PerIP(req); got != "198.51.100.4" {
+		t.Errorf("PerIP = %q, want 198.51.100.4", got)
 	}
 }
 

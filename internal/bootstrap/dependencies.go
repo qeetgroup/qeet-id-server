@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -213,6 +214,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioAccountSID: cfg.TwilioAccountSID,
 		TwilioAuthToken:  cfg.TwilioAuthToken,
 		TwilioFrom:       cfg.TwilioFrom,
+		Dev:              cfg.ServiceEnv == "dev",
 	})
 	// PNG fallback for the email logo (served at the app root): shown in clients
 	// that strip the inline SVG mark (Gmail/Outlook/Yahoo).
@@ -320,7 +322,27 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
-	wa, err := webauthn.New(&webauthn.Config{RPID: rpID, RPDisplayName: rpDisplayName, RPOrigins: rpOrigins})
+	// UserVerification: Required is load-bearing, not a preference.
+	//
+	// go-webauthn copies Config.AuthenticatorSelection.UserVerification into the
+	// assertion and then gates on `session.UserVerification == Required` — a
+	// strict equality. Left unset (or at "preferred") the UV flag in
+	// authenticatorData is never checked, so a passkey proves only POSSESSION of
+	// the authenticator. Accounts created through passkey signup have no
+	// password at all, which made the passkey the entire credential and reduced
+	// a "phishing-resistant MFA" product to a single touch on a borrowed device.
+	//
+	// Setting it here covers both login ceremonies (BeginLogin and
+	// BeginDiscoverableLogin read it from the config); the two registration
+	// ceremonies override AuthenticatorSelection explicitly and set it there.
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:          rpID,
+		RPDisplayName: rpDisplayName,
+		RPOrigins:     rpOrigins,
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		},
+	})
 	if err != nil {
 		slog.Error("webauthn init", "err", err)
 		os.Exit(1)
@@ -328,6 +350,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	passkeyService := passkey.NewService(pool, wa, authService)
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	socialService.SetCipher(sharedCipher)
+	// Allowlist for the hosted flow's return_to. The callback sets the SSO
+	// cookie before redirecting, so an unvalidated value would be an open
+	// redirect on the auth domain. AllowedOrigins is already the vetted browser
+	// origin set (Validate() refuses a wildcard outside dev).
+	socialService.SetAllowedReturnOrigins(
+		append([]string{cfg.AppBaseURL, cfg.LoginBaseURL}, cfg.AllowedOrigins()...)...)
 	// Platform-level (tenant-less) social login for the console's own accounts.
 	// Off until credentials are set; Google only for now.
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {

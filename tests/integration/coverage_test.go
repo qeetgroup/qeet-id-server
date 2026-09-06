@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
@@ -431,8 +432,15 @@ func TestOIDCRevokeAccessTokenHintNoop(t *testing.T) {
 func newPasskeySvc(t *testing.T) *passkey.Service {
 	t.Helper()
 	authSvc, _ := newAuth()
+	// Mirror the production config in internal/bootstrap/dependencies.go —
+	// crucially AuthenticatorSelection.UserVerification, which is what gates
+	// go-webauthn's UV check. A test config that omits it silently verifies
+	// weaker assertions than production does.
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID: "localhost", RPDisplayName: "Qeet ID", RPOrigins: []string{"http://localhost:3000"},
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		},
 	})
 	if err != nil {
 		t.Fatalf("webauthn: %v", err)
@@ -617,8 +625,10 @@ func TestMFATOTPEnrollAndRecoveryCodes(t *testing.T) {
 		t.Fatalf("expected 10 recovery codes, got %d", len(recoveryCodes))
 	}
 
-	// Verify accepts a fresh TOTP (not flagged as a recovery code).
-	totpCode, _ := totp.Code(enr.Secret, time.Now().UTC())
+	// Verify accepts a fresh TOTP (not flagged as a recovery code). Step +1:
+	// the enrollment code above consumed the current step, and a consumed step
+	// is now rejected as a replay.
+	totpCode := totpCodeAtStep(t, enr.Secret, 1)
 	res, err := mfaVerify(ctx, svc, userID, totpCode)
 	if err != nil {
 		t.Fatalf("verify totp: %v", err)
@@ -709,7 +719,10 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 	`, userID); err != nil {
 		t.Fatalf("expire factor budget: %v", err)
 	}
-	if _, err := mfaVerify(ctx, service, userID, totpCode); err != nil {
+	// Step +1: the enrollment confirm above consumed the current step, and the
+	// exhausted-budget attempts were rejected before reaching TOTP verification,
+	// so they consumed nothing.
+	if _, err := mfaVerify(ctx, service, userID, totpCodeAtStep(t, enrollment.Secret, 1)); err != nil {
 		t.Fatalf("correct TOTP after lockout expiry: %v", err)
 	}
 
@@ -1310,7 +1323,8 @@ func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
 	}
 
 	// Satisfy step-up via a real TOTP verify through the (ungated) verify route.
-	vcode, _ := totp.Code(enr.Secret, time.Now().UTC())
+	// Step +1 — enrollment above consumed the current step.
+	vcode := totpCodeAtStep(t, enr.Secret, 1)
 	body, _ := json.Marshal(map[string]string{"code": vcode})
 	vreq, _ := http.NewRequest(http.MethodPost, srv.URL+"/mfa/totp/verify", bytes.NewReader(body))
 	vreq.Header.Set("Content-Type", "application/json")

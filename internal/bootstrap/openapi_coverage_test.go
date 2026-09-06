@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
 	"gopkg.in/yaml.v3"
 )
 
@@ -159,7 +161,10 @@ func productionRouteInventory(t *testing.T) map[string]routeClass {
 	t.Helper()
 	deps := routeInventoryDeps(t)
 	all := chi.NewRouter()
-	mountRootPublicRoutes(all, deps)
+	// Limiters are irrelevant to the route inventory (Group composes middleware
+	// without changing patterns); pass real ones so the production call shape is
+	// exercised rather than a divergent test-only path.
+	mountRootPublicRoutes(all, deps, ratelimit.New(5, 20), ratelimit.New(50, 200))
 	all.Route("/v1", func(r chi.Router) {
 		mountV1PublicRoutes(r, deps)
 		mountAuthenticatedRoutes(r, deps)

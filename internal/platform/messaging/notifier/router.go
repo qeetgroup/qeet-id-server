@@ -30,6 +30,7 @@ func (r Router) Send(ctx context.Context, m Message) error {
 	if r.Default != nil {
 		return r.Default.Send(ctx, m)
 	}
+	// Zero-value LogSender: Reveal is false, so no credential is printed.
 	return LogSender{}.Send(ctx, m)
 }
 
@@ -50,6 +51,11 @@ type Config struct {
 	TwilioAccountSID string
 	TwilioAuthToken  string
 	TwilioFrom       string
+
+	// Dev enables the LogSender body, so a developer can read an OTP out of the
+	// console. It must be false outside development: any channel left without a
+	// provider routes live credentials to the log fallback. See LogSender.
+	Dev bool
 }
 
 // New builds a channel-routing Sender from config. Email is wired when an SMTP
@@ -57,7 +63,7 @@ type Config struct {
 // unconfigured falls back to LogSender. It logs which providers went live so a
 // misconfigured deploy is obvious in the boot logs.
 func New(c Config) Sender {
-	r := Router{Default: LogSender{}}
+	r := Router{Default: LogSender{Reveal: c.Dev}}
 
 	switch {
 	case c.EmailProvider == "ses-api" && c.SMTPFrom != "":

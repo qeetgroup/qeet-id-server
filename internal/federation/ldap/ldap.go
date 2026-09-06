@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
@@ -513,6 +514,21 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		}
 	} else if err != nil {
 		return uuid.Nil, err
+	} else {
+		// An existing user matched the directory's email. Emails are globally
+		// unique (migration 0022), so that row may belong to another tenant. A
+		// successful bind proves only that this connection's directory
+		// accepted the credentials — not that the account belongs here. Without
+		// this check, an admin who points a connection at a directory they run
+		// could assert a victim's address and receive a token pair carrying the
+		// victim's user id. See internal/federation/identitylink.
+		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
+		if berr != nil {
+			return uuid.Nil, berr
+		}
+		if !belongs {
+			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
+		}
 	}
 
 	email := u.Email

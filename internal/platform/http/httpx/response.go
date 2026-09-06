@@ -70,7 +70,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	// generic client message hides.
 	if cause := e.Unwrap(); cause != nil {
 		slog.Warn("request error",
-			"code", e.Code,
+			// "error_code", not "code": the redacting log handler treats "code"
+			// as a secret (OTPs, OAuth codes), which blanked this field and made
+			// the line useless for the correlation it exists to provide.
+			"error_code", e.Code,
 			"cause", cause,
 			"route", safeRequestRoute(r),
 			"req_id", RequestID(r),

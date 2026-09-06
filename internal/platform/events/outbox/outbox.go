@@ -143,7 +143,14 @@ func (d *Dispatcher) tick(ctx context.Context) error {
 		}
 		batch = append(batch, r)
 	}
+	err = rows.Err()
 	rows.Close()
+	// The query is an UPDATE ... RETURNING, so every row it produced is already
+	// leased. Dropping unread rows silently strands those events until the lease
+	// expires; surface it so the tick is retried instead.
+	if err != nil {
+		return err
+	}
 	if len(batch) == 0 {
 		return nil
 	}

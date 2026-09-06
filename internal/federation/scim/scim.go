@@ -1025,6 +1025,19 @@ func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 // transaction, so a provisioning change is never durable without a record of it.
 func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string) bool {
 	ctx := r.Context()
+	// Confirm the user belongs to this tenant before writing.
+	//
+	// user.Repository.UpdateTx keys on the user id alone (`WHERE id = $n AND
+	// deleted_at IS NULL`) — it carries no tenant predicate and there is no RLS
+	// to catch that. Without this check a SCIM token issued to one tenant could
+	// PATCH /scim/v2/Users/{id} for a user in *any* tenant and flip `active`
+	// (suspending them, which then blocks their refresh) or rewrite their
+	// display name. deleteUser already guards this way; both write paths that
+	// reach here (replaceUser, patchUser) now funnel through the same check.
+	if _, err := h.Service.getProvisioned(ctx, tenantID, userID); err != nil {
+		writeSCIMErr(w, http.StatusNotFound, "user not found")
+		return false
+	}
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "update failed")

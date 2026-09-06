@@ -57,7 +57,13 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			raw := strings.TrimSpace(auth[len("bearer "):])
 			claims, err := v.Tokens.VerifyAccess(raw)
 			if err != nil {
-				WriteError(w, r, errs.ErrUnauthorized.WithDetail(err.Error()))
+				// Wrap, not WithDetail. The verification error embeds header
+				// values the caller chose (notably an unknown `kid`, echoed
+				// verbatim) and distinguishes "unknown kid" / "retired key" /
+				// "expired" / "issuer mismatch" — an oracle that maps our key
+				// rotation state for an unauthenticated caller. The cause is
+				// logged by WriteError; the client gets a bare 401.
+				WriteError(w, r, errs.ErrUnauthorized.Wrap(err))
 				return
 			}
 			p := &Principal{

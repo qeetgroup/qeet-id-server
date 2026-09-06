@@ -3,15 +3,11 @@ package outbox
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Reader exposes the dead-letter table for ops triage. The live queue
@@ -70,19 +66,23 @@ type Handler struct {
 	Reader *Reader
 }
 
-// Mount installs the DLQ inspector at /v1/admin/outbox/dlq. Caller is
-// expected to gate this behind a platform-admin permission check at
-// the router level — the handler itself does no auth.
-func (h *Handler) Mount(r chi.Router) {
-	r.Get("/admin/outbox/dlq", h.list)
-}
-
-func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := h.Reader.ListDLQ(r.Context(), limit)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
-}
+// Mount registers nothing.
+//
+// This package previously exposed the DLQ at GET /v1/admin/outbox/dlq, with a
+// comment saying the caller was "expected to gate this behind a platform-admin
+// permission check at the router level". No such gate existed, and none could:
+// the route was mapped to the `audit.read` permission, which rbac.Enforce
+// evaluates against *the caller's own tenant*. Every customer's org owner/admin
+// holds it, so any of them could read every other tenant's dead-lettered event
+// payloads — user records, group names, verified domains, credential subjects.
+// platform.outbox_dead_letter has no tenant_id column, so the query could not
+// be scoped either.
+//
+// The DLQ is now operator-only, inspected via direct database access. That is
+// already how the live queue is handled (see the Reader doc comment) — this
+// simply applies the same rule to the dead-letter table. Reader is retained for
+// that use and for tests.
+//
+// Do not re-mount this on the tenant-scoped API without either a real
+// platform-operator principal or a tenant_id column to filter on.
+func (h *Handler) Mount(chi.Router) {}
