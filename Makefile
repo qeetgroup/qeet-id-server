@@ -1,4 +1,4 @@
-.PHONY: install dev dev-secrets build test test-integration bench lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill
+.PHONY: install dev dev-secrets build test test-integration bench lint migrate-up migrate-down db-up db-down db-reset seed seed-reset kill dev-obs obs-up obs-down obs-reset obs-logs
 
 ifneq (,$(wildcard .env))
     include .env
@@ -11,6 +11,8 @@ MIGRATIONS_DIR = internal/platform/database/migrations
 # Persistent local dev signing material (gitignored). Multi-line PEMs can't live in
 # the Make-included .env, so `dev` injects these from files (see dev-secrets below).
 SECRETS_DIR    = .secrets
+# API stdout is teed here by `make dev-obs`; the otel-collector tails it into Loki.
+LOG_DIR        = logs
 # k6 targets a running server; from the k6 Docker image the host is
 # host.docker.internal. Override for a remote/CI target (e.g. http://localhost:4001).
 BASE_URL      ?= http://host.docker.internal:4001
@@ -44,6 +46,40 @@ dev: dev-secrets
 	 SAML_IDP_KEY="$$(cat $(SECRETS_DIR)/saml_idp_key.pem)" \
 	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
 	 go run ./cmd/api
+
+# Same as `dev`, but tees stdout into $(LOG_DIR)/qeet-id.log for the collector.
+# LOG_FORMAT=json is forced: .env uses "text" for readable local logs, which the
+# filelog receiver's json_parser cannot read. Terminal output stays visible.
+dev-obs: dev-secrets
+	@mkdir -p $(LOG_DIR)
+	@echo "starting qeet-id on :$${HTTP_PORT:-4001} — JSON logs → $(LOG_DIR)/qeet-id.log (tailed into Loki)"
+	@JWT_SIGNING_KEY="$$(cat $(SECRETS_DIR)/jwt_es256.pem)" \
+	 SAML_IDP_KEY="$$(cat $(SECRETS_DIR)/saml_idp_key.pem)" \
+	 SAML_IDP_CERT="$$(cat $(SECRETS_DIR)/saml_idp_cert.pem)" \
+	 LOG_FORMAT=json \
+	 go run ./cmd/api 2>&1 | tee -a $(LOG_DIR)/qeet-id.log
+
+# Observability stack: Grafana :3010, Prometheus :9090, Loki :3100, Tempo :3200,
+# OTLP collector :4317/:4318. Metrics work with plain `make dev`; logs need
+# `make dev-obs`; traces need OTEL_EXPORTER_OTLP_ENDPOINT set in .env.
+obs-up:
+	@mkdir -p $(LOG_DIR)
+	docker compose up -d prometheus loki tempo otel-collector grafana
+	@echo "Grafana    http://localhost:3010  (anonymous admin, no login)"
+	@echo "Prometheus http://localhost:9090"
+	@echo "Loki       http://localhost:3100  ·  Tempo http://localhost:3200"
+
+obs-down:
+	docker compose stop prometheus loki tempo otel-collector grafana
+
+# Wipes stored metrics/logs/traces and the teed log file. Leaves Postgres alone.
+obs-reset:
+	docker compose rm -sfv prometheus loki tempo otel-collector grafana
+	docker volume rm -f qeet-id-dev_promdata qeet-id-dev_lokidata qeet-id-dev_tempodata qeet-id-dev_grafanadata
+	rm -f $(LOG_DIR)/qeet-id.log
+
+obs-logs:
+	docker compose logs -f otel-collector loki tempo
 
 build:
 	go build -o bin/qeet-id ./cmd/api

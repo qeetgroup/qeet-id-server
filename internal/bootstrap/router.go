@@ -151,12 +151,18 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(chimw.Recoverer)
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
-	r.Use(httpx.AccessLog)
 	// Tracing wraps metrics so the server span spans the whole request; both
 	// derive low-cardinality names from the matched chi route pattern. When no
 	// OTLP endpoint is configured the global tracer is a no-op, so this is a
 	// cheap pass-through.
+	//
+	// It must also sit ABOVE AccessLog: chi middleware is outer-to-inner, and
+	// AccessLog reads trace.SpanFromContext(r.Context()) when it writes its line.
+	// With AccessLog outermost it only ever saw its own pre-span context, so the
+	// trace_id/span_id attrs were silently never emitted and Grafana's
+	// log-to-trace correlation had nothing to link on.
 	r.Use(tracing.Middleware)
+	r.Use(httpx.AccessLog)
 	r.Use(metrics.Middleware)
 	// CORS first (above CSRF) so that even a rejected request — e.g. a CSRF 403
 	// — still carries Access-Control-* headers; otherwise the browser masks the
