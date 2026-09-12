@@ -42,5 +42,736 @@ services:
       - "1025:1025"  # SMTP  (app → Mailpit)
       - "8025:8025"  # web UI (read caught mail)
 
+  # ── Observability (local only) ───────────────────────────────────────────
+  # Grafana http://localhost:3010 · Prometheus :9090 · Loki :3100 · Tempo :3200
+  # Every config file is inlined below under the top-level `configs:` key, so
+  # this compose file is entirely self-contained — nothing to keep in sync on
+  # disk. The API runs on the HOST, so Prometheus scrapes host.docker.internal
+  # and the collector tails ./logs/qeet-id.log (written by `make dev-obs`).
+  # Start with: make obs-up
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      # Tempo's metrics generator remote-writes span metrics here.
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    configs:
+      - source: prometheus_yml
+        target: /etc/prometheus/prometheus.yml
+    volumes:
+      - promdata:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: -config.file=/etc/loki/loki.yaml
+    configs:
+      - source: loki_yaml
+        target: /etc/loki/loki.yaml
+    volumes:
+      - lokidata:/loki
+    ports:
+      - "3100:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  tempo:
+    image: grafana/tempo:2.7.1
+    command: -config.file=/etc/tempo/tempo.yaml
+    user: "0:0"  # local dev: avoids volume-permission friction on the WAL dir
+    configs:
+      - source: tempo_yaml
+        target: /etc/tempo/tempo.yaml
+    volumes:
+      - tempodata:/var/tempo
+    ports:
+      - "3200:3200"  # query API / Grafana datasource
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.117.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    configs:
+      - source: otelcol_yaml
+        target: /etc/otelcol/config.yaml
+    volumes:
+      # API stdout, teed here by `make dev-obs`, tailed by the filelog receiver.
+      - ./logs:/var/log/qeet-id:ro
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP  ← OTEL_EXPORTER_OTLP_ENDPOINT points here
+      - "8889:8889"  # Prometheus scrape of OTLP-pushed metrics
+    depends_on:
+      tempo:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    # 3010 deliberately: 3000-3003 belong to the Qeet front-ends.
+    ports:
+      - "3010:3000"
+    environment:
+      # Local dev only — no login prompt. Never mirror this outside localhost.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+      GF_LOG_LEVEL: warn
+    configs:
+      - source: grafana_datasources
+        target: /etc/grafana/provisioning/datasources/datasources.yaml
+      - source: grafana_dashboards
+        target: /etc/grafana/provisioning/dashboards/dashboards.yaml
+      - source: grafana_dashboard_api
+        target: /var/lib/grafana/dashboards/qeet-id-api.json
+    volumes:
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+
 volumes:
   pgdata:
+  promdata:
+  lokidata:
+  tempodata:
+  grafanadata:
+
+# ── Inline config files for the observability stack ────────────────────────
+# Compose renders each `content` block into a file inside the container, so
+# there are no sidecar YAML files on disk to drift out of sync.
+configs:
+  prometheus_yml:
+    content: |
+      global:
+        scrape_interval: 10s
+        evaluation_interval: 10s
+        external_labels:
+          env: dev
+
+      scrape_configs:
+        # qeet-id API — /metrics is mounted in the public route group (router.go).
+        - job_name: qeet-id-api
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["host.docker.internal:4001"]
+              labels:
+                service: qeet-id
+
+        # Anything pushed to the collector over OTLP is re-exposed here.
+        - job_name: otel-collector
+          static_configs:
+            - targets: ["otel-collector:8889"]
+
+        - job_name: prometheus
+          static_configs:
+            - targets: ["localhost:9090"]
+
+  loki_yaml:
+    content: |
+      auth_enabled: false
+
+      server:
+        http_listen_port: 3100
+        grpc_listen_port: 9096
+        log_level: warn
+
+      common:
+        instance_addr: 127.0.0.1
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: 2024-01-01
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      limits_config:
+        metric_aggregation_enabled: true
+        # Required so trace_id/span_id arrive as structured metadata, which is
+        # what Grafana's Loki-to-Tempo correlation links on.
+        allow_structured_metadata: true
+        retention_period: 168h
+        reject_old_samples: false
+        # Pins the index to two stable, low-cardinality labels. Everything the
+        # app logs (req_id, dur_ms, trace_id, route…) stays as structured
+        # metadata: still filterable via `| trace_id="…"`, but never indexed,
+        # so streams stay at 1 instead of one per unique field combination.
+        otlp_config:
+          resource_attributes:
+            ignore_defaults: true
+            attributes_config:
+              - action: index_label
+                attributes:
+                  - service.name
+                  - deployment.environment
+
+      compactor:
+        working_directory: /loki/compactor
+        retention_enabled: true
+        delete_request_store: filesystem
+
+      ruler:
+        storage:
+          type: local
+          local:
+            directory: /loki/rules
+
+  tempo_yaml:
+    content: |
+      stream_over_http_enabled: true
+
+      server:
+        http_listen_port: 3200
+        log_level: warn
+
+      # Receives OTLP from the collector only — not published to the host, the
+      # collector is the single front door.
+      distributor:
+        receivers:
+          otlp:
+            protocols:
+              grpc:
+                endpoint: 0.0.0.0:4317
+              http:
+                endpoint: 0.0.0.0:4318
+
+      ingester:
+        max_block_duration: 5m
+
+      compactor:
+        compaction:
+          block_retention: 24h
+
+      # RED metrics + service-graph data derived from spans, remote-written to
+      # Prometheus so Grafana's service map and traces-to-metrics work.
+      metrics_generator:
+        registry:
+          external_labels:
+            source: tempo
+        storage:
+          path: /var/tempo/generator/wal
+          remote_write:
+            - url: http://prometheus:9090/api/v1/write
+              send_exemplars: true
+        traces_storage:
+          path: /var/tempo/generator/traces
+
+      storage:
+        trace:
+          backend: local
+          wal:
+            path: /var/tempo/wal
+          local:
+            path: /var/tempo/blocks
+
+      overrides:
+        defaults:
+          metrics_generator:
+            processors: [service-graphs, span-metrics, local-blocks]
+
+  otelcol_yaml:
+    content: |
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+
+        # `make dev-obs` tees the API's stdout here (LOG_FORMAT=json is forced by
+        # that target, because .env uses "text" for readable terminal logs).
+        filelog:
+          include: [/var/log/qeet-id/*.log]
+          start_at: beginning
+          retry_on_failure:
+            enabled: true
+          operators:
+            - type: json_parser
+              parse_from: body
+              # slog's JSON handler emits RFC3339Nano under "time".
+              timestamp:
+                parse_from: attributes.time
+                layout_type: gotime
+                layout: "2006-01-02T15:04:05.999999999Z07:00"
+              severity:
+                parse_from: attributes.level
+            # Promotes trace_id/span_id (httpx/middleware.go) onto the log record so
+            # Grafana can jump from a log line straight to its trace.
+            - type: trace_parser
+              trace_id:
+                parse_from: attributes.trace_id
+              span_id:
+                parse_from: attributes.span_id
+
+      processors:
+        batch:
+          timeout: 5s
+          send_batch_size: 1024
+        resource:
+          attributes:
+            - key: service.name
+              value: qeet-id
+              action: upsert
+            - key: deployment.environment
+              value: dev
+              action: upsert
+
+      exporters:
+        otlp/tempo:
+          endpoint: tempo:4317
+          tls:
+            insecure: true
+        # Loki 3.x ingests OTLP natively at /otlp/v1/logs; otlphttp appends /v1/logs.
+        otlphttp/loki:
+          endpoint: http://loki:3100/otlp
+          tls:
+            insecure: true
+        prometheus:
+          endpoint: 0.0.0.0:8889
+
+      service:
+        telemetry:
+          logs:
+            level: warn
+        pipelines:
+          traces:
+            receivers: [otlp]
+            processors: [resource, batch]
+            exporters: [otlp/tempo]
+          logs:
+            receivers: [filelog, otlp]
+            processors: [resource, batch]
+            exporters: [otlphttp/loki]
+          metrics:
+            receivers: [otlp]
+            processors: [resource, batch]
+            exporters: [prometheus]
+
+  grafana_datasources:
+    content: |
+      apiVersion: 1
+
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          uid: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+          jsonData:
+            httpMethod: POST
+            exemplarTraceIdDestinations:
+              - name: trace_id
+                datasourceUid: tempo
+
+        - name: Loki
+          type: loki
+          uid: loki
+          access: proxy
+          url: http://loki:3100
+          jsonData:
+            # Click a log line's trace_id -> opens that trace in Tempo.
+            derivedFields:
+              - name: TraceID
+                matcherType: label
+                matcherRegex: trace_id
+                url: "$${__value.raw}"
+                datasourceUid: tempo
+
+        - name: Tempo
+          type: tempo
+          uid: tempo
+          access: proxy
+          url: http://tempo:3200
+          jsonData:
+            # Trace -> the logs emitted during it, matched on trace_id.
+            tracesToLogsV2:
+              datasourceUid: loki
+              spanStartTimeShift: "-5m"
+              spanEndTimeShift: "5m"
+              filterByTraceID: true
+              customQuery: false
+            tracesToMetrics:
+              datasourceUid: prometheus
+            serviceMap:
+              datasourceUid: prometheus
+            nodeGraph:
+              enabled: true
+            search:
+              hide: false
+
+  grafana_dashboards:
+    content: |
+      apiVersion: 1
+
+      providers:
+        - name: qeet-id
+          orgId: 1
+          folder: Qeet ID
+          type: file
+          disableDeletion: false
+          updateIntervalSeconds: 15
+          allowUiUpdates: true
+          options:
+            path: /var/lib/grafana/dashboards
+            foldersFromFilesStructure: false
+
+  grafana_dashboard_api:
+    content: |
+      {
+        "uid": "qeet-id-api",
+        "title": "Qeet ID \u2014 API overview",
+        "tags": [
+          "qeet-id"
+        ],
+        "timezone": "browser",
+        "schemaVersion": 39,
+        "refresh": "10s",
+        "time": {
+          "from": "now-30m",
+          "to": "now"
+        },
+        "templating": {
+          "list": [
+            {
+              "name": "route",
+              "type": "query",
+              "label": "Route",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "query": "label_values(http_requests_total, route)",
+              "includeAll": true,
+              "multi": true,
+              "current": {
+                "text": "All",
+                "value": "$$__all"
+              }
+            }
+          ]
+        },
+        "panels": [
+          {
+            "type": "stat",
+            "title": "Request rate",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 0,
+              "y": 0
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps",
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum(rate(http_requests_total[5m]))",
+                "legendFormat": "total"
+              }
+            ]
+          },
+          {
+            "type": "stat",
+            "title": "Error rate (5xx)",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 6,
+              "y": 0
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    },
+                    {
+                      "color": "red",
+                      "value": 5
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "100 * sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001)",
+                "legendFormat": "5xx"
+              }
+            ]
+          },
+          {
+            "type": "stat",
+            "title": "p95 latency",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 12,
+              "y": 0
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s",
+                "decimals": 3
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+                "legendFormat": "p95"
+              }
+            ]
+          },
+          {
+            "type": "stat",
+            "title": "4xx rate",
+            "gridPos": {
+              "h": 5,
+              "w": 6,
+              "x": 18,
+              "y": 0
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps",
+                "decimals": 2
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum(rate(http_requests_total{status=~\"4..\"}[5m]))",
+                "legendFormat": "4xx"
+              }
+            ]
+          },
+          {
+            "type": "timeseries",
+            "title": "Requests by route",
+            "gridPos": {
+              "h": 9,
+              "w": 12,
+              "x": 0,
+              "y": 5
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps",
+                "custom": {
+                  "fillOpacity": 8
+                }
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by (route) (rate(http_requests_total{route=~\"$$route\"}[5m]))",
+                "legendFormat": "{{route}}"
+              }
+            ]
+          },
+          {
+            "type": "timeseries",
+            "title": "Responses by status",
+            "gridPos": {
+              "h": 9,
+              "w": 12,
+              "x": 12,
+              "y": 5
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps",
+                "custom": {
+                  "fillOpacity": 20,
+                  "stacking": {
+                    "mode": "normal"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by (status) (rate(http_requests_total{route=~\"$$route\"}[5m]))",
+                "legendFormat": "{{status}}"
+              }
+            ]
+          },
+          {
+            "type": "timeseries",
+            "title": "Latency p50 / p95 / p99",
+            "gridPos": {
+              "h": 9,
+              "w": 12,
+              "x": 0,
+              "y": 14
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s"
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{route=~\"$$route\"}[5m])) by (le))",
+                "legendFormat": "p50"
+              },
+              {
+                "refId": "B",
+                "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{route=~\"$$route\"}[5m])) by (le))",
+                "legendFormat": "p95"
+              },
+              {
+                "refId": "C",
+                "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{route=~\"$$route\"}[5m])) by (le))",
+                "legendFormat": "p99"
+              }
+            ]
+          },
+          {
+            "type": "timeseries",
+            "title": "Auth outcomes \u2014 signup / login / register",
+            "gridPos": {
+              "h": 9,
+              "w": 12,
+              "x": 12,
+              "y": 14
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps"
+              },
+              "overrides": []
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "sum by (route, status) (rate(http_requests_total{route=~\".*/auth/(signup|login|register).*\"}[5m]))",
+                "legendFormat": "{{route}} {{status}}"
+              }
+            ]
+          },
+          {
+            "type": "logs",
+            "title": "API logs (Loki)",
+            "gridPos": {
+              "h": 12,
+              "w": 24,
+              "x": 0,
+              "y": 23
+            },
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "options": {
+              "showTime": true,
+              "wrapLogMessage": true,
+              "sortOrder": "Descending",
+              "enableLogDetails": true
+            },
+            "targets": [
+              {
+                "refId": "A",
+                "expr": "{service_name=\"qeet-id\"}",
+                "queryType": "range"
+              }
+            ]
+          }
+        ]
+      }

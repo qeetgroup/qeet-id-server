@@ -65,18 +65,32 @@ func Code(secret string, t time.Time) (string, error) {
 
 // Verify accepts the code if it matches the current 30s window or the
 // preceding/following one, allowing for small clock skew.
+//
+// Verify alone does NOT prevent replay: the same code stays acceptable for the
+// whole ~90s window. Callers that authenticate with TOTP must use VerifyStep and
+// persist the returned step, rejecting any step already consumed (RFC 6238 §5.2).
 func Verify(secret, code string) bool {
+	_, ok := VerifyStep(secret, code)
+	return ok
+}
+
+// VerifyStep verifies the code and reports WHICH time-step matched, so the
+// caller can enforce single use by refusing a step it has already accepted.
+// The step is the RFC 6238 counter (Unix seconds / period), which increases
+// monotonically and is comparable across the acceptance window.
+func VerifyStep(secret, code string) (step int64, ok bool) {
 	now := time.Now().UTC()
 	for _, skew := range []time.Duration{0, -period * time.Second, period * time.Second} {
-		want, err := Code(secret, now.Add(skew))
+		at := now.Add(skew)
+		want, err := Code(secret, at)
 		if err != nil {
 			continue
 		}
 		if hmacEqual(want, code) {
-			return true
+			return at.Unix() / period, true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func hmacEqual(a, b string) bool {

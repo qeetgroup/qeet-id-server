@@ -103,6 +103,11 @@ func (rd *Reader) List(ctx context.Context, tenantID uuid.UUID, limit int, curso
 		}
 		out = append(out, r)
 	}
+	// Without this, a truncated read yields a short audit page that looks
+	// complete — the worst possible silent failure for an audit trail.
+	if err := resRows.Err(); err != nil {
+		return nil, "", err
+	}
 	var next string
 	if len(out) > limit {
 		next = out[limit].ID.String()

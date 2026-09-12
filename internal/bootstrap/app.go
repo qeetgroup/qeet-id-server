@@ -14,6 +14,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
 	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
@@ -64,6 +65,15 @@ func Run() {
 		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
 	}
 	slog.SetDefault(slog.New(logger.NewRedactingHandler(handler)))
+
+	// Client IP resolution must be configured before the listener starts: it
+	// keys the login rate limiter and every audit record.
+	httpx.SetTrustedProxyHops(cfg.TrustedProxyHops)
+	if cfg.ServiceEnv != "dev" && cfg.TrustedProxyHops == 0 {
+		slog.Warn("TRUSTED_PROXY_HOPS is 0: X-Forwarded-For is ignored and every " +
+			"client IP will be the transport peer. Set it to the number of reverse " +
+			"proxies in front of this server (1 for a single Caddy/nginx/ALB).")
+	}
 
 	bi := buildinfo.Get()
 	slog.Info("starting", "service", cfg.ServiceName, "version", bi.Version, "commit", bi.Commit, "built", bi.Date, "go", bi.GoVersion)

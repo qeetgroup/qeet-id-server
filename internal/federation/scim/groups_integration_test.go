@@ -527,3 +527,79 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestSCIMUserWriteTenantIsolation is the regression test for the cross-tenant
+// user-write hole: user.Repository.UpdateTx keys on the user id alone and
+// carries no tenant predicate, so before applyUserUpdate re-checked ownership,
+// tenant B's SCIM token could suspend or rename any user in tenant A.
+//
+// Suspending is the damaging half — status "suspended" blocks the victim's
+// refresh in access/authentication, so a cross-tenant PATCH is an account
+// lockout. Both write verbs (PUT replace, PATCH) must 404, and — crucially —
+// the victim's row must be unchanged afterwards, because the pre-fix bug
+// committed the write and only *then* failed to reload it.
+func TestSCIMUserWriteTenantIsolation(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	a := newSCIMFixture(t, ctx)
+	b := newSCIMFixture(t, ctx)
+
+	victim := a.seedUser(t, ctx, "victim-"+uuid.NewString()+"@a.example")
+
+	statusOf := func() string {
+		var s string
+		if err := testPool.QueryRow(ctx,
+			`SELECT status FROM "user".users WHERE id = $1`, victim).Scan(&s); err != nil {
+			t.Fatalf("read victim status: %v", err)
+		}
+		return s
+	}
+	before := statusOf()
+
+	// PATCH active:false — the deprovisioning shape a hostile tenant would use.
+	rec := b.do(t, http.MethodPatch, "/scim/v2/Users/"+victim.String(), map[string]any{
+		"schemas": []string{schemaPatchOp},
+		"Operations": []map[string]any{
+			{"op": "replace", "path": "active", "value": false},
+		},
+	})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("B PATCH A's user: status %d, want 404", rec.Code)
+	}
+	if got := statusOf(); got != before {
+		t.Errorf("B's PATCH mutated A's user: status %q -> %q", before, got)
+	}
+
+	// PUT replace — same hole, different verb.
+	rec = b.do(t, http.MethodPut, "/scim/v2/Users/"+victim.String(), map[string]any{
+		"schemas":     []string{schemaUser},
+		"userName":    "pwned@b.example",
+		"displayName": "pwned",
+		"active":      false,
+	})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("B PUT A's user: status %d, want 404", rec.Code)
+	}
+	if got := statusOf(); got != before {
+		t.Errorf("B's PUT mutated A's user: status %q -> %q", before, got)
+	}
+
+	var displayName *string
+	if err := testPool.QueryRow(ctx,
+		`SELECT display_name FROM "user".users WHERE id = $1`, victim).Scan(&displayName); err != nil {
+		t.Fatalf("read victim display_name: %v", err)
+	}
+	if displayName != nil && *displayName == "pwned" {
+		t.Error("B's PUT overwrote A's user display_name")
+	}
+
+	// A's own token must still work, so the guard scopes rather than blocks.
+	if rec := a.do(t, http.MethodPatch, "/scim/v2/Users/"+victim.String(), map[string]any{
+		"schemas": []string{schemaPatchOp},
+		"Operations": []map[string]any{
+			{"op": "replace", "path": "displayName", "value": "renamed-by-owner"},
+		},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("A PATCH its own user: status %d, want 200", rec.Code)
+	}
+}

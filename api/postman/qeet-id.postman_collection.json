@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Qeet Id - API",
+    "name": "Qeet ID - API",
     "_postman_id": "8f3b6e10-7a3f-4d9c-9a55-qeetid000001",
     "description": "Complete request collection for the qeet-id backend (Go monolith).\n\n## Setup\n\n1. Start the backend: `cd backend && make run` (defaults to `http://localhost:4001`).\n2. Import this collection AND the companion environment (`qeet-id.postman_environment.json`).\n3. Select the **qeet-id (local)** environment in the Postman environment dropdown.\n4. **First time / fresh DB:** run **Auth → Signup**. It creates a new tenant + user + owner role in one shot and auto-populates `{{tenantId}}`, `{{userId}}`, `{{accessToken}}`, `{{refreshToken}}`. The signup user becomes the tenant admin.\n5. **Returning users:** run **Auth → Login** with the saved tenant_id + email + password.\n\n## Conventions\n\n- All authed requests inherit a `Bearer {{accessToken}}` header from the collection root.\n- IDs (`{{tenantId}}`, `{{userId}}`, `{{roleId}}`, …) are written back to collection variables by the corresponding `Create` / `Signup` requests, so you can chain them.\n- Routes prefixed `/v1/...` are versioned API surface. Discovery / JWKS live at root (`/.well-known/...`) per the OIDC spec.\n",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -432,7 +432,7 @@
       "name": "Health",
       "item": [
         {
-          "name": "Liveness — GET /healthz",
+          "name": "Liveness",
           "request": {
             "auth": {
               "type": "noauth"
@@ -451,7 +451,7 @@
           }
         },
         {
-          "name": "Readiness — GET /readyz",
+          "name": "Readiness",
           "request": {
             "auth": {
               "type": "noauth"
@@ -470,7 +470,7 @@
           }
         },
         {
-          "name": "Metrics (Prometheus) — GET /metrics",
+          "name": "Metrics (Prometheus)",
           "request": {
             "method": "GET",
             "header": [],
@@ -495,7 +495,7 @@
       "name": "OIDC Discovery (public)",
       "item": [
         {
-          "name": "OpenID configuration — GET /.well-known/openid-configuration",
+          "name": "OpenID configuration",
           "request": {
             "auth": {
               "type": "noauth"
@@ -515,7 +515,7 @@
           }
         },
         {
-          "name": "JWKS — GET /.well-known/jwks.json",
+          "name": "JWKS",
           "request": {
             "auth": {
               "type": "noauth"
@@ -540,7 +540,7 @@
       "name": "Auth",
       "item": [
         {
-          "name": "Signup — POST /v1/auth/signup",
+          "name": "Signup",
           "event": [
             {
               "listen": "test",
@@ -594,7 +594,7 @@
           }
         },
         {
-          "name": "Login — POST /v1/auth/login",
+          "name": "Login",
           "event": [
             {
               "listen": "test",
@@ -639,7 +639,7 @@
           }
         },
         {
-          "name": "Complete MFA login — POST /v1/auth/mfa",
+          "name": "Complete MFA login",
           "event": [
             {
               "listen": "test",
@@ -683,7 +683,7 @@
           }
         },
         {
-          "name": "Refresh — POST /v1/auth/refresh",
+          "name": "Refresh",
           "event": [
             {
               "listen": "test",
@@ -727,7 +727,7 @@
           }
         },
         {
-          "name": "Me — GET /v1/auth/me",
+          "name": "Me",
           "request": {
             "method": "GET",
             "header": [],
@@ -745,7 +745,7 @@
           }
         },
         {
-          "name": "List sessions — GET /v1/auth/sessions",
+          "name": "List sessions",
           "request": {
             "method": "GET",
             "header": [],
@@ -783,7 +783,7 @@
           ]
         },
         {
-          "name": "Revoke session — DELETE /v1/auth/sessions/{id}",
+          "name": "Revoke session",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -802,7 +802,7 @@
           }
         },
         {
-          "name": "Logout — POST /v1/auth/logout",
+          "name": "Logout",
           "request": {
             "method": "POST",
             "header": [],
@@ -820,7 +820,7 @@
           }
         },
         {
-          "name": "Switch tenant — POST /v1/auth/switch-tenant",
+          "name": "Switch tenant",
           "event": [
             {
               "listen": "test",
@@ -862,7 +862,7 @@
           }
         },
         {
-          "name": "Register (hosted, B2C) — POST /v1/auth/register",
+          "name": "Register (hosted, B2C)",
           "request": {
             "method": "POST",
             "header": [
@@ -906,7 +906,7 @@
           ]
         },
         {
-          "name": "Create SSO session — POST /v1/auth/session",
+          "name": "Create SSO session",
           "request": {
             "method": "POST",
             "header": [
@@ -937,7 +937,7 @@
           }
         },
         {
-          "name": "Complete SSO session MFA — POST /v1/auth/session/mfa",
+          "name": "Complete SSO session MFA",
           "request": {
             "method": "POST",
             "header": [
@@ -969,7 +969,7 @@
           }
         },
         {
-          "name": "Destroy SSO session (logout) — DELETE /v1/auth/session",
+          "name": "Destroy SSO session (logout)",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -996,7 +996,7 @@
       "name": "Recovery (public)",
       "item": [
         {
-          "name": "Forgot password — POST /v1/auth/forgot-password",
+          "name": "Forgot password",
           "request": {
             "auth": {
               "type": "noauth"
@@ -1026,7 +1026,7 @@
           }
         },
         {
-          "name": "Reset password — POST /v1/auth/reset-password",
+          "name": "Reset password",
           "request": {
             "auth": {
               "type": "noauth"
@@ -1056,7 +1056,7 @@
           }
         },
         {
-          "name": "Magic link start — POST /v1/auth/magic-link/start",
+          "name": "Magic link start",
           "request": {
             "auth": {
               "type": "noauth"
@@ -1087,7 +1087,7 @@
           }
         },
         {
-          "name": "Magic link consume — POST /v1/auth/magic-link/consume",
+          "name": "Magic link consume",
           "request": {
             "auth": {
               "type": "noauth"
@@ -1123,7 +1123,7 @@
       "name": "Tenants",
       "item": [
         {
-          "name": "List tenants — GET /v1/tenants",
+          "name": "List tenants",
           "request": {
             "method": "GET",
             "header": [],
@@ -1160,7 +1160,7 @@
           ]
         },
         {
-          "name": "Create tenant — POST /v1/tenants",
+          "name": "Create tenant",
           "event": [
             {
               "listen": "test",
@@ -1198,7 +1198,7 @@
           }
         },
         {
-          "name": "Get tenant — GET /v1/tenants/{id}",
+          "name": "Get tenant",
           "request": {
             "method": "GET",
             "header": [],
@@ -1216,7 +1216,7 @@
           }
         },
         {
-          "name": "Update tenant — PATCH /v1/tenants/{id}",
+          "name": "Update tenant",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1243,7 +1243,7 @@
           }
         },
         {
-          "name": "Delete tenant — DELETE /v1/tenants/{id}",
+          "name": "Delete tenant",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1266,7 +1266,7 @@
       "name": "Users",
       "item": [
         {
-          "name": "List users — GET /v1/users",
+          "name": "List users",
           "request": {
             "method": "GET",
             "header": [],
@@ -1303,7 +1303,7 @@
           ]
         },
         {
-          "name": "Create user — POST /v1/users",
+          "name": "Create user",
           "event": [
             {
               "listen": "test",
@@ -1341,7 +1341,7 @@
           }
         },
         {
-          "name": "Get user — GET /v1/users/{id}",
+          "name": "Get user",
           "request": {
             "method": "GET",
             "header": [],
@@ -1359,7 +1359,7 @@
           }
         },
         {
-          "name": "Update user — PATCH /v1/users/{id}",
+          "name": "Update user",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1386,7 +1386,7 @@
           }
         },
         {
-          "name": "Delete user — DELETE /v1/users/{id}",
+          "name": "Delete user",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1404,7 +1404,7 @@
           }
         },
         {
-          "name": "Set password — POST /v1/users/{id}/password",
+          "name": "Set password",
           "request": {
             "method": "POST",
             "header": [
@@ -1432,7 +1432,7 @@
           }
         },
         {
-          "name": "Admin reset user MFA — DELETE /v1/users/{id}/mfa",
+          "name": "Admin reset user MFA",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1452,7 +1452,7 @@
           }
         },
         {
-          "name": "Bulk-create users — POST /v1/users/bulk",
+          "name": "Bulk-create users",
           "request": {
             "method": "POST",
             "header": [
@@ -1491,7 +1491,7 @@
           ]
         },
         {
-          "name": "Import users from an IdP export — POST /v1/users/bulk/import",
+          "name": "Import users from an IdP export",
           "request": {
             "method": "POST",
             "header": [
@@ -1543,7 +1543,7 @@
       "name": "Verification",
       "item": [
         {
-          "name": "Start email verification — POST /v1/users/{id}/verify/email/start",
+          "name": "Start email verification",
           "request": {
             "method": "POST",
             "header": [
@@ -1573,7 +1573,7 @@
           }
         },
         {
-          "name": "Confirm email verification — POST /v1/users/{id}/verify/email/confirm",
+          "name": "Confirm email verification",
           "request": {
             "method": "POST",
             "header": [
@@ -1603,7 +1603,7 @@
           }
         },
         {
-          "name": "Start phone verification — POST /v1/users/{id}/verify/phone/start",
+          "name": "Start phone verification",
           "request": {
             "method": "POST",
             "header": [
@@ -1633,7 +1633,7 @@
           }
         },
         {
-          "name": "Confirm phone verification — POST /v1/users/{id}/verify/phone/confirm",
+          "name": "Confirm phone verification",
           "request": {
             "method": "POST",
             "header": [
@@ -1668,7 +1668,7 @@
       "name": "RBAC",
       "item": [
         {
-          "name": "List permissions — GET /v1/permissions",
+          "name": "List permissions",
           "request": {
             "method": "GET",
             "header": [],
@@ -1705,7 +1705,7 @@
           ]
         },
         {
-          "name": "List roles — GET /v1/tenants/{tenantID}/roles",
+          "name": "List roles",
           "request": {
             "method": "GET",
             "header": [],
@@ -1744,7 +1744,7 @@
           ]
         },
         {
-          "name": "Create role — POST /v1/tenants/{tenantID}/roles",
+          "name": "Create role",
           "event": [
             {
               "listen": "test",
@@ -1784,7 +1784,7 @@
           }
         },
         {
-          "name": "Grant permission to role — POST /v1/roles/{roleID}/permissions/{permID}",
+          "name": "Grant permission to role",
           "request": {
             "method": "POST",
             "header": [],
@@ -1804,7 +1804,7 @@
           }
         },
         {
-          "name": "Revoke permission from role — DELETE /v1/roles/{roleID}/permissions/{permID}",
+          "name": "Revoke permission from role",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1824,7 +1824,7 @@
           }
         },
         {
-          "name": "Assign role to user — POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
+          "name": "Assign role to user",
           "request": {
             "method": "POST",
             "header": [],
@@ -1846,7 +1846,7 @@
           }
         },
         {
-          "name": "Unassign role from user — DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
+          "name": "Unassign role from user",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1868,7 +1868,7 @@
           }
         },
         {
-          "name": "Effective permissions — GET /v1/users/{userID}/tenants/{tenantID}/permissions",
+          "name": "Effective permissions",
           "request": {
             "method": "GET",
             "header": [],
@@ -1889,7 +1889,7 @@
           }
         },
         {
-          "name": "Permission check — GET /v1/check",
+          "name": "Permission check",
           "request": {
             "method": "GET",
             "header": [],
@@ -1920,7 +1920,7 @@
           }
         },
         {
-          "name": "List group roles — GET /v1/tenants/{tenantID}/groups/{groupID}/roles",
+          "name": "List group roles",
           "request": {
             "method": "GET",
             "header": [],
@@ -1941,7 +1941,7 @@
           }
         },
         {
-          "name": "Grant role to group — POST .../groups/{groupID}/roles/{roleID}",
+          "name": "Grant role to group",
           "request": {
             "method": "POST",
             "header": [],
@@ -1963,7 +1963,7 @@
           }
         },
         {
-          "name": "Revoke role from group — DELETE .../groups/{groupID}/roles/{roleID}",
+          "name": "Revoke role from group",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -1985,7 +1985,7 @@
           }
         },
         {
-          "name": "List permissions granted to a role — GET /v1/roles/{roleID}/permissions",
+          "name": "List permissions granted to a role",
           "request": {
             "method": "GET",
             "header": [],
@@ -2021,7 +2021,7 @@
       "name": "Invites",
       "item": [
         {
-          "name": "Create invite — POST /v1/invites",
+          "name": "Create invite",
           "event": [
             {
               "listen": "test",
@@ -2059,7 +2059,7 @@
           }
         },
         {
-          "name": "List invites — GET /v1/tenants/{tenantID}/invites",
+          "name": "List invites",
           "request": {
             "method": "GET",
             "header": [],
@@ -2098,7 +2098,7 @@
           ]
         },
         {
-          "name": "Revoke invite — DELETE /v1/invites/{id}",
+          "name": "Revoke invite",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2116,7 +2116,7 @@
           }
         },
         {
-          "name": "Accept invite (public) — POST /v1/invites/accept",
+          "name": "Accept invite (public)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -2146,7 +2146,7 @@
           }
         },
         {
-          "name": "Resend invite — POST /v1/invites/{id}/resend",
+          "name": "Resend invite",
           "request": {
             "method": "POST",
             "header": [],
@@ -2182,7 +2182,7 @@
       "name": "MFA (TOTP)",
       "item": [
         {
-          "name": "Start TOTP enrollment — POST /v1/mfa/totp/enroll/start",
+          "name": "Start TOTP enrollment",
           "request": {
             "method": "POST",
             "header": [
@@ -2211,7 +2211,7 @@
           }
         },
         {
-          "name": "Confirm TOTP enrollment — POST /v1/mfa/totp/enroll/confirm",
+          "name": "Confirm TOTP enrollment",
           "request": {
             "method": "POST",
             "header": [
@@ -2240,7 +2240,7 @@
           }
         },
         {
-          "name": "Verify TOTP — POST /v1/mfa/totp/verify",
+          "name": "Verify TOTP",
           "request": {
             "method": "POST",
             "header": [
@@ -2268,7 +2268,7 @@
           }
         },
         {
-          "name": "Disable TOTP — DELETE /v1/mfa/totp",
+          "name": "Disable TOTP",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2291,7 +2291,7 @@
       "name": "MFA (OTP, Recovery, WebAuthn, Step-up)",
       "item": [
         {
-          "name": "List OTP factors — GET /v1/mfa/otp/factors",
+          "name": "List OTP factors",
           "request": {
             "method": "GET",
             "header": [],
@@ -2310,7 +2310,7 @@
           }
         },
         {
-          "name": "Add OTP factor — POST /v1/mfa/otp/factors",
+          "name": "Add OTP factor",
           "request": {
             "method": "POST",
             "header": [
@@ -2351,7 +2351,7 @@
           ]
         },
         {
-          "name": "Confirm OTP factor — POST /v1/mfa/otp/factors/{id}/confirm",
+          "name": "Confirm OTP factor",
           "request": {
             "method": "POST",
             "header": [
@@ -2381,7 +2381,7 @@
           }
         },
         {
-          "name": "Challenge OTP factor — POST /v1/mfa/otp/factors/{id}/challenge",
+          "name": "Challenge OTP factor",
           "request": {
             "method": "POST",
             "header": [],
@@ -2402,7 +2402,7 @@
           }
         },
         {
-          "name": "Verify OTP — POST /v1/mfa/otp/verify",
+          "name": "Verify OTP",
           "request": {
             "method": "POST",
             "header": [
@@ -2430,7 +2430,7 @@
           }
         },
         {
-          "name": "Delete OTP factor — DELETE /v1/mfa/otp/factors/{id}",
+          "name": "Delete OTP factor",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2450,7 +2450,7 @@
           }
         },
         {
-          "name": "Recovery codes status — GET /v1/mfa/recovery-codes",
+          "name": "Recovery codes status",
           "request": {
             "method": "GET",
             "header": [],
@@ -2468,7 +2468,7 @@
           }
         },
         {
-          "name": "Regenerate recovery codes (step-up) — POST /v1/mfa/recovery-codes/regenerate",
+          "name": "Regenerate recovery codes (step-up)",
           "request": {
             "method": "POST",
             "header": [],
@@ -2487,7 +2487,7 @@
           }
         },
         {
-          "name": "WebAuthn 2FA challenge — POST /v1/mfa/webauthn/challenge",
+          "name": "WebAuthn 2FA challenge",
           "request": {
             "method": "POST",
             "header": [],
@@ -2519,7 +2519,7 @@
           ]
         },
         {
-          "name": "WebAuthn 2FA verify — POST /v1/mfa/webauthn/verify",
+          "name": "WebAuthn 2FA verify",
           "request": {
             "method": "POST",
             "header": [
@@ -2547,7 +2547,7 @@
           }
         },
         {
-          "name": "Step-up status — GET /v1/mfa/step-up/status",
+          "name": "Step-up status",
           "request": {
             "method": "GET",
             "header": [],
@@ -2571,7 +2571,7 @@
       "name": "API Keys",
       "item": [
         {
-          "name": "Create API key — POST /v1/api-keys",
+          "name": "Create API key",
           "event": [
             {
               "listen": "test",
@@ -2610,7 +2610,7 @@
           }
         },
         {
-          "name": "List API keys — GET /v1/tenants/{tenantID}/api-keys",
+          "name": "List API keys",
           "request": {
             "method": "GET",
             "header": [],
@@ -2649,7 +2649,7 @@
           ]
         },
         {
-          "name": "Revoke API key — DELETE /v1/api-keys/{id}",
+          "name": "Revoke API key",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2667,7 +2667,7 @@
           }
         },
         {
-          "name": "Authed call with API key — GET /v1/users (ApiKey auth)",
+          "name": "Authed call with API key (ApiKey auth)",
           "request": {
             "auth": {
               "type": "apikey",
@@ -2709,7 +2709,7 @@
       "name": "Service Principals (M2M)",
       "item": [
         {
-          "name": "Create service principal — POST /v1/service-principals",
+          "name": "Create service principal",
           "event": [
             {
               "listen": "test",
@@ -2752,7 +2752,7 @@
           }
         },
         {
-          "name": "List service principals — GET /v1/tenants/{tenantID}/service-principals",
+          "name": "List service principals",
           "request": {
             "method": "GET",
             "header": [],
@@ -2791,7 +2791,7 @@
           ]
         },
         {
-          "name": "Disable service principal — DELETE /v1/service-principals/{id}",
+          "name": "Disable service principal",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -2809,7 +2809,7 @@
           }
         },
         {
-          "name": "OAuth token (client_credentials) — POST /v1/oauth/token",
+          "name": "OAuth token (client_credentials)",
           "event": [
             {
               "listen": "test",
@@ -2872,7 +2872,7 @@
       "name": "OIDC (Authed)",
       "item": [
         {
-          "name": "Register OIDC client — POST /v1/oidc/clients",
+          "name": "Register OIDC client",
           "event": [
             {
               "listen": "test",
@@ -2912,7 +2912,7 @@
           }
         },
         {
-          "name": "Authorize — GET /v1/oauth/authorize",
+          "name": "Authorize",
           "request": {
             "method": "GET",
             "header": [],
@@ -2960,7 +2960,7 @@
           }
         },
         {
-          "name": "Token (authorization_code) — POST /v1/oauth/token-code",
+          "name": "Token (authorization_code)",
           "request": {
             "method": "POST",
             "header": [
@@ -3013,7 +3013,7 @@
           }
         },
         {
-          "name": "UserInfo — GET /v1/oauth/userinfo",
+          "name": "UserInfo",
           "request": {
             "method": "GET",
             "header": [],
@@ -3036,7 +3036,7 @@
       "name": "Passkeys (WebAuthn)",
       "item": [
         {
-          "name": "List passkeys — GET /v1/passkeys",
+          "name": "List passkeys",
           "request": {
             "method": "GET",
             "header": [],
@@ -3073,7 +3073,7 @@
           ]
         },
         {
-          "name": "Delete passkey — DELETE /v1/passkeys/{id}",
+          "name": "Delete passkey",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -3091,7 +3091,7 @@
           }
         },
         {
-          "name": "Register begin — POST /v1/passkeys/register/begin",
+          "name": "Register begin",
           "request": {
             "method": "POST",
             "header": [
@@ -3119,7 +3119,7 @@
           }
         },
         {
-          "name": "Register finish — POST /v1/passkeys/register/finish",
+          "name": "Register finish",
           "request": {
             "method": "POST",
             "header": [
@@ -3147,7 +3147,7 @@
           }
         },
         {
-          "name": "Login begin — POST /v1/passkeys/login/begin",
+          "name": "Login begin",
           "request": {
             "method": "POST",
             "header": [
@@ -3175,7 +3175,7 @@
           }
         },
         {
-          "name": "Login finish — POST /v1/passkeys/login/finish",
+          "name": "Login finish",
           "request": {
             "method": "POST",
             "header": [
@@ -3203,7 +3203,7 @@
           }
         },
         {
-          "name": "Passkey signup begin (tenant-less) — POST /v1/signup/passkey/begin",
+          "name": "Passkey signup begin (tenant-less)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -3247,7 +3247,7 @@
           ]
         },
         {
-          "name": "[setup] Passkey signup finish (tenant-less) — POST /v1/signup/passkey/finish",
+          "name": "[setup] Passkey signup finish (tenant-less)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -3296,7 +3296,7 @@
           ]
         },
         {
-          "name": "Passkey signup begin (tenant-scoped hosted) — POST /v1/register/passkey/begin",
+          "name": "Passkey signup begin (tenant-scoped hosted)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -3340,7 +3340,7 @@
           ]
         },
         {
-          "name": "[setup] Passkey signup finish (tenant-scoped hosted) — POST /v1/register/passkey/finish",
+          "name": "[setup] Passkey signup finish (tenant-scoped hosted)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -3389,7 +3389,7 @@
       "name": "Social Login",
       "item": [
         {
-          "name": "Upsert provider — POST /v1/social/providers",
+          "name": "Upsert provider",
           "request": {
             "method": "POST",
             "header": [
@@ -3416,7 +3416,7 @@
           }
         },
         {
-          "name": "List providers — GET /v1/tenants/{tenantID}/social/providers",
+          "name": "List providers",
           "request": {
             "method": "GET",
             "header": [],
@@ -3436,7 +3436,7 @@
           }
         },
         {
-          "name": "List linked identities — GET /v1/users/{userID}/social/identities",
+          "name": "List linked identities",
           "request": {
             "method": "GET",
             "header": [],
@@ -3476,7 +3476,7 @@
           ]
         },
         {
-          "name": "Unlink identity — DELETE /v1/social/identities/{id}",
+          "name": "Unlink identity",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -3495,7 +3495,7 @@
           }
         },
         {
-          "name": "OAuth start — GET /v1/social/{provider}/start",
+          "name": "OAuth start",
           "request": {
             "method": "GET",
             "header": [],
@@ -3514,7 +3514,7 @@
           }
         },
         {
-          "name": "OAuth callback — GET /v1/social/{provider}/callback",
+          "name": "OAuth callback",
           "request": {
             "method": "GET",
             "header": [],
@@ -3533,7 +3533,7 @@
           }
         },
         {
-          "name": "Exchange social code — POST /v1/social/exchange",
+          "name": "Exchange social code",
           "request": {
             "method": "POST",
             "header": [
@@ -3569,7 +3569,7 @@
       "name": "Webhooks",
       "item": [
         {
-          "name": "Create webhook — POST /v1/webhooks",
+          "name": "Create webhook",
           "event": [
             {
               "listen": "test",
@@ -3607,7 +3607,7 @@
           }
         },
         {
-          "name": "List webhooks — GET /v1/tenants/{tenantID}/webhooks",
+          "name": "List webhooks",
           "request": {
             "method": "GET",
             "header": [],
@@ -3646,7 +3646,7 @@
           ]
         },
         {
-          "name": "Disable webhook — DELETE /v1/webhooks/{id}",
+          "name": "Disable webhook",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -3664,7 +3664,7 @@
           }
         },
         {
-          "name": "Test webhook — POST /v1/webhooks/{id}/test",
+          "name": "Test webhook",
           "request": {
             "method": "POST",
             "header": [],
@@ -3683,7 +3683,7 @@
           }
         },
         {
-          "name": "Get webhook — GET /v1/webhooks/{id}",
+          "name": "Get webhook",
           "request": {
             "method": "GET",
             "header": [],
@@ -3701,7 +3701,7 @@
           }
         },
         {
-          "name": "List deliveries — GET /v1/webhooks/{id}/deliveries",
+          "name": "List deliveries",
           "request": {
             "method": "GET",
             "header": [],
@@ -3733,7 +3733,7 @@
           ]
         },
         {
-          "name": "Retry delivery — POST /v1/webhooks/{id}/deliveries/{deliveryID}/retry",
+          "name": "Retry delivery",
           "request": {
             "method": "POST",
             "header": [],
@@ -3759,7 +3759,7 @@
       "name": "Branding",
       "item": [
         {
-          "name": "Get branding — GET /v1/tenants/{tenantID}/branding",
+          "name": "Get branding",
           "request": {
             "method": "GET",
             "header": [],
@@ -3778,7 +3778,7 @@
           }
         },
         {
-          "name": "Update branding — PUT /v1/tenants/{tenantID}/branding",
+          "name": "Update branding",
           "request": {
             "method": "PUT",
             "header": [
@@ -3811,7 +3811,7 @@
       "name": "Policy",
       "item": [
         {
-          "name": "Get policy — GET /v1/tenants/{tenantID}/policy",
+          "name": "Get policy",
           "request": {
             "method": "GET",
             "header": [],
@@ -3830,7 +3830,7 @@
           }
         },
         {
-          "name": "Update policy — PUT /v1/tenants/{tenantID}/policy",
+          "name": "Update policy",
           "request": {
             "method": "PUT",
             "header": [
@@ -3863,7 +3863,7 @@
       "name": "Audit",
       "item": [
         {
-          "name": "List audit events — GET /v1/tenants/{tenantID}/audit",
+          "name": "List audit events",
           "request": {
             "method": "GET",
             "header": [],
@@ -3908,7 +3908,7 @@
           }
         },
         {
-          "name": "Verify audit chain — GET /v1/tenants/{tenantID}/audit/verify",
+          "name": "Verify audit chain",
           "request": {
             "method": "GET",
             "header": [],
@@ -3929,7 +3929,7 @@
           }
         },
         {
-          "name": "Verify platform audit chain (public) — GET /v1/audit/verify",
+          "name": "Verify platform audit chain (public)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -3962,7 +3962,7 @@
           ]
         },
         {
-          "name": "List audit anomalies — GET /v1/tenants/{tenantID}/audit/anomalies",
+          "name": "List audit anomalies",
           "request": {
             "method": "GET",
             "header": [],
@@ -4006,7 +4006,7 @@
           ]
         },
         {
-          "name": "Audit anomaly summary — GET /v1/tenants/{tenantID}/audit/anomalies/summary",
+          "name": "Audit anomaly summary",
           "request": {
             "method": "GET",
             "header": [],
@@ -4039,7 +4039,7 @@
           ]
         },
         {
-          "name": "Resolve an audit anomaly — POST /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve",
+          "name": "Resolve an audit anomaly",
           "request": {
             "method": "POST",
             "header": [],
@@ -4073,7 +4073,7 @@
           ]
         },
         {
-          "name": "Get anomaly-detection settings — GET /v1/tenants/{tenantID}/audit/anomaly-settings",
+          "name": "Get anomaly-detection settings",
           "request": {
             "method": "GET",
             "header": [],
@@ -4105,7 +4105,7 @@
           ]
         },
         {
-          "name": "Update anomaly-detection settings — PUT /v1/tenants/{tenantID}/audit/anomaly-settings",
+          "name": "Update anomaly-detection settings",
           "request": {
             "method": "PUT",
             "header": [
@@ -4151,7 +4151,7 @@
       "name": "Analytics",
       "item": [
         {
-          "name": "Tenant analytics overview — GET /v1/tenants/{tenantID}/analytics/overview",
+          "name": "Tenant analytics overview",
           "request": {
             "method": "GET",
             "header": [],
@@ -4177,7 +4177,7 @@
       "name": "Admin / Outbox",
       "item": [
         {
-          "name": "List DLQ events — GET /v1/admin/outbox/dlq",
+          "name": "List DLQ events",
           "request": {
             "method": "GET",
             "header": [],
@@ -4208,7 +4208,7 @@
       "name": "GDPR",
       "item": [
         {
-          "name": "Create purge request — POST /v1/gdpr/purge",
+          "name": "Create purge request",
           "event": [
             {
               "listen": "test",
@@ -4247,7 +4247,7 @@
           }
         },
         {
-          "name": "List purge requests — GET /v1/tenants/{tenantID}/gdpr/purge",
+          "name": "List purge requests",
           "request": {
             "method": "GET",
             "header": [],
@@ -4287,7 +4287,7 @@
           ]
         },
         {
-          "name": "Cancel purge request — DELETE /v1/gdpr/purge/{id}",
+          "name": "Cancel purge request",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -4306,7 +4306,7 @@
           }
         },
         {
-          "name": "Request a GDPR data export — POST /v1/gdpr/export",
+          "name": "Request a GDPR data export",
           "request": {
             "method": "POST",
             "header": [
@@ -4346,7 +4346,7 @@
           ]
         },
         {
-          "name": "List GDPR export requests — GET /v1/tenants/{tenantID}/gdpr/export",
+          "name": "List GDPR export requests",
           "request": {
             "method": "GET",
             "header": [],
@@ -4378,7 +4378,7 @@
           ]
         },
         {
-          "name": "Get a GDPR export request — GET /v1/tenants/{tenantID}/gdpr/export/{id}",
+          "name": "Get a GDPR export request",
           "request": {
             "method": "GET",
             "header": [],
@@ -4416,7 +4416,7 @@
       "name": "Groups",
       "item": [
         {
-          "name": "Create group — POST /v1/groups",
+          "name": "Create group",
           "event": [
             {
               "listen": "test",
@@ -4454,7 +4454,7 @@
           }
         },
         {
-          "name": "List groups — GET /v1/tenants/{tenantID}/groups",
+          "name": "List groups",
           "request": {
             "method": "GET",
             "header": [],
@@ -4493,7 +4493,7 @@
           ]
         },
         {
-          "name": "Delete group — DELETE /v1/groups/{id}",
+          "name": "Delete group",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -4511,7 +4511,7 @@
           }
         },
         {
-          "name": "Add member — POST /v1/groups/{id}/members/{userID}",
+          "name": "Add member",
           "request": {
             "method": "POST",
             "header": [],
@@ -4531,7 +4531,7 @@
           }
         },
         {
-          "name": "Remove member — DELETE /v1/groups/{id}/members/{userID}",
+          "name": "Remove member",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -4551,7 +4551,7 @@
           }
         },
         {
-          "name": "List members — GET /v1/groups/{id}/members",
+          "name": "List members",
           "request": {
             "method": "GET",
             "header": [],
@@ -4570,7 +4570,7 @@
           }
         },
         {
-          "name": "Update group — PATCH /v1/groups/{id}",
+          "name": "Update group",
           "request": {
             "method": "PATCH",
             "header": [
@@ -4614,7 +4614,7 @@
       "name": "SCIM 2.0",
       "item": [
         {
-          "name": "Get SCIM config — GET /v1/tenants/{tenantID}/scim",
+          "name": "Get SCIM config",
           "request": {
             "method": "GET",
             "header": [],
@@ -4644,7 +4644,7 @@
           ]
         },
         {
-          "name": "Rotate SCIM token — POST /v1/tenants/{tenantID}/scim/token",
+          "name": "Rotate SCIM token",
           "request": {
             "method": "POST",
             "header": [],
@@ -4677,7 +4677,7 @@
           ]
         },
         {
-          "name": "List provisioned users — GET /v1/tenants/{tenantID}/scim/users",
+          "name": "List provisioned users",
           "request": {
             "method": "GET",
             "header": [],
@@ -4708,7 +4708,7 @@
           ]
         },
         {
-          "name": "[scim] ServiceProviderConfig — GET /scim/v2/ServiceProviderConfig",
+          "name": "[scim] ServiceProviderConfig",
           "request": {
             "method": "GET",
             "header": [],
@@ -4747,7 +4747,7 @@
           ]
         },
         {
-          "name": "[scim] Create user — POST /scim/v2/Users",
+          "name": "[scim] Create user",
           "request": {
             "method": "POST",
             "header": [
@@ -4797,7 +4797,7 @@
           ]
         },
         {
-          "name": "[scim] List users — GET /scim/v2/Users",
+          "name": "[scim] List users",
           "request": {
             "method": "GET",
             "header": [],
@@ -4837,7 +4837,7 @@
           ]
         },
         {
-          "name": "Revoke SCIM token — DELETE /v1/tenants/{tenantID}/scim/token",
+          "name": "Revoke SCIM token",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -4868,7 +4868,7 @@
           ]
         },
         {
-          "name": "[scim] ResourceTypes — GET /scim/v2/ResourceTypes",
+          "name": "[scim] ResourceTypes",
           "request": {
             "method": "GET",
             "header": [],
@@ -4896,7 +4896,7 @@
           }
         },
         {
-          "name": "[scim] Schemas — GET /scim/v2/Schemas",
+          "name": "[scim] Schemas",
           "request": {
             "method": "GET",
             "header": [],
@@ -4924,7 +4924,7 @@
           }
         },
         {
-          "name": "[scim] Get user — GET /scim/v2/Users/{id}",
+          "name": "[scim] Get user",
           "request": {
             "method": "GET",
             "header": [],
@@ -4953,7 +4953,7 @@
           }
         },
         {
-          "name": "[scim] Replace user — PUT /scim/v2/Users/{id}",
+          "name": "[scim] Replace user",
           "request": {
             "method": "PUT",
             "header": [
@@ -4991,7 +4991,7 @@
           }
         },
         {
-          "name": "[scim] Patch user (deprovision) — PATCH /scim/v2/Users/{id}",
+          "name": "[scim] Patch user (deprovision)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -5029,7 +5029,7 @@
           }
         },
         {
-          "name": "[scim] Delete user — DELETE /scim/v2/Users/{id}",
+          "name": "[scim] Delete user",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -5058,7 +5058,7 @@
           }
         },
         {
-          "name": "[scim] List groups — GET /scim/v2/Groups",
+          "name": "[scim] List groups",
           "request": {
             "method": "GET",
             "header": [],
@@ -5097,7 +5097,7 @@
           ]
         },
         {
-          "name": "[scim] Create group — POST /scim/v2/Groups",
+          "name": "[scim] Create group",
           "request": {
             "method": "POST",
             "header": [
@@ -5146,7 +5146,7 @@
           ]
         },
         {
-          "name": "[scim] Get group — GET /scim/v2/Groups/{id}",
+          "name": "[scim] Get group",
           "request": {
             "method": "GET",
             "header": [],
@@ -5175,7 +5175,7 @@
           }
         },
         {
-          "name": "[scim] Replace group — PUT /scim/v2/Groups/{id}",
+          "name": "[scim] Replace group",
           "request": {
             "method": "PUT",
             "header": [
@@ -5213,7 +5213,7 @@
           }
         },
         {
-          "name": "[scim] Patch group — PATCH /scim/v2/Groups/{id}",
+          "name": "[scim] Patch group",
           "request": {
             "method": "PATCH",
             "header": [
@@ -5251,7 +5251,7 @@
           }
         },
         {
-          "name": "[scim] Delete group — DELETE /scim/v2/Groups/{id}",
+          "name": "[scim] Delete group",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -5285,7 +5285,7 @@
       "name": "SAML 2.0 SSO",
       "item": [
         {
-          "name": "Create connection — POST /v1/tenants/{tenantID}/saml",
+          "name": "Create connection",
           "request": {
             "method": "POST",
             "header": [
@@ -5326,7 +5326,7 @@
           ]
         },
         {
-          "name": "List connections — GET /v1/tenants/{tenantID}/saml",
+          "name": "List connections",
           "request": {
             "method": "GET",
             "header": [],
@@ -5356,7 +5356,7 @@
           ]
         },
         {
-          "name": "Get connection — GET /v1/tenants/{tenantID}/saml/{id}",
+          "name": "Get connection",
           "request": {
             "method": "GET",
             "header": [],
@@ -5387,7 +5387,7 @@
           ]
         },
         {
-          "name": "Update connection — PATCH /v1/tenants/{tenantID}/saml/{id}",
+          "name": "Update connection",
           "request": {
             "method": "PATCH",
             "header": [
@@ -5427,7 +5427,7 @@
           ]
         },
         {
-          "name": "SP metadata (public) — GET /saml/metadata/{id}",
+          "name": "SP metadata (public)",
           "request": {
             "method": "GET",
             "header": [],
@@ -5459,7 +5459,7 @@
           ]
         },
         {
-          "name": "Login redirect (public) — GET /saml/login/{id}",
+          "name": "Login redirect (public)",
           "request": {
             "method": "GET",
             "header": [],
@@ -5491,7 +5491,7 @@
           ]
         },
         {
-          "name": "Exchange code (public) — POST /saml/exchange",
+          "name": "Exchange code (public)",
           "request": {
             "method": "POST",
             "header": [
@@ -5531,7 +5531,7 @@
           ]
         },
         {
-          "name": "Delete connection — DELETE /v1/tenants/{tenantID}/saml/{id}",
+          "name": "Delete connection",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -5562,7 +5562,7 @@
           ]
         },
         {
-          "name": "Test SAML connection — POST /v1/tenants/{tenantID}/saml/{id}/test",
+          "name": "Test SAML connection",
           "request": {
             "method": "POST",
             "header": [],
@@ -5584,7 +5584,7 @@
           }
         },
         {
-          "name": "List SAML SPs (IdP side) — GET /v1/tenants/{tenantID}/saml-providers",
+          "name": "List SAML SPs (IdP side)",
           "request": {
             "method": "GET",
             "header": [],
@@ -5603,7 +5603,7 @@
           }
         },
         {
-          "name": "Register SAML SP (IdP side) — POST /v1/tenants/{tenantID}/saml-providers",
+          "name": "Register SAML SP (IdP side)",
           "request": {
             "method": "POST",
             "header": [
@@ -5644,7 +5644,7 @@
           ]
         },
         {
-          "name": "Get SAML SP — GET /v1/tenants/{tenantID}/saml-providers/{id}",
+          "name": "Get SAML SP",
           "request": {
             "method": "GET",
             "header": [],
@@ -5664,7 +5664,7 @@
           }
         },
         {
-          "name": "Update SAML SP — PATCH /v1/tenants/{tenantID}/saml-providers/{id}",
+          "name": "Update SAML SP",
           "request": {
             "method": "PATCH",
             "header": [
@@ -5693,7 +5693,7 @@
           }
         },
         {
-          "name": "Delete SAML SP — DELETE /v1/tenants/{tenantID}/saml-providers/{id}",
+          "name": "Delete SAML SP",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -5713,7 +5713,7 @@
           }
         },
         {
-          "name": "[acs] Assertion Consumer Service — POST /saml/acs/{id}",
+          "name": "[acs] Assertion Consumer Service",
           "request": {
             "method": "POST",
             "header": [
@@ -5755,7 +5755,7 @@
           }
         },
         {
-          "name": "[idp] IdP metadata — GET /saml/idp/metadata",
+          "name": "[idp] IdP metadata",
           "request": {
             "method": "GET",
             "header": [],
@@ -5777,7 +5777,7 @@
           }
         },
         {
-          "name": "[idp] IdP SSO (redirect binding) — GET /saml/idp/sso",
+          "name": "[idp] IdP SSO (redirect binding)",
           "request": {
             "method": "GET",
             "header": [],
@@ -5808,7 +5808,7 @@
           }
         },
         {
-          "name": "[idp] IdP SSO (POST binding) — POST /saml/idp/sso",
+          "name": "[idp] IdP SSO (POST binding)",
           "request": {
             "method": "POST",
             "header": [
@@ -5854,7 +5854,7 @@
       "name": "LDAP / Active Directory",
       "item": [
         {
-          "name": "Create connection — POST /v1/tenants/{tenantID}/ldap",
+          "name": "Create connection",
           "request": {
             "method": "POST",
             "header": [
@@ -5895,7 +5895,7 @@
           ]
         },
         {
-          "name": "List connections — GET /v1/tenants/{tenantID}/ldap",
+          "name": "List connections",
           "request": {
             "method": "GET",
             "header": [],
@@ -5925,7 +5925,7 @@
           ]
         },
         {
-          "name": "Get connection — GET /v1/tenants/{tenantID}/ldap/{id}",
+          "name": "Get connection",
           "request": {
             "method": "GET",
             "header": [],
@@ -5956,7 +5956,7 @@
           ]
         },
         {
-          "name": "Update connection — PATCH /v1/tenants/{tenantID}/ldap/{id}",
+          "name": "Update connection",
           "request": {
             "method": "PATCH",
             "header": [
@@ -5996,7 +5996,7 @@
           ]
         },
         {
-          "name": "Test bind — POST /v1/tenants/{tenantID}/ldap/{id}/test",
+          "name": "Test bind",
           "request": {
             "method": "POST",
             "header": [],
@@ -6028,7 +6028,7 @@
           ]
         },
         {
-          "name": "Authenticate (public) — POST /ldap/{id}/authenticate",
+          "name": "Authenticate (public)",
           "request": {
             "method": "POST",
             "header": [
@@ -6069,7 +6069,7 @@
           ]
         },
         {
-          "name": "Delete connection — DELETE /v1/tenants/{tenantID}/ldap/{id}",
+          "name": "Delete connection",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -6105,7 +6105,7 @@
       "name": "Auth Policy",
       "item": [
         {
-          "name": "Get auth policy — GET /v1/tenants/{tenantID}/auth-policy",
+          "name": "Get auth policy",
           "request": {
             "method": "GET",
             "header": [],
@@ -6135,7 +6135,7 @@
           ]
         },
         {
-          "name": "Update auth policy — PUT /v1/tenants/{tenantID}/auth-policy",
+          "name": "Update auth policy",
           "request": {
             "method": "PUT",
             "header": [
@@ -6179,7 +6179,7 @@
       "name": "IP Allow/Deny Rules",
       "item": [
         {
-          "name": "List rules + enforcement — GET /v1/tenants/{tenantID}/ip-rules",
+          "name": "List rules + enforcement",
           "request": {
             "method": "GET",
             "header": [],
@@ -6209,7 +6209,7 @@
           ]
         },
         {
-          "name": "Set enforcement — PUT /v1/tenants/{tenantID}/ip-rules/config",
+          "name": "Set enforcement",
           "request": {
             "method": "PUT",
             "header": [
@@ -6249,7 +6249,7 @@
           ]
         },
         {
-          "name": "Add rule — POST /v1/tenants/{tenantID}/ip-rules",
+          "name": "Add rule",
           "request": {
             "method": "POST",
             "header": [
@@ -6290,7 +6290,7 @@
           ]
         },
         {
-          "name": "Check an address — POST /v1/tenants/{tenantID}/ip-rules/check",
+          "name": "Check an address",
           "request": {
             "method": "POST",
             "header": [
@@ -6330,7 +6330,7 @@
           ]
         },
         {
-          "name": "Delete rule — DELETE /v1/tenants/{tenantID}/ip-rules/{ruleID}",
+          "name": "Delete rule",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -6366,7 +6366,7 @@
       "name": "Email Templates",
       "item": [
         {
-          "name": "List templates — GET /v1/tenants/{tenantID}/email-templates",
+          "name": "List templates",
           "request": {
             "method": "GET",
             "header": [],
@@ -6396,7 +6396,7 @@
           ]
         },
         {
-          "name": "Get template — GET /v1/tenants/{tenantID}/email-templates/{key}",
+          "name": "Get template",
           "request": {
             "method": "GET",
             "header": [],
@@ -6427,7 +6427,7 @@
           ]
         },
         {
-          "name": "Override template — PUT /v1/tenants/{tenantID}/email-templates/{key}",
+          "name": "Override template",
           "request": {
             "method": "PUT",
             "header": [
@@ -6467,7 +6467,7 @@
           ]
         },
         {
-          "name": "Preview template — POST /v1/tenants/{tenantID}/email-templates/{key}/preview",
+          "name": "Preview template",
           "request": {
             "method": "POST",
             "header": [
@@ -6508,7 +6508,7 @@
           ]
         },
         {
-          "name": "Reset to default — DELETE /v1/tenants/{tenantID}/email-templates/{key}",
+          "name": "Reset to default",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -6544,7 +6544,7 @@
       "name": "Secrets Vault",
       "item": [
         {
-          "name": "List secrets — GET /v1/tenants/{tenantID}/secrets",
+          "name": "List secrets",
           "request": {
             "method": "GET",
             "header": [],
@@ -6574,7 +6574,7 @@
           ]
         },
         {
-          "name": "Create secret — POST /v1/tenants/{tenantID}/secrets",
+          "name": "Create secret",
           "request": {
             "method": "POST",
             "header": [
@@ -6615,7 +6615,7 @@
           ]
         },
         {
-          "name": "Reveal secret — POST /v1/tenants/{tenantID}/secrets/{id}/reveal",
+          "name": "Reveal secret",
           "request": {
             "method": "POST",
             "header": [],
@@ -6647,7 +6647,7 @@
           ]
         },
         {
-          "name": "Rotate secret — PATCH /v1/tenants/{tenantID}/secrets/{id}",
+          "name": "Rotate secret",
           "request": {
             "method": "PATCH",
             "header": [
@@ -6687,7 +6687,7 @@
           ]
         },
         {
-          "name": "Delete secret — DELETE /v1/tenants/{tenantID}/secrets/{id}",
+          "name": "Delete secret",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -6718,7 +6718,7 @@
           ]
         },
         {
-          "name": "Vault read by name — GET /v1/vault/{name}",
+          "name": "Vault read by name",
           "request": {
             "method": "GET",
             "header": [],
@@ -6752,7 +6752,7 @@
       "name": "Data Retention",
       "item": [
         {
-          "name": "Get retention policy — GET /v1/tenants/{tenantID}/retention",
+          "name": "Get retention policy",
           "request": {
             "method": "GET",
             "header": [],
@@ -6782,7 +6782,7 @@
           ]
         },
         {
-          "name": "Update retention policy — PUT /v1/tenants/{tenantID}/retention",
+          "name": "Update retention policy",
           "request": {
             "method": "PUT",
             "header": [
@@ -6821,7 +6821,7 @@
           ]
         },
         {
-          "name": "Preview ripe users — POST /v1/tenants/{tenantID}/retention/preview",
+          "name": "Preview ripe users",
           "request": {
             "method": "POST",
             "header": [],
@@ -6852,7 +6852,7 @@
           ]
         },
         {
-          "name": "Run purge now — POST /v1/tenants/{tenantID}/retention/run",
+          "name": "Run purge now",
           "request": {
             "method": "POST",
             "header": [],
@@ -6888,7 +6888,7 @@
       "name": "Billing",
       "item": [
         {
-          "name": "List plans — GET /v1/billing/plans",
+          "name": "List plans",
           "request": {
             "method": "GET",
             "header": [],
@@ -6917,7 +6917,7 @@
           ]
         },
         {
-          "name": "Get subscription — GET /v1/tenants/{tenantID}/billing/subscription",
+          "name": "Get subscription",
           "request": {
             "method": "GET",
             "header": [],
@@ -6948,7 +6948,7 @@
           ]
         },
         {
-          "name": "Subscribe / change plan — PUT /v1/tenants/{tenantID}/billing/subscription",
+          "name": "Subscribe / change plan",
           "request": {
             "method": "PUT",
             "header": [
@@ -6988,7 +6988,7 @@
           ]
         },
         {
-          "name": "List invoices — GET /v1/tenants/{tenantID}/billing/invoices",
+          "name": "List invoices",
           "request": {
             "method": "GET",
             "header": [],
@@ -7019,7 +7019,7 @@
           ]
         },
         {
-          "name": "Cancel at period end — POST /v1/tenants/{tenantID}/billing/subscription/cancel",
+          "name": "Cancel at period end",
           "request": {
             "method": "POST",
             "header": [],
@@ -7051,7 +7051,7 @@
           ]
         },
         {
-          "name": "Start checkout — POST /v1/tenants/{tenantID}/billing/checkout",
+          "name": "Start checkout",
           "request": {
             "method": "POST",
             "header": [
@@ -7081,7 +7081,7 @@
           }
         },
         {
-          "name": "Payment webhook — POST /v1/billing/webhooks/stripe",
+          "name": "Payment webhook",
           "request": {
             "method": "POST",
             "header": [
@@ -7113,7 +7113,7 @@
           }
         },
         {
-          "name": "[setup] Sandbox checkout page (dev) — GET /v1/billing/sandbox/checkout",
+          "name": "[setup] Sandbox checkout page (dev)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -7173,7 +7173,7 @@
           ]
         },
         {
-          "name": "[setup] Sandbox pay (dev) — POST /v1/billing/sandbox/pay",
+          "name": "[setup] Sandbox pay (dev)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -7230,7 +7230,7 @@
       "name": "OAuth Grants",
       "item": [
         {
-          "name": "List active grants — GET /v1/tenants/{tenantID}/oauth/grants",
+          "name": "List active grants",
           "request": {
             "method": "GET",
             "header": [],
@@ -7261,7 +7261,7 @@
           ]
         },
         {
-          "name": "Revoke grant — DELETE /v1/tenants/{tenantID}/oauth/grants/{id}",
+          "name": "Revoke grant",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -7298,7 +7298,7 @@
       "name": "Users — Recycle Bin",
       "item": [
         {
-          "name": "List deleted users — GET /v1/users/deleted",
+          "name": "List deleted users",
           "request": {
             "method": "GET",
             "header": [],
@@ -7327,7 +7327,7 @@
           ]
         },
         {
-          "name": "Restore user — POST /v1/users/{id}/restore",
+          "name": "Restore user",
           "request": {
             "method": "POST",
             "header": [],
@@ -7357,7 +7357,7 @@
           ]
         },
         {
-          "name": "Purge user — DELETE /v1/users/{id}/purge",
+          "name": "Purge user",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -7392,7 +7392,7 @@
       "name": "OAuth 2.0 & OIDC Flows",
       "item": [
         {
-          "name": "Login context — GET /v1/oauth/login-context",
+          "name": "Login context",
           "request": {
             "method": "GET",
             "header": [],
@@ -7420,7 +7420,7 @@
           }
         },
         {
-          "name": "Authorize decision (consent) — POST /v1/oauth/authorize/decision",
+          "name": "Authorize decision (consent)",
           "request": {
             "method": "POST",
             "header": [
@@ -7452,7 +7452,7 @@
           }
         },
         {
-          "name": "Device authorization — POST /v1/oauth/device_authorization",
+          "name": "Device authorization",
           "request": {
             "method": "POST",
             "header": [
@@ -7512,7 +7512,7 @@
           ]
         },
         {
-          "name": "Device verification context — GET /v1/oauth/device",
+          "name": "Device verification context",
           "request": {
             "method": "GET",
             "header": [],
@@ -7539,7 +7539,7 @@
           }
         },
         {
-          "name": "Device decision (approve) — POST /v1/oauth/device/decision",
+          "name": "Device decision (approve)",
           "request": {
             "method": "POST",
             "header": [
@@ -7570,7 +7570,7 @@
           }
         },
         {
-          "name": "RP-initiated logout — GET /v1/oauth/logout",
+          "name": "RP-initiated logout (GET)",
           "request": {
             "method": "GET",
             "header": [],
@@ -7597,7 +7597,7 @@
           }
         },
         {
-          "name": "RP-initiated logout — POST /v1/oauth/logout",
+          "name": "RP-initiated logout (POST)",
           "request": {
             "method": "POST",
             "header": [
@@ -7627,7 +7627,7 @@
           }
         },
         {
-          "name": "Token revoke (RFC 7009) — POST /oauth/revoke",
+          "name": "Token revoke (RFC 7009)",
           "request": {
             "method": "POST",
             "header": [
@@ -7678,7 +7678,7 @@
           }
         },
         {
-          "name": "Token introspect (RFC 7662) — POST /oauth/introspect",
+          "name": "Token introspect (RFC 7662)",
           "request": {
             "method": "POST",
             "header": [
@@ -7724,7 +7724,7 @@
           }
         },
         {
-          "name": "Signing keys metadata — GET /v1/oidc/signing-keys",
+          "name": "Signing keys metadata",
           "request": {
             "method": "GET",
             "header": [],
@@ -7743,7 +7743,7 @@
           }
         },
         {
-          "name": "Token exchange (RFC 8693) — POST /v1/oauth/token-code",
+          "name": "Token exchange (RFC 8693)",
           "request": {
             "method": "POST",
             "header": [
@@ -7832,7 +7832,7 @@
           ]
         },
         {
-          "name": "Device token poll — POST /v1/oauth/token-code",
+          "name": "Device token poll",
           "request": {
             "method": "POST",
             "header": [
@@ -7879,7 +7879,7 @@
           }
         },
         {
-          "name": "Protected resource metadata (RFC 9728) — GET /.well-known/oauth-protected-resource",
+          "name": "Protected resource metadata (RFC 9728)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -7911,7 +7911,7 @@
           ]
         },
         {
-          "name": "Backchannel authorize (CIBA, poll mode) — POST /v1/oauth/bc-authorize",
+          "name": "Backchannel authorize (CIBA, poll mode)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -7980,7 +7980,7 @@
           ]
         },
         {
-          "name": "List my pending CIBA requests — GET /v1/oauth/bc-authorize/pending",
+          "name": "List my pending CIBA requests",
           "request": {
             "method": "GET",
             "header": [],
@@ -8012,7 +8012,7 @@
           ]
         },
         {
-          "name": "Approve/deny a pending CIBA request — POST /v1/oauth/bc-authorize/decision",
+          "name": "Approve/deny a pending CIBA request",
           "request": {
             "method": "POST",
             "header": [
@@ -8057,7 +8057,7 @@
       "name": "OIDC Client Management",
       "item": [
         {
-          "name": "List OIDC clients — GET /v1/tenants/{tenantID}/oidc/clients",
+          "name": "List OIDC clients",
           "request": {
             "method": "GET",
             "header": [],
@@ -8090,7 +8090,7 @@
           ]
         },
         {
-          "name": "Create OIDC client — POST /v1/tenants/{tenantID}/oidc/clients",
+          "name": "Create OIDC client",
           "request": {
             "method": "POST",
             "header": [
@@ -8134,7 +8134,7 @@
           ]
         },
         {
-          "name": "Get OIDC client — GET /v1/tenants/{tenantID}/oidc/clients/{id}",
+          "name": "Get OIDC client",
           "request": {
             "method": "GET",
             "header": [],
@@ -8155,7 +8155,7 @@
           }
         },
         {
-          "name": "Update OIDC client — PATCH /v1/tenants/{tenantID}/oidc/clients/{id}",
+          "name": "Update OIDC client",
           "request": {
             "method": "PATCH",
             "header": [
@@ -8185,7 +8185,7 @@
           }
         },
         {
-          "name": "Rotate client secret — POST .../oidc/clients/{id}/rotate-secret",
+          "name": "Rotate client secret",
           "request": {
             "method": "POST",
             "header": [],
@@ -8219,7 +8219,7 @@
           ]
         },
         {
-          "name": "Delete OIDC client — DELETE /v1/tenants/{tenantID}/oidc/clients/{id}",
+          "name": "Delete OIDC client",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -8240,7 +8240,7 @@
           }
         },
         {
-          "name": "Delete OIDC client (by scope) — DELETE /v1/oidc/clients/{id}",
+          "name": "Delete OIDC client (by scope)",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -8260,7 +8260,7 @@
           }
         },
         {
-          "name": "List device authorizations — GET /v1/tenants/{tenantID}/oauth/devices",
+          "name": "List device authorizations",
           "request": {
             "method": "GET",
             "header": [],
@@ -8293,7 +8293,7 @@
           ]
         },
         {
-          "name": "Revoke device authorization — DELETE .../oauth/devices/{id}",
+          "name": "Revoke device authorization",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -8314,7 +8314,7 @@
           }
         },
         {
-          "name": "Acknowledge a shadow-AI candidate — POST /v1/tenants/{tenantID}/oidc/clients/{id}/review",
+          "name": "Acknowledge a shadow-AI candidate",
           "request": {
             "method": "POST",
             "header": [],
@@ -8353,7 +8353,7 @@
       "name": "ReBAC (Relationships)",
       "item": [
         {
-          "name": "List relation tuples — GET /v1/tenants/{tenantID}/relation-tuples",
+          "name": "List relation tuples",
           "request": {
             "method": "GET",
             "header": [],
@@ -8379,7 +8379,7 @@
           }
         },
         {
-          "name": "Write relation tuple — POST /v1/tenants/{tenantID}/relation-tuples",
+          "name": "Write relation tuple",
           "request": {
             "method": "POST",
             "header": [
@@ -8420,7 +8420,7 @@
           ]
         },
         {
-          "name": "Check relation — POST /v1/tenants/{tenantID}/relation-tuples/check",
+          "name": "Check relation",
           "request": {
             "method": "POST",
             "header": [
@@ -8450,7 +8450,7 @@
           }
         },
         {
-          "name": "Delete relation tuple — DELETE /v1/tenants/{tenantID}/relation-tuples/{id}",
+          "name": "Delete relation tuple",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -8470,7 +8470,7 @@
           }
         },
         {
-          "name": "Expand identity graph — GET /v1/tenants/{tenantID}/relation-tuples/graph",
+          "name": "Expand identity graph",
           "request": {
             "method": "GET",
             "header": [],
@@ -8524,7 +8524,7 @@
       "name": "Security & Threat Detection",
       "item": [
         {
-          "name": "List anomalies — GET /v1/tenants/{tenantID}/security/anomalies",
+          "name": "List anomalies",
           "request": {
             "method": "GET",
             "header": [],
@@ -8557,7 +8557,7 @@
           ]
         },
         {
-          "name": "Anomaly summary — GET /v1/tenants/{tenantID}/security/anomalies/summary",
+          "name": "Anomaly summary",
           "request": {
             "method": "GET",
             "header": [],
@@ -8578,7 +8578,7 @@
           }
         },
         {
-          "name": "Resolve anomaly — POST .../security/anomalies/{id}/resolve",
+          "name": "Resolve anomaly",
           "request": {
             "method": "POST",
             "header": [],
@@ -8600,7 +8600,7 @@
           }
         },
         {
-          "name": "Bot telemetry — GET /v1/tenants/{tenantID}/security/bots",
+          "name": "Bot telemetry",
           "request": {
             "method": "GET",
             "header": [],
@@ -8620,7 +8620,7 @@
           }
         },
         {
-          "name": "Get bot settings — GET /v1/tenants/{tenantID}/security/bots/settings",
+          "name": "Get bot settings",
           "request": {
             "method": "GET",
             "header": [],
@@ -8641,7 +8641,7 @@
           }
         },
         {
-          "name": "Update bot settings — PUT /v1/tenants/{tenantID}/security/bots/settings",
+          "name": "Update bot settings",
           "request": {
             "method": "PUT",
             "header": [
@@ -8671,7 +8671,7 @@
           }
         },
         {
-          "name": "Get risk settings — GET /v1/tenants/{tenantID}/security/risk-settings",
+          "name": "Get risk settings",
           "request": {
             "method": "GET",
             "header": [],
@@ -8703,7 +8703,7 @@
           ]
         },
         {
-          "name": "Update risk settings — PUT /v1/tenants/{tenantID}/security/risk-settings",
+          "name": "Update risk settings",
           "request": {
             "method": "PUT",
             "header": [
@@ -8749,7 +8749,7 @@
       "name": "AI Agents",
       "item": [
         {
-          "name": "List agents — GET /v1/tenants/{tenantID}/agents",
+          "name": "List agents",
           "request": {
             "method": "GET",
             "header": [],
@@ -8781,7 +8781,7 @@
           ]
         },
         {
-          "name": "Create agent — POST /v1/tenants/{tenantID}/agents",
+          "name": "Create agent",
           "request": {
             "method": "POST",
             "header": [
@@ -8823,7 +8823,7 @@
           ]
         },
         {
-          "name": "Delete agent — DELETE /v1/tenants/{tenantID}/agents/{id}",
+          "name": "Delete agent",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -8843,7 +8843,7 @@
           }
         },
         {
-          "name": "Mint agent token — POST /v1/agents/token",
+          "name": "Mint agent token",
           "request": {
             "method": "POST",
             "header": [
@@ -8886,7 +8886,7 @@
           ]
         },
         {
-          "name": "List agents sponsored by a user — GET /v1/tenants/{tenantID}/agents/sponsored-by/{userID}",
+          "name": "List agents sponsored by a user",
           "request": {
             "method": "GET",
             "header": [],
@@ -8920,7 +8920,7 @@
           ]
         },
         {
-          "name": "Transfer sponsorship — POST /v1/tenants/{tenantID}/agents/sponsored-by/{userID}/transfer",
+          "name": "Transfer sponsorship",
           "request": {
             "method": "POST",
             "header": [
@@ -8963,7 +8963,7 @@
           ]
         },
         {
-          "name": "Update agent (suspend/resume via disabled) — PATCH /v1/tenants/{tenantID}/agents/{id}",
+          "name": "Update agent (suspend/resume via disabled)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -9004,7 +9004,7 @@
           ]
         },
         {
-          "name": "Suspend agent — POST /v1/tenants/{tenantID}/agents/{id}/suspend",
+          "name": "Suspend agent",
           "request": {
             "method": "POST",
             "header": [],
@@ -9037,7 +9037,7 @@
           ]
         },
         {
-          "name": "Resume agent — POST /v1/tenants/{tenantID}/agents/{id}/resume",
+          "name": "Resume agent",
           "request": {
             "method": "POST",
             "header": [],
@@ -9070,7 +9070,7 @@
           ]
         },
         {
-          "name": "Decommission agent — POST /v1/tenants/{tenantID}/agents/{id}/decommission",
+          "name": "Decommission agent",
           "request": {
             "method": "POST",
             "header": [],
@@ -9103,7 +9103,7 @@
           ]
         },
         {
-          "name": "Suspend all agents (kill switch) — POST /v1/tenants/{tenantID}/agents/kill-all",
+          "name": "Suspend all agents (kill switch)",
           "request": {
             "method": "POST",
             "header": [],
@@ -9140,7 +9140,7 @@
       "name": "Verifiable Credentials",
       "item": [
         {
-          "name": "List credentials — GET /v1/tenants/{tenantID}/credentials",
+          "name": "List credentials",
           "request": {
             "method": "GET",
             "header": [],
@@ -9172,7 +9172,7 @@
           ]
         },
         {
-          "name": "Issue credential — POST /v1/tenants/{tenantID}/credentials",
+          "name": "Issue credential",
           "request": {
             "method": "POST",
             "header": [
@@ -9214,7 +9214,7 @@
           ]
         },
         {
-          "name": "Revoke credential — POST .../credentials/{id}/revoke",
+          "name": "Revoke credential",
           "request": {
             "method": "POST",
             "header": [],
@@ -9235,7 +9235,7 @@
           }
         },
         {
-          "name": "Verify credential (public) — POST /v1/credentials/verify",
+          "name": "Verify credential (public)",
           "request": {
             "method": "POST",
             "header": [
@@ -9271,7 +9271,7 @@
       "name": "Auth Hooks (Actions)",
       "item": [
         {
-          "name": "List auth hooks — GET /v1/tenants/{tenantID}/auth-hooks",
+          "name": "List auth hooks",
           "request": {
             "method": "GET",
             "header": [],
@@ -9303,7 +9303,7 @@
           ]
         },
         {
-          "name": "Create auth hook — POST /v1/tenants/{tenantID}/auth-hooks",
+          "name": "Create auth hook",
           "request": {
             "method": "POST",
             "header": [
@@ -9344,7 +9344,7 @@
           ]
         },
         {
-          "name": "Update auth hook — PATCH /v1/tenants/{tenantID}/auth-hooks/{id}",
+          "name": "Update auth hook",
           "request": {
             "method": "PATCH",
             "header": [
@@ -9373,7 +9373,7 @@
           }
         },
         {
-          "name": "Delete auth hook — DELETE /v1/tenants/{tenantID}/auth-hooks/{id}",
+          "name": "Delete auth hook",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -9398,7 +9398,7 @@
       "name": "Domain Verification",
       "item": [
         {
-          "name": "List domains — GET /v1/tenants/{tenantID}/domains",
+          "name": "List domains",
           "request": {
             "method": "GET",
             "header": [],
@@ -9430,7 +9430,7 @@
           ]
         },
         {
-          "name": "Claim domain — POST /v1/tenants/{tenantID}/domains",
+          "name": "Claim domain",
           "request": {
             "method": "POST",
             "header": [
@@ -9471,7 +9471,7 @@
           ]
         },
         {
-          "name": "Verify domain — POST /v1/tenants/{tenantID}/domains/{id}/verify",
+          "name": "Verify domain",
           "request": {
             "method": "POST",
             "header": [],
@@ -9493,7 +9493,7 @@
           }
         },
         {
-          "name": "Remove domain — DELETE /v1/tenants/{tenantID}/domains/{id}",
+          "name": "Remove domain",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -9518,7 +9518,7 @@
       "name": "SIEM / Log Sinks",
       "item": [
         {
-          "name": "List log sinks — GET /v1/tenants/{tenantID}/log-sinks",
+          "name": "List log sinks",
           "request": {
             "method": "GET",
             "header": [],
@@ -9550,7 +9550,7 @@
           ]
         },
         {
-          "name": "Create log sink — POST /v1/tenants/{tenantID}/log-sinks",
+          "name": "Create log sink",
           "request": {
             "method": "POST",
             "header": [
@@ -9591,7 +9591,7 @@
           ]
         },
         {
-          "name": "Enable/disable sink — PATCH /v1/tenants/{tenantID}/log-sinks/{id}",
+          "name": "Enable/disable sink",
           "request": {
             "method": "PATCH",
             "header": [
@@ -9620,7 +9620,7 @@
           }
         },
         {
-          "name": "Delete sink — DELETE /v1/tenants/{tenantID}/log-sinks/{id}",
+          "name": "Delete sink",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -9645,7 +9645,7 @@
       "name": "Notifications",
       "item": [
         {
-          "name": "List notifications — GET /v1/notifications",
+          "name": "List notifications",
           "request": {
             "method": "GET",
             "header": [],
@@ -9663,7 +9663,7 @@
           }
         },
         {
-          "name": "Mark all read — POST /v1/notifications/mark-all-read",
+          "name": "Mark all read",
           "request": {
             "method": "POST",
             "header": [],
@@ -9686,7 +9686,7 @@
       "name": "ABAC",
       "item": [
         {
-          "name": "List ABAC policies — GET /v1/tenants/{tenantID}/abac/policies",
+          "name": "List ABAC policies",
           "request": {
             "method": "GET",
             "header": [],
@@ -9718,7 +9718,7 @@
           ]
         },
         {
-          "name": "Create ABAC policy — POST /v1/tenants/{tenantID}/abac/policies",
+          "name": "Create ABAC policy",
           "request": {
             "method": "POST",
             "header": [
@@ -9760,7 +9760,7 @@
           ]
         },
         {
-          "name": "Get ABAC policy — GET /v1/tenants/{tenantID}/abac/policies/{id}",
+          "name": "Get ABAC policy",
           "request": {
             "method": "GET",
             "header": [],
@@ -9793,7 +9793,7 @@
           ]
         },
         {
-          "name": "Update ABAC policy — PATCH /v1/tenants/{tenantID}/abac/policies/{id}",
+          "name": "Update ABAC policy",
           "request": {
             "method": "PATCH",
             "header": [
@@ -9835,7 +9835,7 @@
           ]
         },
         {
-          "name": "Evaluate ABAC policies — POST /v1/tenants/{tenantID}/abac/evaluate",
+          "name": "Evaluate ABAC policies",
           "request": {
             "method": "POST",
             "header": [
@@ -9883,7 +9883,7 @@
           ]
         },
         {
-          "name": "Delete ABAC policy — DELETE /v1/tenants/{tenantID}/abac/policies/{id}",
+          "name": "Delete ABAC policy",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -9921,7 +9921,7 @@
       "name": "AuthZEN",
       "item": [
         {
-          "name": "AuthZEN evaluation — POST /v1/tenants/{tenantID}/access/v1/evaluation",
+          "name": "AuthZEN evaluation",
           "request": {
             "method": "POST",
             "header": [
@@ -9968,7 +9968,7 @@
       "name": "Rate Limits",
       "item": [
         {
-          "name": "Get rate limits — GET /v1/tenants/{tenantID}/rate-limits",
+          "name": "Get rate limits",
           "request": {
             "method": "GET",
             "header": [],
@@ -9999,7 +9999,7 @@
           ]
         },
         {
-          "name": "Set rate limits — PUT /v1/tenants/{tenantID}/rate-limits",
+          "name": "Set rate limits",
           "request": {
             "method": "PUT",
             "header": [
@@ -10039,7 +10039,7 @@
           ]
         },
         {
-          "name": "Reset rate limits — DELETE /v1/tenants/{tenantID}/rate-limits",
+          "name": "Reset rate limits",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -10075,7 +10075,7 @@
       "name": "Token Vault",
       "item": [
         {
-          "name": "List providers — GET /v1/tenants/{tenantID}/vault/tokens/providers",
+          "name": "List providers",
           "request": {
             "method": "GET",
             "header": [],
@@ -10108,7 +10108,7 @@
           ]
         },
         {
-          "name": "Register an OAuth2 provider — POST /v1/tenants/{tenantID}/vault/tokens/providers",
+          "name": "Register an OAuth2 provider",
           "request": {
             "method": "POST",
             "header": [
@@ -10151,7 +10151,7 @@
           ]
         },
         {
-          "name": "Delete a provider — DELETE /v1/tenants/{tenantID}/vault/tokens/providers/{provider}",
+          "name": "Delete a provider",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -10185,7 +10185,7 @@
           ]
         },
         {
-          "name": "[setup] OAuth2 redirect callback — GET /v1/vault/tokens/callback",
+          "name": "[setup] OAuth2 redirect callback",
           "request": {
             "auth": {
               "type": "noauth"
@@ -10231,7 +10231,7 @@
           ]
         },
         {
-          "name": "[setup] Begin connecting an account — GET /v1/vault/tokens/{provider}/connect",
+          "name": "[setup] Begin connecting an account",
           "request": {
             "method": "GET",
             "header": [],
@@ -10263,7 +10263,7 @@
           ]
         },
         {
-          "name": "[setup] Get a live access token — GET /v1/vault/tokens/{provider}/access-token",
+          "name": "[setup] Get a live access token",
           "request": {
             "method": "GET",
             "header": [],
@@ -10295,7 +10295,7 @@
           ]
         },
         {
-          "name": "Disconnect a third-party account — DELETE /v1/vault/tokens/{provider}",
+          "name": "Disconnect a third-party account",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -10331,7 +10331,7 @@
       "name": "Qeet AI",
       "item": [
         {
-          "name": "Qeet AI status — GET /v1/qeetai/status",
+          "name": "Qeet AI status",
           "request": {
             "method": "GET",
             "header": [],
@@ -10361,7 +10361,7 @@
           ]
         },
         {
-          "name": "List conversations — GET /v1/qeetai/conversations",
+          "name": "List conversations",
           "request": {
             "method": "GET",
             "header": [],
@@ -10392,7 +10392,7 @@
           ]
         },
         {
-          "name": "Create conversation — POST /v1/qeetai/conversations",
+          "name": "Create conversation",
           "request": {
             "method": "POST",
             "header": [
@@ -10432,7 +10432,7 @@
           ]
         },
         {
-          "name": "Get conversation — GET /v1/qeetai/conversations/{conversationID}",
+          "name": "Get conversation",
           "request": {
             "method": "GET",
             "header": [],
@@ -10463,7 +10463,7 @@
           ]
         },
         {
-          "name": "Rename / pin conversation — PATCH /v1/qeetai/conversations/{conversationID}",
+          "name": "Rename / pin conversation",
           "request": {
             "method": "PATCH",
             "header": [
@@ -10503,7 +10503,7 @@
           ]
         },
         {
-          "name": "Delete conversation — DELETE /v1/qeetai/conversations/{conversationID}",
+          "name": "Delete conversation",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -10534,7 +10534,7 @@
           ]
         },
         {
-          "name": "[setup] Send a message (SSE stream) — POST /v1/qeetai/conversations/{conversationID}/messages",
+          "name": "[setup] Send a message (SSE stream)",
           "request": {
             "method": "POST",
             "header": [
@@ -10584,7 +10584,7 @@
       "name": "Activity",
       "item": [
         {
-          "name": "Activity history — GET /v1/activity",
+          "name": "Activity history",
           "request": {
             "method": "GET",
             "header": [],
@@ -10664,7 +10664,7 @@
           ]
         },
         {
-          "name": "[setup] Live activity stream (SSE) — GET /v1/activity/stream",
+          "name": "[setup] Live activity stream (SSE)",
           "request": {
             "method": "GET",
             "header": [],
@@ -10716,7 +10716,7 @@
       "name": "Search",
       "item": [
         {
-          "name": "Universal search — GET /v1/search",
+          "name": "Universal search",
           "request": {
             "method": "GET",
             "header": [],
@@ -10770,7 +10770,7 @@
       "name": "Compliance",
       "item": [
         {
-          "name": "List compliance evidence runs — GET /v1/tenants/{tenantID}/compliance/{framework}/evidence",
+          "name": "List compliance evidence runs",
           "request": {
             "method": "GET",
             "header": [],
@@ -10803,7 +10803,7 @@
           ]
         },
         {
-          "name": "Generate compliance evidence — POST /v1/tenants/{tenantID}/compliance/{framework}/evidence",
+          "name": "Generate compliance evidence",
           "request": {
             "method": "POST",
             "header": [],
@@ -10837,7 +10837,7 @@
           ]
         },
         {
-          "name": "Get compliance evidence run (full report) — GET /v1/tenants/{tenantID}/compliance/evidence/{id}",
+          "name": "Get compliance evidence run (full report)",
           "request": {
             "method": "GET",
             "header": [],
@@ -10875,7 +10875,7 @@
       "name": "Admin Portal",
       "item": [
         {
-          "name": "List links — GET /v1/tenants/{tenantID}/admin-portal/links",
+          "name": "List links",
           "request": {
             "method": "GET",
             "header": [],
@@ -10907,7 +10907,7 @@
           ]
         },
         {
-          "name": "Generate a link — POST /v1/tenants/{tenantID}/admin-portal/links",
+          "name": "Generate a link",
           "request": {
             "method": "POST",
             "header": [
@@ -10949,7 +10949,7 @@
           ]
         },
         {
-          "name": "Exchange portal link — POST /v1/admin-portal/session",
+          "name": "Exchange portal link",
           "request": {
             "auth": {
               "type": "noauth"
@@ -10988,7 +10988,7 @@
           ]
         },
         {
-          "name": "Revoke a link — DELETE /v1/tenants/{tenantID}/admin-portal/links/{id}",
+          "name": "Revoke a link",
           "request": {
             "method": "DELETE",
             "header": [],
@@ -11021,7 +11021,7 @@
           ]
         },
         {
-          "name": "Get portal context — GET /v1/admin-portal/context",
+          "name": "Get portal context",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11054,7 +11054,7 @@
           ]
         },
         {
-          "name": "List connections (portal) — GET /v1/admin-portal/saml",
+          "name": "List connections (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11087,7 +11087,7 @@
           ]
         },
         {
-          "name": "Create connection (portal) — POST /v1/admin-portal/saml",
+          "name": "Create connection (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11130,7 +11130,7 @@
           ]
         },
         {
-          "name": "Get connection (portal) — GET /v1/admin-portal/saml/{id}",
+          "name": "Get connection (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11164,7 +11164,7 @@
           ]
         },
         {
-          "name": "Update connection (portal) — PATCH /v1/admin-portal/saml/{id}",
+          "name": "Update connection (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11207,7 +11207,7 @@
           ]
         },
         {
-          "name": "Test connection (portal) — POST /v1/admin-portal/saml/{id}/test",
+          "name": "Test connection (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11242,7 +11242,7 @@
           ]
         },
         {
-          "name": "Delete connection (portal) — DELETE /v1/admin-portal/saml/{id}",
+          "name": "Delete connection (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11276,7 +11276,7 @@
           ]
         },
         {
-          "name": "Get SCIM config (portal) — GET /v1/admin-portal/scim",
+          "name": "Get SCIM config (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11309,7 +11309,7 @@
           ]
         },
         {
-          "name": "Rotate SCIM token (portal) — POST /v1/admin-portal/scim/token",
+          "name": "Rotate SCIM token (portal)",
           "request": {
             "auth": {
               "type": "noauth"
@@ -11344,7 +11344,7 @@
           ]
         },
         {
-          "name": "Revoke SCIM token (portal) — DELETE /v1/admin-portal/scim/token",
+          "name": "Revoke SCIM token (portal)",
           "request": {
             "auth": {
               "type": "noauth"

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -89,7 +90,11 @@ func (h *Handler) stream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Keep-alive pings every 20s prevent proxy timeouts on idle connections.
+	// stopKeepAlive runs first (defers are LIFO), so the goroutine has exited
+	// before this handler returns and can never write to a released
+	// ResponseWriter.
 	donePing := make(chan struct{})
+	defer sse.stopKeepAlive()
 	defer close(donePing)
 	sse.startKeepAlive(donePing, 20*time.Second)
 
@@ -867,9 +872,23 @@ func splitCSV(s string) []string {
 // sseWriter writes SSE frames to an http.ResponseWriter and flushes after each.
 // It mirrors qeetai/sse.go — not imported because qeetai is not a shared
 // library; copying the ~30-line writer keeps the package dependency graph clean.
+// sseWriter serializes writes to a streaming ResponseWriter.
+//
+// An http.ResponseWriter is not safe for concurrent use, and SSE inherently has
+// two writers: the handler goroutine emitting events, and the keep-alive
+// goroutine emitting pings on a ticker. Unsynchronized, those interleave — a
+// ": keep-alive" spliced into the middle of a "data:" line breaks the client's
+// frame parser — and race on net/http's chunked-writer state.
+//
+// mu also makes the shutdown handshake possible: stopKeepAlive waits for the
+// ping goroutine to finish, so nothing touches w after ServeHTTP returns (which
+// net/http explicitly forbids, and which can write into a recycled connection).
 type sseWriter struct {
+	mu      sync.Mutex
 	w       http.ResponseWriter
 	flusher http.Flusher
+
+	pingDone chan struct{} // closed by the keep-alive goroutine on exit
 }
 
 // newSSEWriter wraps w for SSE use. Returns nil when w does not implement
@@ -882,6 +901,17 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	return &sseWriter{w: w, flusher: f}
 }
 
+// write emits one pre-formatted frame under the lock.
+func (s *sseWriter) write(frame string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A failed frame write means the client has gone. There is nothing useful to
+	// do about it here — the handler already returns when the request context is
+	// cancelled — so the error is discarded explicitly rather than ignored.
+	_, _ = fmt.Fprint(s.w, frame)
+	s.flusher.Flush()
+}
+
 // sendActivity writes one "event: activity\ndata: <json>\n\n" SSE frame.
 func (s *sseWriter) sendActivity(ev ActivityEvent) {
 	raw, err := json.Marshal(ev)
@@ -889,30 +919,42 @@ func (s *sseWriter) sendActivity(ev ActivityEvent) {
 		slog.Warn("activity: sse marshal", "err", err)
 		return
 	}
-	fmt.Fprintf(s.w, "event: activity\ndata: %s\n\n", raw)
-	s.flusher.Flush()
+	s.write(fmt.Sprintf("event: activity\ndata: %s\n\n", raw))
 }
 
 // keepAlive sends a comment ping (":\n\n") to prevent proxy timeouts on idle
 // connections — identical to the qeetai keep-alive pattern.
 func (s *sseWriter) keepAlive() {
-	fmt.Fprintf(s.w, ": keep-alive\n\n")
-	s.flusher.Flush()
+	s.write(": keep-alive\n\n")
 }
 
 // startKeepAlive launches a goroutine that sends keep-alive pings every d
-// until done is closed.
-func (s *sseWriter) startKeepAlive(done <-chan struct{}, d time.Duration) {
+// until stop is closed. Pair every call with stopKeepAlive.
+func (s *sseWriter) startKeepAlive(stop <-chan struct{}, d time.Duration) {
+	s.pingDone = make(chan struct{})
 	go func() {
+		defer close(s.pingDone)
 		t := time.NewTicker(d)
 		defer t.Stop()
 		for {
 			select {
-			case <-done:
+			case <-stop:
 				return
 			case <-t.C:
 				s.keepAlive()
 			}
 		}
 	}()
+}
+
+// stopKeepAlive blocks until the keep-alive goroutine has returned.
+//
+// Closing the stop channel alone is not enough: if the ticker fires as the
+// handler unwinds, the goroutine can still be inside a write when ServeHTTP
+// returns. Waiting here is what makes "no writes after the handler returns"
+// actually true.
+func (s *sseWriter) stopKeepAlive() {
+	if s.pingDone != nil {
+		<-s.pingDone
+	}
 }

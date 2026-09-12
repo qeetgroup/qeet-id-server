@@ -157,3 +157,71 @@ func TestPasskeyLoginRejectsForgedAssertion(t *testing.T) {
 		t.Fatal("login must reject an assertion signed by a credential the server never registered")
 	}
 }
+
+// TestPasskeyCeremoniesRequireUserVerification pins the property that makes a
+// passkey a real second factor rather than mere possession of the device.
+//
+// go-webauthn gates its UV check on a strict equality —
+// `session.UserVerification == protocol.VerificationRequired` — so any other
+// value (including the zero value and "preferred") means the UV bit in
+// authenticatorData is never checked at all. Both ceremonies therefore have to
+// emit exactly "required", and this test reads the options the browser would
+// actually receive rather than trusting the config.
+func TestPasskeyCeremoniesRequireUserVerification(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	svc := newPasskeySvc(t)
+
+	email := uniqueSlug("pkuv") + "@example.com"
+
+	_, creation, err := svc.BeginSignup(ctx, email, "Ada Lovelace")
+	if err != nil {
+		t.Fatalf("begin signup: %v", err)
+	}
+	regJSON, err := json.Marshal(creation)
+	if err != nil {
+		t.Fatalf("marshal creation options: %v", err)
+	}
+	if got := userVerificationOf(t, regJSON); got != "required" {
+		t.Errorf("registration userVerification = %q, want \"required\" — "+
+			"anything else means the UV flag is never checked", got)
+	}
+
+	// Empty email drives the discoverable (usernameless) path, which is the
+	// one the hosted login app uses.
+	_, assertion, err := svc.BeginLogin(ctx, "")
+	if err != nil {
+		t.Fatalf("begin login: %v", err)
+	}
+	loginJSON, err := json.Marshal(assertion)
+	if err != nil {
+		t.Fatalf("marshal assertion options: %v", err)
+	}
+	if got := userVerificationOf(t, loginJSON); got != "required" {
+		t.Errorf("login userVerification = %q, want \"required\" — "+
+			"passkey login would otherwise succeed on possession alone", got)
+	}
+}
+
+// userVerificationOf digs the effective userVerification value out of a
+// marshalled WebAuthn options object. The two ceremonies nest it differently:
+// registration carries it under publicKey.authenticatorSelection, assertion
+// puts it directly on publicKey.
+func userVerificationOf(t *testing.T, optionsJSON []byte) string {
+	t.Helper()
+	var doc struct {
+		PublicKey struct {
+			UserVerification       string `json:"userVerification"`
+			AuthenticatorSelection struct {
+				UserVerification string `json:"userVerification"`
+			} `json:"authenticatorSelection"`
+		} `json:"publicKey"`
+	}
+	if err := json.Unmarshal(optionsJSON, &doc); err != nil {
+		t.Fatalf("unmarshal options: %v", err)
+	}
+	if v := doc.PublicKey.AuthenticatorSelection.UserVerification; v != "" {
+		return v
+	}
+	return doc.PublicKey.UserVerification
+}

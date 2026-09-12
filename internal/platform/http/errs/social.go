@@ -19,6 +19,7 @@ const (
 	CodeSocialUserinfoFailed        = "social.userinfo_failed"
 	CodeSocialEmailMissing          = "social.email_missing"
 	CodeSocialAccountNotInTenant    = "social.account_not_in_tenant"
+	CodeSocialReturnToInvalid       = "social.return_to_invalid"
 	CodeSocialEmailUnverified       = "social.email_unverified"
 	CodeSocialCodeRequired          = "social.code_required"
 	CodeSocialLoginCodeInvalid      = "social.login_code_invalid"
@@ -47,6 +48,12 @@ var (
 	ErrSocialEmailMissing          = New(CodeSocialEmailMissing, "The sign-in provider didn't share an email address, which is required.")
 	// Deliberately vague: emails are globally unique, so a precise message here
 	// would confirm to one tenant that an address belongs to another.
+	// ErrSocialReturnToInvalid rejects a hosted-flow return_to that is neither a
+	// root-relative path nor an allowlisted origin — it would be an open
+	// redirect on the authentication domain.
+	ErrSocialReturnToInvalid = New(CodeSocialReturnToInvalid,
+		"That sign-in link has an invalid return address.")
+
 	ErrSocialAccountNotInTenant = New(CodeSocialAccountNotInTenant,
 		"That account can't sign in with this provider.")
 	ErrSocialEmailUnverified  = New(CodeSocialEmailUnverified, "The sign-in provider did not verify ownership of that email address. Link it from a signed-in account instead.")

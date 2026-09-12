@@ -77,7 +77,7 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 	if err != nil {
 		return fmt.Errorf("smtp data: %w", err)
 	}
-	if _, err := wc.Write(buildMIME(s.From, m.To, m.Subject, m.Body, m.HTML)); err != nil {
+	if _, err := wc.Write(buildMIME(messageFrom(s.From, m.FromName), m.To, m.Subject, m.Body, m.HTML, m.ReplyTo)); err != nil {
 		return fmt.Errorf("smtp write: %w", err)
 	}
 	if err := wc.Close(); err != nil {
@@ -89,7 +89,7 @@ func (s SMTPSender) Send(ctx context.Context, m Message) error {
 // buildMIME assembles an RFC 5322 message: a plain-text mail, or — when html is
 // non-empty — a multipart/alternative carrying both the text and HTML parts so
 // clients render whichever they support.
-func buildMIME(from, to, subject, body, html string) []byte {
+func buildMIME(from, to, subject, body, html string, replyTo ...string) []byte {
 	// Header values are CR/LF-stripped so untrusted input (a submitted recipient,
 	// a user-derived subject) can't smuggle extra headers or a forged body —
 	// classic SMTP header injection.
@@ -101,6 +101,11 @@ func buildMIME(from, to, subject, body, html string) []byte {
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", to)
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
+	if len(replyTo) > 0 {
+		if address := replyAddress(replyTo[0]); address != "" {
+			fmt.Fprintf(&b, "Reply-To: %s\r\n", address)
+		}
+	}
 	b.WriteString("MIME-Version: 1.0\r\n")
 
 	if html == "" {
@@ -140,4 +145,24 @@ func fromAddress(from string) string {
 		return a.Address
 	}
 	return from
+}
+
+func messageFrom(from, name string) string {
+	address, err := mail.ParseAddress(from)
+	if err != nil || strings.TrimSpace(name) == "" {
+		return from
+	}
+	address.Name = sanitizeHeader(name)
+	return address.String()
+}
+
+func replyAddress(value string) string {
+	if strings.ContainsAny(value, "\r\n") {
+		return ""
+	}
+	address, err := mail.ParseAddress(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	return address.Address
 }

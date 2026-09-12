@@ -614,7 +614,11 @@ func (s *Service) Checkout(ctx context.Context, tenantID uuid.UUID, planCode, cu
 	})
 	if err != nil {
 		_ = s.q.UpdateCheckoutFailed(ctx, checkoutID)
-		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
+		// Wrap, not WithDetail: err carries the provider's raw HTTP response
+		// body (see payments.go), which can run to a megabyte and embeds account
+		// identifiers, request ids and echoed parameters. Detail is serialized to
+		// the client; a wrapped cause is logged server-side instead.
+		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").Wrap(err)
 	}
 	_ = s.q.UpdateCheckoutProviderRef(ctx, dbgen.UpdateCheckoutProviderRefParams{
 		ProviderRef: providerRef,
@@ -815,7 +819,7 @@ func (s *Service) StartSignupCheckout(ctx context.Context, ownerID uuid.UUID, in
 	})
 	if err != nil {
 		_, _ = s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET status = 'failed' WHERE id = $1`, checkoutID)
-		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").WithDetail(err.Error())
+		return nil, errs.ErrInternalServer.WithMessage("Couldn't start the payment. Please try again.").Wrap(err)
 	}
 	_, _ = s.pool.Exec(ctx, `UPDATE tenant.signup_checkouts SET provider_ref = $1 WHERE id = $2`, providerRef, checkoutID)
 	return &CheckoutResult{Status: "checkout", CheckoutURL: redirectURL, Provider: provider.Name()}, nil

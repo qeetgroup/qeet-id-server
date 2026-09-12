@@ -121,7 +121,7 @@ internal/platform/database/migrations/NNNN_description.up.sql
 internal/platform/database/migrations/NNNN_description.down.sql
 ```
 
-Numbering continues from the highest present (currently `0104`; `0082` is absent and is not to be
+Numbering continues from the highest present (currently `0107`; `0082` is absent and is not to be
 reused). Migrations are embedded with `//go:embed` and applied on startup. Additive first —
 expand, migrate, contract across releases.
 

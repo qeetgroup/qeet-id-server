@@ -58,6 +58,67 @@ type Service struct {
 	// sign-in (env-configured, e.g. Google). Distinct from the per-tenant
 	// social_providers table used for tenants' end users. See platform.go.
 	platform map[string]providerConfig
+	// returnOrigins is the allowlist for the hosted flow's `return_to`, keyed by
+	// normalized "scheme://host[:port]". Empty means only root-relative paths
+	// are accepted. See SetAllowedReturnOrigins and validateReturnTo.
+	returnOrigins map[string]struct{}
+}
+
+// SetAllowedReturnOrigins declares the origins a `return_to` may point at.
+// Wired from the composition root with the app + hosted-login base URLs and the
+// configured browser origins, which are already validated (production refuses to
+// start with a wildcard).
+func (s *Service) SetAllowedReturnOrigins(origins ...string) {
+	set := make(map[string]struct{}, len(origins))
+	for _, o := range origins {
+		if norm := normalizeOrigin(o); norm != "" {
+			set[norm] = struct{}{}
+		}
+	}
+	s.returnOrigins = set
+}
+
+// normalizeOrigin reduces a URL or origin string to "scheme://host[:port]",
+// or "" if it is not an absolute URL with a host.
+func normalizeOrigin(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+// validateReturnTo rejects a `return_to` that would send the browser somewhere
+// we do not control.
+//
+// The callback sets the hosted-login SSO cookie and THEN redirects here, so an
+// unvalidated value is an open redirect on the authentication domain: an
+// attacker sends a victim to /v1/social/google/start?return_to=https://evil… and
+// the victim lands on the attacker's page having just authenticated, from a
+// first-party origin. The hosted flow only ever needs to return to the login or
+// console app.
+//
+// Accepted: "" (non-hosted flow), a root-relative path, or an absolute URL whose
+// origin is allowlisted. A protocol-relative "//evil.example" is rejected — it
+// looks relative but is not.
+func (s *Service) validateReturnTo(returnTo string) error {
+	if returnTo == "" {
+		return nil
+	}
+	if strings.HasPrefix(returnTo, "//") || strings.HasPrefix(returnTo, `/\`) {
+		return errs.ErrSocialReturnToInvalid
+	}
+	if strings.HasPrefix(returnTo, "/") {
+		return nil
+	}
+	origin := normalizeOrigin(returnTo)
+	if origin == "" {
+		return errs.ErrSocialReturnToInvalid
+	}
+	if _, ok := s.returnOrigins[origin]; !ok {
+		return errs.ErrSocialReturnToInvalid
+	}
+	return nil
 }
 
 func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
@@ -330,6 +391,11 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 // BeginLogin resolves the tenant + provider, persists CSRF state with a PKCE
 // verifier, and returns the upstream authorization URL to redirect the user to.
 func (s *Service) BeginLogin(ctx context.Context, provider, tenantRef, redirectURI, returnTo string) (string, error) {
+	// Validate before anything is persisted, so a rejected value never reaches
+	// the callback that would redirect to it.
+	if err := s.validateReturnTo(returnTo); err != nil {
+		return "", err
+	}
 	tenantID, err := s.resolveTenant(ctx, tenantRef)
 	if err != nil {
 		return "", err

@@ -5,6 +5,9 @@ const (
 	CodeVerifyCodeInvalid = "verification.code_invalid"
 	CodeVerifyCodeUsed    = "verification.code_used"
 	CodeVerifyCodeExpired = "verification.code_expired"
+	// Guess budget for a single code exhausted; the code is retired and the
+	// caller must request a new one.
+	CodeVerifyAttemptsExceeded = "verification.attempts_exceeded"
 
 	// Preconditions of the send-a-code flow (start email/phone verification).
 	CodeVerifyUserNotFound = "verification.user_not_found"
@@ -22,6 +25,9 @@ var (
 	ErrVerifyCodeInvalid = New(CodeVerifyCodeInvalid, "That verification code is incorrect.")
 	ErrVerifyCodeUsed    = New(CodeVerifyCodeUsed, "This code has already been used.")
 	ErrVerifyCodeExpired = New(CodeVerifyCodeExpired, "This code has expired. Request a new one.")
+
+	ErrVerifyAttemptsExceeded = New(CodeVerifyAttemptsExceeded,
+		"Too many incorrect attempts. Request a new code.").AsRetryable()
 
 	ErrVerifyUserNotFound = New(CodeVerifyUserNotFound, "We couldn't find that user.")
 	ErrVerifyNoEmail      = New(CodeVerifyNoEmail, "This account has no email address to verify.")

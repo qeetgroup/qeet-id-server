@@ -456,6 +456,12 @@ func (r *Repository) ListByTenant(ctx context.Context, tenantID uuid.UUID, limit
 		u.Metadata = parseUserMetadata(meta, u.ID)
 		out = append(out, u)
 	}
+	// A mid-stream failure (connection reset, server cancel) stops the loop
+	// without an error from Scan. Unchecked, that returns a SHORT page plus a
+	// next-cursor derived from it — silently skipping users.
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
 	var next string
 	if len(out) > limit {
 		last := out[limit-1]

@@ -62,6 +62,32 @@ type Domain struct {
 	DNSRecordValue    string     `json:"dns_record_value"`
 	VerifiedAt        *time.Time `json:"verified_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
+
+	// LastCheckedAt/LastError record the most recent verification attempt, so
+	// the console can tell "not checked yet" from "checked and it failed".
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+	// Per-domain switches: verifying ownership doesn't itself opt a domain into
+	// SSO routing or just-in-time provisioning.
+	SSOEnabled bool `json:"sso_enabled"`
+	JITEnabled bool `json:"jit_enabled"`
+	IsDefault  bool `json:"is_default"`
+	// Status is derived, never stored: verified | pending | attention.
+	Status string `json:"status"`
+}
+
+// deriveStatus collapses the stored fields into the three states the console
+// renders. "attention" is specifically a domain whose last check FAILED —
+// distinct from one nobody has checked yet, which is simply pending.
+func (d *Domain) deriveStatus() {
+	switch {
+	case d.VerifiedAt != nil:
+		d.Status = "verified"
+	case d.LastError != "":
+		d.Status = "attention"
+	default:
+		d.Status = "pending"
+	}
 }
 
 func (d *Domain) fillDNS() {
@@ -124,6 +150,7 @@ func rowToDomain(id uuid.UUID, domain, token string, verifiedAt pgtype.Timestamp
 		CreatedAt:         createdAt,
 	}
 	d.fillDNS()
+	d.deriveStatus()
 	return d
 }
 
@@ -180,17 +207,93 @@ func (s *Service) AddWithActor(ctx context.Context, tenantID uuid.UUID, raw stri
 	return &d, nil
 }
 
+// List returns the tenant's domains with their per-domain settings and the
+// outcome of the last verification attempt.
+//
+// Raw SQL because sqlc isn't wired into the build here; fold into queries.sql
+// (replacing ListDomains) at the next `sqlc generate`.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Domain, error) {
-	rows, err := s.q.ListDomains(ctx, tenantID)
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, domain, verification_token, verified_at, created_at,
+		       last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled, is_default
+		FROM tenant.domains
+		WHERE tenant_id = $1
+		ORDER BY is_default DESC, domain
+	`, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Domain, 0, len(rows))
-	for _, row := range rows {
-		d := rowToDomain(row.ID, row.Domain, row.VerificationToken, row.VerifiedAt, row.CreatedAt)
+	defer rows.Close()
+
+	out := make([]Domain, 0)
+	for rows.Next() {
+		var d Domain
+		var verifiedAt, lastChecked *time.Time
+		if err := rows.Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
+			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled, &d.IsDefault); err != nil {
+			return nil, err
+		}
+		d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
+		d.fillDNS()
+		d.deriveStatus()
 		out = append(out, d)
 	}
-	return out, nil
+	return out, rows.Err()
+}
+
+// UpdateSettings toggles the per-domain switches. Making a domain the default
+// clears the previous one in the same transaction, so the partial unique index
+// can never be violated by a straight UPDATE.
+func (s *Service) UpdateSettings(
+	ctx context.Context, id, tenantID uuid.UUID,
+	sso, jit, isDefault *bool, actor audit.Actor,
+) (*Domain, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if isDefault != nil && *isDefault {
+		if _, err := tx.Exec(ctx,
+			`UPDATE tenant.domains SET is_default = FALSE WHERE tenant_id = $1 AND is_default`,
+			tenantID); err != nil {
+			return nil, err
+		}
+	}
+
+	var d Domain
+	var verifiedAt, lastChecked *time.Time
+	err = tx.QueryRow(ctx, `
+		UPDATE tenant.domains SET
+			sso_enabled = COALESCE($3, sso_enabled),
+			jit_enabled = COALESCE($4, jit_enabled),
+			is_default  = COALESCE($5, is_default)
+		WHERE id = $1 AND tenant_id = $2
+		RETURNING id, domain, verification_token, verified_at, created_at,
+		          last_checked_at, COALESCE(last_error, ''), sso_enabled, jit_enabled, is_default
+	`, id, tenantID, sso, jit, isDefault).
+		Scan(&d.ID, &d.Domain, &d.VerificationToken, &verifiedAt, &d.CreatedAt,
+			&lastChecked, &d.LastError, &d.SSOEnabled, &d.JITEnabled, &d.IsDefault)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrDomainVerifyNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	d.VerifiedAt, d.LastCheckedAt = verifiedAt, lastChecked
+	d.fillDNS()
+	d.deriveStatus()
+
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "domain.settings_updated", "domain", d.ID,
+		map[string]any{"domain": d.Domain, "sso": d.SSOEnabled, "jit": d.JITEnabled,
+			"default": d.IsDefault})); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // Verify looks up the DNS TXT record and, if the token is present, marks the
@@ -224,6 +327,18 @@ func (s *Service) VerifyWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 		}
 	}
 	if lerr != nil || !found {
+		// Stamp the failed attempt before returning. Without this the domain
+		// stays indistinguishable from one nobody has checked yet, and the
+		// "Attention required" state could never be reached.
+		reason := "DNS TXT record not found"
+		if lerr != nil {
+			reason = "DNS lookup failed"
+		}
+		if _, uerr := s.pool.Exec(ctx,
+			`UPDATE tenant.domains SET last_checked_at = NOW(), last_error = $3
+			 WHERE id = $1 AND tenant_id = $2`, id, tenantID, reason); uerr != nil {
+			return nil, uerr
+		}
 		return nil, errs.ErrDomainVerifyDNSRecordMissing
 	}
 
@@ -232,6 +347,11 @@ func (s *Service) VerifyWithActor(ctx context.Context, id, tenantID uuid.UUID, a
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
+		`UPDATE tenant.domains SET last_checked_at = NOW(), last_error = NULL
+		 WHERE id = $1 AND tenant_id = $2`, id, tenantID); err != nil {
+		return nil, err
+	}
 	updated, err := s.q.WithTx(tx).MarkDomainVerified(ctx, dbgen.MarkDomainVerifiedParams{ID: id, TenantID: tenantID})
 	if err != nil {
 		if strings.Contains(err.Error(), "uq_verified_domain") {
@@ -297,6 +417,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/domains", h.list)
 	r.Post("/tenants/{tenantID}/domains", h.add)
 	r.Post("/tenants/{tenantID}/domains/{id}/verify", h.verify)
+	r.Get("/tenants/{tenantID}/login-domain", h.loginDomain)
+	r.Patch("/tenants/{tenantID}/domains/{id}", h.updateSettings)
 	r.Delete("/tenants/{tenantID}/domains/{id}", h.remove)
 }
 
@@ -387,4 +509,35 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type updateSettingsInput struct {
+	SSOEnabled *bool `json:"sso_enabled"`
+	JITEnabled *bool `json:"jit_enabled"`
+	IsDefault  *bool `json:"is_default"`
+}
+
+func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	var in updateSettingsInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	d, err := h.Service.UpdateSettings(r.Context(), id, tenantID, in.SSOEnabled, in.JITEnabled,
+		in.IsDefault, actorOf(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, d)
 }

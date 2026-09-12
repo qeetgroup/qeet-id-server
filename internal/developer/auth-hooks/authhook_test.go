@@ -52,3 +52,50 @@ func TestSignDeterministic(t *testing.T) {
 		t.Error("different secret must produce a different signature")
 	}
 }
+
+// TestDecideUnparseableBodyHonoursFailClosed is the regression test for a
+// fail-closed bypass.
+//
+// The hook answering 2xx with a body we cannot parse has told us nothing. The
+// unmarshal error used to be discarded, leaving decision == "" and allowing the
+// sign-in — even for a tenant that had explicitly configured fail_open=false,
+// whose entire reason for setting it is to block sign-in when the hook cannot
+// give an answer.
+//
+// Fail-open on unreachability remains the documented default; this only makes
+// the opt-out enforceable.
+func TestDecideUnparseableBodyHonoursFailClosed(t *testing.T) {
+	bodies := map[string][]byte{
+		"empty":           {},
+		"truncated json":  []byte(`{"decision":`),
+		"not json at all": []byte(`<html>502 Bad Gateway</html>`),
+		"json array":      []byte(`["deny"]`),
+		"bare string":     []byte(`"deny"`),
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			// fail_open=false: an undecidable answer must block.
+			msg, denied, claims := decide(false, nil, body)
+			if !denied {
+				t.Errorf("fail-closed tenant: denied = false, want true (unparseable body must not allow)")
+			}
+			if msg == "" {
+				t.Error("a denial must carry a user-facing message")
+			}
+			if claims != nil {
+				t.Errorf("claims = %v, want nil on denial", claims)
+			}
+
+			// fail_open=true: unchanged, still allows.
+			if _, denied, _ := decide(true, nil, body); denied {
+				t.Error("fail-open tenant: denied = true, want false (documented default)")
+			}
+		})
+	}
+
+	// A well-formed body with no decision field is a valid "no objection" and
+	// must still allow — that contract is unchanged.
+	if _, denied, _ := decide(false, nil, []byte(`{}`)); denied {
+		t.Error("well-formed empty object must allow; only unparseable bodies are undecidable")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -23,9 +24,18 @@ const (
 // sseWriter writes SSE frames to an http.ResponseWriter and flushes after
 // each frame. The response must have Content-Type: text/event-stream set
 // before the first write.
+//
+// Writes are serialized. An http.ResponseWriter is not safe for concurrent
+// use, and SSE always has two writers: the orchestrator goroutine streaming
+// model output, and the keep-alive goroutine pinging on a ticker. Left
+// unsynchronized they interleave (a ": ping" inside a "data:" line breaks the
+// client parser) and race on net/http's chunked-writer state.
 type sseWriter struct {
+	mu      sync.Mutex
 	w       http.ResponseWriter
 	flusher http.Flusher
+
+	pingDone chan struct{} // closed by the keep-alive goroutine on exit
 }
 
 // newSSEWriter wraps w for SSE use. Returns nil when w does not implement
@@ -38,6 +48,17 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	return &sseWriter{w: w, flusher: f}
 }
 
+// write emits one pre-formatted frame under the lock.
+func (s *sseWriter) write(frame string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A failed frame write means the client has gone. There is nothing useful to
+	// do about it here — the handler already returns when the request context is
+	// cancelled — so the error is discarded explicitly rather than ignored.
+	_, _ = fmt.Fprint(s.w, frame)
+	s.flusher.Flush()
+}
+
 // send writes one SSE frame: "event: <eventType>\ndata: <json>\n\n".
 func (s *sseWriter) send(eventType StreamEventType, data any) {
 	raw, err := json.Marshal(data)
@@ -45,32 +66,41 @@ func (s *sseWriter) send(eventType StreamEventType, data any) {
 		slog.Warn("qeetai: sse marshal", "err", err)
 		return
 	}
-	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", eventType, raw)
-	s.flusher.Flush()
+	s.write(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, raw))
 }
 
 // keepAlive sends a comment ping (":\n\n") to prevent proxy timeouts.
 // Call it periodically from a ticker goroutine.
 func (s *sseWriter) keepAlive() {
-	fmt.Fprintf(s.w, ": ping\n\n")
-	s.flusher.Flush()
+	s.write(": ping\n\n")
 }
 
 // startKeepAlive launches a goroutine that sends keep-alive pings every d
-// until done is closed.
-func (s *sseWriter) startKeepAlive(done <-chan struct{}, d time.Duration) {
+// until stop is closed. Pair every call with stopKeepAlive.
+func (s *sseWriter) startKeepAlive(stop <-chan struct{}, d time.Duration) {
+	s.pingDone = make(chan struct{})
 	go func() {
+		defer close(s.pingDone)
 		t := time.NewTicker(d)
 		defer t.Stop()
 		for {
 			select {
-			case <-done:
+			case <-stop:
 				return
 			case <-t.C:
 				s.keepAlive()
 			}
 		}
 	}()
+}
+
+// stopKeepAlive blocks until the keep-alive goroutine has returned, so nothing
+// writes to the ResponseWriter after ServeHTTP returns — which net/http
+// forbids, and which can otherwise write into a recycled connection.
+func (s *sseWriter) stopKeepAlive() {
+	if s.pingDone != nil {
+		<-s.pingDone
+	}
 }
 
 // SSE data payload shapes — must match the frontend StreamEvent union in §A.4.

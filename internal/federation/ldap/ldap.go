@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
@@ -67,7 +68,9 @@ type Service struct {
 	egress *egress.Policy
 	box    *envelope.Cipher
 	// gate enforces the plan LDAP feature on connection creation (nil = off).
-	gate PlanGate
+	gate     PlanGate
+	observer OperationObserver
+	mapper   ProfileMapper
 }
 
 func NewService(pool *pgxpool.Pool, authSvc *auth.Service, policies ...*egress.Policy) *Service {
@@ -421,9 +424,11 @@ func (s *Service) TestBind(ctx context.Context, c *connFull) error {
 }
 
 type ldapUser struct {
-	DN    string
-	Email string
-	Name  string
+	DN           string
+	Email        string
+	Name         string
+	ConnectionID string
+	Profile      map[string]any
 }
 
 // authenticate binds the service account, finds the user, then verifies the
@@ -443,9 +448,17 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	}
 
 	filter := strings.ReplaceAll(c.UserFilter, "%s", goldap.EscapeFilter(username))
+	attributes := []string{c.EmailAttribute, c.NameAttribute}
+	if s.mapper != nil {
+		mapped, err := s.mapper.SourceAttributes(ctx, c.TenantID, c.ID.String())
+		if err != nil {
+			return nil, err
+		}
+		attributes = append(attributes, mapped...)
+	}
 	req := goldap.NewSearchRequest(
 		c.BaseDN, goldap.ScopeWholeSubtree, goldap.NeverDerefAliases, 2, int(dialTimeout.Seconds()), false,
-		filter, []string{c.EmailAttribute, c.NameAttribute}, nil,
+		filter, attributes, nil,
 	)
 	res, err := conn.Search(req)
 	if err != nil {
@@ -469,10 +482,31 @@ func (s *Service) authenticate(ctx context.Context, c *connFull, username, passw
 	}
 
 	email := strings.ToLower(strings.TrimSpace(entry.GetAttributeValue(c.EmailAttribute)))
+	name := entry.GetAttributeValue(c.NameAttribute)
+	var profile map[string]any
+	if s.mapper != nil {
+		source := map[string]any{}
+		for _, attribute := range attributes {
+			values := entry.GetAttributeValues(attribute)
+			if len(values) > 0 {
+				source[attribute] = values
+			}
+		}
+		profile, err = s.mapper.MapProfile(ctx, c.TenantID, c.ID.String(), source, false)
+		if err != nil {
+			return nil, err
+		}
+		if mapped, ok := profile["email"].(string); ok {
+			email = strings.ToLower(mapped)
+		}
+		if mapped, ok := profile["display_name"].(string); ok {
+			name = mapped
+		}
+	}
 	if email == "" {
 		return nil, errs.ErrLDAPEmailAttributeMissing
 	}
-	return &ldapUser{DN: entry.DN, Email: email, Name: entry.GetAttributeValue(c.NameAttribute)}, nil
+	return &ldapUser{DN: entry.DN, Email: email, Name: name, ConnectionID: c.ID.String(), Profile: profile}, nil
 }
 
 // findOrCreateUser links the directory DN to a user (by linked identity, then
@@ -491,6 +525,9 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		Subject:  u.DN,
 	})
 	if err == nil {
+		if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
+			return uuid.Nil, err
+		}
 		return userID, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -513,6 +550,21 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 		}
 	} else if err != nil {
 		return uuid.Nil, err
+	} else {
+		// An existing user matched the directory's email. Emails are globally
+		// unique (migration 0022), so that row may belong to another tenant. A
+		// successful bind proves only that this connection's directory
+		// accepted the credentials — not that the account belongs here. Without
+		// this check, an admin who points a connection at a directory they run
+		// could assert a victim's address and receive a token pair carrying the
+		// victim's user id. See internal/federation/identitylink.
+		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
+		if berr != nil {
+			return uuid.Nil, berr
+		}
+		if !belongs {
+			return uuid.Nil, errs.ErrLDAPAccountNotInTenant
+		}
 	}
 
 	email := u.Email
@@ -525,15 +577,20 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, u *l
 	}); err != nil {
 		return uuid.Nil, err
 	}
+	if err := s.storeMappedProfile(ctx, tx, tenantID, userID, u); err != nil {
+		return uuid.Nil, err
+	}
 	return userID, tx.Commit(ctx)
 }
 
 // Login runs the full directory authentication and issues a token pair.
-func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (*auth.TokenPair, error) {
+func (s *Service) Login(ctx context.Context, connID uuid.UUID, username, password, ip, ua string) (pair *auth.TokenPair, resultError error) {
 	c, err := s.getFull(ctx, connID, uuid.Nil)
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
+	defer func() { s.recordOperation(ctx, c.TenantID, connID, "sign-in", "user", started, resultError) }()
 	if c.Status == "disabled" {
 		return nil, errs.ErrLDAPConnectionDisabled
 	}
@@ -776,12 +833,7 @@ func (h *Handler) test(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	c, err := h.Service.getFull(r.Context(), id, tenantID)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	if err := h.Service.TestBind(r.Context(), c); err != nil {
+	if err := h.Service.TestConnection(r.Context(), tenantID, id); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

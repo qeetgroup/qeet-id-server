@@ -3,9 +3,13 @@ package branding
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
+	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -81,11 +85,15 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Branding, er
 // render the tenant's brand without a second round-trip. Missing/unset fields
 // come back empty. Satisfies oidc.BrandingLister (deps stay one-way: primitives
 // only, no branding types leak into federation).
-func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor string) {
+func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
 	b, err := r.Get(ctx, tenantID)
 	if err != nil || b == nil {
-		return "", "", ""
+		return "", "", "", ""
 	}
+	return loginAppearance(b)
+}
+
+func loginAppearance(b *Branding) (logoURL, primaryColor, secondaryColor, backgroundColor string) {
 	if b.LogoURL != nil {
 		logoURL = *b.LogoURL
 	}
@@ -95,13 +103,79 @@ func (r *Repository) LoginBranding(ctx context.Context, tenantID uuid.UUID) (log
 	if b.SecondaryColor != nil {
 		secondaryColor = *b.SecondaryColor
 	}
-	return logoURL, primaryColor, secondaryColor
+	if value, ok := b.Settings["background_color"].(string); ok && colorPattern.MatchString(value) {
+		backgroundColor = value
+	}
+	return logoURL, primaryColor, secondaryColor, backgroundColor
+}
+
+var colorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+const maxBrandingBodyBytes = int64(3 << 20)
+
+func decodeBranding(r *http.Request) (Branding, error) {
+	var in Branding
+	if err := httpx.DecodeJSONLimit(r, &in, maxBrandingBodyBytes); err != nil {
+		return Branding{}, err
+	}
+	return in, normalizeAppearance(&in)
+}
+
+func normalizeAppearance(b *Branding) error {
+	if b.LogoURL != nil && strings.HasPrefix(*b.LogoURL, "data:") {
+		header, content, found := strings.Cut(*b.LogoURL, ",")
+		if !found || (header != "data:image/png;base64" && header != "data:image/jpeg;base64" && header != "data:image/webp;base64" && header != "data:image/svg+xml;base64") {
+			return errs.ErrBadRequest.WithDetail("logo must be a PNG, JPEG, WEBP or SVG image")
+		}
+		if len(content) > base64.StdEncoding.EncodedLen(2<<20) {
+			return errs.ErrRequestBodyTooLarge
+		}
+		decoded, err := base64.StdEncoding.DecodeString(content)
+		if err != nil || len(decoded) == 0 {
+			return errs.ErrBadRequest.WithDetail("logo data is invalid")
+		}
+		if len(decoded) > 2<<20 {
+			return errs.ErrRequestBodyTooLarge
+		}
+	}
+	if value, exists := b.Settings["email_reply_to"]; exists {
+		address, ok := value.(string)
+		if !ok {
+			return errs.ErrBadRequest.WithDetail("email_reply_to must be an email address")
+		}
+		address = strings.TrimSpace(address)
+		if address != "" {
+			parsed, err := mail.ParseAddress(address)
+			if err != nil || parsed.Address != address || strings.ContainsAny(address, "\r\n") {
+				return errs.ErrBadRequest.WithDetail("email_reply_to must be a single email address")
+			}
+		}
+		b.Settings["email_reply_to"] = address
+	}
+	if b.EmailFromName != nil && strings.ContainsAny(*b.EmailFromName, "\r\n") {
+		return errs.ErrBadRequest.WithDetail("email_from_name must not contain line breaks")
+	}
+	if value, exists := b.Settings["background_color"]; exists {
+		color, ok := value.(string)
+		if !ok {
+			return errs.ErrBadRequest.WithDetail("background_color must be a hex color")
+		}
+		color = strings.ToLower(strings.TrimSpace(color))
+		if color != "" && !colorPattern.MatchString(color) {
+			return errs.ErrBadRequest.WithDetail("background_color must be a six-digit hex color")
+		}
+		b.Settings["background_color"] = color
+	}
+	return nil
 }
 
 // Upsert persists branding. The INSERT ON CONFLICT uses a COALESCE/NULLIF
 // expression for the JSONB settings column that sqlc cannot parse reliably, so
 // this method stays hand-written on the caller-supplied pgx.Tx.
 func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, b Branding) error {
+	if err := normalizeAppearance(&b); err != nil {
+		return err
+	}
 	// Plan gate: custom branding (logo, colors, custom email sender) is a paid feature.
 	if r.gate != nil {
 		ok, err := r.gate.FeatureAllowed(ctx, b.TenantID, "custom_branding")
@@ -173,8 +247,8 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
-	var in Branding
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	in, err := decodeBranding(r)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

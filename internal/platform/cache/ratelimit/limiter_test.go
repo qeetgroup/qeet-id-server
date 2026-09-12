@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -127,11 +129,102 @@ func TestMiddlewareBy_429HasRetryAfter(t *testing.T) {
 	}
 }
 
-func TestPerIP_UsesXForwardedFor(t *testing.T) {
+// A 429 must carry the same {"error":{"code":...}} envelope as every other
+// error response. It used to be a bare status with an empty body, so clients
+// had no code to branch on and could only show a generic failure message.
+func TestMiddlewareBy_429CarriesErrorEnvelope(t *testing.T) {
+	l := New(1, 1)
+	h := l.MiddlewareBy("ip", func(*http.Request) string { return "5.6.7.8" })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req) // drain the single token
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("want 429, got %d", rec.Code)
+	}
+
+	var body struct {
+		Error struct {
+			Code      string         `json:"code"`
+			Message   string         `json:"message"`
+			Retryable bool           `json:"retryable"`
+			Metadata  map[string]any `json:"metadata"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("429 body is not the error envelope (%q): %v", rec.Body.String(), err)
+	}
+	if body.Error.Code != errs.CodeTooManyRequests {
+		t.Errorf("code = %q, want %q", body.Error.Code, errs.CodeTooManyRequests)
+	}
+	if body.Error.Message == "" {
+		t.Error("429 envelope must carry a user-facing message")
+	}
+	if !body.Error.Retryable {
+		t.Error("a throttled request is retryable")
+	}
+	if _, ok := body.Error.Metadata["retry_after"]; !ok {
+		t.Error("retry_after should be exposed in metadata")
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("Retry-After header must survive the envelope change")
+	}
+}
+
+// TestPerIP_IgnoresXForwardedForWithoutTrustedProxy pins the security property
+// that makes the per-IP login limiter meaningful.
+//
+// This test previously asserted the OPPOSITE — that PerIP returns the
+// X-Forwarded-For value — which codified a rate-limit bypass: the header is
+// caller-supplied, so an attacker rotating it got a fresh token bucket per
+// request and could brute-force logins without limit. With no trusted proxy
+// declared, the header must be ignored entirely.
+func TestPerIP_IgnoresXForwardedForWithoutTrustedProxy(t *testing.T) {
+	httpx.SetTrustedProxyHops(0)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "203.0.113.7:34567"
 	req.Header.Set("X-Forwarded-For", "9.9.9.9")
-	if got := PerIP(req); got != "9.9.9.9" {
-		t.Errorf("PerIP = %q, want 9.9.9.9", got)
+	if got := PerIP(req); got != "203.0.113.7" {
+		t.Errorf("PerIP = %q, want the transport peer 203.0.113.7 (spoofed XFF must be ignored)", got)
+	}
+}
+
+// TestPerIP_SpoofedXForwardedForCannotSplitBuckets is the regression test for
+// the bypass itself: with one trusted proxy appending the real peer, a caller
+// who forges the left-hand side of the chain must still land in ONE bucket.
+func TestPerIP_SpoofedXForwardedForCannotSplitBuckets(t *testing.T) {
+	httpx.SetTrustedProxyHops(1)
+	t.Cleanup(func() { httpx.SetTrustedProxyHops(0) })
+
+	seen := map[string]struct{}{}
+	for _, forged := range []string{"1.1.1.1", "2.2.2.2", "3.3.3.3", "4.4.4.4"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.1:1234" // the proxy
+		// What the origin sees when a caller sends "X-Forwarded-For: <forged>"
+		// and the proxy appends the address it actually accepted from.
+		req.Header.Set("X-Forwarded-For", forged+", 203.0.113.7")
+		seen[PerIP(req)] = struct{}{}
+	}
+	if len(seen) != 1 {
+		t.Fatalf("forged X-Forwarded-For produced %d distinct buckets, want 1: %v", len(seen), seen)
+	}
+	if _, ok := seen["203.0.113.7"]; !ok {
+		t.Errorf("bucket key = %v, want the proxy-observed peer 203.0.113.7", seen)
+	}
+}
+
+// TestPerIP_TrustedProxyReadsRealClient covers the normal, unforged case.
+func TestPerIP_TrustedProxyReadsRealClient(t *testing.T) {
+	httpx.SetTrustedProxyHops(1)
+	t.Cleanup(func() { httpx.SetTrustedProxyHops(0) })
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "198.51.100.4")
+	if got := PerIP(req); got != "198.51.100.4" {
+		t.Errorf("PerIP = %q, want 198.51.100.4", got)
 	}
 }
 

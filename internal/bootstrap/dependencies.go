@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -43,6 +44,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
@@ -213,7 +215,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioAccountSID: cfg.TwilioAccountSID,
 		TwilioAuthToken:  cfg.TwilioAuthToken,
 		TwilioFrom:       cfg.TwilioFrom,
+		Dev:              cfg.ServiceEnv == "dev",
 	})
+	sender = branding.Sender{Source: brandingRepo, Next: sender}
 	// PNG fallback for the email logo (served at the app root): shown in clients
 	// that strip the inline SVG mark (Gmail/Outlook/Yahoo).
 	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
@@ -320,7 +324,27 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
-	wa, err := webauthn.New(&webauthn.Config{RPID: rpID, RPDisplayName: rpDisplayName, RPOrigins: rpOrigins})
+	// UserVerification: Required is load-bearing, not a preference.
+	//
+	// go-webauthn copies Config.AuthenticatorSelection.UserVerification into the
+	// assertion and then gates on `session.UserVerification == Required` — a
+	// strict equality. Left unset (or at "preferred") the UV flag in
+	// authenticatorData is never checked, so a passkey proves only POSSESSION of
+	// the authenticator. Accounts created through passkey signup have no
+	// password at all, which made the passkey the entire credential and reduced
+	// a "phishing-resistant MFA" product to a single touch on a borrowed device.
+	//
+	// Setting it here covers both login ceremonies (BeginLogin and
+	// BeginDiscoverableLogin read it from the config); the two registration
+	// ceremonies override AuthenticatorSelection explicitly and set it there.
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:          rpID,
+		RPDisplayName: rpDisplayName,
+		RPOrigins:     rpOrigins,
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		},
+	})
 	if err != nil {
 		slog.Error("webauthn init", "err", err)
 		os.Exit(1)
@@ -328,6 +352,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	passkeyService := passkey.NewService(pool, wa, authService)
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	socialService.SetCipher(sharedCipher)
+	// Allowlist for the hosted flow's return_to. The callback sets the SSO
+	// cookie before redirecting, so an unvalidated value would be an open
+	// redirect on the auth domain. AllowedOrigins is already the vetted browser
+	// origin set (Validate() refuses a wildcard outside dev).
+	socialService.SetAllowedReturnOrigins(
+		append([]string{cfg.AppBaseURL, cfg.LoginBaseURL}, cfg.AllowedOrigins()...)...)
 	// Platform-level (tenant-less) social login for the console's own accounts.
 	// Off until credentials are set; Google only for now.
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
@@ -417,6 +447,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
 	ldapService.SetCipher(sharedCipher)
+	directoryService := directory.NewService(scimService, ldapService)
+	directoryService.SetEventStore(pool)
+	scimService.SetOperationObserver(directoryService)
+	ldapService.SetOperationObserver(directoryService)
+	scimService.SetProfileMapper(directoryService)
+	ldapService.SetProfileMapper(directoryService)
 	ipAllowService := ipallow.NewService(pool)
 
 	// Plan enforcement: inject the entitlement checker into every gated create
@@ -530,6 +566,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
 		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: cfg.ServiceEnv != "dev"},
 		LDAP:          &ldap.Handler{Service: ldapService},
+		Directory:     &directory.Handler{Service: directoryService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Threat:        &threat.Handler{Service: threatService},
 		Bot:           &bot.Handler{Service: botService},

@@ -30,6 +30,7 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/identitylink"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
@@ -535,6 +536,22 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, subj
 		}
 	} else if err != nil {
 		return uuid.Nil, err
+	} else {
+		// An existing user matched the asserted email. Emails are globally
+		// unique (migration 0022), so that row may belong to a different
+		// tenant — and a SAML assertion proves only that *this* connection's
+		// IdP vouched for the address, not that the address belongs here.
+		// Without this check, anyone who can register a SAML connection (it is
+		// not plan-gated) could point it at an IdP they control, assert a
+		// victim's address, and be handed a token pair carrying the victim's
+		// user id. See internal/federation/identitylink.
+		belongs, berr := identitylink.UserInTenant(ctx, tx, userID, tenantID)
+		if berr != nil {
+			return uuid.Nil, berr
+		}
+		if !belongs {
+			return uuid.Nil, errs.ErrSAMLUserTenantMismatch
+		}
 	}
 
 	if err := q.LinkExternalIdentity(ctx, dbgen.LinkExternalIdentityParams{

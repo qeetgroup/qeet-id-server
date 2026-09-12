@@ -15,6 +15,7 @@ const (
 	CodeLDAPConnectionFieldsRequired = "ldap.connection_fields_required"
 	CodeLDAPServerURLInvalid         = "ldap.server_url_invalid"
 	CodeLDAPStatusInvalid            = "ldap.status_invalid"
+	CodeLDAPAccountNotInTenant       = "ldap.account_not_in_tenant"
 )
 
 // LDAP errors. The Message is what the end user (or admin configuring a
@@ -30,4 +31,10 @@ var (
 	ErrLDAPConnectionFieldsRequired = New(CodeLDAPConnectionFieldsRequired, "Name, server URL, bind DN, bind password and base DN are required.")
 	ErrLDAPServerURLInvalid         = New(CodeLDAPServerURLInvalid, "The server URL must start with ldap:// or ldaps://.")
 	ErrLDAPStatusInvalid            = New(CodeLDAPStatusInvalid, "Status must be draft, active or disabled.")
+	// ErrLDAPAccountNotInTenant is returned when the directory asserts an email
+	// that resolves to a user outside this connection's tenant. Emails are
+	// globally unique, so a successful bind against an attacker-run directory
+	// must not be allowed to adopt another tenant's account.
+	ErrLDAPAccountNotInTenant = New(CodeLDAPAccountNotInTenant,
+		"That directory account belongs to a different organization.")
 )

@@ -571,34 +571,6 @@ paths:
                     type: string
         '503':
           description: Not ready (a dependency is down)
-  /v1/admin/outbox/dlq:
-    get:
-      operationId: get_v1_admin_outbox_dlq
-      summary: List DLQ events
-      tags:
-        - Admin
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/billing/checkout:
     post:
       operationId: post_v1_tenants_ByTenantID_billing_checkout

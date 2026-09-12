@@ -15,7 +15,17 @@ type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
 	ServiceEnv  string `envconfig:"SERVICE_ENV" default:"dev"`
 	HTTPPort    string `envconfig:"HTTP_PORT" default:"4001"`
-	LogLevel    string `envconfig:"LOG_LEVEL" default:"info"`
+	// TrustedProxyHops is the number of reverse proxies in front of this server
+	// that APPEND to X-Forwarded-For (Caddy, nginx, ALB all do). It decides how
+	// the client IP is read — see httpx.ClientIP.
+	//
+	// 0 (default) ignores X-Forwarded-For entirely and uses the transport peer.
+	// That is the safe default: the header is attacker-controlled unless a
+	// trusted hop rewrote it, and the client IP keys the login rate limiter and
+	// every audit record. A deployment behind exactly one proxy must set 1, or
+	// every request will be attributed to the proxy's own address.
+	TrustedProxyHops int    `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
+	LogLevel         string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
 	// for structured log ingestion and dev with jq). "text" forces the colored
 	// logfmt dev handler. Empty auto-selects: text when stdout is a TTY in

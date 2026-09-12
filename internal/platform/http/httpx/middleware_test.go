@@ -148,3 +148,78 @@ func TestInFlight_ConcurrentRequests(t *testing.T) {
 	}
 	close(release)
 }
+
+func TestClientIP_TrustedProxyHops(t *testing.T) {
+	tests := []struct {
+		name       string
+		hops       int
+		remoteAddr string
+		xff        string
+		want       string
+	}{
+		{
+			name:       "no trusted proxy ignores a forged header",
+			hops:       0,
+			remoteAddr: "203.0.113.7:4444",
+			xff:        "9.9.9.9",
+			want:       "203.0.113.7",
+		},
+		{
+			name:       "one proxy, no forgery",
+			hops:       1,
+			remoteAddr: "10.0.0.1:80",
+			xff:        "198.51.100.4",
+			want:       "198.51.100.4",
+		},
+		{
+			name:       "one proxy, caller prepended a forged hop",
+			hops:       1,
+			remoteAddr: "10.0.0.1:80",
+			xff:        "9.9.9.9, 198.51.100.4",
+			want:       "198.51.100.4",
+		},
+		{
+			name:       "one proxy, caller prepended a whole forged chain",
+			hops:       1,
+			remoteAddr: "10.0.0.1:80",
+			xff:        "1.1.1.1, 2.2.2.2, 3.3.3.3, 198.51.100.4",
+			want:       "198.51.100.4",
+		},
+		{
+			name:       "two proxies",
+			hops:       2,
+			remoteAddr: "10.0.0.1:80",
+			xff:        "198.51.100.4, 10.0.0.9",
+			want:       "198.51.100.4",
+		},
+		{
+			name:       "chain shorter than declared falls back to the peer",
+			hops:       2,
+			remoteAddr: "203.0.113.7:4444",
+			xff:        "9.9.9.9",
+			want:       "203.0.113.7",
+		},
+		{
+			name:       "X-Real-IP is never trusted",
+			hops:       1,
+			remoteAddr: "203.0.113.7:4444",
+			xff:        "",
+			want:       "203.0.113.7",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			SetTrustedProxyHops(tc.hops)
+			t.Cleanup(func() { SetTrustedProxyHops(0) })
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.RemoteAddr = tc.remoteAddr
+			if tc.xff != "" {
+				r.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			r.Header.Set("X-Real-IP", "6.6.6.6")
+			if got := ClientIP(r); got != tc.want {
+				t.Errorf("ClientIP = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

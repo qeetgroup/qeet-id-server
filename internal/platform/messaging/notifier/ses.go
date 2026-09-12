@@ -57,8 +57,13 @@ func (s *SESv2Sender) Send(ctx context.Context, m Message) error {
 	if m.HTML != "" {
 		body.Html = &types.Content{Data: aws.String(m.HTML), Charset: aws.String("UTF-8")}
 	}
+	var replyTo []string
+	if address := replyAddress(m.ReplyTo); address != "" {
+		replyTo = []string{address}
+	}
 	_, err := s.client.SendEmail(ctx, &sesv2.SendEmailInput{
-		FromEmailAddress: aws.String(s.from),
+		FromEmailAddress: aws.String(messageFrom(s.from, m.FromName)),
+		ReplyToAddresses: replyTo,
 		Destination:      &types.Destination{ToAddresses: []string{m.To}},
 		Content: &types.EmailContent{
 			Simple: &types.Message{

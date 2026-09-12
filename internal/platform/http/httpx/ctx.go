@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -39,27 +40,75 @@ func RequestID(r *http.Request) string {
 	return middleware.GetReqID(r.Context())
 }
 
-// ClientIP resolves the originating client IP, preferring proxy headers set by
-// the edge (Caddy/nginx) so audit records carry the real caller rather than the
-// loadbalancer or a loopback address.
+// trustedProxyHops is the number of reverse proxies that sit in front of this
+// server and APPEND to X-Forwarded-For. Set once at startup from
+// TRUSTED_PROXY_HOPS (see SetTrustedProxyHops); read on every request.
 //
-// X-Forwarded-For is a comma-separated chain "client, proxy1, proxy2"; the
-// left-most entry is the original client, so we take that (not the whole list,
-// which is not a valid INET and would fail to store). X-Real-IP is a single
-// value. We fall back to the transport RemoteAddr host. IPv4-mapped IPv6
-// addresses (::ffff:1.2.3.4) are unwrapped to their dotted-quad form.
-func ClientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		first := v
-		if i := strings.IndexByte(v, ','); i >= 0 {
-			first = v[:i]
-		}
-		if ip := strings.TrimSpace(first); ip != "" {
-			return normalizeIP(ip)
-		}
+// It is package-level because ClientIP is called from ~90 sites and threading
+// configuration through all of them would buy nothing: the value is written
+// once during composition, before the listener accepts a connection, and is
+// read-only thereafter. atomic.Int32 keeps that write/read pair race-free.
+var trustedProxyHops atomic.Int32
+
+// SetTrustedProxyHops declares how many trusted reverse proxies front this
+// server. Call it from the composition root before serving.
+//
+// 0 (the default) means "no trusted proxy": X-Forwarded-For is ignored
+// entirely and the client IP is the transport peer. That is the only safe
+// default — the header is attacker-controlled unless something we trust
+// rewrote it.
+func SetTrustedProxyHops(n int) {
+	if n < 0 {
+		n = 0
 	}
-	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); v != "" {
-		return normalizeIP(v)
+	trustedProxyHops.Store(int32(n))
+}
+
+// ClientIP resolves the originating client IP for rate limiting, audit records
+// and access logs.
+//
+// # Why this is positional rather than left-most
+//
+// X-Forwarded-For is a client-supplied header. Reverse proxies conventionally
+// APPEND the peer they received the connection from rather than replacing the
+// header, so a request arriving as
+//
+//	X-Forwarded-For: 1.2.3.4          (attacker-chosen)
+//
+// is forwarded by one proxy as
+//
+//	X-Forwarded-For: 1.2.3.4, <real client>
+//
+// Taking the LEFT-most entry therefore returns whatever the caller typed. That
+// is what this function used to do, and it made the per-IP login limiter
+// trivially bypassable (a fresh token bucket per forged value = unlimited
+// credential stuffing) and let a caller forge the source IP recorded in the
+// tenant's audit log.
+//
+// Counting from the RIGHT is spoof-resistant: the last N entries are the ones
+// our own N trusted proxies appended, so the entry immediately left of them is
+// the address the outermost trusted proxy actually saw. Anything further left
+// is caller-supplied and ignored.
+//
+// X-Real-IP is deliberately NOT consulted. It carries a single value with no
+// positional structure, so there is no way to distinguish a proxy-set value
+// from a caller-set one, and the common proxies pass a caller-supplied one
+// through untouched.
+func ClientIP(r *http.Request) string {
+	if hops := int(trustedProxyHops.Load()); hops > 0 {
+		if v := r.Header.Get("X-Forwarded-For"); v != "" {
+			parts := strings.Split(v, ",")
+			// The right-most `hops` entries were appended by our proxies; the
+			// client is the entry immediately to their left.
+			if idx := len(parts) - hops; idx >= 0 && idx < len(parts) {
+				if ip := strings.TrimSpace(parts[idx]); ip != "" {
+					return normalizeIP(ip)
+				}
+			}
+			// Chain shorter than declared — a request that did not traverse the
+			// full proxy path. Fall through to the transport peer rather than
+			// trusting a truncated chain.
+		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

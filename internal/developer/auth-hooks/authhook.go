@@ -150,6 +150,16 @@ func sign(secret string, body []byte) string {
 // it's unit-tested. On a call error it honours fail_open; on success it denies
 // only when the body explicitly says decision="deny", and otherwise carries
 // through an optional "claims" object verbatim.
+//
+// An UNPARSEABLE body is treated as a call failure, not as an allow. Fail-open
+// by default is a deliberate product decision (there is an ADR for it), but that
+// decision is about what happens when the hook cannot be reached — it is not a
+// licence to ignore a tenant that has explicitly set fail_open=false. A hook
+// answering 2xx with a truncated, empty or non-JSON body has told us nothing,
+// and swallowing the unmarshal error meant `decision` stayed "" and the sign-in
+// was ALLOWED even for a fail-closed tenant. Routing it through the same
+// failOpen branch keeps the documented default intact while making the opt-out
+// actually enforceable.
 func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied bool, claims map[string]any) {
 	if callErr != nil {
 		if failOpen {
@@ -162,7 +172,12 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 		Message  string         `json:"message"`
 		Claims   map[string]any `json:"claims"`
 	}
-	_ = json.Unmarshal(body, &r)
+	if err := json.Unmarshal(body, &r); err != nil {
+		if failOpen {
+			return "", false, nil
+		}
+		return "Sign-in is temporarily unavailable. Please try again later.", true, nil
+	}
 	if strings.EqualFold(strings.TrimSpace(r.Decision), "deny") {
 		msg := strings.TrimSpace(r.Message)
 		if msg == "" {

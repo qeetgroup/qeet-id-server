@@ -12,6 +12,15 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 )
 
+// Shutdown phase budgets. These are spent sequentially, so the worst-case
+// shutdown is their sum — keep that under the orchestrator's termination grace
+// period (Kubernetes terminationGracePeriodSeconds, ECS stopTimeout).
+const (
+	httpDrainTimeout   = 15 * time.Second
+	workerDrainTimeout = 15 * time.Second
+	traceFlushTimeout  = 5 * time.Second
+)
+
 // gracefulShutdown drains in-flight HTTP requests and background workers within
 // a bounded window, flushes tracing, and writes a best-effort shutdown audit
 // row. It runs once rootCtx is cancelled (SIGINT/SIGTERM, or a fatal serve
@@ -28,13 +37,19 @@ func gracefulShutdown(
 	inFlightAtSignal := deps.InFlight.Count()
 	slog.Info("shutdown initiated", "in_flight", inFlightAtSignal)
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	// Each phase gets its OWN budget. Sharing one deadline across all three ran
+	// them serially against a single clock: a busy HTTP drain could consume the
+	// whole window, after which the worker drain saw an already-expired context
+	// and gave up with zero grace, and the tracer flush silently dropped every
+	// buffered span.
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), httpDrainTimeout)
+	defer cancelHTTP()
+	if err := srv.Shutdown(httpCtx); err != nil {
 		slog.Error("http shutdown", "err", err)
 	}
 
+	workerCtx, cancelWorkers := context.WithTimeout(context.Background(), workerDrainTimeout)
+	defer cancelWorkers()
 	workerDone := make(chan struct{})
 	go func() {
 		waitWorkers()
@@ -42,12 +57,14 @@ func gracefulShutdown(
 	}()
 	select {
 	case <-workerDone:
-	case <-shutdownCtx.Done():
+	case <-workerCtx.Done():
 		slog.Warn("worker drain timed out", "in_flight", deps.InFlight.Count())
 	}
 
 	// Flush any buffered spans before exit. No-op when tracing is disabled.
-	if err := tracerShutdown(shutdownCtx); err != nil {
+	traceCtx, cancelTrace := context.WithTimeout(context.Background(), traceFlushTimeout)
+	defer cancelTrace()
+	if err := tracerShutdown(traceCtx); err != nil {
 		slog.Warn("tracing shutdown", "err", err)
 	}
 

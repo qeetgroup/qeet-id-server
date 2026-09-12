@@ -6,11 +6,35 @@ package errs
 // is prefixed with the `group` domain so it never collides with another
 // bounded context.
 const (
-	CodeGroupNotFound = "group.not_found"
+	CodeGroupNotFound   = "group.not_found"
+	CodeGroupNameExists = "group.name_exists"
+
+	// Reusable group-shape templates.
+	CodeGroupTemplateUnnamed     = "group.template_unnamed"
+	CodeGroupTemplateNodeUnnamed = "group.template_node_unnamed"
+	CodeGroupTemplateEmpty       = "group.template_empty"
+	CodeGroupTemplateTooDeep     = "group.template_too_deep"
+	CodeGroupTemplateTooLarge    = "group.template_too_large"
+	CodeGroupTemplateNameExists  = "group.template_name_exists"
+
+	// Bulk import.
+	CodeGroupImportEmpty    = "group.import_empty"
+	CodeGroupImportTooLarge = "group.import_too_large"
 )
 
 // Group errors. The Message is what the end user sees — edit wording here, in
 // one place. Handlers just `return errs.ErrGroupNotFound`.
 var (
-	ErrGroupNotFound = New(CodeGroupNotFound, "That group doesn't exist.")
+	ErrGroupNotFound   = New(CodeGroupNotFound, "That group doesn't exist.")
+	ErrGroupNameExists = New(CodeGroupNameExists, "A group with that name already exists.")
+
+	ErrGroupTemplateUnnamed     = New(CodeGroupTemplateUnnamed, "Give the template a name.")
+	ErrGroupTemplateNodeUnnamed = New(CodeGroupTemplateNodeUnnamed, "Every group in the template needs a name.")
+	ErrGroupTemplateEmpty       = New(CodeGroupTemplateEmpty, "A template needs at least one group.")
+	ErrGroupTemplateTooDeep     = New(CodeGroupTemplateTooDeep, "Templates can nest up to 6 levels deep.")
+	ErrGroupTemplateTooLarge    = New(CodeGroupTemplateTooLarge, "A template can create at most 200 groups.")
+	ErrGroupTemplateNameExists  = New(CodeGroupTemplateNameExists, "A template with that name already exists.")
+
+	ErrGroupImportEmpty    = New(CodeGroupImportEmpty, "There are no groups to import.")
+	ErrGroupImportTooLarge = New(CodeGroupImportTooLarge, "Import up to 500 groups at a time.")
 )

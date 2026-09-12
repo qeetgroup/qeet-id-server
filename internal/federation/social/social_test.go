@@ -141,3 +141,53 @@ func TestNewService_TrimsTrailingSlash(t *testing.T) {
 		t.Errorf("appBaseURL = %q, want trailing slash trimmed", s.appBaseURL)
 	}
 }
+
+// TestValidateReturnTo covers the open-redirect guard on the hosted flow.
+//
+// The social callback sets the hosted-login SSO cookie and then redirects to
+// return_to, so an unvalidated value hands an attacker a redirect from a
+// first-party, just-authenticated origin — high-credibility phishing.
+func TestValidateReturnTo(t *testing.T) {
+	s := &Service{}
+	s.SetAllowedReturnOrigins("https://login.qeet.in", "https://console.qeet.in/")
+
+	allowed := []string{
+		"",                               // non-hosted flow
+		"/oauth/authorize?client_id=abc", // root-relative
+		"https://login.qeet.in/oauth/authorize",
+		"https://LOGIN.QEET.IN/oauth/authorize", // host compare is case-insensitive
+		"https://console.qeet.in/",
+	}
+	for _, rt := range allowed {
+		if err := s.validateReturnTo(rt); err != nil {
+			t.Errorf("validateReturnTo(%q) = %v, want nil", rt, err)
+		}
+	}
+
+	rejected := []string{
+		"https://evil.example/",                // wholly foreign origin
+		"http://login.qeet.in/oauth/authorize", // scheme downgrade is a different origin
+		"https://login.qeet.in.evil.example/",  // suffix-confusion host
+		"//evil.example/path",                  // protocol-relative: looks relative, is not
+		`/\evil.example/path`,                  // backslash variant some parsers fold to //
+		"javascript:alert(1)",                  // no host
+		"https://evil.example/?next=https://login.qeet.in",
+	}
+	for _, rt := range rejected {
+		if err := s.validateReturnTo(rt); err == nil {
+			t.Errorf("validateReturnTo(%q) = nil, want rejection", rt)
+		}
+	}
+}
+
+// TestValidateReturnToWithNoAllowlist pins the safe default: with no origins
+// configured, only root-relative paths are accepted.
+func TestValidateReturnToWithNoAllowlist(t *testing.T) {
+	s := &Service{}
+	if err := s.validateReturnTo("/oauth/authorize"); err != nil {
+		t.Errorf("root-relative path = %v, want nil", err)
+	}
+	if err := s.validateReturnTo("https://login.qeet.in/"); err == nil {
+		t.Error("absolute URL with no allowlist = nil, want rejection")
+	}
+}

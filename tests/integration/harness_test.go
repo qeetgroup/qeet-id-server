@@ -26,6 +26,8 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption/totp"
 )
 
 // testPool is the shared pool for the whole package; nil means setup was
@@ -242,4 +244,22 @@ func mfaVerifyOTP(ctx context.Context, svc *mfa.Service, userID uuid.UUID, code 
 		return false, err
 	}
 	return true, tx.Commit(ctx)
+}
+
+// totpCodeAtStep returns a TOTP code for the time step `steps` away from now
+// (one step = 30s). Verification accepts now-1, now and now+1.
+//
+// Tests that authenticate more than once with the same secret must use
+// STRICTLY ASCENDING steps. A consumed step is rejected as a replay
+// (migration 0107 + consumeTOTPStep), which is what RFC 6238 §5.2 requires and
+// what a real authenticator naturally satisfies by rotating every 30s. Reusing
+// `totp.Code(secret, time.Now())` twice inside one step is precisely the replay
+// the check exists to stop.
+func totpCodeAtStep(t *testing.T, secret string, steps int) string {
+	t.Helper()
+	code, err := totp.Code(secret, time.Now().UTC().Add(time.Duration(steps)*30*time.Second))
+	if err != nil {
+		t.Fatalf("totp code (step %+d): %v", steps, err)
+	}
+	return code
 }

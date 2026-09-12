@@ -6,8 +6,10 @@ package passkey
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -213,12 +215,19 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 	// Require a discoverable (resident) credential so the passwordless,
 	// usernameless login flow (BeginDiscoverableLogin) can find it — passkeys
 	// registered without this aren't discoverable and break login on the hosted
-	// app. UV is "preferred" to keep hardware keys without a PIN usable.
+	// app.
+	//
+	// UV is Required, not Preferred: go-webauthn only checks the UV flag when
+	// the value is exactly Required, so "preferred" meant it was never verified
+	// at all. Enrolling a credential that cannot do user verification would
+	// otherwise produce a passkey that logs in on possession alone. The cost is
+	// that a PIN-less hardware key can no longer be enrolled; for a
+	// passkeys-first IdP that is the intended trade.
 	options, sessionData, err := s.wa.BeginRegistration(u,
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			ResidentKey:      protocol.ResidentKeyRequirementRequired,
-			UserVerification: protocol.VerificationPreferred,
+			UserVerification: protocol.VerificationRequired,
 		}),
 	)
 	if err != nil {
@@ -427,7 +436,7 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
 		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
 			ResidentKey:      protocol.ResidentKeyRequirementRequired,
-			UserVerification: protocol.VerificationPreferred,
+			UserVerification: protocol.VerificationRequired,
 		}),
 	)
 	if err != nil {
@@ -655,6 +664,21 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		return nil, errs.ErrPasskeySessionInvalid
 	}
 
+	// Signature-counter clone detection. go-webauthn computes CloneWarning in
+	// Authenticator.UpdateCounter when the asserted counter fails to advance,
+	// but it deliberately leaves the response to the Relying Party (WebAuthn
+	// L2 §6.1.1 step 17). Discarding it made the stored sign_count decorative:
+	// a credential whose private key had been extracted could replay a stale
+	// counter forever and authenticate indefinitely. Refuse the login instead.
+	if cred.Authenticator.CloneWarning {
+		slog.Error("passkey signature counter regressed — possible cloned authenticator",
+			"user_id", loginUserID,
+			"tenant_id", tenantID,
+			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID),
+			"asserted_sign_count", cred.Authenticator.SignCount,
+		)
+		return nil, errs.ErrPasskeyCloneDetected
+	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),
 		CredentialID: cred.ID,
@@ -725,6 +749,16 @@ func (s *Service) FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cr
 	cred, err := s.wa.ValidateLogin(u, *sessionData, parsed)
 	if err != nil {
 		return errs.ErrPasskeyMFAFailed
+	}
+	// See FinishLogin: a counter that fails to advance signals a cloned
+	// credential, and a second factor is exactly where that must not pass.
+	if cred.Authenticator.CloneWarning {
+		slog.Error("passkey signature counter regressed during MFA — possible cloned authenticator",
+			"user_id", userID,
+			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID),
+			"asserted_sign_count", cred.Authenticator.SignCount,
+		)
+		return errs.ErrPasskeyCloneDetected
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),

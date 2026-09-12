@@ -44,9 +44,11 @@ const (
 )
 
 type Service struct {
-	pool  *pgxpool.Pool
-	q     *dbgen.Queries
-	users *user.Repository
+	pool     *pgxpool.Pool
+	q        *dbgen.Queries
+	users    *user.Repository
+	observer OperationObserver
+	mapper   ProfileMapper
 	// gate enforces the plan SCIM feature on token provisioning (nil = off).
 	gate PlanGate
 }
@@ -455,7 +457,7 @@ func (h *Handler) scimAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), tenantCtxKey, tid)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		h.observeMutations(next).ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -595,12 +597,13 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type scimUserPayload struct {
-	UserName    string      `json:"userName"`
-	DisplayName string      `json:"displayName"`
-	ExternalID  string      `json:"externalId"`
-	Active      *bool       `json:"active"`
-	Name        *scimName   `json:"name"`
-	Emails      []scimEmail `json:"emails"`
+	Source      map[string]any `json:"-"`
+	UserName    string         `json:"userName"`
+	DisplayName string         `json:"displayName"`
+	ExternalID  string         `json:"externalId"`
+	Active      *bool          `json:"active"`
+	Name        *scimName      `json:"name"`
+	Emails      []scimEmail    `json:"emails"`
 }
 
 type scimName struct {
@@ -655,7 +658,19 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeSCIMBody(w, r, &p) {
 		return
 	}
+	profile, err := h.Service.profile(r.Context(), tid, p.Source, false)
+	if err != nil {
+		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
+		return
+	}
 	email := p.email()
+	if mapped, ok := profile["email"].(string); ok {
+		email = mapped
+	}
+	display := p.display()
+	if mapped, ok := profile["display_name"].(string); ok {
+		display = mapped
+	}
 	if email == "" {
 		writeSCIMErr(w, http.StatusBadRequest, "userName (email) is required")
 		return
@@ -670,7 +685,7 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	u, err := h.Service.users.CreateWithCredentialTx(ctx, tx, user.CreateInput{
 		TenantID:    tid,
 		Email:       email,
-		DisplayName: p.display(),
+		DisplayName: display,
 	}, "")
 	if err != nil {
 		if errors.Is(err, errs.ErrConflict) {
@@ -684,6 +699,12 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMErr(w, http.StatusInternalServerError, "tagging failed")
 		return
 	}
+	if h.Service.mapper != nil {
+		if err := h.Service.mapper.StoreProfile(ctx, tx, tid, u.ID, "scim:"+tid.String(), profile); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "Profile mapping could not be saved")
+			return
+		}
+	}
 	// IdP can create a user already deactivated. Previously this ignored its
 	// own error, so the response could claim a state the database never had.
 	active := true
@@ -691,6 +712,10 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		active = false
 		suspended := "suspended"
 		if _, err := h.Service.users.UpdateTx(ctx, tx, u.ID, user.UpdateInput{Status: &suspended}); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
+			return
+		}
+		if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2`, tid, u.ID); err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "create failed")
 			return
 		}
@@ -734,6 +759,11 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeSCIMBody(w, r, &p) {
 		return
 	}
+	profile, err := h.Service.profile(r.Context(), tid, p.Source, false)
+	if err != nil {
+		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
+		return
+	}
 	in := user.UpdateInput{}
 	if d := p.display(); d != "" {
 		in.DisplayName = &d
@@ -742,7 +772,7 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 	if status != "" {
 		in.Status = &status
 	}
-	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated") {
+	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated", profile) {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -771,6 +801,11 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 	}
 	var body patchBody
 	if !decodeSCIMBody(w, r, &body) {
+		return
+	}
+	profile, err := h.Service.profile(r.Context(), tid, patchProfileSource(body), true)
+	if err != nil {
+		writeSCIMTypedErr(w, http.StatusBadRequest, "invalidValue", "Directory mapping validation failed")
 		return
 	}
 	in := user.UpdateInput{}
@@ -811,7 +846,7 @@ func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated") {
+	if !h.applyUserUpdate(w, r, tid, id, in, "user.updated", profile) {
 		return
 	}
 	row, err := h.Service.getProvisioned(r.Context(), tid, id)
@@ -1023,8 +1058,21 @@ func recordUserEvidence(ctx context.Context, tx pgx.Tx, r *http.Request, tenantI
 
 // applyUserUpdate runs a SCIM-driven user update and its evidence in one
 // transaction, so a provisioning change is never durable without a record of it.
-func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string) bool {
+func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenantID, userID uuid.UUID, in user.UpdateInput, action string, profiles ...map[string]any) bool {
 	ctx := r.Context()
+	// Confirm the user belongs to this tenant before writing.
+	//
+	// user.Repository.UpdateTx keys on the user id alone (`WHERE id = $n AND
+	// deleted_at IS NULL`) — it carries no tenant predicate and there is no RLS
+	// to catch that. Without this check a SCIM token issued to one tenant could
+	// PATCH /scim/v2/Users/{id} for a user in *any* tenant and flip `active`
+	// (suspending them, which then blocks their refresh) or rewrite their
+	// display name. deleteUser already guards this way; both write paths that
+	// reach here (replaceUser, patchUser) now funnel through the same check.
+	if _, err := h.Service.getProvisioned(ctx, tenantID, userID); err != nil {
+		writeSCIMErr(w, http.StatusNotFound, "user not found")
+		return false
+	}
 	tx, err := h.Service.users.Pool().Begin(ctx)
 	if err != nil {
 		writeSCIMErr(w, http.StatusInternalServerError, "update failed")
@@ -1034,6 +1082,22 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 	if _, err := h.Service.users.UpdateTx(ctx, tx, userID, in); err != nil {
 		writeSCIMErr(w, http.StatusNotFound, "user not found")
 		return false
+	}
+	if in.Status != nil && *in.Status == "suspended" {
+		if _, err := tx.Exec(ctx, `UPDATE "user".users SET suspension_source='scim',suspension_reason='provider' WHERE tenant_id=$1 AND id=$2 AND suspension_source='unknown'`, tenantID, userID); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+		if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
+			return false
+		}
+	}
+	if h.Service.mapper != nil && len(profiles) > 0 {
+		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), profiles[0]); err != nil {
+			writeSCIMErr(w, http.StatusInternalServerError, "Profile mapping could not be saved")
+			return false
+		}
 	}
 	metadata := map[string]any{}
 	if in.Status != nil {
