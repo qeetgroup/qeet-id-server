@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -124,6 +126,51 @@ func TestMiddlewareBy_429HasRetryAfter(t *testing.T) {
 	}
 	if n, err := strconv.Atoi(ra); err != nil || n < 1 {
 		t.Errorf("Retry-After = %q, want positive integer", ra)
+	}
+}
+
+// A 429 must carry the same {"error":{"code":...}} envelope as every other
+// error response. It used to be a bare status with an empty body, so clients
+// had no code to branch on and could only show a generic failure message.
+func TestMiddlewareBy_429CarriesErrorEnvelope(t *testing.T) {
+	l := New(1, 1)
+	h := l.MiddlewareBy("ip", func(*http.Request) string { return "5.6.7.8" })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req) // drain the single token
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("want 429, got %d", rec.Code)
+	}
+
+	var body struct {
+		Error struct {
+			Code      string         `json:"code"`
+			Message   string         `json:"message"`
+			Retryable bool           `json:"retryable"`
+			Metadata  map[string]any `json:"metadata"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("429 body is not the error envelope (%q): %v", rec.Body.String(), err)
+	}
+	if body.Error.Code != errs.CodeTooManyRequests {
+		t.Errorf("code = %q, want %q", body.Error.Code, errs.CodeTooManyRequests)
+	}
+	if body.Error.Message == "" {
+		t.Error("429 envelope must carry a user-facing message")
+	}
+	if !body.Error.Retryable {
+		t.Error("a throttled request is retryable")
+	}
+	if _, ok := body.Error.Metadata["retry_after"]; !ok {
+		t.Error("retry_after should be exposed in metadata")
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("Retry-After header must survive the envelope change")
 	}
 }
 

@@ -5,6 +5,7 @@ package verification
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"strings"
@@ -34,6 +35,138 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration) *
 		ttl = 10 * time.Minute
 	}
 	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl}
+}
+
+// latestCode is the newest outstanding verification row for a user, together
+// with the hash of the code it was issued for.
+type latestCode struct {
+	id        uuid.UUID
+	codeHash  string
+	value     string // the email or phone carried on the row
+	expiresAt time.Time
+	usedAt    *time.Time
+	attempts  int
+}
+
+// maxVerificationAttempts is the guess budget for a single code. Five wrong
+// answers retire it, so a 6-digit code can't be ground down: getting a fresh
+// budget means requesting a new code, and the sending routes are throttled.
+const maxVerificationAttempts = 5
+
+// matches reports whether the submitted code is the one this row was issued
+// for, compared in constant time so a wrong code can't be recovered by timing.
+func (l latestCode) matches(code string) bool {
+	return subtle.ConstantTimeCompare([]byte(codes.Hash(code)), []byte(l.codeHash)) == 1
+}
+
+// newestEmailCode / newestPhoneCode read the most recent row for a user and
+// lock it for update.
+//
+// They deliberately do NOT filter on the submitted code's hash. The generated
+// GetLatest*Verification queries match on (user_id, code_hash), which means the
+// "latest" row is the latest one *for that code* — so every code ever issued
+// stayed valid until it expired, and asking for a resend left the previous code
+// working alongside the new one. Selecting the newest row and comparing the
+// hash in Go makes "only the most recently sent code is accepted" a property of
+// the lookup itself.
+//
+// Note both email flows (verify-your-address and change-your-address) write to
+// email_verifications, and the table has no column distinguishing them, so the
+// newest code wins across both. That is the intended reading: whichever code we
+// most recently sent the user is the only one that counts.
+//
+// Raw SQL because sqlc isn't wired into the build here; fold these into
+// queries.sql at the next `sqlc generate`.
+func newestEmailCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCode, error) {
+	var l latestCode
+	err := tx.QueryRow(ctx, `
+		SELECT id, code_hash, email, expires_at, used_at, attempts
+		FROM "user".email_verifications
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, userID).Scan(&l.id, &l.codeHash, &l.value, &l.expiresAt, &l.usedAt, &l.attempts)
+	return l, err
+}
+
+func newestPhoneCode(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (latestCode, error) {
+	var l latestCode
+	err := tx.QueryRow(ctx, `
+		SELECT id, code_hash, phone, expires_at, used_at, attempts
+		FROM "user".phone_verifications
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+		FOR UPDATE
+	`, userID).Scan(&l.id, &l.codeHash, &l.value, &l.expiresAt, &l.usedAt, &l.attempts)
+	return l, err
+}
+
+// recordFailedAttempt charges one guess against the code and reports whether
+// that exhausted the budget. Retiring the row here (used_at) means the very
+// attempt that hits the cap also closes the code, rather than leaving one more
+// usable guess behind.
+//
+// The caller must COMMIT after this even though it is about to return an error:
+// the whole point is that a failed confirm has a persistent cost. Rolling back,
+// which is the natural shape of the surrounding transaction, would discard the
+// count and leave the budget infinite.
+func recordFailedAttempt(ctx context.Context, tx pgx.Tx, table string, id uuid.UUID) (bool, error) {
+	// #nosec G201 -- table is one of two package-local literals, never caller input.
+	q := `UPDATE "user".` + table + `
+		SET attempts = attempts + 1,
+		    used_at  = CASE WHEN attempts + 1 >= $2 THEN NOW() ELSE used_at END
+		WHERE id = $1
+		RETURNING attempts >= $2`
+	var exhausted bool
+	err := tx.QueryRow(ctx, q, id, maxVerificationAttempts).Scan(&exhausted)
+	return exhausted, err
+}
+
+// chargeFailure runs the shared checks and, when the submitted code is wrong,
+// persists the failed attempt before returning. It commits the transaction on
+// that path so the count survives the caller's deferred rollback.
+func chargeFailure(ctx context.Context, tx pgx.Tx, table string, row latestCode, code string) error {
+	err := checkUsable(row, code)
+	if !errors.Is(err, errs.ErrVerifyCodeInvalid) {
+		// Expired, already used, or budget already gone: nothing to charge, and
+		// a correct code (err == nil) falls through to the caller's success path.
+		return err
+	}
+	exhausted, updErr := recordFailedAttempt(ctx, tx, table, row.id)
+	if updErr != nil {
+		return updErr
+	}
+	if cmtErr := tx.Commit(ctx); cmtErr != nil {
+		return cmtErr
+	}
+	if exhausted {
+		return errs.ErrVerifyAttemptsExceeded
+	}
+	return err
+}
+
+// checkUsable applies the non-identity checks shared by every confirm path.
+func checkUsable(l latestCode, code string) error {
+	// Budget first, and before the identity check: once a code is burned it is
+	// dead even for the correct value, so a guesser can't tell from the response
+	// that they had finally landed on it.
+	if l.attempts >= maxVerificationAttempts {
+		return errs.ErrVerifyAttemptsExceeded
+	}
+	// A stale code (superseded by a resend) and a plain wrong code are the same
+	// thing to the caller: this is not the code we are waiting on.
+	if !l.matches(code) {
+		return errs.ErrVerifyCodeInvalid
+	}
+	if l.usedAt != nil {
+		return errs.ErrVerifyCodeUsed
+	}
+	if time.Now().After(l.expiresAt) {
+		return errs.ErrVerifyCodeExpired
+	}
+	return nil
 }
 
 func (s *Service) StartEmail(ctx context.Context, userID uuid.UUID, email string) error {
@@ -85,23 +218,17 @@ func (s *Service) ConfirmEmail(ctx context.Context, userID uuid.UUID, code strin
 	}
 	defer tx.Rollback(ctx)
 
-	row, err := s.q.WithTx(tx).GetLatestEmailVerification(ctx, dbgen.GetLatestEmailVerificationParams{
-		UserID:   userID,
-		CodeHash: codes.Hash(code),
-	})
+	row, err := newestEmailCode(ctx, tx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrVerifyCodeInvalid
 		}
 		return err
 	}
-	if row.UsedAt.Valid {
-		return errs.ErrVerifyCodeUsed
+	if err := chargeFailure(ctx, tx, "email_verifications", row, code); err != nil {
+		return err
 	}
-	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrVerifyCodeExpired
-	}
-	if err := s.q.WithTx(tx).MarkEmailVerificationUsed(ctx, row.ID); err != nil {
+	if err := s.q.WithTx(tx).MarkEmailVerificationUsed(ctx, row.id); err != nil {
 		return err
 	}
 	if err := s.q.WithTx(tx).MarkUserEmailVerified(ctx, userID); err != nil {
@@ -166,27 +293,21 @@ func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
 
-	row, err := qtx.GetLatestEmailChange(ctx, dbgen.GetLatestEmailChangeParams{
-		UserID:   userID,
-		CodeHash: codes.Hash(code),
-	})
+	row, err := newestEmailCode(ctx, tx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", errs.ErrVerifyCodeInvalid
 		}
 		return "", err
 	}
-	if row.UsedAt.Valid {
-		return "", errs.ErrVerifyCodeUsed
+	if err := chargeFailure(ctx, tx, "email_verifications", row, code); err != nil {
+		return "", err
 	}
-	if time.Now().After(row.ExpiresAt) {
-		return "", errs.ErrVerifyCodeExpired
-	}
-	if err := qtx.MarkEmailVerificationUsed(ctx, row.ID); err != nil {
+	if err := qtx.MarkEmailVerificationUsed(ctx, row.id); err != nil {
 		return "", err
 	}
 	if _, err := qtx.UpdateUserEmail(ctx, dbgen.UpdateUserEmailParams{
-		Email:  row.Email,
+		Email:  row.value,
 		UserID: userID,
 	}); err != nil {
 		if pgxerr.IsUnique(err) {
@@ -197,7 +318,7 @@ func (s *Service) ConfirmEmailChange(ctx context.Context, userID uuid.UUID, code
 	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
-	return row.Email, nil
+	return row.value, nil
 }
 
 func (s *Service) StartPhone(ctx context.Context, userID uuid.UUID, phone string) error {
@@ -241,30 +362,24 @@ func (s *Service) ConfirmPhone(ctx context.Context, userID uuid.UUID, code strin
 	}
 	defer tx.Rollback(ctx)
 
-	row, err := s.q.WithTx(tx).GetLatestPhoneVerification(ctx, dbgen.GetLatestPhoneVerificationParams{
-		UserID:   userID,
-		CodeHash: codes.Hash(code),
-	})
+	row, err := newestPhoneCode(ctx, tx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errs.ErrVerifyCodeInvalid
 		}
 		return err
 	}
-	if row.UsedAt.Valid {
-		return errs.ErrVerifyCodeUsed
+	if err := chargeFailure(ctx, tx, "phone_verifications", row, code); err != nil {
+		return err
 	}
-	if time.Now().After(row.ExpiresAt) {
-		return errs.ErrVerifyCodeExpired
-	}
-	if err := s.q.WithTx(tx).MarkPhoneVerificationUsed(ctx, row.ID); err != nil {
+	if err := s.q.WithTx(tx).MarkPhoneVerificationUsed(ctx, row.id); err != nil {
 		return err
 	}
 	// Persist the verified number itself (not just the timestamp) so downstream
 	// SMS/OTP has a number to use and the account isn't left "verified" with a
 	// NULL phone.
 	if err := s.q.WithTx(tx).SetUserVerifiedPhone(ctx, dbgen.SetUserVerifiedPhoneParams{
-		Phone:  &row.Phone,
+		Phone:  &row.value,
 		UserID: userID,
 	}); err != nil {
 		return err

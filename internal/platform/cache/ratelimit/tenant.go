@@ -10,6 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // Override holds per-tenant rate and capacity for one limit_key.
@@ -177,7 +180,12 @@ func (l *TenantLimiter) MiddlewareBy(scopeName string, extract KeyFunc) func(htt
 			}
 			if !allowed {
 				w.Header().Set("Retry-After", strconv.Itoa(retry))
-				w.WriteHeader(http.StatusTooManyRequests)
+				// Write the standard error envelope, not a bare status. Every
+				// other response in the API carries {"error":{"code":...}}, and
+				// a body-less 429 left clients with no code to branch on — the
+				// console could only fall back to "Something went wrong".
+				httpx.WriteError(w, r, errs.ErrTooManyRequests.WithMetadata(
+					map[string]any{"retry_after": retry}))
 				return
 			}
 			next.ServeHTTP(w, r)
