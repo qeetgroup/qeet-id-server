@@ -905,7 +905,10 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 func (s *sseWriter) write(frame string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprint(s.w, frame)
+	// A failed frame write means the client has gone. There is nothing useful to
+	// do about it here — the handler already returns when the request context is
+	// cancelled — so the error is discarded explicitly rather than ignored.
+	_, _ = fmt.Fprint(s.w, frame)
 	s.flusher.Flush()
 }
 
