@@ -30,6 +30,10 @@ type Group struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// MemberCount is populated by List only. Create/Update return a group that
+	// has just been written, where the count is either zero or unchanged, so
+	// they leave it at zero rather than paying for a second query.
+	MemberCount int `json:"member_count"`
 }
 
 type Service struct {
@@ -134,16 +138,41 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	return &g, nil
 }
 
+// List returns every group in the tenant with its member count.
+//
+// The count is a LEFT JOIN aggregate rather than a per-group query: the console
+// shows "members assigned" across the whole directory, and one round trip per
+// group would make that O(groups) requests for a single number.
+//
+// Raw SQL because sqlc isn't wired into the build here; fold this into
+// queries.sql (replacing ListGroups) at the next `sqlc generate`.
 func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Group, error) {
-	rows, err := s.q.ListGroups(ctx, tenantID)
+	rows, err := s.pool.Query(ctx, `
+		SELECT g.id, g.tenant_id, g.parent_id, g.name, g.description, g.created_at,
+		       COUNT(gm.user_id) AS member_count
+		FROM tenant.groups g
+		LEFT JOIN tenant.group_members gm ON gm.group_id = g.id
+		WHERE g.tenant_id = $1
+		GROUP BY g.id
+		ORDER BY g.name
+	`, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Group, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, groupFromListRow(row))
+	defer rows.Close()
+
+	out := make([]Group, 0)
+	for rows.Next() {
+		var g Group
+		var parent pgtype.UUID
+		if err := rows.Scan(&g.ID, &g.TenantID, &parent, &g.Name, &g.Description,
+			&g.CreatedAt, &g.MemberCount); err != nil {
+			return nil, err
+		}
+		g.ParentID = pgtypeToUUIDPtr(parent)
+		out = append(out, g)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 func (s *Service) Delete(ctx context.Context, id, tenantID uuid.UUID, actor audit.Actor) error {

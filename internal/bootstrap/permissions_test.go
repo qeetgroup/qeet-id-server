@@ -50,6 +50,13 @@ func routeInventoryDeps(t *testing.T) Deps {
 	return deps
 }
 
+func TestDirectoryConnectionsRequireConnectionRead(test *testing.T) {
+	permission := userPermissionMap()["GET /v1/tenants/{tenantID}/directory/connections"]
+	if permission != "connection.read" {
+		test.Fatalf("directory inventory permission = %q, want connection.read", permission)
+	}
+}
+
 func TestAuthenticatedRoutesHaveExplicitPolicies(t *testing.T) {
 	router := chi.NewRouter()
 	router.Route("/v1", func(r chi.Router) {

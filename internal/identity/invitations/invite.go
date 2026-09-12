@@ -185,7 +185,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 		return nil, "", err
 	}
 	iv := inviteFromInsertRow(row)
-	s.sendInviteEmail(ctx, iv.ID, in.Email, raw)
+	s.sendInviteEmail(ctx, in.TenantID, iv.ID, in.Email, raw)
 	return &iv, raw, nil
 }
 
@@ -193,13 +193,14 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 // but does not fail the request — the invite row exists and the admin can
 // resend or copy the returned token. Delivery to unverified recipients fails
 // while Amazon SES is in sandbox mode.
-func (s *Service) sendInviteEmail(ctx context.Context, inviteID uuid.UUID, email, rawToken string) {
+func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.UUID, email, rawToken string) {
 	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
-		Channel: "email",
-		To:      email,
-		Subject: "You've been invited to Qeet",
-		Body:    fmt.Sprintf("Accept your invitation: %s", inviteURL),
+		TenantID: tenantID.String(),
+		Channel:  "email",
+		To:       email,
+		Subject:  "You've been invited to Qeet",
+		Body:     fmt.Sprintf("Accept your invitation: %s", inviteURL),
 		HTML: emailtmpl.Action(
 			"You've been invited to Qeet",
 			"You've been invited to join an organization on Qeet ID. Click the button below to accept.",
@@ -231,7 +232,7 @@ func (s *Service) Resend(ctx context.Context, tenantID, id uuid.UUID) (*Invite, 
 		return nil, "", err
 	}
 	iv := inviteFromRegenerateRow(row)
-	s.sendInviteEmail(ctx, iv.ID, iv.Email, raw)
+	s.sendInviteEmail(ctx, tenantID, iv.ID, iv.Email, raw)
 	return &iv, raw, nil
 }
 

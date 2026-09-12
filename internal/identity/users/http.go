@@ -47,6 +47,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/users/stats", h.getUserStats)
 	r.Get("/users/trends", h.getUserTrends)
 	r.Get("/users/deleted", h.listDeleted)
+	r.Get("/users/suspended", h.listSuspended)
+	r.Post("/users/{id}/reactivate", h.reactivateUser)
+	r.Put("/users/{id}/suspension", h.reviewSuspension)
 	r.Post("/users", h.create)
 	r.Post("/users/bulk", h.bulkCreate)
 	r.Post("/users/bulk/import", h.bulkImportFromVendor)
@@ -400,7 +403,7 @@ func (h *Handler) updateMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, tenantID, err := h.scopedID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -414,7 +417,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	u, err := h.Repo.Update(r.Context(), id, in)
+	var u *User
+	if in.Status != nil {
+		u, err = h.updateStatusWithEvidence(r, tenantID, id, in)
+	} else {
+		u, err = h.Repo.Update(r.Context(), id, in)
+	}
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

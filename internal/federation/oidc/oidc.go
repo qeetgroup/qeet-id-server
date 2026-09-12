@@ -994,7 +994,7 @@ type DeviceTrustChecker interface {
 // so the login page can render the tenant's brand on first paint. Returns empty
 // strings when unset. Satisfied by *branding.Repository (optional).
 type BrandingLister interface {
-	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor string)
+	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
 }
 
 type Handler struct {
@@ -1107,7 +1107,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 	// the tenant's brand on first paint. Omitted entirely when nothing is set.
 	var brand map[string]any
 	if h.Branding != nil {
-		if logo, primary, secondary := h.Branding.LoginBranding(r.Context(), tenantID); logo != "" || primary != "" || secondary != "" {
+		if logo, primary, secondary, background := h.Branding.LoginBranding(r.Context(), tenantID); logo != "" || primary != "" || secondary != "" || background != "" {
 			brand = map[string]any{}
 			if logo != "" {
 				brand["logo_url"] = logo
@@ -1117,6 +1117,9 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			}
 			if secondary != "" {
 				brand["secondary_color"] = secondary
+			}
+			if background != "" {
+				brand["background_color"] = background
 			}
 		}
 	}

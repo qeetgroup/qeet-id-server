@@ -28,6 +28,101 @@ tags:
   - name: Branding
     description: Per-tenant hosted-login branding.
 paths:
+  /v1/users/suspended:
+    get:
+      operationId: get_v1_users_suspended
+      summary: List suspended users and review metrics
+      description: >-
+        Requires user.read. Tenant scope comes only from the authenticated
+        principal. Includes owned accounts and tenant members; private suspension
+        metadata is masked for accounts owned elsewhere, with can_manage=false.
+        Historical unknown timestamps and risk are not inferred.
+      tags: [Users]
+      security: [{bearerAuth: []}, {apiKeyAuth: []}]
+      parameters:
+        - {name: q, in: query, schema: {type: string, maxLength: 200}}
+        - {name: reason, in: query, schema: {type: string}}
+        - {name: source, in: query, schema: {type: string}}
+        - {name: team, in: query, schema: {type: string, maxLength: 200}}
+        - {name: risk, in: query, schema: {type: string, enum: [unknown, low, medium, high]}}
+        - {name: review, in: query, schema: {type: string, enum: [pending, reviewed, external]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: offset, in: query, schema: {type: integer, minimum: 0, maximum: 100000}}
+      responses:
+        '200':
+          description: Suspended users with scoped summary, reason/risk breakdowns and review queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/SuspendedDirectoryUser'}}
+                  total: {type: integer}
+                  limit: {type: integer}
+                  offset: {type: integer}
+                  summary:
+                    type: object
+                    properties:
+                      total: {type: integer}
+                      high_risk: {type: integer}
+                      policy: {type: integer}
+                      manual: {type: integer}
+                      pending: {type: integer}
+                  reasons:
+                    type: array
+                    items: {type: object, properties: {key: {type: string}, count: {type: integer}}}
+                  risks:
+                    type: array
+                    items: {type: object, properties: {key: {type: string}, count: {type: integer}}}
+                  queue: {type: array, items: {$ref: '#/components/schemas/SuspendedDirectoryUser'}}
+                  teams: {type: array, items: {type: string}}
+        '400': {description: Invalid filters}
+        '401': {description: Authentication and tenant required}
+        '403': {description: Missing user.read}
+  /v1/users/{id}/reactivate:
+    post:
+      operationId: post_v1_users_ById_reactivate
+      summary: Reactivate a suspended owned user
+      description: Requires user.write and ownership in the active tenant. Revokes existing sessions and records audit/outbox evidence atomically; old sessions are never restored.
+      tags: [Users]
+      security: [{bearerAuth: []}, {apiKeyAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: User reactivated
+          content: {application/json: {schema: {type: object, additionalProperties: true}}}
+        '401': {description: Authentication required}
+        '403': {description: Missing user.write}
+        '404': {description: Account not owned by this tenant}
+        '409': {description: Account is no longer suspended}
+  /v1/users/{id}/suspension:
+    put:
+      operationId: put_v1_users_ById_suspension
+      summary: Review a suspended owned user
+      description: Requires user.write and ownership. Updates review facts and emits audit/outbox evidence without reactivating the account.
+      tags: [Users]
+      security: [{bearerAuth: []}, {apiKeyAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, risk, review]
+              properties:
+                reason: {type: string, enum: [unspecified, provider, suspicious_activity, policy_violation, account_compromise, offboarding, inactive, other]}
+                risk: {type: string, enum: [unknown, low, medium, high]}
+                review: {type: string, enum: [pending, reviewed]}
+      responses:
+        '204': {description: Review saved}
+        '400': {description: Invalid review facts}
+        '401': {description: Authentication required}
+        '403': {description: Missing user.write}
+        '404': {description: Account not owned by this tenant}
+        '409': {description: Account is no longer suspended}
   /v1/groups:
     post:
       operationId: post_v1_groups
@@ -124,6 +219,210 @@ paths:
       responses:
         '204':
           description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/groups/templates:
+    get:
+      operationId: get_v1_groups_templates
+      summary: List group templates
+      tags:
+        - Groups
+      description: Reusable group structures that can be applied to create a whole tree at once.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    post:
+      operationId: post_v1_groups_templates
+      summary: Create a group template
+      tags:
+        - Groups
+      description: Stores a named tree of groups. Up to 6 levels deep and 200 groups.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, nodes]
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                nodes:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/GroupTemplateNode'
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/groups/templates/{id}:
+    delete:
+      operationId: delete_v1_groups_templates_ById
+      summary: Delete a group template
+      tags:
+        - Groups
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      description: Removes the template. Groups already created from it are untouched.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/groups/templates/{id}/apply:
+    post:
+      operationId: post_v1_groups_templates_ById_apply
+      summary: Apply a group template
+      tags:
+        - Groups
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      description: >-
+        Creates every group in the template in one transaction, optionally under
+        an existing parent. The parent must belong to the caller's tenant.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                parent_id:
+                  type: string
+                  nullable: true
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/groups/import:
+    post:
+      operationId: post_v1_groups_import
+      summary: Bulk import groups
+      tags:
+        - Groups
+      description: >-
+        Creates groups from a flat list, resolving each row's parent by name.
+        Rows are attempted independently: the response reports created, skipped
+        (name already exists) and failed rows so a partial import can be retried.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groups]
+              properties:
+                groups:
+                  type: array
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name:
+                        type: string
+                      description:
+                        type: string
+                      parent:
+                        type: string
+                        description: Parent group name, resolved against existing and imported rows.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -648,15 +947,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: Organization branding, including optional background_color and email_reply_to values in settings. Unknown settings are preserved by clients. Custom sender addresses are configuration preferences and do not activate a provider identity.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TenantBranding'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -686,18 +984,16 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/TenantBranding'
+        description: Complete editable branding fields and settings. Preserve unrelated settings when updating. The tenant ID is enforced by the authenticated route scope.
+      description: Requires custom_branding entitlement. Accepts at most 3 MiB of JSON, including an optional base64 PNG, JPEG, WEBP or SVG logo of at most 2 MiB decoded. settings.background_color is a six-digit hex color or empty for the default; settings.email_reply_to is a single mailbox or empty. Sender name and reply-to apply only to tenant invitations and magic links. The provider-approved From address is retained.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/TenantBranding'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1698,6 +1994,43 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/login-domain:
+    get:
+      operationId: get_v1_tenants_ByTenantID_login_domain
+      summary: Custom login domain status
+      tags:
+        - Domains
+      description: >-
+        Provisioning state of the tenant's custom hosted-login hostname, plus the
+        DNS records to publish. DNS is checked live; TLS and the login endpoint
+        report their own stage rather than being inferred from the DNS result.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/domains:
     get:
       operationId: get_v1_tenants_ByTenantID_domains
@@ -1810,6 +2143,56 @@ paths:
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/domains/{id}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_domains_ById
+      summary: Update domain settings
+      tags:
+        - Domains
+      description: >-
+        Toggles SSO routing, just-in-time provisioning, and which domain is the
+        tenant default. Setting a new default clears the previous one.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sso_enabled: {type: boolean}
+                jit_enabled: {type: boolean}
+                is_default: {type: boolean}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
     delete:
       operationId: delete_v1_tenants_ByTenantID_domains_ById
       summary: Remove domain
@@ -1969,6 +2352,71 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    TenantBranding:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        logo_url:
+          type: string
+          nullable: true
+        primary_color:
+          type: string
+          nullable: true
+        secondary_color:
+          type: string
+          nullable: true
+          description: Brand-panel accent, independent of page background.
+        custom_domain:
+          type: string
+          nullable: true
+        email_from_name:
+          type: string
+          nullable: true
+        email_from_address:
+          type: string
+          nullable: true
+          description: Requested sender mailbox; provider approval is separate.
+        settings:
+          type: object
+          additionalProperties: true
+          properties:
+            background_color:
+              type: string
+              pattern: '^$|^#[0-9a-fA-F]{6}$'
+              description: Hosted-login page background; empty keeps the default theme.
+            email_reply_to:
+              type: string
+              description: Single reply mailbox for tenant-scoped messages; empty omits Reply-To.
+    GroupTemplateNode:
+      type: object
+      description: >-
+        One group in a template tree. Recursive: `children` holds the same shape,
+        up to 6 levels deep.
+      required: [name]
+      properties:
+        name: {type: string}
+        description: {type: string}
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupTemplateNode'
+    SuspendedDirectoryUser:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        email: {type: string, format: email}
+        display_name: {type: [string, 'null']}
+        avatar_url: {type: [string, 'null']}
+        team: {type: string}
+        reason: {type: string}
+        source: {type: string}
+        risk: {type: string, enum: [unknown, low, medium, high]}
+        review: {type: string, enum: [pending, reviewed, external]}
+        suspended_at: {type: [string, 'null'], format: date-time}
+        last_sign_in: {type: [string, 'null'], format: date-time}
+        can_manage: {type: boolean}
     Error:
       type: object
       required:

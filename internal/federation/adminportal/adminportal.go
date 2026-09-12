@@ -65,7 +65,7 @@ type Service struct {
 // interface so adminportal doesn't import the branding types, matching the
 // one-way dependency oidc.BrandingLister already establishes.
 type brandingLister interface {
-	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor string)
+	LoginBranding(ctx context.Context, tenantID uuid.UUID) (logoURL, primaryColor, secondaryColor, backgroundColor string)
 }
 
 func NewService(pool *pgxpool.Pool, brandingRepo brandingLister, loginBaseURL string) *Service {
@@ -355,9 +355,10 @@ func (s *Service) tenantName(ctx context.Context, tenantID uuid.UUID) (string, e
 // PortalBranding is the subset of branding.Branding a hosted, unauthenticated
 // page needs to render on first paint — mirrors oidc's login-context shape.
 type PortalBranding struct {
-	LogoURL        string `json:"logo_url,omitempty"`
-	PrimaryColor   string `json:"primary_color,omitempty"`
-	SecondaryColor string `json:"secondary_color,omitempty"`
+	LogoURL         string `json:"logo_url,omitempty"`
+	PrimaryColor    string `json:"primary_color,omitempty"`
+	SecondaryColor  string `json:"secondary_color,omitempty"`
+	BackgroundColor string `json:"background_color,omitempty"`
 }
 
 // PortalContext is what the hosted admin-portal page fetches before rendering
@@ -376,9 +377,9 @@ func (s *Service) Context(ctx context.Context, l *Link) (*PortalContext, error) 
 		return nil, err
 	}
 	pc := &PortalContext{TenantName: name, Capabilities: l.Capabilities, ExpiresAt: l.ExpiresAt}
-	logo, primary, secondary := s.brandingRepo.LoginBranding(ctx, l.TenantID)
-	if logo != "" || primary != "" || secondary != "" {
-		pc.Branding = &PortalBranding{LogoURL: logo, PrimaryColor: primary, SecondaryColor: secondary}
+	logo, primary, secondary, background := s.brandingRepo.LoginBranding(ctx, l.TenantID)
+	if logo != "" || primary != "" || secondary != "" || background != "" {
+		pc.Branding = &PortalBranding{LogoURL: logo, PrimaryColor: primary, SecondaryColor: secondary, BackgroundColor: background}
 	}
 	return pc, nil
 }

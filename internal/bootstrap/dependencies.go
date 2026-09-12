@@ -44,6 +44,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
@@ -216,6 +217,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioFrom:       cfg.TwilioFrom,
 		Dev:              cfg.ServiceEnv == "dev",
 	})
+	sender = branding.Sender{Source: brandingRepo, Next: sender}
 	// PNG fallback for the email logo (served at the app root): shown in clients
 	// that strip the inline SVG mark (Gmail/Outlook/Yahoo).
 	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
@@ -445,6 +447,12 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	ldapService := ldap.NewService(pool, authService, outboundPolicy)
 	ldapService.SetCipher(sharedCipher)
+	directoryService := directory.NewService(scimService, ldapService)
+	directoryService.SetEventStore(pool)
+	scimService.SetOperationObserver(directoryService)
+	ldapService.SetOperationObserver(directoryService)
+	scimService.SetProfileMapper(directoryService)
+	ldapService.SetProfileMapper(directoryService)
 	ipAllowService := ipallow.NewService(pool)
 
 	// Plan enforcement: inject the entitlement checker into every gated create
@@ -558,6 +566,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
 		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: cfg.ServiceEnv != "dev"},
 		LDAP:          &ldap.Handler{Service: ldapService},
+		Directory:     &directory.Handler{Service: directoryService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},
 		Threat:        &threat.Handler{Service: threatService},
 		Bot:           &bot.Handler{Service: botService},

@@ -31,6 +31,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/developer/principal"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/adminportal"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/directory"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/ldap"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/saml"
@@ -106,6 +107,7 @@ type Deps struct {
 	SAML          *saml.Handler
 	AdminPortal   *adminportal.Handler
 	LDAP          *ldap.Handler
+	Directory     *directory.Handler
 	IPAllow       *ipallow.Handler
 	Threat        *threat.Handler
 	Bot           *bot.Handler
@@ -373,12 +375,14 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Passkey.Mount(r)
 	d.Social.Mount(r)
 	d.Group.Mount(r)
+	d.Group.MountTemplates(r)
 	d.SCIM.Mount(r)
 	d.Secret.Mount(r)
 	d.TokenVault.Mount(r)
 	d.SAML.Mount(r)
 	d.AdminPortal.Mount(r)
 	d.LDAP.Mount(r)
+	d.Directory.Mount(r)
 	d.IPAllow.Mount(r)
 	d.Threat.Mount(r)
 	d.Bot.Mount(r)

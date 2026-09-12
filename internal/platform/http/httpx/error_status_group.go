@@ -11,6 +11,15 @@ import (
 // editing the shared error_status.go.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeGroupNotFound: http.StatusNotFound,
+		errs.CodeGroupNotFound:            http.StatusNotFound,
+		errs.CodeGroupNameExists:          http.StatusConflict,
+		errs.CodeGroupTemplateNameExists:  http.StatusConflict,
+		errs.CodeGroupTemplateUnnamed:     http.StatusUnprocessableEntity,
+		errs.CodeGroupTemplateNodeUnnamed: http.StatusUnprocessableEntity,
+		errs.CodeGroupTemplateEmpty:       http.StatusUnprocessableEntity,
+		errs.CodeGroupTemplateTooDeep:     http.StatusUnprocessableEntity,
+		errs.CodeGroupTemplateTooLarge:    http.StatusUnprocessableEntity,
+		errs.CodeGroupImportEmpty:         http.StatusUnprocessableEntity,
+		errs.CodeGroupImportTooLarge:      http.StatusUnprocessableEntity,
 	})
 }

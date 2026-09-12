@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
 )
 
 type recordSender struct{ last *Message }
@@ -99,6 +101,42 @@ func TestFromAddress(t *testing.T) {
 	}
 	if got := fromAddress("bare@q.test"); got != "bare@q.test" {
 		t.Errorf("bare form = %q", got)
+	}
+}
+
+func TestTenantEmailHeaders(t *testing.T) {
+	from := messageFrom("Qeet ID <platform@example.test>", "Example Auth")
+	if fromAddress(from) != "platform@example.test" || !strings.Contains(from, "Example Auth") {
+		t.Fatalf("custom name changed provider-approved address: %s", from)
+	}
+	message := string(buildMIME(from, "user@example.test", "Notice", "Body", "", "support@example.test"))
+	if !strings.Contains(message, "Reply-To: support@example.test\r\n") {
+		t.Fatal("missing reply-to header")
+	}
+	message = string(buildMIME(from, "user@example.test", "Notice", "Body", "", "support@example.test\r\nBcc: other@example.test"))
+	if strings.Contains(message, "Reply-To:") || strings.Contains(message, "Bcc:") {
+		t.Fatal("unsafe reply-to header was emitted")
+	}
+}
+
+type recordedSES struct{ input *sesv2.SendEmailInput }
+
+func (client *recordedSES) SendEmail(_ context.Context, input *sesv2.SendEmailInput, _ ...func(*sesv2.Options)) (*sesv2.SendEmailOutput, error) {
+	client.input = input
+	return &sesv2.SendEmailOutput{}, nil
+}
+
+func TestTenantSESHeaders(t *testing.T) {
+	client := &recordedSES{}
+	sender := &SESv2Sender{client: client, from: "Qeet ID <platform@example.test>"}
+	if err := sender.Send(context.Background(), Message{To: "user@example.test", Channel: "email", FromName: "Organization", ReplyTo: "reply@example.test", Subject: "Notice", Body: "Body"}); err != nil {
+		t.Fatal(err)
+	}
+	if fromAddress(*client.input.FromEmailAddress) != "platform@example.test" || !strings.Contains(*client.input.FromEmailAddress, "Organization") {
+		t.Fatal("provider sender identity changed")
+	}
+	if len(client.input.ReplyToAddresses) != 1 || client.input.ReplyToAddresses[0] != "reply@example.test" {
+		t.Fatal("reply-to not delivered")
 	}
 }
 
