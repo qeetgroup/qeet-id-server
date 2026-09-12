@@ -52,7 +52,13 @@ WHERE token_hash = @token_hash AND user_id = @user_id AND expires_at > NOW();
 
 -- name: CheckTenantMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id
+    SELECT 1 FROM rbac.user_roles membership
+    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
+    JOIN tenant.tenants organization ON organization.id = membership.tenant_id
+    JOIN "user".users account ON account.id = membership.user_id
+    WHERE membership.user_id = @user_id AND membership.tenant_id = @tenant_id
+      AND organization.status = 'active' AND organization.deleted_at IS NULL
+      AND account.status = 'active' AND account.deleted_at IS NULL
 ) AS is_member;
 
 -- name: UpdatePasswordCredentialHash :exec

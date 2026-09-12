@@ -15,7 +15,13 @@ import (
 
 const checkTenantMembership = `-- name: CheckTenantMembership :one
 SELECT EXISTS (
-    SELECT 1 FROM rbac.user_roles WHERE user_id = $1 AND tenant_id = $2
+    SELECT 1 FROM rbac.user_roles membership
+    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
+    JOIN tenant.tenants organization ON organization.id = membership.tenant_id
+    JOIN "user".users account ON account.id = membership.user_id
+    WHERE membership.user_id = $1 AND membership.tenant_id = $2
+      AND organization.status = 'active' AND organization.deleted_at IS NULL
+      AND account.status = 'active' AND account.deleted_at IS NULL
 ) AS is_member
 `
 

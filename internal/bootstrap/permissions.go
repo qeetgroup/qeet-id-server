@@ -339,6 +339,7 @@ func routePolicyMap() map[string]rbac.RoutePolicy {
 		"GET /v1/me",
 		"PATCH /v1/me",
 		"GET /v1/tenants",
+		"GET /v1/me/organizations",
 		"POST /v1/tenants",
 		"GET /v1/me/invites",
 		"POST /v1/me/invites/accept",
