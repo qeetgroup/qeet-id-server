@@ -5,6 +5,7 @@ package email
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/email/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 // Definition is a catalog entry: a known template key with its built-in
@@ -82,19 +84,25 @@ func defByKey(key string) (Definition, bool) {
 
 // Resolved is the API view: catalog metadata merged with any tenant override.
 type Resolved struct {
-	Key         string   `json:"key"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Subject     string   `json:"subject"`
-	Body        string   `json:"body"`
-	Variables   []string `json:"variables"`
-	Custom      bool     `json:"custom"`
+	Key           string        `json:"key"`
+	Name          string        `json:"name"`
+	Description   string        `json:"description"`
+	Subject       string        `json:"subject"`
+	Body          string        `json:"body"`
+	Variables     []string      `json:"variables"`
+	Custom        bool          `json:"custom"`
+	Options       EditorOptions `json:"options"`
+	DeliveryScope string        `json:"delivery_scope"`
 }
 
 func resolve(d Definition, subject, body *string) Resolved {
 	r := Resolved{
 		Key: d.Key, Name: d.Name, Description: d.Description,
 		Subject: d.DefaultSubject, Body: d.DefaultBody, Variables: d.Variables,
+		DeliveryScope: "platform",
+	}
+	if d.Key == "invite" || d.Key == "magic_link" {
+		r.DeliveryScope = "tenant"
 	}
 	if subject != nil && body != nil {
 		r.Subject, r.Body, r.Custom = *subject, *body, true
@@ -128,14 +136,14 @@ func NewService(pool *pgxpool.Pool) *Service {
 func (s *Service) Pool() *pgxpool.Pool { return s.pool }
 
 // overrides returns the tenant's customised templates keyed by template_key.
-func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string][2]string, error) {
+func (s *Service) overrides(ctx context.Context, tenantID uuid.UUID) (map[string]dbgen.ListEmailTemplateOverridesRow, error) {
 	rows, err := s.q.ListEmailTemplateOverrides(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string][2]string{}
+	out := map[string]dbgen.ListEmailTemplateOverridesRow{}
 	for _, r := range rows {
-		out[r.TemplateKey] = [2]string{r.Subject, r.Body}
+		out[r.TemplateKey] = r
 	}
 	return out, nil
 }
@@ -148,8 +156,11 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Resolved, err
 	out := make([]Resolved, 0, len(catalog))
 	for _, d := range catalog {
 		if o, ok := ov[d.Key]; ok {
-			subj, body := o[0], o[1]
-			out = append(out, resolve(d, &subj, &body))
+			resolved := resolve(d, &o.Subject, &o.Body)
+			if err := json.Unmarshal(o.Options, &resolved.Options); err != nil {
+				return nil, err
+			}
+			out = append(out, resolved)
 		} else {
 			out = append(out, resolve(d, nil, nil))
 		}
@@ -173,23 +184,35 @@ func (s *Service) Get(ctx context.Context, tenantID uuid.UUID, key string) (*Res
 		return nil, err
 	}
 	r := resolve(d, &row.Subject, &row.Body)
+	if err := json.Unmarshal(row.Options, &r.Options); err != nil {
+		return nil, err
+	}
 	return &r, nil
 }
 
 func (s *Service) Upsert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key, subject, body string) (*Resolved, error) {
+	return s.UpsertEditor(ctx, tx, tenantID, key, EditorInput{Subject: subject, Body: body})
+}
+
+func (s *Service) UpsertEditor(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key string, input EditorInput) (*Resolved, error) {
 	d, ok := defByKey(key)
 	if !ok {
 		return nil, errs.ErrEmailTemplateNotFound
 	}
-	if strings.TrimSpace(subject) == "" || strings.TrimSpace(body) == "" {
-		return nil, errs.ErrEmailTemplateContentRequired
+	if err := normalizeEditor(&input, d); err != nil {
+		return nil, err
+	}
+	options, err := json.Marshal(input.Options)
+	if err != nil {
+		return nil, err
 	}
 	if err := s.q.WithTx(tx).UpsertEmailTemplate(ctx, dbgen.UpsertEmailTemplateParams{
-		TenantID: tenantID, TemplateKey: key, Subject: subject, Body: body,
+		TenantID: tenantID, TemplateKey: key, Subject: input.Subject, Body: input.Body, Options: options,
 	}); err != nil {
 		return nil, err
 	}
-	r := resolve(d, &subject, &body)
+	r := resolve(d, &input.Subject, &input.Body)
+	r.Options = input.Options
 	return &r, nil
 }
 
@@ -209,7 +232,11 @@ func (s *Service) Reset(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, key 
 }
 
 type Handler struct {
-	Service *Service
+	Service          *Service
+	Sender           notifier.Sender
+	Appearance       EmailAppearanceSource
+	TestEmailEnabled bool
+	testLimits       testEmailLimits
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -218,6 +245,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/tenants/{tenantID}/email-templates/{key}", h.upsert)
 	r.Delete("/tenants/{tenantID}/email-templates/{key}", h.reset)
 	r.Post("/tenants/{tenantID}/email-templates/{key}/preview", h.preview)
+	r.Post("/tenants/{tenantID}/email-templates/{key}/test", h.testEmail)
 }
 
 func requirePathTenant(r *http.Request) (uuid.UUID, error) {
@@ -264,7 +292,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out, "capabilities": map[string]bool{"rich_text": true, "localization": true, "test_email": h.TestEmailEnabled && h.Sender != nil}})
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -288,10 +316,7 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := chi.URLParam(r, "key")
-	var in struct {
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
-	}
+	var in EditorInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -303,7 +328,7 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	res, err := h.Service.Upsert(ctx, tx, tenantID, key, in.Subject, in.Body)
+	res, err := h.Service.UpsertEditor(ctx, tx, tenantID, key, in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -355,17 +380,28 @@ func (h *Handler) preview(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	res, err := h.Service.Get(r.Context(), tenantID, chi.URLParam(r, "key"))
+	var in struct {
+		Vars   map[string]string `json:"vars"`
+		Draft  *EditorInput      `json:"draft"`
+		Locale string            `json:"locale"`
+	}
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	key := chi.URLParam(r, "key")
+	if in.Draft == nil {
+		res, err := h.Service.Get(r.Context(), tenantID, key)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		in.Draft = &EditorInput{Subject: res.Subject, Body: res.Body, Options: res.Options}
+	}
+	result, err := renderEditor(key, *in.Draft, in.Vars, in.Locale, h.appearance(r.Context(), tenantID))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	var in struct {
-		Vars map[string]string `json:"vars"`
-	}
-	_ = httpx.DecodeJSON(r, &in)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"subject": Render(res.Subject, in.Vars),
-		"body":    Render(res.Body, in.Vars),
-	})
+	httpx.WriteJSON(w, http.StatusOK, result)
 }

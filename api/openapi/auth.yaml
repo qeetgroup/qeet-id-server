@@ -526,6 +526,45 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/trusted-devices/count:
+    get:
+      operationId: get_v1_auth_trusted_devices_count
+      summary: Count trusted devices
+      tags:
+        - Auth
+      description: >-
+        Number of live trusted devices in the caller's tenant, as used by the
+        Authentication overview. Counts devices, not users, and excludes expired
+        rows — an expired device is no longer trusted. Tenant scope comes from
+        the principal, never a parameter. Returns 0 for tenants that have not
+        enabled adaptive MFA (`remember_device_enabled`), since nothing writes a
+        trusted device until then.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Live trusted-device count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices, users]
+                properties:
+                  devices:
+                    type: integer
+                    minimum: 0
+                    description: Live trusted devices (one browser cookie = one device).
+                  users:
+                    type: integer
+                    minimum: 0
+                    description: Distinct people those devices belong to.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions

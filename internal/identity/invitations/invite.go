@@ -196,11 +196,13 @@ func (s *Service) Create(ctx context.Context, in CreateInput, invitedBy *uuid.UU
 func (s *Service) sendInviteEmail(ctx context.Context, tenantID, inviteID uuid.UUID, email, rawToken string) {
 	inviteURL := fmt.Sprintf("%s/invite/accept?token=%s", s.baseAppURL, rawToken)
 	if err := s.sender.Send(ctx, notifier.Message{
-		TenantID: tenantID.String(),
-		Channel:  "email",
-		To:       email,
-		Subject:  "You've been invited to Qeet",
-		Body:     fmt.Sprintf("Accept your invitation: %s", inviteURL),
+		TemplateKey:       "invite",
+		TemplateVariables: map[string]string{"invite_url": inviteURL},
+		TenantID:          tenantID.String(),
+		Channel:           "email",
+		To:                email,
+		Subject:           "You've been invited to Qeet",
+		Body:              fmt.Sprintf("Accept your invitation: %s", inviteURL),
 		HTML: emailtmpl.Action(
 			"You've been invited to Qeet",
 			"You've been invited to join an organization on Qeet ID. Click the button below to accept.",

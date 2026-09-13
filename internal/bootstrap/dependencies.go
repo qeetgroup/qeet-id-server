@@ -217,7 +217,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioFrom:       cfg.TwilioFrom,
 		Dev:              cfg.ServiceEnv == "dev",
 	})
+	emailTransport, emailRouter := sender.(notifier.Router)
+	emailTestEnabled := emailRouter && emailTransport.Email != nil
 	sender = branding.Sender{Source: brandingRepo, Next: sender}
+	sender = email.TemplateSender{Templates: emailTemplateService, Appearance: brandingRepo, Next: sender}
 	// PNG fallback for the email logo (served at the app root): shown in clients
 	// that strip the inline SVG mark (Gmail/Outlook/Yahoo).
 	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
@@ -541,7 +544,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
-		EmailTemplate: &email.Handler{Service: emailTemplateService},
+		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: emailTestEnabled},
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},

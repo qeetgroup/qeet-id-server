@@ -87,3 +87,38 @@ func SetTrustedDeviceCookie(w http.ResponseWriter, raw string, secure bool) {
 		MaxAge:   int(trustedDeviceTTL.Seconds()),
 	})
 }
+
+// TrustedDeviceSummary is the tenant's live trusted-device estate.
+type TrustedDeviceSummary struct {
+	// Devices counts rows: one browser cookie is one device, so a person with a
+	// laptop and a phone contributes two.
+	Devices int `json:"devices"`
+	// Users is how many distinct people those devices belong to, so the console
+	// can say "N devices across M people" without a second round trip.
+	Users int `json:"users"`
+}
+
+// CountTrustedDevices returns how many live trusted devices a tenant has.
+//
+// Live, not total: an expired row is no longer trusted — MFA is asked for again
+// — so counting it would overstate how much of the estate is remembered.
+//
+// One row is one device (token_hash is UNIQUE), so this counts devices rather
+// than users; a person with a laptop and a phone contributes two.
+//
+// tenant_id is nullable and is written NULL for tenant-less sessions
+// (CreateTrustedDevice above), so the equality check correctly excludes them.
+//
+// Raw SQL because sqlc isn't wired into the build here; fold into queries.sql at
+// the next `sqlc generate`.
+func (s *Service) CountTrustedDevices(
+	ctx context.Context, tenantID uuid.UUID,
+) (TrustedDeviceSummary, error) {
+	var out TrustedDeviceSummary
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(DISTINCT user_id)
+		FROM auth.trusted_devices
+		WHERE tenant_id = $1 AND expires_at > NOW()
+	`, tenantID).Scan(&out.Devices, &out.Users)
+	return out, err
+}

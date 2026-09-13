@@ -131,7 +131,10 @@ func userPermissionMap() map[string]string {
 		"GET /v1/tenants/{tenantID}/oauth/grants":                     "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":             "connection.write",
 		"GET /v1/tenants/{tenantID}/oauth/devices":                    "connection.read",
-		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}":            "connection.write",
+		// Tenant-wide trusted-device estate (adaptive MFA "remember this
+		// device"), distinct from the OAuth device-grant flows above.
+		"GET /v1/auth/trusted-devices/count":               "connection.read",
+		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}": "connection.write",
 
 		// SSO connections: SAML / SCIM / LDAP / social provider config.
 		"GET /v1/tenants/{tenantID}/saml":                                                         "connection.read",
@@ -225,6 +228,7 @@ func userPermissionMap() map[string]string {
 		"PUT /v1/tenants/{tenantID}/email-templates/{key}":          "branding.write",
 		"DELETE /v1/tenants/{tenantID}/email-templates/{key}":       "branding.write",
 		"POST /v1/tenants/{tenantID}/email-templates/{key}/preview": "branding.write",
+		"POST /v1/tenants/{tenantID}/email-templates/{key}/test":    "branding.write",
 		"GET /v1/tenants/{tenantID}/branding":                       "tenant.read",
 		"GET /v1/tenants/{tenantID}/email-templates":                "branding.write",
 		"GET /v1/tenants/{tenantID}/email-templates/{key}":          "branding.write",

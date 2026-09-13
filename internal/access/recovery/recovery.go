@@ -194,11 +194,13 @@ func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email 
 	}
 	magicURL := fmt.Sprintf("%s/magic?token=%s", s.baseAppURL, raw)
 	return s.sender.Send(ctx, notifier.Message{
-		TenantID: tenantID.String(),
-		Channel:  "email",
-		To:       email,
-		Subject:  "Your login link",
-		Body:     fmt.Sprintf("Sign in to Qeet ID: %s", magicURL),
+		TemplateKey:       "magic_link",
+		TemplateVariables: map[string]string{"magic_url": magicURL},
+		TenantID:          tenantID.String(),
+		Channel:           "email",
+		To:                email,
+		Subject:           "Your login link",
+		Body:              fmt.Sprintf("Sign in to Qeet ID: %s", magicURL),
 		HTML: emailtmpl.Action(
 			"Sign in to Qeet ID",
 			"Click the button below to sign in. This link is single-use and expires shortly.",

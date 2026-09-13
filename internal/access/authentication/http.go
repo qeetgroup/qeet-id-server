@@ -75,6 +75,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/auth/logout", h.logout)
 	r.Post("/auth/switch-tenant", h.switchTenant)
 	r.Get("/auth/sessions", h.listSessions)
+	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
@@ -527,4 +528,21 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		"actor":      p.ActorType,
 		"scopes":     p.Scopes,
 	})
+}
+
+// trustedDeviceCount reports how many live trusted devices the caller's tenant
+// has. Scoped from the principal, never a path or query parameter, so one tenant
+// can't read another's estate.
+func (h *Handler) trustedDeviceCount(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.CountTrustedDevices(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }

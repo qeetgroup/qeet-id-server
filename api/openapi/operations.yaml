@@ -1313,7 +1313,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: Lists the tenant-scoped catalogue and overrides. Capabilities indicate rich-text/localization support and whether a mail transport is configured for test delivery. delivery_scope distinguishes tenant invitations/magic links from platform-account security email.
       responses:
         '200':
           description: OK
@@ -1321,7 +1321,17 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EmailResolvedTemplate'
+                  capabilities:
+                    type: object
+                    properties:
+                      rich_text: { type: boolean }
+                      localization: { type: boolean }
+                      test_email: { type: boolean }
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1354,8 +1364,12 @@ paths:
         - apiKeyAuth: []
       description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
-        '204':
-          description: No Content
+        '200':
+          description: Built-in default after removing the override and its options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailResolvedTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1392,8 +1406,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/EmailResolvedTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1424,22 +1437,20 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/EmailEditorInput'
+        description: Subject, plain-text alternative, and optional rich HTML, preheader, design and language variants. HTML is sanitized. Only catalogue variables are accepted.
+      description: Saves the template and options atomically with its audit event. Tenant invitations and magic links use saved overrides; platform-account recovery, verification and MFA remain platform-managed.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/EmailResolvedTemplate'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1476,17 +1487,77 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              properties:
+                vars:
+                  type: object
+                  maxProperties: 32
+                  description: Each value is limited to 4096 UTF-8 bytes.
+                  additionalProperties: { type: string, maxLength: 4096 }
+                locale: { type: string }
+                draft:
+                  $ref: '#/components/schemas/EmailEditorInput'
+        description: Omit draft to preview saved content; include it to preview unsaved edits.
+      description: Renders subject, text and sanitized branded HTML without persisting or sending email. Each expanded content field is limited to 200000 UTF-8 bytes before the branded wrapper is added.
       responses:
-        '201':
-          description: Created
+        '200':
+          description: Rendered preview
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  subject: { type: string }
+                  body: { type: string }
+                  html: { type: string }
+                  locale: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/email-templates/{key}/test:
+    post:
+      operationId: sendEmailTemplateTest
+      summary: Send the current draft to the operator's verified email
+      tags: [Email Templates]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      description: Requires branding.write, a user principal with a verified active account, and a configured mail transport. The destination is resolved server-side, never accepted from input. Sends inert sample links and codes; limited to one request per tenant/user per minute on each server instance. Records an audit event before attempting delivery. An accepted response means the provider accepted the message, not that it reached the inbox.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [draft]
+              properties:
+                draft:
+                  $ref: '#/components/schemas/EmailEditorInput'
+                locale: { type: string }
+      responses:
+        '202':
+          description: Mail transport accepted the test
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [accepted] }
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2714,6 +2785,49 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    EmailLocalizedContent:
+      type: object
+      description: Subject and preheader limits count Unicode characters. Text and HTML limits count UTF-8 bytes. Action URL variables must remain in both text and HTML when provided. Variables in URLs are allowed only as standalone action-link href values, never in image sources or within external URLs.
+      required: [subject, body]
+      properties:
+        subject: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, minLength: 1, maxLength: 150000 }
+        preheader: { type: string, maxLength: 200 }
+        body_html: { type: string, maxLength: 200000 }
+    EmailTemplateOptions:
+      type: object
+      properties:
+        preheader: { type: string, maxLength: 200 }
+        body_html: { type: string, maxLength: 200000 }
+        default_locale: { type: string, default: en }
+        show_logo: { type: boolean, default: true }
+        alignment: { type: string, enum: [left, center], default: center }
+        translations:
+          type: object
+          maxProperties: 20
+          description: Non-English BCP-47 language variants; English remains the base content.
+          additionalProperties:
+            $ref: '#/components/schemas/EmailLocalizedContent'
+    EmailEditorInput:
+      type: object
+      description: Subject and preheader limits count Unicode characters. Text and HTML limits count UTF-8 bytes. Action URL variables must remain in both text and HTML when provided. Variables in URLs are allowed only as standalone action-link href values, never in image sources or within external URLs.
+      required: [subject, body]
+      properties:
+        subject: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, minLength: 1, maxLength: 150000 }
+        options:
+          $ref: '#/components/schemas/EmailTemplateOptions'
+    EmailResolvedTemplate:
+      allOf:
+        - $ref: '#/components/schemas/EmailEditorInput'
+        - type: object
+          properties:
+            key: { type: string }
+            name: { type: string }
+            description: { type: string }
+            variables: { type: array, items: { type: string } }
+            custom: { type: boolean }
+            delivery_scope: { type: string, enum: [tenant, platform] }
     ActivityActor:
       type: object
       description: The principal that caused an activity event.
