@@ -17,6 +17,23 @@ type Sender struct {
 	Next   notifier.Sender
 }
 
+func (r *Repository) EmailAppearance(ctx context.Context, tenantID uuid.UUID) (name, logo, primary string, err error) {
+	brand, err := r.Get(ctx, tenantID)
+	if err != nil {
+		return "", "", "", err
+	}
+	if brand.EmailFromName != nil {
+		name = *brand.EmailFromName
+	}
+	if brand.LogoURL != nil {
+		logo = *brand.LogoURL
+	}
+	if brand.PrimaryColor != nil {
+		primary = *brand.PrimaryColor
+	}
+	return name, logo, primary, nil
+}
+
 func (r *Repository) EmailIdentity(ctx context.Context, tenantID uuid.UUID) (name, replyTo string, err error) {
 	if r.gate != nil {
 		allowed, gateErr := r.gate.FeatureAllowed(ctx, tenantID, "custom_branding")

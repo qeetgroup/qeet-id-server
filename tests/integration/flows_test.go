@@ -70,6 +70,108 @@ func newAuth() (*auth.Service, *user.Repository) {
 	return auth.NewService(testPool, users, issuer), users
 }
 
+func TestOrganizationSelectionEligibility(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	repository := tenant.NewRepository(testPool)
+	svc, _ := newAuth()
+	home := createTenant(t, ctx, uniqueSlug("selection"))
+	userID := createUserInTenant(t, ctx, home)
+	eligible := []uuid.UUID{home}
+	for range 4 {
+		eligible = append(eligible, createTenant(t, ctx, uniqueSlug("selection")))
+	}
+	for _, organization := range eligible {
+		addTenantMembership(t, ctx, userID, organization)
+	}
+	foreign := createTenant(t, ctx, uniqueSlug("foreign-selection"))
+	suspended := createTenant(t, ctx, uniqueSlug("suspended-selection"))
+	deleted := createTenant(t, ctx, uniqueSlug("deleted-selection"))
+	for _, organization := range []uuid.UUID{suspended, deleted} {
+		addTenantMembership(t, ctx, userID, organization)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE tenant.tenants SET status='suspended' WHERE id=$1`, suspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE tenant.tenants SET deleted_at=NOW(), status='deleted' WHERE id=$1`, deleted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO tenant.domains (tenant_id,domain,verification_token,verified_at) VALUES ($1,$2,$3,NOW())`, home, uniqueSlug("selection")+".example.test", uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.IssuePair(ctx, userID, home, "", "", "password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := repository.EligibleOrganizations(ctx, userID, current.SessionID, 2, "")
+	if err != nil || len(page.Items) != 2 || page.NextCursor == "" {
+		t.Fatalf("first page: %+v, %v", page, err)
+	}
+	next, err := repository.EligibleOrganizations(ctx, userID, current.SessionID, 200, page.NextCursor)
+	if err != nil || len(next.Items) != 3 || next.NextCursor != "" {
+		t.Fatalf("next page: %+v, %v", next, err)
+	}
+	for _, organization := range append(page.Items, next.Items...) {
+		if !slices.Contains(eligible, organization.ID) || len(organization.Roles) == 0 {
+			t.Fatalf("unexpected membership: %+v", organization)
+		}
+		if organization.LastUsedAt != nil {
+			t.Fatal("current sign-in must not count as last used")
+		}
+		if organization.ID == home && organization.Domain == "" {
+			t.Fatal("verified domain omitted")
+		}
+	}
+	previous, err := svc.IssuePair(ctx, userID, eligible[1], "", "", "tenant_switch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE auth.sessions SET last_seen_at=NOW()-interval '1 day' WHERE id=$1`, previous.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	page, err = repository.EligibleOrganizations(ctx, userID, current.SessionID, 200, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, organization := range page.Items {
+		if organization.ID == eligible[1] && organization.LastUsedAt == nil {
+			t.Fatal("prior use omitted")
+		}
+	}
+	for _, denied := range []uuid.UUID{foreign, suspended, deleted} {
+		if _, err := svc.SwitchTenant(ctx, userID, denied, "", ""); !errors.Is(err, errs.ErrAuthNotTenantMember) {
+			t.Fatalf("ineligible switch allowed: %v", err)
+		}
+	}
+	if _, err := svc.SwitchTenant(ctx, userID, eligible[2], "", ""); err != nil {
+		t.Fatalf("eligible switch rejected: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id=$1 AND tenant_id=$2`, userID, eligible[2]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SwitchTenant(ctx, userID, eligible[2], "", ""); !errors.Is(err, errs.ErrAuthNotTenantMember) {
+		t.Fatal("removed membership remained switchable")
+	}
+	if _, err := repository.EligibleOrganizations(ctx, userID, current.SessionID, 200, "invalid"); err == nil {
+		t.Fatal("invalid cursor accepted")
+	}
+	router := chi.NewRouter()
+	router.Use(withPrincipal(userID, home))
+	(&tenant.Handler{Repo: repository}).Mount(router)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("GET", "/me/organizations?user_id="+uuid.NewString(), nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("self list status: %d %s", response.Code, response.Body.String())
+	}
+	var result tenant.OrganizationSelectionPage
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 4 {
+		t.Fatalf("self list not caller-scoped: %d", len(result.Items))
+	}
+}
+
 type fixedSAMLSession struct{ userID uuid.UUID }
 
 func (s fixedSAMLSession) ResolveLoginSession(context.Context, string) (uuid.UUID, error) {

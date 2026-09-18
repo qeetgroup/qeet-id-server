@@ -27,7 +27,7 @@ func (q *Queries) DeleteEmailTemplate(ctx context.Context, arg DeleteEmailTempla
 }
 
 const getEmailTemplateOverride = `-- name: GetEmailTemplateOverride :one
-SELECT subject, body
+SELECT subject, body, options
 FROM tenant.email_templates
 WHERE tenant_id = $1 AND template_key = $2
 `
@@ -40,18 +40,19 @@ type GetEmailTemplateOverrideParams struct {
 type GetEmailTemplateOverrideRow struct {
 	Subject string
 	Body    string
+	Options []byte
 }
 
 func (q *Queries) GetEmailTemplateOverride(ctx context.Context, arg GetEmailTemplateOverrideParams) (GetEmailTemplateOverrideRow, error) {
 	row := q.db.QueryRow(ctx, getEmailTemplateOverride, arg.TenantID, arg.TemplateKey)
 	var i GetEmailTemplateOverrideRow
-	err := row.Scan(&i.Subject, &i.Body)
+	err := row.Scan(&i.Subject, &i.Body, &i.Options)
 	return i, err
 }
 
 const listEmailTemplateOverrides = `-- name: ListEmailTemplateOverrides :many
 
-SELECT template_key, subject, body
+SELECT template_key, subject, body, options
 FROM tenant.email_templates
 WHERE tenant_id = $1
 `
@@ -60,6 +61,7 @@ type ListEmailTemplateOverridesRow struct {
 	TemplateKey string
 	Subject     string
 	Body        string
+	Options     []byte
 }
 
 // Queries for the email-templates domain.
@@ -74,7 +76,12 @@ func (q *Queries) ListEmailTemplateOverrides(ctx context.Context, tenantID uuid.
 	items := []ListEmailTemplateOverridesRow{}
 	for rows.Next() {
 		var i ListEmailTemplateOverridesRow
-		if err := rows.Scan(&i.TemplateKey, &i.Subject, &i.Body); err != nil {
+		if err := rows.Scan(
+			&i.TemplateKey,
+			&i.Subject,
+			&i.Body,
+			&i.Options,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -86,11 +93,12 @@ func (q *Queries) ListEmailTemplateOverrides(ctx context.Context, tenantID uuid.
 }
 
 const upsertEmailTemplate = `-- name: UpsertEmailTemplate :exec
-INSERT INTO tenant.email_templates (tenant_id, template_key, subject, body, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
+INSERT INTO tenant.email_templates (tenant_id, template_key, subject, body, options, updated_at)
+VALUES ($1, $2, $3, $4, $5, NOW())
 ON CONFLICT (tenant_id, template_key) DO UPDATE
     SET subject    = EXCLUDED.subject,
         body       = EXCLUDED.body,
+        options    = EXCLUDED.options,
         updated_at = NOW()
 `
 
@@ -99,6 +107,7 @@ type UpsertEmailTemplateParams struct {
 	TemplateKey string
 	Subject     string
 	Body        string
+	Options     []byte
 }
 
 func (q *Queries) UpsertEmailTemplate(ctx context.Context, arg UpsertEmailTemplateParams) error {
@@ -107,6 +116,7 @@ func (q *Queries) UpsertEmailTemplate(ctx context.Context, arg UpsertEmailTempla
 		arg.TemplateKey,
 		arg.Subject,
 		arg.Body,
+		arg.Options,
 	)
 	return err
 }

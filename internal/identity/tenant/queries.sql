@@ -6,6 +6,29 @@
 SELECT * FROM tenant.tenants
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- name: ListEligibleOrganizations :many
+SELECT t.id, t.slug, t.name, t.plan, t.region, t.logo_url,
+  ARRAY(SELECT DISTINCT role.name FROM rbac.user_roles membership
+    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
+    WHERE membership.user_id = @user_id AND membership.tenant_id = t.id
+    ORDER BY role.name)::text[] AS roles,
+  COALESCE((SELECT domain.domain FROM tenant.domains domain
+    WHERE domain.tenant_id = t.id AND domain.verified_at IS NOT NULL
+    ORDER BY domain.created_at, domain.id LIMIT 1), '')::text AS domain,
+  COALESCE((SELECT MAX(session.last_seen_at) FROM auth.sessions session
+    WHERE session.user_id = @user_id AND session.tenant_id = t.id
+      AND session.id <> @current_session_id), '0001-01-01 00:00:00+00'::timestamptz)::timestamptz AS last_used_at
+FROM tenant.tenants t
+WHERE t.status = 'active' AND t.deleted_at IS NULL
+  AND EXISTS (SELECT 1 FROM "user".users account
+    WHERE account.id = @user_id AND account.status = 'active' AND account.deleted_at IS NULL)
+  AND EXISTS (SELECT 1 FROM rbac.user_roles membership
+    JOIN rbac.roles role ON role.id = membership.role_id AND role.tenant_id = membership.tenant_id
+    WHERE membership.user_id = @user_id AND membership.tenant_id = t.id)
+  AND (@after_id::uuid = '00000000-0000-0000-0000-000000000000'::uuid OR t.id > @after_id::uuid)
+ORDER BY t.id
+LIMIT @row_limit;
+
 -- IsEmailVerified reports whether the given user has a verified email — the
 -- gate for self-serve org creation.
 -- name: IsEmailVerified :one

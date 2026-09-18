@@ -30,6 +30,7 @@ type Handler struct {
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants", h.list)
+	r.Get("/me/organizations", h.eligibleOrganizations)
 	r.Post("/tenants", h.create)
 	// Use {tenantID} (not {id}) so the router-level EnforceTenantScope guard
 	// fires: it rejects any path tenant that isn't the caller's own, closing the

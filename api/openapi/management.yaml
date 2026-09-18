@@ -794,6 +794,53 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/me/organizations:
+    get:
+      operationId: listMyEligibleOrganizations
+      summary: List organizations available to the signed-in user
+      tags: [Tenants]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+        - name: cursor
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Eligible organization page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  next_cursor: { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, slug, plan, region, logo_url, domain, roles, last_used_at]
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        slug: { type: string }
+                        plan: { type: string }
+                        region: { type: string }
+                        logo_url: { type: string }
+                        domain: { type: string, description: A verified organization domain, or empty if none. }
+                        roles: { type: array, items: { type: string } }
+                        last_used_at: { type: string, format: date-time, nullable: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants:
     get:
       operationId: get_v1_tenants
