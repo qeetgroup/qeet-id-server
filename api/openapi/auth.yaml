@@ -2,13 +2,31 @@ openapi: 3.1.0
 info:
   title: Qeet ID — Authentication & Access API
   version: 0.2.0
-  description: 'Qeet ID identity platform — full HTTP surface.
+  description: |-
+    Human authentication, passkeys, MFA, and authorization for Qeet ID.
 
+    ## Start here
 
-    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
+    1. Authenticate a user — password login, or passwordless **passkey** login. Passkeys are first-class: a user can exist with no password at all.
+    2. Satisfy **MFA** if tenant policy or adaptive risk requires it. A registered passkey satisfies MFA on its own.
+    3. Use the returned `Bearer` access token for authenticated calls.
+    4. **Signup creates a tenant-less user.** Create a tenant via the Identity Management API before any tenant-scoped call — the creator becomes the tenant owner.
+    5. Configure authorization: RBAC is the baseline; layer in ABAC, ReBAC, or AuthZEN as needed.
 
+    ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+
+    ## Related APIs
+
+    - **Identity Management API** — tenants, users, groups, invitations
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+    - **Developer API** — API keys, agents, webhooks, vaults
+    - **Operations API** — audit, analytics, billing
+
+    ## Contract maintenance
+
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification.
 servers:
   - url: https://api.id.qeet.in
     description: Production
@@ -17,26 +35,37 @@ servers:
 tags:
   - name: Auth
     description: Login, signup, refresh, sessions, hosted-login SSO cookie.
-  - name: RBAC
-    description: Roles, permissions, assignments, and authorization checks.
+    externalDocs:
+      description: Authentication guide
+      url: https://docs.qeet.in/id/authentication
+  - name: Passkeys
+    description: 'WebAuthn passkey registration and passwordless login. A registered passkey also satisfies MFA on its own.'
   - name: MFA
     description: TOTP and OTP (email/SMS) second factors plus recovery codes.
-  - name: Passkeys
-    description: WebAuthn passkey registration and passwordless login.
-  - name: IP Rules
-    description: Per-tenant IP allow/deny CIDR rules.
+    externalDocs:
+      description: MFA guide
+      url: https://docs.qeet.in/id/mfa
+  - name: RBAC
+    description: Roles, permissions, assignments, and authorization checks.
+  - name: ABAC
+    description: Attribute-based access control — policy store (CRUD) and the PDP evaluate endpoint.
+  - name: ReBAC
+    description: 'Relationship-based access control — relationship tuples and graph-based permission checks.'
+  - name: AuthZEN
+    description: OpenID AuthZEN core evaluation API — a spec-shaped facade over RBAC/ReBAC for external policy-enforcement points.
   - name: Auth Policy
     description: Per-tenant password rules and allowed login methods.
   - name: Policy
     description: Per-tenant security policy.
-  - name: AuthZEN
-    description: OpenID AuthZEN core evaluation API — a spec-shaped facade over RBAC/ReBAC for external policy-enforcement points.
-  - name: ABAC
-    description: Attribute-based access control — policy store (CRUD) and the PDP evaluate endpoint.
+  - name: IP Rules
+    description: Per-tenant IP allow/deny CIDR rules.
+  - name: Threats
+    description: 'Adaptive threat detection — bot telemetry, risk and bot settings, and login-anomaly review and resolution.'
 paths:
   /v1/auth/forgot-password:
     post:
       operationId: post_v1_auth_forgot_password
+      description: 'Sends a password-reset link to the supplied email when it belongs to an account. It always returns a neutral confirmation regardless of whether the address exists, so it cannot be used to enumerate accounts, and it is rate limited. Complete the flow with the reset-password call using the token from the emailed link.'
       summary: Forgot password
       tags:
         - Auth
@@ -70,6 +99,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing.'
       summary: Sign in
       tags:
         - Auth
@@ -78,6 +108,9 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              email: ada@example.com
+              password: corr3ct-h0rse-battery
             schema:
               $ref: '#/components/schemas/LoginRequest'
       responses:
@@ -146,6 +179,7 @@ paths:
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
+      description: 'Signs the caller out and revokes the session behind the presented credential. The associated refresh token stops working as soon as this returns, so any subsequent authenticated call must start a fresh sign-in. Other active sessions for the same user are unaffected; remove those individually with the session-revocation call.'
       summary: Logout
       tags:
         - Auth
@@ -175,6 +209,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: post_v1_auth_magic_link_consume
+      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call.'
       summary: Magic link consume
       tags:
         - Auth
@@ -206,6 +241,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the supplied address. It always returns a neutral confirmation whether or not the address maps to an account, preventing enumeration, and it is rate limited. Finish the flow by redeeming the emailed token at the magic-link consume call.'
       summary: Magic link start
       tags:
         - Auth
@@ -239,6 +275,7 @@ paths:
   /v1/auth/me:
     get:
       operationId: get_v1_auth_me
+      description: 'Returns the principal resolved from the presented credential, including the user, tenant, and session identifiers, the actor type, and granted scopes. Use it to confirm who the current credential authenticates as and which tenant it is scoped to. A tenant-less principal reports a null tenant until one is selected with the switch-tenant call.'
       summary: Me
       tags:
         - Auth
@@ -257,6 +294,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
+      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in.'
       summary: Refresh
       tags:
         - Auth
@@ -281,6 +319,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
+      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. On success the password is updated and the user can sign in with the new credentials.'
       summary: Reset password
       tags:
         - Auth
@@ -320,6 +359,7 @@ paths:
   /v1/auth/session:
     delete:
       operationId: delete_v1_auth_session
+      description: 'Revokes the hosted-login SSO session and clears the qe_ls cookie, ending the browser''s single sign-on state. This is the counterpart to the create-SSO-session call and returns no content. Bearer-token API sessions are unaffected; sign those out with the logout call.'
       summary: Destroy SSO session (logout)
       tags:
         - Auth
@@ -329,6 +369,7 @@ paths:
           description: Session revoked, cookie cleared
     post:
       operationId: post_v1_auth_session
+      description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.'
       summary: Create SSO session
       tags:
         - Auth
@@ -568,6 +609,7 @@ paths:
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions
+      description: 'Lists the caller''s own active sessions, each with its device, address, and timestamp metadata, for review in account security settings. Results are cursor-paginated: pass the returned next_cursor to fetch the following page until has_more is false. Terminate any listed session individually with the session-revocation call.'
       summary: List sessions
       tags:
         - Auth
@@ -615,6 +657,7 @@ paths:
   /v1/auth/sessions/{id}:
     delete:
       operationId: delete_v1_auth_sessions_ById
+      description: 'Revokes a single session belonging to the caller by its identifier. The session''s refresh token stops working as soon as this returns, forcing that device to sign in again, while the caller''s other sessions are left intact. Enumerate session identifiers first with the list-sessions call.'
       summary: Revoke session
       tags:
         - Auth
@@ -646,6 +689,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: post_v1_auth_signup
+      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. A duplicate email is rejected, and the endpoint is rate limited.'
       summary: Sign up
       tags:
         - Auth
@@ -654,6 +698,10 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              email: ada@example.com
+              password: corr3ct-h0rse-battery
+              display_name: Ada Lovelace
             schema:
               $ref: '#/components/schemas/SignupRequest'
       responses:
@@ -661,6 +709,13 @@ paths:
           description: Created; token pair + user
           content:
             application/json:
+              example:
+                access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiIwMThmMmE3MCJ9.FAKE-signature
+                token_type: Bearer
+                expires_at: '2026-09-24T11:15:00Z'
+                refresh_token: rt_2b9f4c7a1e6d8035b4c2a1908f7e6d5c
+                session_id: 018f2a70-5b6c-7d8e-9f01-2a3b4c5d6e7f
+                user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
               schema:
                 $ref: '#/components/schemas/SignupResponse'
         '409':
@@ -672,6 +727,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
+      description: 'Issues a new token pair scoped to the target tenant for a user who belongs to more than one. The caller must already be a member of the requested tenant; a non-membership is refused. The previously issued token keeps working for its original scope, so retain the returned pair for calls against the newly selected tenant. Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -705,59 +761,344 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/check:
+  /v1/passkeys:
     get:
-      operationId: get_v1_check
-      summary: Permission check
+      operationId: get_v1_passkeys
+      summary: List passkeys
       tags:
-        - RBAC
-      parameters:
-        - in: query
-          name: user_id
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: tenant_id
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - in: query
-          name: permission
-          required: true
-          schema:
-            type: string
-        - in: query
-          name: explain
-          required: false
-          description: >-
-            When "true", return the full authorization trace (allowed, the grant path(s), and a reason on denial) instead of the bare {allowed} object.
-          schema:
-            type: string
-            enum:
-              - "true"
+        - Passkeys
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
-          description: >-
-            Decision. The default shape is {allowed}. With explain=true the response is the Explanation object (allowed, paths, reason).
+          description: OK
           content:
             application/json:
               schema:
-                oneOf:
-                  - type: object
-                    properties:
-                      allowed:
-                        type: boolean
-                  - $ref: '#/components/schemas/AuthzExplanation'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                type: object
+                additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/login/begin:
+    post:
+      operationId: post_v1_passkeys_login_begin
+      summary: Login begin
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/login/finish:
+    post:
+      operationId: post_v1_passkeys_login_finish
+      summary: Login finish
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/register/begin:
+    post:
+      operationId: post_v1_passkeys_register_begin
+      summary: Register begin
+      tags:
+        - Passkeys
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/register/finish:
+    post:
+      operationId: post_v1_passkeys_register_finish
+      summary: Register finish
+      tags:
+        - Passkeys
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/signup/passkey/begin:
+    post:
+      operationId: post_v1_signup_passkey_begin
+      description: 'Starts the passwordless counterpart to email/password signup, returning the WebAuthn credential-creation options the authenticator needs to mint a passkey. No password is created and no user exists yet; the account is materialized only when the ceremony completes. Finish registration by returning the signed attestation to the passkey-signup finish call.'
+      summary: Passkey-first signup begin (tenant-less)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                display_name:
+                  type: string
+        description: Starts a passwordless counterpart to POST /auth/signup — no password is created.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/signup/passkey/finish:
+    post:
+      operationId: post_v1_signup_passkey_finish
+      description: 'Completes passwordless signup by verifying the authenticator attestation from the begin step and creating a tenant-less user with the new passkey as its founding credential. On success it returns a token pair; because the passkey is first-class, the account has no password and can both authenticate and satisfy MFA with the passkey alone. As with password signup, create a tenant through the Identity Management API before any tenant-scoped call, and the creator becomes the tenant owner.'
+      summary: Passkey-first signup finish (tenant-less)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session_id
+                - credential
+              properties:
+                session_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                name:
+                  type: string
+        description: Verifies the attestation, creates the tenant-less user with the passkey as its founding credential, and returns a token pair.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/register/passkey/begin:
+    post:
+      operationId: post_v1_register_passkey_begin
+      description: 'Starts the passwordless counterpart to hosted tenant signup, returning the WebAuthn credential-creation options for a passkey scoped to the supplied tenant. It is gated by the tenant''s self-registration policy and is refused when self-registration is disabled. Finish the ceremony by returning the signed attestation to the tenant-scoped passkey-register finish call.'
+      summary: Passkey-first signup begin (tenant-scoped hosted signup)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tenant_id
+                - email
+              properties:
+                tenant_id:
+                  type: string
+                email:
+                  type: string
+                display_name:
+                  type: string
+        description: Starts a passwordless counterpart to POST /auth/register — gated by the tenant's self_registration_enabled policy.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/register/passkey/finish:
+    post:
+      operationId: post_v1_register_passkey_finish
+      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own.'
+      summary: Passkey-first signup finish (tenant-scoped hosted signup)
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session_id
+                - credential
+              properties:
+                session_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+                name:
+                  type: string
+        description: Verifies the attestation, creates the user in the ceremony's tenant, and sets the hosted-login SSO cookie.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/{id}:
+    delete:
+      operationId: delete_v1_passkeys_ById
+      summary: Delete passkey
+      tags:
+        - Passkeys
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/otp/factors:
     get:
       operationId: get_v1_mfa_otp_factors
@@ -1292,19 +1633,18 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '501':
           description: WebAuthn second factor not enabled
-  /v1/passkeys:
+  /v1/mfa/push/devices:
     get:
-      operationId: get_v1_passkeys
-      summary: List passkeys
-      tags:
-        - Passkeys
+      operationId: get_v1_mfa_push_devices
+      description: 'Lists the caller''s registered push-approval devices used as a second factor, each with its label and platform, for management in account security settings. It never returns the secret device token, which is shown only once at registration. Add or rotate a device with the register-device call and remove one with the revoke-device call.'
+      summary: List registered push-MFA devices
+      tags: [MFA]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
-          description: OK
+          description: Registered devices
           content:
             application/json:
               schema:
@@ -1312,95 +1652,28 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/passkeys/login/begin:
     post:
-      operationId: post_v1_passkeys_login_begin
-      summary: Login begin
-      tags:
-        - Passkeys
-      security: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/passkeys/login/finish:
-    post:
-      operationId: post_v1_passkeys_login_finish
-      summary: Login finish
-      tags:
-        - Passkeys
-      security: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/passkeys/register/begin:
-    post:
-      operationId: post_v1_passkeys_register_begin
-      summary: Register begin
-      tags:
-        - Passkeys
+      operationId: post_v1_mfa_push_devices
+      description: 'Registers a mobile device for push-based MFA, or rotates the credential of an existing one, from its platform push token. The resulting device token is returned only in this response and cannot be retrieved later, so the device must persist it to answer future challenges. That token is required when responding to a challenge; revoke the device with the corresponding delete call.'
+      summary: Register or rotate a push-MFA device
+      tags: [MFA]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              required: [push_token, platform]
+              properties:
+                name: { type: string }
+                push_token: { type: string }
+                platform: { type: string, enum: [ios, android] }
       responses:
         '201':
-          description: Created
+          description: Device registered; device_token is returned once
           content:
             application/json:
               schema:
@@ -1408,227 +1681,135 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/passkeys/register/finish:
-    post:
-      operationId: post_v1_passkeys_register_finish
-      summary: Register finish
-      tags:
-        - Passkeys
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/signup/passkey/begin:
-    post:
-      operationId: post_v1_signup_passkey_begin
-      summary: Passkey-first signup begin (tenant-less)
-      tags:
-        - Passkeys
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - email
-              properties:
-                email:
-                  type: string
-                display_name:
-                  type: string
-        description: Starts a passwordless counterpart to POST /auth/signup — no password is created.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/signup/passkey/finish:
-    post:
-      operationId: post_v1_signup_passkey_finish
-      summary: Passkey-first signup finish (tenant-less)
-      tags:
-        - Passkeys
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - session_id
-                - credential
-              properties:
-                session_id:
-                  type: string
-                credential:
-                  type: object
-                  additionalProperties: true
-                name:
-                  type: string
-        description: Verifies the attestation, creates the tenant-less user with the passkey as its founding credential, and returns a token pair.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/register/passkey/begin:
-    post:
-      operationId: post_v1_register_passkey_begin
-      summary: Passkey-first signup begin (tenant-scoped hosted signup)
-      tags:
-        - Passkeys
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - tenant_id
-                - email
-              properties:
-                tenant_id:
-                  type: string
-                email:
-                  type: string
-                display_name:
-                  type: string
-        description: Starts a passwordless counterpart to POST /auth/register — gated by the tenant's self_registration_enabled policy.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/register/passkey/finish:
-    post:
-      operationId: post_v1_register_passkey_finish
-      summary: Passkey-first signup finish (tenant-scoped hosted signup)
-      tags:
-        - Passkeys
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - session_id
-                - credential
-              properties:
-                session_id:
-                  type: string
-                credential:
-                  type: object
-                  additionalProperties: true
-                name:
-                  type: string
-        description: Verifies the attestation, creates the user in the ceremony's tenant, and sets the hosted-login SSO cookie.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/passkeys/{id}:
+  /v1/mfa/push/devices/{id}:
     delete:
-      operationId: delete_v1_passkeys_ById
-      summary: Delete passkey
-      tags:
-        - Passkeys
+      operationId: delete_v1_mfa_push_devices_ById
+      description: 'Revokes a registered push-MFA device by its identifier so it can no longer approve challenges. Its device token is invalidated immediately and any pending challenge to it can no longer be answered. Re-enroll the device with the register-device call if push approval is needed again.'
+      summary: Revoke a push-MFA device
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: id
           in: path
           required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Device revoked }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/challenges/{id}:
+    get:
+      operationId: get_v1_mfa_push_challenges_ById
+      description: 'Returns the current status of a push-MFA challenge, letting the sign-in surface poll while it waits for the user to approve or deny on their device. It is unauthenticated because it is called before the second factor is satisfied, and it exposes only the challenge state, not user data. The enrolled device answers the challenge through the challenge-respond call.'
+      summary: Poll a push-MFA challenge
+      tags: [MFA]
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Challenge status
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/challenges/{id}/respond:
+    post:
+      operationId: post_v1_mfa_push_challenges_ById_respond
+      description: 'Records the user''s approval or denial of a push-MFA challenge, called by the enrolled device rather than the browser. It is authenticated by the device_token issued at registration together with the matching user_id, not a session credential, which is why no bearer token is required. Once recorded, the polling sign-in surface observes the outcome through the challenge-status call and proceeds or fails accordingly.'
+      summary: Approve or deny a push-MFA challenge
+      tags: [MFA]
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, device_token, approved]
+              properties:
+                user_id: { type: string, format: uuid }
+                device_token: { type: string }
+                approved: { type: boolean }
+      responses:
+        '204': { description: Challenge response recorded }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/check:
+    get:
+      operationId: get_v1_check
+      description: 'Evaluates whether a user holds a given permission in a tenant under the baseline RBAC model and returns an allow or deny decision. By default the response is the bare decision; pass explain=true to receive the full authorization trace, including the grant path and, on denial, a reason. This is a read-only decision and changes no state. Richer models are available through the ABAC evaluate, ReBAC check, and AuthZEN evaluation calls.'
+      summary: Permission check
+      tags:
+        - RBAC
+      parameters:
+        - in: query
+          name: user_id
+          required: true
           schema:
             type: string
+            format: uuid
+        - in: query
+          name: tenant_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: permission
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: explain
+          required: false
+          description: >-
+            When "true", return the full authorization trace (allowed, the grant path(s), and a reason on denial) instead of the bare {allowed} object.
+          schema:
+            type: string
+            enum:
+              - "true"
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
-        '204':
-          description: No Content
+        '200':
+          description: >-
+            Decision. The default shape is {allowed}. With explain=true the response is the Explanation object (allowed, paths, reason).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      allowed:
+                        type: boolean
+                  - $ref: '#/components/schemas/AuthzExplanation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
   /v1/permissions:
     get:
       operationId: get_v1_permissions
+      description: 'Returns the catalog of permissions defined in the system that can be granted to roles under RBAC. Use it to populate role-editing surfaces and to discover the permission keys accepted by the permission-check call. The list is a reference catalog and reflects no particular user''s grants.'
       summary: List permissions
       tags:
         - RBAC
@@ -1652,6 +1833,7 @@ paths:
   /v1/roles/{roleID}/permissions:
     get:
       operationId: get_v1_roles_ByRoleID_permissions
+      description: 'Lists the permissions currently granted to a role, resolving what any holder of that role can do. Use it to review a role before changing its grants. Add a permission with the grant-permission-to-role call and remove one with the revoke-permission-from-role call.'
       summary: List permissions granted to a role
       tags:
         - RBAC
@@ -1685,6 +1867,7 @@ paths:
   /v1/roles/{roleID}/permissions/{permID}:
     delete:
       operationId: delete_v1_roles_ByRoleID_permissions_ByPermID
+      description: 'Revokes a permission from a role; holders lose it from their effective permissions as soon as this returns, unless another role still grants it. This is the counterpart to the grant-permission-to-role call. Confirm the resulting grants with the list-role-permissions call.'
       summary: Revoke permission from role
       tags:
         - RBAC
@@ -1715,6 +1898,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_roles_ByRoleID_permissions_ByPermID
+      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call.'
       summary: Grant permission to role
       tags:
         - RBAC
@@ -1751,84 +1935,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/auth-policy:
-    get:
-      operationId: get_v1_tenants_ByTenantID_auth_policy
-      summary: Get auth policy
-      tags:
-        - Auth Policy
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-    put:
-      operationId: put_v1_tenants_ByTenantID_auth_policy
-      summary: Update auth policy
-      tags:
-        - Auth Policy
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/groups/{groupID}/roles:
     get:
       operationId: get_v1_tenants_ByTenantID_groups_ByGroupID_roles
+      description: 'Lists the roles granted to a group within the tenant; every member of the group inherits these roles'' permissions. Use it to review a group''s authorization before changing it. Grant a role with the grant-role-to-group call and remove one with the revoke-role-from-group call.'
       summary: List group roles
       tags:
         - RBAC
@@ -1904,6 +2014,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: delete_v1_tenants_ByTenantID_groups_ByGroupID_roles_ByRoleID
+      description: 'Revokes a role from a group within the tenant; members lose the role''s group-derived permissions as soon as this returns, though direct user grants of the same role are unaffected. This is the counterpart to the grant-role-to-group call. Review the group''s remaining roles with the list-group-roles call.'
       summary: Revoke role from group
       tags:
         - RBAC
@@ -1937,12 +2048,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/security/bots:
+  /v1/tenants/{tenantID}/roles:
     get:
-      operationId: get_v1_tenants_ByTenantID_security_bots
-      summary: Bot telemetry
+      operationId: get_v1_tenants_ByTenantID_roles
+      description: 'Lists the roles defined in the tenant, including both system roles and tenant-defined custom roles. Use it to populate role pickers and to review the tenant''s RBAC configuration. Define a new custom role with the create-role call.'
+      summary: List roles
       tags:
-        - Threats
+        - RBAC
       parameters:
         - name: tenantID
           in: path
@@ -1954,164 +2066,7 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Recent bot verdicts and stats
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/security/risk-settings:
-    get:
-      operationId: get_v1_tenants_ByTenantID_security_risk_settings
-      summary: Get risk settings
-      description: >-
-        Returns the medium/high risk-score thresholds, the level at which
-        step-up MFA is forced even for a trusted device, and the two
-        additive adaptive-MFA signals layered on top: impossible-travel
-        (a login from a new country sooner than min_travel_hours after the
-        last one) and device reputation (a login from a browser+OS
-        combination never seen before for this user). Both are
-        independently toggled and off by default.
-      tags:
-        - Threats
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Risk settings
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RiskSettings'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    put:
-      operationId: put_v1_tenants_ByTenantID_security_risk_settings
-      summary: Update risk settings
-      tags:
-        - Threats
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RiskSettings'
-      responses:
-        '200':
-          description: Updated settings
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/security/bots/settings:
-    get:
-      operationId: get_v1_tenants_ByTenantID_security_bots_settings
-      summary: Get bot settings
-      tags:
-        - Threats
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Bot-detection settings
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    put:
-      operationId: put_v1_tenants_ByTenantID_security_bots_settings
-      summary: Update bot settings
-      tags:
-        - Threats
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Updated settings
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/security/anomalies:
-    get:
-      operationId: get_v1_tenants_ByTenantID_security_anomalies
-      summary: List anomalies
-      tags:
-        - Threats
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Recent anomalies
+          description: Roles
           content:
             application/json:
               schema:
@@ -2120,19 +2075,60 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Role'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/security/anomalies/summary:
-    get:
-      operationId: get_v1_tenants_ByTenantID_security_anomalies_summary
-      summary: Anomaly summary
+    post:
+      operationId: post_v1_tenants_ByTenantID_roles
+      description: 'Creates a custom role in the tenant from a name and description. The role starts with no permissions; attach them with the grant-permission-to-role call before putting it to use. Assign the finished role with the assign-role-to-user or grant-role-to-group calls.'
+      summary: Create role
       tags:
-        - Threats
+        - RBAC
       parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        '201':
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Role'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/{userID}/tenants/{tenantID}/permissions:
+    get:
+      operationId: get_v1_users_ByUserID_tenants_ByTenantID_permissions
+      description: 'Returns the flattened set of permission keys a user effectively holds in a tenant, combining direct role assignments with roles inherited through group membership. Use it to explain why a user can or cannot perform an action, complementing the single-permission decision from the permission-check call. It is read-only and reflects the grants in force at call time.'
+      summary: Effective permissions
+      tags:
+        - RBAC
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
         - name: tenantID
           in: path
           required: true
@@ -2143,45 +2139,330 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Open/resolved/affected/high-severity counts
+          description: Effective permissions
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
-    post:
-      operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
-      summary: Resolve anomaly
-      tags:
-        - Threats
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Anomaly resolved
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
+    delete:
+      operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
+      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call.'
+      summary: Unassign role from user
+      tags:
+        - RBAC
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Unassigned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
+      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant, and the assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
+      summary: Assign role to user
+      tags:
+        - RBAC
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      responses:
+        '204':
+          description: Assigned
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/policies:
+    get:
+      operationId: get_v1_tenants_ByTenantID_abac_policies
+      summary: List ABAC policies
+      description: Returns all ABAC policies for the tenant, ordered by priority desc then name.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_abac_policies
+      summary: Create ABAC policy
+      description: Creates a new ABAC policy for the tenant.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ABACPolicyCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/abac/policies/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_abac_policies_ById
+      description: 'Returns a single ABAC policy by its identifier, including its conditions, effect, and priority. Use it to inspect a policy before editing or removing it. Modify it with the update-policy call or remove it with the delete-policy call.'
+      summary: Get ABAC policy
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_abac_policies_ById
+      summary: Update ABAC policy
+      description: Replaces all mutable fields of a policy. Send the full desired state.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ABACPolicyCreate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_abac_policies_ById
+      description: 'Permanently removes an ABAC policy from the tenant. Once deleted, the policy no longer participates in the deny-wins evaluation, which can change access decisions immediately, so confirm its impact first with the ABAC evaluate call. Retrieve the policy beforehand with the get-policy call if a record is needed.'
+      summary: Delete ABAC policy
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/abac/evaluate:
+    post:
+      operationId: post_v1_tenants_ByTenantID_abac_evaluate
+      summary: Evaluate ABAC policies
+      description: |
+        Runs the deny-wins ABAC evaluation algorithm against all enabled policies
+        that match the supplied resource type and action. Returns the decision and,
+        when ?explain=true, a trace of every policy evaluated.
+      tags:
+        - ABAC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: explain
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, the response includes a human-readable trace of each evaluated policy.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ABACEvaluateRequest'
+      responses:
+        '200':
+          description: Decision
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ABACDecision'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
   /v1/tenants/{tenantID}/relation-tuples:
     get:
       operationId: get_v1_tenants_ByTenantID_relation_tuples
@@ -2234,6 +2515,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_relation_tuples
+      description: 'Writes a relationship tuple asserting that a subject holds a named relation on an object, the building block of the ReBAC graph. The subject may be a direct principal or a userset reference (type:id#relation) so relationships can be composed. Test the effect of a tuple with the relation-check call and remove it with the delete-tuple call.'
       summary: Write relation tuple
       tags:
         - ReBAC
@@ -2282,6 +2564,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_relation_tuples_ById
+      description: 'Removes a relationship tuple by its identifier, severing that edge in the ReBAC graph. Any access that depended solely on this tuple is revoked as soon as this returns, so re-verify affected grants with the relation-check call. This is the counterpart to the write-tuple call.'
       summary: Delete relation tuple
       tags:
         - ReBAC
@@ -2311,6 +2594,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/check:
     post:
       operationId: post_v1_tenants_ByTenantID_relation_tuples_check
+      description: 'Evaluates whether a user holds a relation on an object by walking the ReBAC tuple graph, following userset references transitively. It returns a boolean decision by default; pass explain=true to also receive the root-to-leaf chain of tuples that granted access. This is a read-only decision; author the underlying tuples with the write-tuple call.'
       summary: Check relation
       tags:
         - ReBAC
@@ -2533,6 +2817,156 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/auth-policy:
+    get:
+      operationId: get_v1_tenants_ByTenantID_auth_policy
+      summary: Get auth policy
+      tags:
+        - Auth Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      operationId: put_v1_tenants_ByTenantID_auth_policy
+      summary: Update auth policy
+      tags:
+        - Auth Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/policy:
+    get:
+      operationId: get_v1_tenants_ByTenantID_policy
+      summary: Get policy
+      tags:
+        - Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      operationId: put_v1_tenants_ByTenantID_policy
+      summary: Update policy
+      tags:
+        - Policy
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/ip-rules:
     get:
       operationId: get_v1_tenants_ByTenantID_ip_rules
@@ -2726,12 +3160,13 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/policy:
+  /v1/tenants/{tenantID}/security/bots:
     get:
-      operationId: get_v1_tenants_ByTenantID_policy
-      summary: Get policy
+      operationId: get_v1_tenants_ByTenantID_security_bots
+      description: 'Returns recent automated-traffic verdicts and aggregate statistics from bot detection for the tenant, for review in the security dashboard. It reports observed telemetry only and changes no configuration. Tune how detection behaves with the bot-settings calls.'
+      summary: Bot telemetry
       tags:
-        - Policy
+        - Threats
       parameters:
         - name: tenantID
           in: path
@@ -2741,10 +3176,9 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
-          description: OK
+          description: Recent bot verdicts and stats
           content:
             application/json:
               schema:
@@ -2754,17 +3188,46 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/security/risk-settings:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_risk_settings
+      summary: Get risk settings
+      description: >-
+        Returns the medium/high risk-score thresholds, the level at which
+        step-up MFA is forced even for a trusted device, and the two
+        additive adaptive-MFA signals layered on top: impossible-travel
+        (a login from a new country sooner than min_travel_hours after the
+        last one) and device reputation (a login from a browser+OS
+        combination never seen before for this user). Both are
+        independently toggled and off by default.
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Risk settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RiskSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     put:
-      operationId: put_v1_tenants_ByTenantID_policy
-      summary: Update policy
+      operationId: put_v1_tenants_ByTenantID_security_risk_settings
+      description: 'Updates the tenant''s adaptive-risk configuration, including the medium and high risk-score thresholds, the level at which step-up MFA is forced even for a trusted device, and the impossible-travel and device-reputation signals. Both additive signals are off by default and take effect for subsequent sign-ins once enabled. Retrieve the current values first with the get-risk-settings call, since this call replaces the stored settings with the submitted state.'
+      summary: Update risk settings
       tags:
-        - Policy
+        - Threats
       parameters:
         - name: tenantID
           in: path
@@ -2775,17 +3238,14 @@ paths:
         - bearerAuth: []
         - apiKeyAuth: []
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/RiskSettings'
       responses:
         '200':
-          description: OK
+          description: Updated settings
           content:
             application/json:
               schema:
@@ -2795,18 +3255,15 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/roles:
+  /v1/tenants/{tenantID}/security/bots/settings:
     get:
-      operationId: get_v1_tenants_ByTenantID_roles
-      summary: List roles
+      operationId: get_v1_tenants_ByTenantID_security_bots_settings
+      description: 'Returns the tenant''s bot-detection configuration, such as whether detection is enforced and the action taken on a bot verdict. Use it to populate the settings surface before editing. Apply changes with the update-bot-settings call and review observed activity with the bot-telemetry call.'
+      summary: Get bot settings
       tags:
-        - RBAC
+        - Threats
       parameters:
         - name: tenantID
           in: path
@@ -2818,7 +3275,71 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Roles
+          description: Bot-detection settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_security_bots_settings
+      description: 'Updates the tenant''s bot-detection configuration and applies it to subsequent authentication traffic. Retrieve the current configuration first with the get-bot-settings call, since this call replaces the stored settings with the submitted state. Review the effect afterward through the bot-telemetry call.'
+      summary: Update bot settings
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/security/anomalies:
+    get:
+      operationId: get_v1_tenants_ByTenantID_security_anomalies
+      description: 'Lists recent login anomalies detected for the tenant for review by a security operator. Each entry carries the anomaly''s context and its open or resolved state. Triage counts are available from the anomaly-summary call, and an individual entry is closed with the resolve-anomaly call.'
+      summary: List anomalies
+      tags:
+        - Threats
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent anomalies
           content:
             application/json:
               schema:
@@ -2827,58 +3348,20 @@ paths:
                   items:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Role'
+                      type: object
+                      additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: post_v1_tenants_ByTenantID_roles
-      summary: Create role
-      tags:
-        - RBAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RoleCreate'
-      responses:
-        '201':
-          description: Role created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Role'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/users/{userID}/tenants/{tenantID}/permissions:
+  /v1/tenants/{tenantID}/security/anomalies/summary:
     get:
-      operationId: get_v1_users_ByUserID_tenants_ByTenantID_permissions
-      summary: Effective permissions
+      operationId: get_v1_tenants_ByTenantID_security_anomalies_summary
+      description: 'Returns aggregate counts of login anomalies for the tenant, including open, resolved, affected-user, and high-severity totals, for a dashboard overview. It summarizes the same records enumerated by the list-anomalies call. Drill into individual entries there and close them with the resolve-anomaly call.'
+      summary: Anomaly summary
       tags:
-        - RBAC
+        - Threats
       parameters:
-        - name: userID
-          in: path
-          required: true
-          schema:
-            type: string
         - name: tenantID
           in: path
           required: true
@@ -2889,337 +3372,7 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: Effective permissions
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
-    delete:
-      operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      summary: Unassign role from user
-      tags:
-        - RBAC
-      parameters:
-        - name: userID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: roleID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Unassigned
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    post:
-      operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      summary: Assign role to user
-      tags:
-        - RBAC
-      parameters:
-        - name: userID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: roleID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      responses:
-        '204':
-          description: Assigned
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/abac/policies:
-    get:
-      operationId: get_v1_tenants_ByTenantID_abac_policies
-      summary: List ABAC policies
-      description: Returns all ABAC policies for the tenant, ordered by priority desc then name.
-      tags:
-        - ABAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ABACPolicy'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: post_v1_tenants_ByTenantID_abac_policies
-      summary: Create ABAC policy
-      description: Creates a new ABAC policy for the tenant.
-      tags:
-        - ABAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ABACPolicyCreate'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ABACPolicy'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/abac/policies/{id}:
-    get:
-      operationId: get_v1_tenants_ByTenantID_abac_policies_ById
-      summary: Get ABAC policy
-      tags:
-        - ABAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ABACPolicy'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    patch:
-      operationId: patch_v1_tenants_ByTenantID_abac_policies_ById
-      summary: Update ABAC policy
-      description: Replaces all mutable fields of a policy. Send the full desired state.
-      tags:
-        - ABAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ABACPolicyCreate'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ABACPolicy'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-    delete:
-      operationId: delete_v1_tenants_ByTenantID_abac_policies_ById
-      summary: Delete ABAC policy
-      tags:
-        - ABAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/abac/evaluate:
-    post:
-      operationId: post_v1_tenants_ByTenantID_abac_evaluate
-      summary: Evaluate ABAC policies
-      description: |
-        Runs the deny-wins ABAC evaluation algorithm against all enabled policies
-        that match the supplied resource type and action. Returns the decision and,
-        when ?explain=true, a trace of every policy evaluated.
-      tags:
-        - ABAC
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: explain
-          in: query
-          required: false
-          schema:
-            type: boolean
-          description: When true, the response includes a human-readable trace of each evaluated policy.
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ABACEvaluateRequest'
-      responses:
-        '200':
-          description: Decision
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ABACDecision'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/mfa/push/devices:
-    get:
-      operationId: get_v1_mfa_push_devices
-      summary: List registered push-MFA devices
-      tags: [MFA]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Registered devices
+          description: Open/resolved/affected/high-severity counts
           content:
             application/json:
               schema:
@@ -3227,100 +3380,36 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/security/anomalies/{id}/resolve:
     post:
-      operationId: post_v1_mfa_push_devices
-      summary: Register or rotate a push-MFA device
-      tags: [MFA]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [push_token, platform]
-              properties:
-                name: { type: string }
-                push_token: { type: string }
-                platform: { type: string, enum: [ios, android] }
-      responses:
-        '201':
-          description: Device registered; device_token is returned once
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /v1/mfa/push/devices/{id}:
-    delete:
-      operationId: delete_v1_mfa_push_devices_ById
-      summary: Revoke a push-MFA device
-      tags: [MFA]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
+      operationId: post_v1_tenants_ByTenantID_security_anomalies_ById_resolve
+      description: 'Marks a login anomaly as resolved, recording that an operator has reviewed it and removing it from the open queue. Resolving is a review action; it does not itself block a user or revoke a session, so take any remediation separately. The updated totals are reflected by the anomaly-summary call.'
+      summary: Resolve anomaly
+      tags:
+        - Threats
       parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
         - name: id
           in: path
           required: true
-          schema: { type: string, format: uuid }
-      responses:
-        '204': { description: Device revoked }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/mfa/push/challenges/{id}:
-    get:
-      operationId: get_v1_mfa_push_challenges_ById
-      summary: Poll a push-MFA challenge
-      tags: [MFA]
-      security: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
-          description: Challenge status
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/mfa/push/challenges/{id}/respond:
-    post:
-      operationId: post_v1_mfa_push_challenges_ById_respond
-      summary: Approve or deny a push-MFA challenge
-      tags: [MFA]
-      security: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [user_id, device_token, approved]
-              properties:
-                user_id: { type: string, format: uuid }
-                device_token: { type: string }
-                approved: { type: boolean }
-      responses:
-        '204': { description: Challenge response recorded }
+          description: Anomaly resolved
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 components:
@@ -3436,6 +3525,28 @@ components:
             detail:
               type: string
               description: Optional human detail
+            translation_key:
+              type: string
+              description: Optional i18n key the client can use to localize the message.
+            retryable:
+              type: boolean
+              description: Whether the client may safely retry the request.
+            fields:
+              type: array
+              description: Per-field validation errors (typically on 422 responses).
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Optional structured, error-specific context.
             request_id:
               type: string
               description: Correlates with the X-Request-Id header

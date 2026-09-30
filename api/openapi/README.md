@@ -23,6 +23,26 @@ paths use) plus the shared `securitySchemes`, so every file validates standalone
    helpers. It fails on undocumented routes, stale operations, and API-auth
    security mismatches.
 
+## Tag order and the developer journey
+
+Operations are grouped by `tag`, and the **order of path items in each file is
+intentional**. The api.qeet.in portal (Scalar) orders the tags within a product by
+the **first appearance of each tag in document order** — it does *not* read the
+root `tags:` array order or any `x-*` ordering hint. Each file's paths are therefore
+laid out to follow an onboarding journey, and its top-level `tags:` array is kept in
+the same order for readability:
+
+- **auth**: Auth → Passkeys → MFA → RBAC → ABAC → ReBAC → AuthZEN → Auth Policy → Policy → IP Rules → Threats
+- **management**: Tenants → Domains → Users → Verification → Groups → Invites → Branding
+- **federation**: OIDC → Social → SAML → LDAP → Directory → SCIM → Admin Portal
+- **developer**: API Keys → Agents → Credentials → Auth Hooks → Webhooks → Secrets → Token Vault
+- **operations**: Health → Activity → Analytics → Search → Audit → Compliance → Data Retention → GDPR → Log Sinks → Notifications → Rate Limits → Email Templates → Qeet AI → Billing → Entitlements → Sales
+
+When adding an operation, place it next to the other paths of its tag so the journey
+order is preserved, and declare the tag (with a `description`) in the top-level
+`tags:` array. `bun run validate:specs` in the qeet-apis repo warns on undeclared,
+unused, or undescribed tags.
+
 ## Tooling
 
 These files are split by bounded context; tools that want a single document merge

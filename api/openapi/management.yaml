@@ -2,32 +2,500 @@ openapi: 3.1.0
 info:
   title: Qeet ID — Identity Management API
   version: 0.2.0
-  description: 'Qeet ID identity platform — full HTTP surface.
+  description: |-
+    Tenants, domains, users, groups, and invitations for Qeet ID.
 
+    ## Start here — the tenant lifecycle
 
-    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
+    1. A newly registered user has **no tenant**. Create one with `POST /v1/tenants`; the caller becomes the tenant **owner**.
+    2. (Optional) Prove control of a domain under **Domains** to unlock domain-based features.
+    3. Add and manage users, organize them into groups, and invite teammates.
 
+    The `register → tenant-less user → create tenant → owner` sequence is the most common early surprise: authentication happens in the Authentication & Access API; tenant creation happens here.
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
+    ## Authentication
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+
+    ## Related APIs
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+    - **Developer API** — API keys, agents, webhooks, vaults
+    - **Operations API** — audit, analytics, billing
+
+    ## Contract maintenance
+
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification.
 servers:
   - url: https://api.id.qeet.in
     description: Production
   - url: http://localhost:4001
     description: Local (make dev)
 tags:
-  - name: Users
-    description: User CRUD, password set, and soft-delete recycle bin (restore/purge).
   - name: Tenants
     description: Tenant (workspace) CRUD.
-  - name: Invites
-    description: Tenant member invitations.
-  - name: Groups
-    description: User groups and membership.
+  - name: Domains
+    description: 'Tenant domain ownership — claim a domain, verify it via DNS, and manage verified domains.'
+  - name: Users
+    description: User CRUD, password set, and soft-delete recycle bin (restore/purge).
   - name: Verification
     description: Email and phone verification flows.
+  - name: Groups
+    description: User groups and membership.
+  - name: Invites
+    description: Tenant member invitations.
   - name: Branding
     description: Per-tenant hosted-login branding.
 paths:
+  /v1/me/organizations:
+    get:
+      operationId: listMyEligibleOrganizations
+      summary: List organizations available to the signed-in user
+      tags: [Tenants]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection.
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
+        - name: cursor
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Eligible organization page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  next_cursor: { type: string }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, slug, plan, region, logo_url, domain, roles, last_used_at]
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        slug: { type: string }
+                        plan: { type: string }
+                        region: { type: string }
+                        logo_url: { type: string }
+                        domain: { type: string, description: A verified organization domain, or empty if none. }
+                        roles: { type: array, items: { type: string } }
+                        last_used_at: { type: string, format: date-time, nullable: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants:
+    get:
+      operationId: get_v1_tenants
+      description: 'Returns a page of the tenants the authenticated principal belongs to. Scope is taken from the caller''s identity, never from a query parameter. Use the returned cursor to page through large result sets. A newly registered user with no tenant sees an empty page until a tenant is created.'
+      summary: List tenants
+      tags:
+        - Tenants
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Tenant page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_v1_tenants
+      description: 'Creates a tenant and makes the calling user its owner. A newly registered user has no tenant until this succeeds; every tenant-scoped endpoint requires one. A verified email is required before a tenant can be provisioned. The response includes a tenant-scoped token pair so the client can immediately switch into the new tenant.'
+      summary: Create tenant
+      tags:
+        - Tenants
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              slug: acme
+              name: Acme, Inc.
+              plan: pro
+              region: ap-south-1
+              metadata:
+                industry: fintech
+            schema:
+              $ref: '#/components/schemas/TenantCreate'
+      responses:
+        '201':
+          description: Created; caller becomes owner (token pair included)
+          content:
+            application/json:
+              example:
+                tenant:
+                  id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                  slug: acme
+                  name: Acme, Inc.
+                  plan: pro
+                  region: ap-south-1
+                  created_at: '2026-09-24T10:15:00Z'
+                  updated_at: '2026-09-24T10:15:00Z'
+                  member_count: 1
+                  mfa_enabled_count: 0
+                tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                roles:
+                  - owner
+                access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImsxIn0.eyJ0ZW5hbnQiOiJhY21lIn0.FAKE-signature
+                token_type: Bearer
+                expires_at: '2026-09-24T11:15:00Z'
+                refresh_token: rt_1a2b3c4d5e6f70819a2b3c4d5e6f7081
+                session_id: 018f2a72-7d8e-7f90-b123-4c5d6e7f8091
+                user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+              schema:
+                $ref: '#/components/schemas/TenantCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID
+      description: 'Soft-deletes the tenant. This is a destructive, owner-only action: members lose access and tenant-scoped calls stop resolving once it completes. Users who belonged only to this tenant are left without one and must create or join another.'
+      summary: Delete tenant
+      tags:
+        - Tenants
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: get_v1_tenants_ByTenantID
+      description: 'Returns a single tenant by id. The caller must be a member of the tenant; requests for a tenant the principal does not belong to are rejected rather than disclosed.'
+      summary: Get tenant
+      tags:
+        - Tenants
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_tenants_ByTenantID
+      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed.'
+      summary: Update tenant
+      tags:
+        - Tenants
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/login-domain:
+    get:
+      operationId: get_v1_tenants_ByTenantID_login_domain
+      summary: Custom login domain status
+      tags:
+        - Domains
+      description: >-
+        Provisioning state of the tenant's custom hosted-login hostname, plus the
+        DNS records to publish. DNS is checked live; TLS and the login endpoint
+        report their own stage rather than being inferred from the DNS result.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/domains:
+    get:
+      operationId: get_v1_tenants_ByTenantID_domains
+      description: 'Lists the domains claimed by the tenant together with the DNS record each requires and its current verification status. Use this to track which domains are pending, verified, or failing checks. New domains are added with the claim-domain call and confirmed with the verify-domain call.'
+      summary: List domains
+      tags:
+        - Domains
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Domains with their DNS verification records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_domains
+      description: 'Registers a domain for the tenant and returns the DNS TXT record that must be published to prove ownership. The record lives under a dedicated verification subdomain so it does not disturb existing apex TXT records such as SPF. Publish the returned record in DNS, then call the verify-domain endpoint to complete the claim.'
+      summary: Claim domain
+      tags:
+        - Domains
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - domain
+              properties:
+                domain:
+                  type: string
+      responses:
+        '201':
+          description: Domain claimed; publish the returned TXT record then verify
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/domains/{id}/verify:
+    post:
+      operationId: post_v1_tenants_ByTenantID_domains_ById_verify
+      description: 'Performs a live DNS lookup for the previously issued TXT record and, on a match, marks the domain verified by setting verified_at. Claim the domain first so the expected record is known; verification is only attempted when explicitly requested here, not in the background. Verifying ownership does not by itself enable SSO or just-in-time provisioning for the domain.'
+      summary: Verify domain
+      tags:
+        - Domains
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Verification result (verified_at set on success)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/domains/{id}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_domains_ById
+      summary: Update domain settings
+      tags:
+        - Domains
+      description: >-
+        Toggles SSO routing, just-in-time provisioning, and which domain is the
+        tenant default. Setting a new default clears the previous one.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sso_enabled: {type: boolean}
+                jit_enabled: {type: boolean}
+                is_default: {type: boolean}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_domains_ById
+      description: 'Removes a claimed or verified domain from the tenant. Any domain-based features that depended on it stop applying. Re-adding the domain later requires claiming and verifying it again.'
+      summary: Remove domain
+      tags:
+        - Domains
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Domain removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/users/suspended:
     get:
       operationId: get_v1_users_suspended
@@ -123,6 +591,983 @@ paths:
         '403': {description: Missing user.write}
         '404': {description: Account not owned by this tenant}
         '409': {description: Account is no longer suspended}
+  /v1/users/trends:
+    get:
+      operationId: get_v1_users_trends
+      summary: User directory 30-day trends
+      description: 30-day daily total/MFA-enrolled series for the Users KPI sparklines. Requires `user.read`.
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Trend series
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserTrends'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/users/stats:
+    get:
+      operationId: get_v1_users_stats
+      summary: User directory summary
+      description: Tenant-wide member counts (total / active / suspended / invited / MFA enabled / MFA missing) for the Users admin summary strip. Requires `user.read`.
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Directory summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/users:
+    get:
+      operationId: get_v1_users
+      description: 'Returns a page of users in the caller''s tenant. Supports opaque cursor paging or numeric offset paging to jump to a specific page. Requires an existing tenant; scope comes from the authenticated principal.'
+      summary: List users
+      tags:
+        - Users
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Offset for numbered paging (jump to page N). Alternative to cursor.
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: User page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: post_v1_users
+      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. Requires an existing tenant.'
+      summary: Create user
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/bulk:
+    post:
+      operationId: post_v1_users_bulk
+      summary: Bulk-create users
+      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row is reported in the response rather than failing the whole batch (partial success).
+      tags:
+        - Users
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserBulkImport'
+      responses:
+        '200':
+          description: Per-row import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBulkImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/bulk/import:
+    post:
+      operationId: post_v1_users_bulk_import
+      summary: Import users from an IdP export (Auth0 / Cognito / Azure AD B2C)
+      description: >
+        Migration tooling for teams leaving another identity provider: the
+        request body is that vendor's own raw user-export file, converted to
+        the same shape POST /v1/users/bulk accepts and run through the
+        identical per-row partial-success pipeline. No vendor exports a
+        portable password hash, so every imported row lands with no password
+        credential — passkey, magic link, OTP, or an admin-triggered reset
+        are how an imported user first signs in.
+      tags:
+        - Users
+      parameters:
+        - name: source
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [auth0, cognito, azure_b2c]
+          description: "auth0 expects NDJSON (one JSON object per line, from an Auth0 user-export job); cognito expects the User Import Job CSV template; azure_b2c expects a Microsoft Graph /users list response ({\"value\": [...]})."
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+          text/csv:
+            schema:
+              type: string
+          application/json:
+            schema:
+              type: string
+        description: The raw export file content, in the format documented for the chosen source.
+      responses:
+        '200':
+          description: Per-row import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserBulkImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/deleted:
+    get:
+      operationId: get_v1_users_deleted
+      description: 'Lists soft-deleted users held in the tenant recycle bin. From here an account can be brought back with the restore call or removed permanently with the purge call.'
+      summary: List deleted users
+      tags:
+        - Users
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Soft-deleted users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/users/{id}:
+    delete:
+      operationId: delete_v1_users_ById
+      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged.'
+      summary: Delete user
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Soft-deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: get_v1_users_ById
+      description: 'Returns a single user by id within the caller''s tenant. Requests for a user outside the tenant are rejected rather than disclosed.'
+      summary: Get user
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patch_v1_users_ById
+      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state.'
+      summary: Update user
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/{id}/password:
+    post:
+      operationId: post_v1_users_ById_password
+      description: 'Administratively sets or replaces a user''s password, applying the tenant''s password-complexity policy when one is configured. All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call.'
+      summary: Set password
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 256
+      responses:
+        '204':
+          description: Password set
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/{id}/mfa:
+    delete:
+      operationId: delete_v1_users_ById_mfa
+      summary: Admin reset user MFA
+      description: Account-recovery for a locked-out user. Requires the `user.write` permission; audited as `mfa.admin_reset`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: MFA reset; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/security:
+    get:
+      operationId: get_v1_users_ById_security
+      summary: User security posture
+      description: >-
+        Aggregated authentication posture for a user (User 360): MFA factors
+        (TOTP / email-SMS OTP / push), passkeys, recovery codes, password state,
+        and the active-session / device count. Requires `user.read`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Security posture
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mfa_required: { type: boolean }
+                  mfa_enabled: { type: boolean }
+                  totp_enabled: { type: boolean }
+                  otp_factors: { type: integer }
+                  push_devices: { type: integer }
+                  passkeys: { type: integer }
+                  passkey_last_used_at: { type: string, format: date-time, nullable: true }
+                  recovery_codes_remaining: { type: integer }
+                  password_set: { type: boolean }
+                  password_changed_at: { type: string, format: date-time, nullable: true }
+                  active_sessions: { type: integer }
+                  distinct_devices: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/sessions:
+    get:
+      operationId: get_v1_users_ById_sessions
+      summary: List a user's live sessions
+      description: Admin view of a user's active (non-revoked) sessions. Requires `user.read`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        ip: { type: string, nullable: true }
+                        user_agent: { type: string, nullable: true }
+                        created_at: { type: string, format: date-time }
+                        last_seen_at: { type: string, format: date-time }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/sessions/revoke-all:
+    post:
+      operationId: post_v1_users_ById_sessions_revokeAll
+      summary: Revoke all of a user's sessions
+      description: Admin force sign-out — revokes every live session for the user. Requires `user.write`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/access:
+    get:
+      operationId: get_v1_users_ById_access
+      summary: User access summary
+      description: >-
+        Per-user access within the caller's tenant (User 360): the organization
+        (tenant), directly-assigned roles, group memberships, and counts of
+        consented applications and enabled tenant policies. Requires `user.read`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Access summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    type: object
+                    nullable: true
+                    properties:
+                      id: { type: string, format: uuid }
+                      name: { type: string }
+                      slug: { type: string }
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        description: { type: string }
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        name: { type: string }
+                        description: { type: string }
+                  applications_count: { type: integer }
+                  policies_count: { type: integer }
+                  permissions_direct: { type: integer }
+                  permissions_inherited: { type: integer }
+                  permissions_total: { type: integer }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/mfa-required:
+    put:
+      operationId: put_v1_users_ById_mfaRequired
+      summary: Set user MFA-required policy
+      description: Toggle the per-user `mfa_required` policy flag. Requires `user.write`; audited as `user.mfa_required_set`.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - required
+              properties:
+                required:
+                  type: boolean
+      responses:
+        '200':
+          description: MFA-required flag updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mfa_required: { type: boolean }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/purge:
+    delete:
+      operationId: delete_v1_users_ById_purge
+      description: 'Permanently deletes a soft-deleted user, removing it from the recycle bin. This is irreversible and cannot be undone by the restore call. Use it only after the account has been soft-deleted.'
+      summary: Purge user
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Permanently purged
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/restore:
+    post:
+      operationId: post_v1_users_ById_restore
+      description: 'Brings a soft-deleted user back from the tenant recycle bin, reversing an earlier delete call and returning the reactivated account. Only accounts that are still soft-deleted (not yet purged) can be restored. It is the counterpart to the purge call.'
+      summary: Restore user
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      responses:
+        '200':
+          description: Restored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/me:
+    get:
+      operationId: get_v1_me
+      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details.'
+      summary: Get the authenticated user's profile
+      tags: [Users]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: patch_v1_me
+      description: 'Updates the authenticated caller''s own profile. Only the supplied fields are changed, and the account is always resolved from the token, so a caller can never edit another user''s profile through this route.'
+      summary: Update the authenticated user's profile
+      tags: [Users]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/users/{id}/verify/email/confirm:
+    post:
+      operationId: post_v1_users_ById_verify_email_confirm
+      description: 'Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested. Request the code with the start-email-verification call before invoking this.'
+      summary: Confirm email verification
+      tags:
+        - Verification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Email verified; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/email/change/start:
+    post:
+      operationId: post_v1_me_email_change_start
+      summary: Start changing my email
+      description: Sends a verification code to a new email address. Pre-checks the address isn't already in use by another account (`verification.email_taken`).
+      tags:
+        - Verification
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+              required:
+                - email
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/me/email/change/confirm:
+    post:
+      operationId: post_v1_me_email_change_confirm
+      summary: Confirm my email change
+      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email.
+      tags:
+        - Verification
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+              required:
+                - code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/users/{id}/verify/email/start:
+    post:
+      operationId: post_v1_users_ById_verify_email_start
+      summary: Start email verification
+      description: Sends a 6-digit code to the address on file. Pass `email` only to verify a different address.
+      tags:
+        - Verification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Optional; defaults to the user's email on file.
+      responses:
+        '200':
+          description: Code sent; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/users/{id}/verify/phone/confirm:
+    post:
+      operationId: post_v1_users_ById_verify_phone_confirm
+      description: 'Confirms phone verification by validating the code delivered by the start-phone-verification call and marking the number verified. Codes are single-use, time-limited, and retired after a few incorrect attempts, requiring a fresh send. Request the code with the start-phone-verification call before invoking this.'
+      summary: Confirm phone verification
+      tags:
+        - Verification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+      responses:
+        '200':
+          description: Phone verified; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/users/{id}/verify/phone/start:
+    post:
+      operationId: post_v1_users_ById_verify_phone_start
+      summary: Start phone verification
+      description: Sends a 6-digit code to the number on file. Pass `phone` only to verify a different number.
+      tags:
+        - Verification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone:
+                  type: string
+                  description: Optional; defaults to the user's phone on file.
+      responses:
+        '200':
+          description: Code sent; returns a confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/groups:
     post:
       operationId: post_v1_groups
@@ -547,6 +1992,40 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/groups:
+    get:
+      operationId: get_v1_tenants_ByTenantID_groups
+      summary: List groups
+      tags:
+        - Groups
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/invites:
     post:
       operationId: post_v1_invites
@@ -770,6 +2249,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:
@@ -794,183 +2274,30 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /v1/me/organizations:
+  /v1/tenants/{tenantID}/invites:
     get:
-      operationId: listMyEligibleOrganizations
-      summary: List organizations available to the signed-in user
-      tags: [Tenants]
+      operationId: get_v1_tenants_ByTenantID_invites
+      summary: List invites
+      tags:
+        - Invites
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection.
-      parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 200, default: 200 }
-        - name: cursor
-          in: query
-          schema: { type: string, format: uuid }
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
-          description: Eligible organization page
+          description: OK
           content:
             application/json:
               schema:
                 type: object
-                required: [items, next_cursor]
-                properties:
-                  next_cursor: { type: string }
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      required: [id, name, slug, plan, region, logo_url, domain, roles, last_used_at]
-                      properties:
-                        id: { type: string, format: uuid }
-                        name: { type: string }
-                        slug: { type: string }
-                        plan: { type: string }
-                        region: { type: string }
-                        logo_url: { type: string }
-                        domain: { type: string, description: A verified organization domain, or empty if none. }
-                        roles: { type: array, items: { type: string } }
-                        last_used_at: { type: string, format: date-time, nullable: true }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants:
-    get:
-      operationId: get_v1_tenants
-      summary: List tenants
-      tags:
-        - Tenants
-      parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Tenant page
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantPage'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    post:
-      operationId: post_v1_tenants
-      summary: Create tenant
-      tags:
-        - Tenants
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TenantCreate'
-      responses:
-        '201':
-          description: Created; caller becomes owner (token pair included)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantCreateResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}:
-    delete:
-      operationId: delete_v1_tenants_ByTenantID
-      summary: Delete tenant
-      tags:
-        - Tenants
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    get:
-      operationId: get_v1_tenants_ByTenantID
-      summary: Get tenant
-      tags:
-        - Tenants
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Tenant
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Tenant'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    patch:
-      operationId: patch_v1_tenants_ByTenantID
-      summary: Update tenant
-      tags:
-        - Tenants
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TenantUpdate'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Tenant'
-        '400':
-          $ref: '#/components/responses/BadRequest'
+                additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -979,6 +2306,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/branding:
     get:
       operationId: get_v1_tenants_ByTenantID_branding
@@ -1051,1265 +2380,6 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/groups:
-    get:
-      operationId: get_v1_tenants_ByTenantID_groups
-      summary: List groups
-      tags:
-        - Groups
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/invites:
-    get:
-      operationId: get_v1_tenants_ByTenantID_invites
-      summary: List invites
-      tags:
-        - Invites
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/users/trends:
-    get:
-      operationId: get_v1_users_trends
-      summary: User directory 30-day trends
-      description: 30-day daily total/MFA-enrolled series for the Users KPI sparklines. Requires `user.read`.
-      tags:
-        - Users
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Trend series
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserTrends'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/users/stats:
-    get:
-      operationId: get_v1_users_stats
-      summary: User directory summary
-      description: Tenant-wide member counts (total / active / suspended / invited / MFA enabled / MFA missing) for the Users admin summary strip. Requires `user.read`.
-      tags:
-        - Users
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Directory summary
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserStats'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/users:
-    get:
-      operationId: get_v1_users
-      summary: List users
-      tags:
-        - Users
-      parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - name: offset
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 0
-          description: Offset for numbered paging (jump to page N). Alternative to cursor.
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: User page
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserPage'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    post:
-      operationId: post_v1_users
-      summary: Create user
-      tags:
-        - Users
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserCreate'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/users/bulk:
-    post:
-      operationId: post_v1_users_bulk
-      summary: Bulk-create users
-      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row is reported in the response rather than failing the whole batch (partial success).
-      tags:
-        - Users
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserBulkImport'
-      responses:
-        '200':
-          description: Per-row import summary
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserBulkImportResult'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/users/bulk/import:
-    post:
-      operationId: post_v1_users_bulk_import
-      summary: Import users from an IdP export (Auth0 / Cognito / Azure AD B2C)
-      description: >
-        Migration tooling for teams leaving another identity provider: the
-        request body is that vendor's own raw user-export file, converted to
-        the same shape POST /v1/users/bulk accepts and run through the
-        identical per-row partial-success pipeline. No vendor exports a
-        portable password hash, so every imported row lands with no password
-        credential — passkey, magic link, OTP, or an admin-triggered reset
-        are how an imported user first signs in.
-      tags:
-        - Users
-      parameters:
-        - name: source
-          in: query
-          required: true
-          schema:
-            type: string
-            enum: [auth0, cognito, azure_b2c]
-          description: "auth0 expects NDJSON (one JSON object per line, from an Auth0 user-export job); cognito expects the User Import Job CSV template; azure_b2c expects a Microsoft Graph /users list response ({\"value\": [...]})."
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/x-ndjson:
-            schema:
-              type: string
-          text/csv:
-            schema:
-              type: string
-          application/json:
-            schema:
-              type: string
-        description: The raw export file content, in the format documented for the chosen source.
-      responses:
-        '200':
-          description: Per-row import summary
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserBulkImportResult'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/users/deleted:
-    get:
-      operationId: get_v1_users_deleted
-      summary: List deleted users
-      tags:
-        - Users
-      parameters:
-        - $ref: '#/components/parameters/Limit'
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Soft-deleted users
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /v1/users/{id}:
-    delete:
-      operationId: delete_v1_users_ById
-      summary: Delete user
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Soft-deleted
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    get:
-      operationId: get_v1_users_ById
-      summary: Get user
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: User
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    patch:
-      operationId: patch_v1_users_ById
-      summary: Update user
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserUpdate'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/users/{id}/password:
-    post:
-      operationId: post_v1_users_ById_password
-      summary: Set password
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - password
-              properties:
-                password:
-                  type: string
-                  minLength: 8
-                  maxLength: 256
-      responses:
-        '204':
-          description: Password set
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/users/{id}/mfa:
-    delete:
-      operationId: delete_v1_users_ById_mfa
-      summary: Admin reset user MFA
-      description: Account-recovery for a locked-out user. Requires the `user.write` permission; audited as `mfa.admin_reset`.
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: MFA reset; returns a confirmation message
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/security:
-    get:
-      operationId: get_v1_users_ById_security
-      summary: User security posture
-      description: >-
-        Aggregated authentication posture for a user (User 360): MFA factors
-        (TOTP / email-SMS OTP / push), passkeys, recovery codes, password state,
-        and the active-session / device count. Requires `user.read`.
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Security posture
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  mfa_required: { type: boolean }
-                  mfa_enabled: { type: boolean }
-                  totp_enabled: { type: boolean }
-                  otp_factors: { type: integer }
-                  push_devices: { type: integer }
-                  passkeys: { type: integer }
-                  passkey_last_used_at: { type: string, format: date-time, nullable: true }
-                  recovery_codes_remaining: { type: integer }
-                  password_set: { type: boolean }
-                  password_changed_at: { type: string, format: date-time, nullable: true }
-                  active_sessions: { type: integer }
-                  distinct_devices: { type: integer }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/sessions:
-    get:
-      operationId: get_v1_users_ById_sessions
-      summary: List a user's live sessions
-      description: Admin view of a user's active (non-revoked) sessions. Requires `user.read`.
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Active sessions
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: { type: string, format: uuid }
-                        ip: { type: string, nullable: true }
-                        user_agent: { type: string, nullable: true }
-                        created_at: { type: string, format: date-time }
-                        last_seen_at: { type: string, format: date-time }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/sessions/revoke-all:
-    post:
-      operationId: post_v1_users_ById_sessions_revokeAll
-      summary: Revoke all of a user's sessions
-      description: Admin force sign-out — revokes every live session for the user. Requires `user.write`.
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Sessions revoked
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  revoked: { type: integer }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/access:
-    get:
-      operationId: get_v1_users_ById_access
-      summary: User access summary
-      description: >-
-        Per-user access within the caller's tenant (User 360): the organization
-        (tenant), directly-assigned roles, group memberships, and counts of
-        consented applications and enabled tenant policies. Requires `user.read`.
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Access summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  organization:
-                    type: object
-                    nullable: true
-                    properties:
-                      id: { type: string, format: uuid }
-                      name: { type: string }
-                      slug: { type: string }
-                  roles:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: { type: string, format: uuid }
-                        name: { type: string }
-                        description: { type: string }
-                  groups:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        id: { type: string, format: uuid }
-                        name: { type: string }
-                        description: { type: string }
-                  applications_count: { type: integer }
-                  policies_count: { type: integer }
-                  permissions_direct: { type: integer }
-                  permissions_inherited: { type: integer }
-                  permissions_total: { type: integer }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/mfa-required:
-    put:
-      operationId: put_v1_users_ById_mfaRequired
-      summary: Set user MFA-required policy
-      description: Toggle the per-user `mfa_required` policy flag. Requires `user.write`; audited as `user.mfa_required_set`.
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - required
-              properties:
-                required:
-                  type: boolean
-      responses:
-        '200':
-          description: MFA-required flag updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  mfa_required: { type: boolean }
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/purge:
-    delete:
-      operationId: delete_v1_users_ById_purge
-      summary: Purge user
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Permanently purged
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/restore:
-    post:
-      operationId: post_v1_users_ById_restore
-      summary: Restore user
-      tags:
-        - Users
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      responses:
-        '200':
-          description: Restored
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/users/{id}/verify/email/confirm:
-    post:
-      operationId: post_v1_users_ById_verify_email_confirm
-      summary: Confirm email verification
-      tags:
-        - Verification
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - code
-              properties:
-                code:
-                  type: string
-      responses:
-        '200':
-          description: Email verified; returns a confirmation message
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/me/email/change/start:
-    post:
-      operationId: post_v1_me_email_change_start
-      summary: Start changing my email
-      description: Sends a verification code to a new email address. Pre-checks the address isn't already in use by another account (`verification.email_taken`).
-      tags:
-        - Verification
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-              required:
-                - email
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/me/email/change/confirm:
-    post:
-      operationId: post_v1_me_email_change_confirm
-      summary: Confirm my email change
-      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email.
-      tags:
-        - Verification
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                code:
-                  type: string
-              required:
-                - code
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/users/{id}/verify/email/start:
-    post:
-      operationId: post_v1_users_ById_verify_email_start
-      summary: Start email verification
-      description: Sends a 6-digit code to the address on file. Pass `email` only to verify a different address.
-      tags:
-        - Verification
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Optional; defaults to the user's email on file.
-      responses:
-        '200':
-          description: Code sent; returns a confirmation message
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/users/{id}/verify/phone/confirm:
-    post:
-      operationId: post_v1_users_ById_verify_phone_confirm
-      summary: Confirm phone verification
-      tags:
-        - Verification
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - code
-              properties:
-                code:
-                  type: string
-      responses:
-        '200':
-          description: Phone verified; returns a confirmation message
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/users/{id}/verify/phone/start:
-    post:
-      operationId: post_v1_users_ById_verify_phone_start
-      summary: Start phone verification
-      description: Sends a 6-digit code to the number on file. Pass `phone` only to verify a different number.
-      tags:
-        - Verification
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                phone:
-                  type: string
-                  description: Optional; defaults to the user's phone on file.
-      responses:
-        '200':
-          description: Code sent; returns a confirmation message
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/login-domain:
-    get:
-      operationId: get_v1_tenants_ByTenantID_login_domain
-      summary: Custom login domain status
-      tags:
-        - Domains
-      description: >-
-        Provisioning state of the tenant's custom hosted-login hostname, plus the
-        DNS records to publish. DNS is checked live; TLS and the login endpoint
-        report their own stage rather than being inferred from the DNS result.
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/domains:
-    get:
-      operationId: get_v1_tenants_ByTenantID_domains
-      summary: List domains
-      tags:
-        - Domains
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Domains with their DNS verification records
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: post_v1_tenants_ByTenantID_domains
-      summary: Claim domain
-      tags:
-        - Domains
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - domain
-              properties:
-                domain:
-                  type: string
-      responses:
-        '201':
-          description: Domain claimed; publish the returned TXT record then verify
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/domains/{id}/verify:
-    post:
-      operationId: post_v1_tenants_ByTenantID_domains_ById_verify
-      summary: Verify domain
-      tags:
-        - Domains
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Verification result (verified_at set on success)
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/domains/{id}:
-    patch:
-      operationId: patch_v1_tenants_ByTenantID_domains_ById
-      summary: Update domain settings
-      tags:
-        - Domains
-      description: >-
-        Toggles SSO routing, just-in-time provisioning, and which domain is the
-        tenant default. Setting a new default clears the previous one.
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                sso_enabled: {type: boolean}
-                jit_enabled: {type: boolean}
-                is_default: {type: boolean}
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-    delete:
-      operationId: delete_v1_tenants_ByTenantID_domains_ById
-      summary: Remove domain
-      tags:
-        - Domains
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Domain removed
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/me:
-    get:
-      operationId: get_v1_me
-      summary: Get the authenticated user's profile
-      tags: [Users]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: User profile
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    patch:
-      operationId: patch_v1_me
-      summary: Update the authenticated user's profile
-      tags: [Users]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Updated profile
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
 components:
   securitySchemes:
     bearerAuth:
@@ -2486,6 +2556,28 @@ components:
             detail:
               type: string
               description: Optional human detail
+            translation_key:
+              type: string
+              description: Optional i18n key the client can use to localize the message.
+            retryable:
+              type: boolean
+              description: Whether the client may safely retry the request.
+            fields:
+              type: array
+              description: Per-field validation errors (typically on 422 responses).
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Optional structured, error-specific context.
             request_id:
               type: string
               description: Correlates with the X-Request-Id header

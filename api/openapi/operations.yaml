@@ -2,23 +2,74 @@ openapi: 3.1.0
 info:
   title: Qeet ID — Operations API (audit, billing, analytics)
   version: 0.2.0
-  description: 'Qeet ID identity platform — full HTTP surface.
+  description: |-
+    Observability, governance, and commercial operations for Qeet ID.
 
+    ## Start here
 
-    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
+    1. **Health** first — `GET /healthz` and `/readyz` need no authentication and are the easiest successful call for a new integrator.
+    2. **Observe** — activity feed, usage analytics, and universal search.
+    3. **Investigate & govern** — audit log, compliance evidence, data retention, GDPR erasure, and SIEM log sinks.
+    4. **Commercial** — billing, plans, and entitlements.
 
+    ## Authentication
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+
+    ## Related APIs
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+    - **Identity Management API** — tenants, users, groups, invitations
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+    - **Developer API** — API keys, agents, webhooks, vaults
+
+    ## Contract maintenance
+
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification.
 servers:
   - url: https://api.id.qeet.in
     description: Production
   - url: http://localhost:4001
     description: Local (make dev)
 tags:
+  - name: Health
+    description: Liveness, readiness, and Prometheus metrics.
+  - name: Activity
+    description: >-
+      Live Activity feed — a real-time SSE event stream and cursor-paginated
+      history, both sourced from the hash-chained audit log and the NATS outbox.
+      Tenant-scoped; requires audit.read. The SSE stream fans out domain events
+      from the transactional outbox; reconnects replay missed events via
+      Last-Event-ID.
+  - name: Analytics
+    description: Per-tenant usage analytics.
+  - name: Search
+    description: >-
+      Universal tenant-scoped fuzzy search across all resource types. Results
+      are RBAC-gated per type — the caller only sees resources their role
+      allows them to read.
   - name: Audit
     description: Append-only, hash-chained audit log query and integrity verification.
+  - name: Compliance
+    description: SOC 2 and ISO 27001 live evidence generation from real tenant system state.
+  - name: Data Retention
+    description: Per-tenant auto-purge of soft-deleted users.
   - name: GDPR
     description: Right-to-erasure purge requests.
+  - name: Log Sinks
+    description: 'SIEM log-sink connectors — forward audit and event streams to external SIEM destinations.'
+  - name: Notifications
+    description: 'In-app notifications — list notifications and mark them read.'
+  - name: Rate Limits
+    description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
+  - name: Email Templates
+    description: Per-tenant transactional email template overrides.
+  - name: Qeet AI
+    description: >-
+      AI qeetai inference service — streaming conversation turns, conversation
+      management, and configuration status. Tool execution runs client-side
+      under the user's own token (RBAC/RLS/audit inherited). API key is
+      server-side only and never returned by any endpoint.
   - name: Billing
     description: Subscription plans, subscriptions, and invoices.
   - name: Entitlements
@@ -27,39 +78,63 @@ tags:
       limits. Read by the console to gate the UI off the same source of truth the
       backend enforces on. Gated create endpoints return 402 with a stable code
       (billing.plan_limit / billing.upgrade_required) when a plan cap is reached.
-  - name: Analytics
-    description: Per-tenant usage analytics.
-  - name: Email Templates
-    description: Per-tenant transactional email template overrides.
-  - name: Data Retention
-    description: Per-tenant auto-purge of soft-deleted users.
-  - name: Admin
-    description: Operational/admin endpoints (outbox DLQ).
-  - name: Health
-    description: Liveness, readiness, and Prometheus metrics.
-  - name: Rate Limits
-    description: Per-tenant rate-limit overrides (tenant / user / API-key buckets).
-  - name: Compliance
-    description: SOC 2 and ISO 27001 live evidence generation from real tenant system state.
-  - name: Qeet AI
-    description: >-
-      AI qeetai inference service — streaming conversation turns, conversation
-      management, and configuration status. Tool execution runs client-side
-      under the user's own token (RBAC/RLS/audit inherited). API key is
-      server-side only and never returned by any endpoint.
-  - name: Search
-    description: >-
-      Universal tenant-scoped fuzzy search across all resource types. Results
-      are RBAC-gated per type — the caller only sees resources their role
-      allows them to read.
-  - name: Activity
-    description: >-
-      Live Activity feed — a real-time SSE event stream and cursor-paginated
-      history, both sourced from the hash-chained audit log and the NATS outbox.
-      Tenant-scoped; requires audit.read. The SSE stream fans out domain events
-      from the transactional outbox; reconnects replay missed events via
-      Last-Event-ID.
+  - name: Sales
+    description: 'Contact-sales lead capture (public marketing endpoint).'
 paths:
+  /healthz:
+    get:
+      operationId: get_healthz
+      description: 'Returns 200 whenever the process can answer the request, reporting only that the instance is running rather than that its dependencies are reachable. Requires no authentication and performs no dependency checks, making it the cheapest way to confirm connectivity. Container orchestrators use this signal to decide whether to restart the instance.'
+      summary: Liveness
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /metrics:
+    get:
+      operationId: get_metrics
+      description: 'Exposes process and request metrics in Prometheus exposition format for scraping by a metrics collector. Requires no authentication and is intended to be reached only from within the deployment network. The payload reflects the instance''s current counters and gauges at the time of the call.'
+      summary: Metrics (Prometheus)
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Prometheus exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+  /readyz:
+    get:
+      operationId: get_readyz
+      description: 'Runs every registered dependency probe under a short shared timeout and returns 200 only when all pass, otherwise 503 with a per-check breakdown. Requires no authentication. Unlike the liveness probe, a failure here indicates the instance is temporarily unable to serve traffic, so orchestrators route requests away without restarting the process.'
+      summary: Readiness
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        '503':
+          description: Not ready (a dependency is down)
   /v1/activity:
     get:
       operationId: get_v1_activity
@@ -374,6 +449,40 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/analytics/overview:
+    get:
+      operationId: get_v1_tenants_ByTenantID_analytics_overview
+      summary: Tenant analytics overview
+      tags:
+        - Analytics
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/search:
     get:
       operationId: get_v1_search
@@ -437,358 +546,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/rate-limits:
-    get:
-      operationId: get_v1_tenants_ByTenantID_rate_limits
-      summary: Get rate limits
-      description: >-
-        Returns the effective per-bucket limits (tenant, user, api_key) — the
-        platform defaults merged with any tenant-specific overrides.
-      tags:
-        - Rate Limits
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Effective limits
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantRateLimits'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    put:
-      operationId: put_v1_tenants_ByTenantID_rate_limits
-      summary: Set rate limits
-      tags:
-        - Rate Limits
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TenantRateLimits'
-      responses:
-        '200':
-          description: Updated effective limits
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantRateLimits'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-    delete:
-      operationId: delete_v1_tenants_ByTenantID_rate_limits
-      summary: Reset rate limits
-      tags:
-        - Rate Limits
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Overrides cleared
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /healthz:
-    get:
-      operationId: get_healthz
-      summary: Liveness
-      tags:
-        - Health
-      security: []
-      responses:
-        '200':
-          description: Alive
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
-  /metrics:
-    get:
-      operationId: get_metrics
-      summary: Metrics (Prometheus)
-      tags:
-        - Health
-      security: []
-      responses:
-        '200':
-          description: Prometheus exposition format
-          content:
-            text/plain:
-              schema:
-                type: string
-  /readyz:
-    get:
-      operationId: get_readyz
-      summary: Readiness
-      tags:
-        - Health
-      security: []
-      responses:
-        '200':
-          description: Ready
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-        '503':
-          description: Not ready (a dependency is down)
-  /v1/tenants/{tenantID}/billing/checkout:
-    post:
-      operationId: post_v1_tenants_ByTenantID_billing_checkout
-      summary: Start checkout
-      description: >-
-        Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
-      tags:
-        - Billing
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - plan_code
-                - currency
-                - success_url
-                - cancel_url
-              properties:
-                plan_code:
-                  type: string
-                currency:
-                  type: string
-                country:
-                  type: string
-                  description: ISO-3166-1 alpha-2 billing country; selects the payment provider. Omitted → currency-based routing.
-                success_url:
-                  type: string
-                  format: uri
-                cancel_url:
-                  type: string
-                  format: uri
-      responses:
-        '200':
-          description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/billing/webhooks/{provider}:
-    post:
-      operationId: post_v1_billing_webhooks_ByProvider
-      summary: Payment webhook
-      description: >-
-        Receives provider payment events. Authenticated by the provider's webhook signature (no user session); on a verified successful payment the referenced checkout is completed idempotently.
-      tags:
-        - Billing
-      security: []
-      parameters:
-        - name: provider
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [stripe, razorpay]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Event acknowledged
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/billing/plans:
-    get:
-      operationId: get_v1_billing_plans
-      summary: List plans
-      tags:
-        - Billing
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/gdpr/purge:
-    post:
-      operationId: post_v1_gdpr_purge
-      summary: Create purge request
-      tags:
-        - GDPR
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/gdpr/purge/{id}:
-    delete:
-      operationId: delete_v1_gdpr_purge_ById
-      summary: Cancel purge request
-      tags:
-        - GDPR
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '204':
-          description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/analytics/overview:
-    get:
-      operationId: get_v1_tenants_ByTenantID_analytics_overview
-      summary: Tenant analytics overview
-      tags:
-        - Analytics
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/audit:
     get:
       operationId: get_v1_tenants_ByTenantID_audit
+      description: 'Returns the tenant''s audit events in reverse chronological order with cursor-based pagination and optional filters for action, resource type, actor, and a free-text query. The audit log is append-only and hash-chained, so results reflect an immutable record of activity. Pass the returned cursor to page through history; access is restricted to the tenant named in the path.'
       summary: List audit events
       tags:
         - Audit
@@ -825,8 +586,12 @@ paths:
         - name: limit
           in: query
           required: false
+          description: Page size. Defaults to 50; the server clamps values above 200.
           schema:
             type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
         - name: cursor
           in: query
           required: false
@@ -841,6 +606,21 @@ paths:
           description: '{ items: AuditEvent[], next_cursor: string }'
           content:
             application/json:
+              example:
+                events:
+                  - id: 018f2a90-1b2c-7d3e-8f40-5a6b7c8d9e01
+                    action: user.created
+                    resource_type: user
+                    resource_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+                    actor_user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+                    created_at: '2026-09-24T10:15:04Z'
+                  - id: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
+                    action: tenant.created
+                    resource_type: tenant
+                    resource_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                    actor_user_id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+                    created_at: '2026-09-24T10:15:00Z'
+                next_cursor: 018f2a90-0a1b-7c2d-8e3f-4a5b6c7d8e00
               schema:
                 type: object
                 additionalProperties: true
@@ -953,6 +733,7 @@ paths:
   /v1/tenants/{tenantID}/audit/anomalies/summary:
     get:
       operationId: get_v1_tenants_ByTenantID_audit_anomalies_summary
+      description: 'Returns aggregate counts of detected anomalies for the tenant, including currently open anomalies, those resolved in the last seven days, and the number scored as high severity. Anomalies come from scoring the append-only audit log against a per-actor behavioral baseline. Intended to drive an at-a-glance security dashboard.'
       summary: Audit anomaly summary
       tags:
         - Audit
@@ -980,6 +761,7 @@ paths:
   /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve:
     post:
       operationId: post_v1_tenants_ByTenantID_audit_anomalies_ById_resolve
+      description: 'Marks the identified anomaly as resolved and records the acting administrator, removing it from the open queue. Returns 404 when no matching open anomaly exists for the tenant. This is a review action only and does not alter the underlying audit events that triggered detection.'
       summary: Resolve an audit anomaly
       tags:
         - Audit
@@ -1009,6 +791,7 @@ paths:
   /v1/tenants/{tenantID}/audit/anomaly-settings:
     get:
       operationId: get_v1_tenants_ByTenantID_audit_anomaly_settings
+      description: 'Returns the tenant''s anomaly-detection configuration, including whether scoring is enabled, the score threshold above which an event is flagged, and the minimum number of baseline events required before scoring begins. Platform defaults are reported when the tenant has not customized the settings.'
       summary: Get anomaly-detection settings
       tags:
         - Audit
@@ -1034,6 +817,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_audit_anomaly_settings
+      description: 'Replaces the tenant''s anomaly-detection configuration. The score threshold must be between 0 and 1 and the minimum baseline count must be non-negative, otherwise the request is rejected as unprocessable. Changes take effect on the next background scoring pass, and the stored settings are returned.'
       summary: Update anomaly-detection settings
       tags:
         - Audit
@@ -1065,46 +849,132 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/billing/invoices:
-    get:
-      operationId: get_v1_tenants_ByTenantID_billing_invoices
-      summary: List invoices
+  /v1/tenants/{tenantID}/compliance/{framework}/evidence:
+    post:
+      operationId: post_v1_tenants_ByTenantID_compliance_ByFramework_evidence
+      summary: Generate compliance evidence
+      description: >-
+        Runs all controls for the framework against live tenant state (MFA
+        policy, audit log, RBAC, retention, SIEM config, secrets vault, etc.),
+        persists an immutable evidence run, and returns the full per-control
+        report. framework must be 'soc2' or 'iso27001'.
       tags:
-        - Billing
+        - Compliance
       parameters:
         - name: tenantID
           in: path
           required: true
           schema:
             type: string
+            format: uuid
+        - name: framework
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [soc2, iso27001]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Evidence run generated; body contains the full control-by-control report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceRun'
+        '400':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_ByFramework_evidence
+      summary: List compliance evidence runs
+      description: >-
+        Returns previous evidence runs for the framework, most recent first.
+        Controls are omitted; call GET .../compliance/evidence/{id} for the
+        full report.
+      tags:
+        - Compliance
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: framework
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [soc2, iso27001]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
       responses:
         '200':
-          description: OK
+          description: List of evidence runs (controls omitted).
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/EvidenceRun'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/compliance/evidence/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_compliance_evidence_ById
+      summary: Get compliance evidence run (full report)
+      description: >-
+        Returns the full evidence run including per-control results. Carries a
+        Content-Disposition header so browsers treat it as a downloadable JSON
+        evidence report. tenant-scoped; 404 when the run belongs to a different tenant.
+      tags:
+        - Compliance
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Full evidence run with per-control results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvidenceRun'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/subscription:
+  /v1/tenants/{tenantID}/retention:
     get:
-      operationId: get_v1_tenants_ByTenantID_billing_subscription
-      summary: Get subscription
+      operationId: get_v1_tenants_ByTenantID_retention
+      summary: Get retention policy
       tags:
-        - Billing
+        - Data Retention
       parameters:
         - name: tenantID
           in: path
@@ -1134,10 +1004,10 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
     put:
-      operationId: put_v1_tenants_ByTenantID_billing_subscription
-      summary: Subscribe / change plan
+      operationId: put_v1_tenants_ByTenantID_retention
+      summary: Update retention policy
       tags:
-        - Billing
+        - Data Retention
       parameters:
         - name: tenantID
           in: path
@@ -1174,12 +1044,12 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/billing/subscription/cancel:
+  /v1/tenants/{tenantID}/retention/preview:
     post:
-      operationId: post_v1_tenants_ByTenantID_billing_subscription_cancel
-      summary: Cancel at period end
+      operationId: post_v1_tenants_ByTenantID_retention_preview
+      summary: Preview ripe users
       tags:
-        - Billing
+        - Data Retention
       parameters:
         - name: tenantID
           in: path
@@ -1216,18 +1086,300 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/entitlements:
-    get:
-      operationId: get_v1_tenants_ByTenantID_entitlements
-      summary: Get plan entitlements
+  /v1/tenants/{tenantID}/retention/run:
+    post:
+      operationId: post_v1_tenants_ByTenantID_retention_run
+      summary: Run purge now
       tags:
-        - Entitlements
-      description: >-
-        Returns the tenant's resolved entitlements: the effective plan code, the
-        boolean feature flags, and the numeric limits (-1 = unlimited). Resolved
-        from the active subscription (falling back to the tenant's plan label),
-        so an in-app upgrade is reflected immediately. Readable by any
-        authenticated member of the tenant; scoped to the caller's own tenant.
+        - Data Retention
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/gdpr/purge:
+    post:
+      operationId: post_v1_gdpr_purge
+      summary: Create purge request
+      tags:
+        - GDPR
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/gdpr/purge/{id}:
+    delete:
+      operationId: delete_v1_gdpr_purge_ById
+      summary: Cancel purge request
+      tags:
+        - GDPR
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/gdpr/purge:
+    get:
+      operationId: get_v1_tenants_ByTenantID_gdpr_purge
+      summary: List purge requests
+      tags:
+        - GDPR
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/gdpr/export:
+    post:
+      operationId: post_v1_gdpr_export
+      summary: Request a GDPR data export
+      tags:
+        - GDPR
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload.
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/gdpr/export:
+    get:
+      operationId: get_v1_tenants_ByTenantID_gdpr_export
+      summary: List GDPR export requests
+      tags:
+        - GDPR
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/gdpr/export/{id}:
+    get:
+      operationId: get_v1_tenants_ByTenantID_gdpr_export_ById
+      summary: Get a GDPR export request (payload once ready)
+      tags:
+        - GDPR
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/account/export:
+    post:
+      operationId: post_v1_account_export
+      description: 'Assembles the authenticated user''s own portable data across every organization they belong to and returns it synchronously as a downloadable JSON attachment, supporting the data-portability right. The caller is identified from the session or key, so no user identifier is supplied and no tenant scope is required.'
+      summary: Export the authenticated user's portable account data
+      tags: [GDPR]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Portable account data excluding credential material
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/account/delete:
+    post:
+      operationId: post_v1_account_delete
+      description: 'Immediately erases the authenticated user''s personal data and credentials and revokes all of their sessions, exercising the right to erasure. When the account has a password, the current password must be supplied in the body to re-prove identity before this irreversible action; password-less accounts are authorized by the session alone. Audit references are retained in redacted form so the hash-chained log stays verifiable, and the client should sign the user out afterward.'
+      summary: Delete the authenticated user's account
+      tags: [GDPR]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Account data erased and sessions revoked }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/log-sinks:
+    get:
+      operationId: get_v1_tenants_ByTenantID_log_sinks
+      description: 'Returns the tenant''s configured log sinks, each describing an external destination that receives forwarded audit events, along with its enabled state, last-forwarded timestamp, and last delivery error. Destination credentials such as tokens are never returned. Use this to review which SIEM integrations are active for the tenant.'
+      summary: List log sinks
+      tags:
+        - Log Sinks
       parameters:
         - name: tenantID
           in: path
@@ -1239,65 +1391,263 @@ paths:
         - apiKeyAuth: []
       responses:
         '200':
-          description: OK
+          description: Configured sinks (tokens are write-only, not returned)
           content:
             application/json:
               schema:
                 type: object
-                required:
-                  - plan
-                  - features
-                  - limits
                 properties:
-                  plan:
-                    type: string
-                    enum: [free, starter, pro, enterprise]
-                    description: Effective plan tier (annual "_year" variants folded to the base tier).
-                  features:
-                    type: object
-                    description: Boolean feature flags keyed by feature name.
-                    additionalProperties:
-                      type: boolean
-                    example:
-                      passkeys: true
-                      password: true
-                      magic_links: true
-                      social: true
-                      totp: true
-                      email_otp: true
-                      hosted_login: true
-                      sms_mfa: false
-                      custom_branding: false
-                      custom_domain: false
-                      sso: false
-                      scim: false
-                      ldap: false
-                      webhooks: false
-                      audit_export: false
-                      ai_qeetai: false
-                      abac: false
-                  limits:
-                    type: object
-                    description: Numeric resource caps keyed by resource name; -1 means unlimited.
-                    additionalProperties:
-                      type: integer
-                    example:
-                      seats: 5
-                      apps: 3
-                      api_keys: 2
-                      custom_roles: 0
-                      webhooks: 0
-                      orgs: 1
-                      mau: 10000
-                      audit_retention_days: 7
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_log_sinks
+      description: 'Registers a destination that forwards the tenant''s audit events to an external SIEM (Splunk HEC, Datadog, or a generic HTTP endpoint). The endpoint must be valid and the sink type recognized, otherwise the request is rejected as unprocessable. Any supplied token is encrypted at rest; forwarding starts from creation time with no backfill of historical events, and delivery is at-least-once.'
+      summary: Create log sink
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+                - endpoint
+              properties:
+                type:
+                  type: string
+                  enum: [splunk_hec, datadog, http]
+                endpoint:
+                  type: string
+                  format: uri
+                token:
+                  type: string
+      responses:
+        '201':
+          description: Sink created (streams new audit events from now)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/log-sinks/{id}:
+    patch:
+      operationId: patch_v1_tenants_ByTenantID_log_sinks_ById
+      description: 'Toggles whether the identified log sink actively forwards events, without deleting its configuration or resetting its position. Returns 404 when the sink does not exist for the tenant. Re-enabling resumes forwarding from where the sink last left off.'
+      summary: Enable/disable sink
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_log_sinks_ById
+      description: 'Permanently removes the identified log sink and stops any further forwarding to its destination. Returns 404 when the sink does not exist for the tenant. Stored credentials for the destination are discarded; already-delivered events are unaffected.'
+      summary: Delete sink
+      tags:
+        - Log Sinks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/notifications:
+    get:
+      operationId: get_v1_notifications
+      description: 'Returns the authenticated user''s most recent notifications together with the current unread count. Results are scoped to the calling user, and no tenant is required. Pair with the mark-all-read operation to clear the unread state.'
+      summary: List notifications
+      tags:
+        - Notifications
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Notification inbox
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  unread_count:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/notifications/mark-all-read:
+    post:
+      operationId: post_v1_notifications_mark_all_read
+      description: 'Clears the unread state on all of the authenticated user''s notifications in a single call. The notifications themselves are retained; only their read status changes. A subsequent list reports an unread count of zero.'
+      summary: Mark all read
+      tags:
+        - Notifications
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: All notifications marked read
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/tenants/{tenantID}/rate-limits:
+    get:
+      operationId: get_v1_tenants_ByTenantID_rate_limits
+      summary: Get rate limits
+      description: >-
+        Returns the effective per-bucket limits (tenant, user, api_key) — the
+        platform defaults merged with any tenant-specific overrides.
+      tags:
+        - Rate Limits
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Effective limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantRateLimits'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: put_v1_tenants_ByTenantID_rate_limits
+      description: 'Stores per-tenant overrides for the request rate limits applied to the tenant, its users, and its API keys, replacing any previous override. Values are validated before being persisted. Overrides take precedence over the platform defaults; remove them with the reset operation to fall back to those defaults.'
+      summary: Set rate limits
+      tags:
+        - Rate Limits
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantRateLimits'
+      responses:
+        '200':
+          description: Updated effective limits
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantRateLimits'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_rate_limits
+      description: 'Removes the tenant''s rate-limit overrides so the platform default limits apply again. Succeeds even when no override is currently set. The change is written to the audit log and propagated to the limiter.'
+      summary: Reset rate limits
+      tags:
+        - Rate Limits
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Overrides cleared
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/tenants/{tenantID}/email-templates:
     get:
       operationId: get_v1_tenants_ByTenantID_email_templates
@@ -1568,612 +1918,6 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/gdpr/purge:
-    get:
-      operationId: get_v1_tenants_ByTenantID_gdpr_purge
-      summary: List purge requests
-      tags:
-        - GDPR
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/gdpr/export:
-    post:
-      operationId: post_v1_gdpr_export
-      summary: Request a GDPR data export
-      tags:
-        - GDPR
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Queues an async export job; poll GET .../gdpr/export/{id} for status and payload.
-      responses:
-        '202':
-          description: Accepted
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/gdpr/export:
-    get:
-      operationId: get_v1_tenants_ByTenantID_gdpr_export
-      summary: List GDPR export requests
-      tags:
-        - GDPR
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/gdpr/export/{id}:
-    get:
-      operationId: get_v1_tenants_ByTenantID_gdpr_export_ById
-      summary: Get a GDPR export request (payload once ready)
-      tags:
-        - GDPR
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Returns status plus the full data payload once status is "ready"; response carries a Content-Disposition download header in that case.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/log-sinks:
-    get:
-      operationId: get_v1_tenants_ByTenantID_log_sinks
-      summary: List log sinks
-      tags:
-        - Log Sinks
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Configured sinks (tokens are write-only, not returned)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: post_v1_tenants_ByTenantID_log_sinks
-      summary: Create log sink
-      tags:
-        - Log Sinks
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - type
-                - endpoint
-              properties:
-                type:
-                  type: string
-                  enum: [splunk_hec, datadog, http]
-                endpoint:
-                  type: string
-                  format: uri
-                token:
-                  type: string
-      responses:
-        '201':
-          description: Sink created (streams new audit events from now)
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/log-sinks/{id}:
-    patch:
-      operationId: patch_v1_tenants_ByTenantID_log_sinks_ById
-      summary: Enable/disable sink
-      tags:
-        - Log Sinks
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                enabled:
-                  type: boolean
-      responses:
-        '200':
-          description: Updated
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      operationId: delete_v1_tenants_ByTenantID_log_sinks_ById
-      summary: Delete sink
-      tags:
-        - Log Sinks
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: Removed
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/tenants/{tenantID}/retention:
-    get:
-      operationId: get_v1_tenants_ByTenantID_retention
-      summary: Get retention policy
-      tags:
-        - Data Retention
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-    put:
-      operationId: put_v1_tenants_ByTenantID_retention
-      summary: Update retention policy
-      tags:
-        - Data Retention
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/retention/preview:
-    post:
-      operationId: post_v1_tenants_ByTenantID_retention_preview
-      summary: Preview ripe users
-      tags:
-        - Data Retention
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/retention/run:
-    post:
-      operationId: post_v1_tenants_ByTenantID_retention_run
-      summary: Run purge now
-      tags:
-        - Data Retention
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/notifications:
-    get:
-      operationId: get_v1_notifications
-      summary: List notifications
-      tags:
-        - Notifications
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Notification inbox
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-                  unread_count:
-                    type: integer
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /v1/notifications/mark-all-read:
-    post:
-      operationId: post_v1_notifications_mark_all_read
-      summary: Mark all read
-      tags:
-        - Notifications
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204':
-          description: All notifications marked read
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /v1/tenants/{tenantID}/compliance/{framework}/evidence:
-    post:
-      operationId: post_v1_tenants_ByTenantID_compliance_ByFramework_evidence
-      summary: Generate compliance evidence
-      description: >-
-        Runs all controls for the framework against live tenant state (MFA
-        policy, audit log, RBAC, retention, SIEM config, secrets vault, etc.),
-        persists an immutable evidence run, and returns the full per-control
-        report. framework must be 'soc2' or 'iso27001'.
-      tags:
-        - Compliance
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: framework
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [soc2, iso27001]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '201':
-          description: Evidence run generated; body contains the full control-by-control report.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EvidenceRun'
-        '400':
-          $ref: '#/components/responses/Unprocessable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    get:
-      operationId: get_v1_tenants_ByTenantID_compliance_ByFramework_evidence
-      summary: List compliance evidence runs
-      description: >-
-        Returns previous evidence runs for the framework, most recent first.
-        Controls are omitted; call GET .../compliance/evidence/{id} for the
-        full report.
-      tags:
-        - Compliance
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: framework
-          in: path
-          required: true
-          schema:
-            type: string
-            enum: [soc2, iso27001]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: List of evidence runs (controls omitted).
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/EvidenceRun'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/tenants/{tenantID}/compliance/evidence/{id}:
-    get:
-      operationId: get_v1_tenants_ByTenantID_compliance_evidence_ById
-      summary: Get compliance evidence run (full report)
-      description: >-
-        Returns the full evidence run including per-control results. Carries a
-        Content-Disposition header so browsers treat it as a downloadable JSON
-        evidence report. tenant-scoped; 404 when the run belongs to a different tenant.
-      tags:
-        - Compliance
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Full evidence run with per-control results.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EvidenceRun'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
   /v1/qeetai/status:
     get:
       operationId: get_v1_qeetai_status
@@ -2436,27 +2180,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /v1/account/export:
-    post:
-      operationId: post_v1_account_export
-      summary: Export the authenticated user's portable account data
-      tags: [GDPR]
+  /v1/qeetai/provider-config:
+    get:
+      operationId: get_v1_qeetai_provider_config
+      description: 'Returns the tenant''s bring-your-own-key AI provider configuration with any secret values masked. Absence of a configuration means the deployment''s platform fallback, or none, is in effect. Scoped to the caller''s tenant and restricted to organization administrators.'
+      summary: Get masked tenant AI provider configuration
+      tags: [Qeet AI]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
       responses:
         '200':
-          description: Portable account data excluding credential material
+          description: Masked provider configuration
           content:
             application/json:
               schema: { type: object, additionalProperties: true }
         '401':
           $ref: '#/components/responses/Unauthorized'
-  /v1/account/delete:
+    put:
+      operationId: put_v1_qeetai_provider_config
+      description: 'Stores the tenant''s own AI provider credentials so the assistant runs against the tenant''s key rather than the platform fallback, which unlocks it regardless of plan. Secrets are encrypted at rest and are never returned in full by the read endpoint. Restricted to organization administrators; validate the credentials with the test operation before saving.'
+      summary: Store tenant AI provider configuration
+      tags: [Qeet AI]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Updated provider configuration
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      operationId: delete_v1_qeetai_provider_config
+      description: 'Removes the tenant''s bring-your-own-key AI provider configuration, reverting to the deployment''s platform fallback where one is available. Restricted to organization administrators. Once removed, assistant availability again depends on the tenant''s plan.'
+      summary: Delete tenant AI provider configuration
+      tags: [Qeet AI]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204': { description: Provider configuration deleted }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/qeetai/provider-config/test:
     post:
-      operationId: post_v1_account_delete
-      summary: Delete the authenticated user's account
-      tags: [GDPR]
+      operationId: post_v1_qeetai_provider_config_test
+      description: 'Validates AI provider credentials with a live call and reports whether they work, without persisting them. Accepts candidate credentials in the body or, when omitted, tests the stored configuration. Use this before saving a new key to confirm the provider accepts it.'
+      summary: Test tenant AI provider credentials
+      tags: [Qeet AI]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -2466,14 +2245,284 @@ paths:
           application/json:
             schema: { type: object, additionalProperties: true }
       responses:
-        '204': { description: Account data erased and sessions revoked }
+        '200':
+          description: Provider connectivity result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/tenants/{tenantID}/billing/checkout:
+    post:
+      operationId: post_v1_tenants_ByTenantID_billing_checkout
+      summary: Start checkout
+      description: >-
+        Returns a hosted-payment URL to redirect the admin to, or {status:"active"} when the plan is free or no card provider serves the request (direct activation). The provider is chosen by billing country (config-driven; an omitted country falls back to currency-based routing: INR → Razorpay, else the default provider). The provider's webhook later activates the subscription.
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - plan_code
+                - currency
+                - success_url
+                - cancel_url
+              properties:
+                plan_code:
+                  type: string
+                currency:
+                  type: string
+                country:
+                  type: string
+                  description: ISO-3166-1 alpha-2 billing country; selects the payment provider. Omitted → currency-based routing.
+                success_url:
+                  type: string
+                  format: uri
+                cancel_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Either a checkout URL ({status:"checkout"}) or {status:"active"}
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/billing/webhooks/{provider}:
+    post:
+      operationId: post_v1_billing_webhooks_ByProvider
+      summary: Payment webhook
+      description: >-
+        Receives provider payment events. Authenticated by the provider's webhook signature (no user session); on a verified successful payment the referenced checkout is completed idempotently.
+      tags:
+        - Billing
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [stripe, razorpay]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Event acknowledged
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/billing/plans:
+    get:
+      operationId: get_v1_billing_plans
+      summary: List plans
+      tags:
+        - Billing
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/invoices:
+    get:
+      operationId: get_v1_tenants_ByTenantID_billing_invoices
+      summary: List invoices
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/subscription:
+    get:
+      operationId: get_v1_tenants_ByTenantID_billing_subscription
+      summary: Get subscription
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    put:
+      operationId: put_v1_tenants_ByTenantID_billing_subscription
+      summary: Subscribe / change plan
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/tenants/{tenantID}/billing/subscription/cancel:
+    post:
+      operationId: post_v1_tenants_ByTenantID_billing_subscription_cancel
+      summary: Cancel at period end
+      tags:
+        - Billing
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/signup/checkout:
     post:
       operationId: post_v1_signup_checkout
+      description: 'Begins a hosted payment for a plan chosen during signup, before any organization exists. The organization is created only once payment completes, so an abandoned checkout never leaves a dangling tenant. Scoped to the authenticated user; the organization name and slug are required and the return URLs must be valid absolute URLs. Returns the details needed to redirect the browser to the payment provider.'
       summary: Start paid-plan checkout before tenant creation
       tags: [Billing]
       security:
@@ -2497,6 +2546,7 @@ paths:
   /v1/billing/razorpay/verify:
     post:
       operationId: post_v1_billing_razorpay_verify
+      description: 'Completes a checkout from a Razorpay payment-link redirect using the signed callback parameters posted by the browser. Authenticity is established by the Razorpay signature rather than a session, so the endpoint requires no authentication and is CSRF-exempt. Completion is idempotent, so a later asynchronous webhook for the same payment is a harmless no-op.'
       summary: Verify a Razorpay payment-link callback
       tags: [Billing]
       security: []
@@ -2512,6 +2562,7 @@ paths:
   /v1/billing/sandbox/checkout:
     get:
       operationId: get_v1_billing_sandbox_checkout
+      description: 'Renders a mock hosted-checkout page that stands in for a real payment provider flow during local development. Returns 404 when the sandbox provider is not enabled, so it is inert in production. The success and cancel return URLs are validated to prevent an open redirect.'
       summary: Render the development-only sandbox checkout page
       tags: [Billing]
       security: []
@@ -2526,6 +2577,7 @@ paths:
   /v1/billing/sandbox/pay:
     post:
       operationId: post_v1_billing_sandbox_pay
+      description: 'Completes the referenced checkout along the same path a real payment webhook would take, then redirects the browser to the validated success URL. Returns 404 when the sandbox provider is not enabled. Used only in local development to exercise the redirect-then-success flow without a payment account.'
       summary: Complete a development-only sandbox checkout
       tags: [Billing]
       security: []
@@ -2542,6 +2594,7 @@ paths:
   /v1/tenants/{tenantID}/billing/profile:
     get:
       operationId: get_v1_tenants_ByTenantID_billing_profile
+      description: 'Returns the tenant''s billing profile, such as the legal entity, address, and tax identifiers used on invoices. Scoped to the tenant named in the path. Populate or amend it with the corresponding update operation before generating tax-compliant invoices.'
       summary: Get tenant billing profile
       tags: [Billing]
       security:
@@ -2564,6 +2617,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: put_v1_tenants_ByTenantID_billing_profile
+      description: 'Creates or replaces the tenant''s billing profile and returns the stored result. Scoped to the tenant named in the path. These details feed invoice generation, so keep them accurate for the tenant''s jurisdiction.'
       summary: Update tenant billing profile
       tags: [Billing]
       security:
@@ -2592,6 +2646,7 @@ paths:
   /v1/tenants/{tenantID}/billing/trial:
     post:
       operationId: post_v1_tenants_ByTenantID_billing_trial
+      description: 'Starts a time-limited trial of the requested plan for the tenant and returns the resulting subscription. Scoped to the tenant named in the path. When the trial expires the subscription follows the normal billing lifecycle unless a paid plan is selected first.'
       summary: Start a tenant plan trial
       tags: [Billing]
       security:
@@ -2617,9 +2672,92 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /v1/tenants/{tenantID}/entitlements:
+    get:
+      operationId: get_v1_tenants_ByTenantID_entitlements
+      summary: Get plan entitlements
+      tags:
+        - Entitlements
+      description: >-
+        Returns the tenant's resolved entitlements: the effective plan code, the
+        boolean feature flags, and the numeric limits (-1 = unlimited). Resolved
+        from the active subscription (falling back to the tenant's plan label),
+        so an in-app upgrade is reflected immediately. Readable by any
+        authenticated member of the tenant; scoped to the caller's own tenant.
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - plan
+                  - features
+                  - limits
+                properties:
+                  plan:
+                    type: string
+                    enum: [free, starter, pro, enterprise]
+                    description: Effective plan tier (annual "_year" variants folded to the base tier).
+                  features:
+                    type: object
+                    description: Boolean feature flags keyed by feature name.
+                    additionalProperties:
+                      type: boolean
+                    example:
+                      passkeys: true
+                      password: true
+                      magic_links: true
+                      social: true
+                      totp: true
+                      email_otp: true
+                      hosted_login: true
+                      sms_mfa: false
+                      custom_branding: false
+                      custom_domain: false
+                      sso: false
+                      scim: false
+                      ldap: false
+                      webhooks: false
+                      audit_export: false
+                      ai_qeetai: false
+                      abac: false
+                  limits:
+                    type: object
+                    description: Numeric resource caps keyed by resource name; -1 means unlimited.
+                    additionalProperties:
+                      type: integer
+                    example:
+                      seats: 5
+                      apps: 3
+                      api_keys: 2
+                      custom_roles: 0
+                      webhooks: 0
+                      orgs: 1
+                      mau: 10000
+                      audit_retention_days: 7
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/entitlements/usage:
     get:
       operationId: get_v1_tenants_ByTenantID_entitlements_usage
+      description: 'Returns the tenant''s current consumption for each metered resource, such as seats, applications, and API keys, for display against the plan''s limits. It complements the entitlements endpoint, which resolves the plan''s capability set, by running the underlying count queries only when the usage view needs them. Scoped to the tenant named in the path.'
       summary: Get tenant resource usage against plan limits
       tags: [Entitlements]
       security:
@@ -2640,77 +2778,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/qeetai/provider-config:
-    get:
-      operationId: get_v1_qeetai_provider_config
-      summary: Get masked tenant AI provider configuration
-      tags: [Qeet AI]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Masked provider configuration
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    put:
-      operationId: put_v1_qeetai_provider_config
-      summary: Store tenant AI provider configuration
-      tags: [Qeet AI]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        '200':
-          description: Updated provider configuration
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-    delete:
-      operationId: delete_v1_qeetai_provider_config
-      summary: Delete tenant AI provider configuration
-      tags: [Qeet AI]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '204': { description: Provider configuration deleted }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-  /v1/qeetai/provider-config/test:
-    post:
-      operationId: post_v1_qeetai_provider_config_test
-      summary: Test tenant AI provider credentials
-      tags: [Qeet AI]
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        '200':
-          description: Provider connectivity result
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /v1/sales/leads:
     post:
       operationId: post_v1_sales_leads
+      description: 'Records a contact-sales lead for follow-up and, on a best-effort basis, notifies the configured sales inbox; a delivery failure does not fail the request because the lead is already persisted. Available to any authenticated user, including during onboarding before an organization exists, with tenant and user recorded when known. Returns 202 to acknowledge the lead was accepted for processing.'
       summary: Submit a contact-sales lead
       tags: [Sales]
       security:
@@ -3357,6 +3428,28 @@ components:
             detail:
               type: string
               description: Optional human detail
+            translation_key:
+              type: string
+              description: Optional i18n key the client can use to localize the message.
+            retryable:
+              type: boolean
+              description: Whether the client may safely retry the request.
+            fields:
+              type: array
+              description: Per-field validation errors (typically on 422 responses).
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Optional structured, error-specific context.
             request_id:
               type: string
               description: Correlates with the X-Request-Id header

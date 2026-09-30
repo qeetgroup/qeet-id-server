@@ -4,11 +4,11 @@
 # Usage:
 #   ./run.sh                          # full run against http://localhost:4001
 #   ./run.sh --base http://localhost:4001
-#   ./run.sh --folder Auth            # run one folder
-#   ./run.sh --folder Auth --folder Tenants  # run multiple folders (repeat flag)
+#   ./run.sh --folder "03 Auth"       # run one folder (bare "Auth" also resolves)
+#   ./run.sh --folder "03 Auth" --folder "09 Tenants"  # multiple (repeat flag)
 #   ./run.sh --ci                     # JUnit + HTML reports under ./reports
 #   ./run.sh --bail                   # stop on first failure
-#   ./run.sh --skip-501               # skip routes whose name starts with [501]
+#   ./run.sh --skip-501               # skip [501]-tagged routes (NN prefix ok)
 #
 # Requires: Bun. Newman is fetched on demand via bunx.
 
@@ -43,6 +43,25 @@ if [[ ! -f "$ENVIRONMENT" ]]; then
   echo "environment not found: $ENVIRONMENT" >&2; exit 1
 fi
 
+# Resolve a --folder argument to its numbered display name (e.g. Auth -> "03 Auth").
+# Folders in the collection are numbered ("01 Health", "03 Auth", …); this lets old
+# commands that pass the bare name keep working. Already-numbered or unknown names are
+# passed through verbatim. Needs jq for the lookup; without jq, the arg is used as-is.
+normalize_folder() {
+  local arg="$1"
+  if [[ "$arg" =~ ^[0-9][0-9][[:space:]] ]]; then
+    printf '%s' "$arg"; return
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    local match
+    match="$(jq -r --arg a "$arg" \
+      '[ .item[].name | select(test("^[0-9][0-9] ") and (.[3:] == $a)) ] | .[0] // empty' \
+      "$COLLECTION" 2>/dev/null || true)"
+    if [[ -n "$match" ]]; then printf '%s' "$match"; return; fi
+  fi
+  printf '%s' "$arg"
+}
+
 CMD=(bunx newman@6 run "$COLLECTION" -e "$ENVIRONMENT")
 
 if [[ -n "$BASE_URL" ]]; then
@@ -51,7 +70,7 @@ fi
 
 for f in "${FOLDERS[@]:-}"; do
   [[ -z "$f" ]] && continue
-  CMD+=(--folder "$f")
+  CMD+=(--folder "$(normalize_folder "$f")")
 done
 
 [[ -n "$BAIL" ]] && CMD+=("$BAIL")
@@ -73,7 +92,7 @@ if [[ $SKIP_501 -eq 1 ]]; then
   TMP="$(mktemp -t qeet-postman.XXXXXX).json"
   jq '
     .item |= map(
-      .item |= map(select((.name // "") | startswith("[501]") | not))
+      .item |= map(select((.name // "") | test("^(?:[0-9]{2} +)?\\[501\\]") | not))
     )
   ' "$COLLECTION" > "$TMP"
   trap 'rm -f "$TMP"' EXIT

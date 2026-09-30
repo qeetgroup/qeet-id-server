@@ -2,13 +2,36 @@ openapi: 3.1.0
 info:
   title: Qeet ID — Developer API (keys, webhooks, secrets, agents)
   version: 0.2.0
-  description: 'Qeet ID identity platform — full HTTP surface.
+  description: |-
+    Non-human identities and developer integrations for Qeet ID — API keys, AI agents, webhooks, auth hooks, vaults, and verifiable credentials.
 
+    ## The non-human identity model
 
-    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification. Launch-critical families carry fully-described request/response bodies; remaining admin CRUD routes carry accurate path/method/params/security with summarized bodies.
+    - **API keys** resolve to actor_type `api_key`.
+    - **Service principals** (defined in the Federation API) resolve to actor_type `service`.
+    - **AI agents** resolve to actor_type `agent`.
 
+    ## Start here
 
-    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>`), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session).'
+    1. Create an **API key** for simple machine access (`Authorization: ApiKey <key>`), or register an **agent** for AI workloads.
+    2. **Agent tokens are re-minted, never refreshed** — call the mint endpoint again to obtain a fresh short-lived token.
+    3. Wire up **webhooks** and **auth hooks** to react to events and customize auth flows.
+    4. Store secrets in the **Secrets Vault** (tenant secrets) or connect third-party accounts via the **Token Vault** (external OAuth credentials, refreshed for you).
+
+    ## Authentication
+
+    Auth modes: `bearerAuth` (user/service JWT), `apiKeyAuth` (`Authorization: ApiKey <key>` — legacy scheme), `scimBearer` (per-tenant SCIM token), `clientCredentials` (OAuth M2M), and `ssoCookie` (hosted-login SSO session). CSRF protection applies only to `ssoCookie` sessions; `bearerAuth` requests bypass it.
+
+    ## Related APIs
+
+    - **Authentication & Access API** — login, passkeys, MFA, authorization
+    - **Identity Management API** — tenants, users, groups, invitations
+    - **Federation API** — OIDC/OAuth provider, SAML, SCIM, LDAP, social
+    - **Operations API** — audit, analytics, billing
+
+    ## Contract maintenance
+
+    This document covers routes mounted by internal/bootstrap/router.go. internal/bootstrap/openapi_coverage_test.go walks the production mount helpers and fails when a mounted operation is undocumented, a documented operation is stale, or API-auth security declarations disagree with runtime classification.
 servers:
   - url: https://api.id.qeet.in
     description: Production
@@ -17,14 +40,23 @@ servers:
 tags:
   - name: API Keys
     description: Long-lived API keys for machine access.
+  - name: Agents
+    description: 'AI agent identities — register agents and mint short-lived scoped tokens (re-minted, never refreshed); manage sponsorship, suspension and decommissioning.'
+  - name: Credentials
+    description: 'Verifiable credentials — issue, list and revoke W3C / JWT-VC documents, plus public verification.'
+  - name: Auth Hooks
+    description: 'Custom authentication hooks (actions) invoked during authentication flows.'
   - name: Webhooks
     description: Outbound webhook endpoint management.
   - name: Secrets
     description: Per-tenant encrypted secrets vault.
+  - name: Token Vault
+    description: 'Third-party OAuth credential storage with transparent refresh, for calling external services on a user''s behalf — distinct from Secrets Vault (tenant secrets).'
 paths:
   /v1/api-keys:
     post:
       operationId: post_v1_api_keys
+      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`.'
       summary: Create API key
       tags:
         - API Keys
@@ -35,6 +67,13 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+              name: CI deploy bot
+              scopes:
+                - users:read
+                - audit:read
+              expires_at: '2027-01-01T00:00:00Z'
             schema:
               $ref: '#/components/schemas/ApiKeyCreate'
       responses:
@@ -42,6 +81,19 @@ paths:
           description: Created; secret shown once
           content:
             application/json:
+              example:
+                api_key:
+                  id: 018f2a70-1a2b-7c3d-9e4f-5a6b7c8d9e0f
+                  tenant_id: 018f2a6c-9c3d-7e4a-b2f1-3a5c9d8e1f00
+                  name: CI deploy bot
+                  prefix: qk_7Qx8t
+                  scopes:
+                    - users:read
+                    - audit:read
+                  expires_at: '2027-01-01T00:00:00Z'
+                  created_at: '2026-09-24T10:15:00Z'
+                secret: qk_7Qx8t3f0a1b2c3d4e5f6g7h8i9j0k1l2
+                warning: The secret is shown only once. Store it now; it cannot be retrieved again.
               schema:
                 type: object
                 properties:
@@ -62,6 +114,7 @@ paths:
   /v1/api-keys/{id}:
     delete:
       operationId: delete_v1_api_keys_ById
+      description: 'Revokes an API key immediately. Requests still using the key begin failing authentication as soon as this returns.'
       summary: Revoke API key
       tags:
         - API Keys
@@ -86,6 +139,7 @@ paths:
   /v1/tenants/{tenantID}/api-keys:
     get:
       operationId: get_v1_tenants_ByTenantID_api_keys
+      description: 'Lists the tenant''s API keys. Only key metadata is returned; the secret value is never included.'
       summary: List API keys
       tags:
         - API Keys
@@ -114,145 +168,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /v1/credentials/verify:
-    post:
-      operationId: post_v1_credentials_verify
-      summary: Verify credential (public)
-      description: >-
-        Any relying party can present a JWT-serialized W3C Verifiable Credential issued by this server; the response reports validity (signature, issuer, expiry, and revocation status) plus the credential subject + claims. No session required.
-      tags:
-        - Credentials
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - credential
-              properties:
-                credential:
-                  type: string
-                  description: The JWT-VC string.
-      responses:
-        '200':
-          description: '{ valid, subject, issuer, vc, ... }'
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/credentials:
-    get:
-      operationId: get_v1_tenants_ByTenantID_credentials
-      summary: List credentials
-      tags:
-        - Credentials
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Issued credentials (registry view)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: post_v1_tenants_ByTenantID_credentials
-      summary: Issue credential
-      tags:
-        - Credentials
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - subject
-                - type
-              properties:
-                subject:
-                  type: string
-                type:
-                  type: string
-                claims:
-                  type: object
-                  additionalProperties: true
-                ttl_seconds:
-                  type: integer
-      responses:
-        '201':
-          description: Signed JWT-VC + credential id
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /v1/tenants/{tenantID}/credentials/{id}/revoke:
-    post:
-      operationId: post_v1_tenants_ByTenantID_credentials_ById_revoke
-      summary: Revoke credential
-      tags:
-        - Credentials
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Revoked
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
   /v1/agents/token:
     post:
       operationId: post_v1_agents_token
@@ -266,6 +181,9 @@ paths:
         required: true
         content:
           application/json:
+            example:
+              agent_id: 018f2a80-4d5e-7f60-a1b2-c3d4e5f60718
+              secret: as_9m8n7b6v5c4x3z2a1s0d9f8g7h6j5k4l
             schema:
               type: object
               required:
@@ -281,6 +199,11 @@ paths:
           description: Short-lived agent access token
           content:
             application/json:
+              example:
+                access_token: eyJhbGciOiJFUzI1NiIsImtpZCI6ImZ2MSJ9.eyJzdWIiOiJhZ2VudCJ9.FAKE-signature
+                token_type: Bearer
+                expires_in: 300
+                scope: agent:invoke
               schema:
                 type: object
                 additionalProperties: true
@@ -289,6 +212,7 @@ paths:
   /v1/tenants/{tenantID}/agents:
     get:
       operationId: get_v1_tenants_ByTenantID_agents
+      description: 'Lists the AI agent identities registered in the tenant.'
       summary: List agents
       tags:
         - Agents
@@ -320,6 +244,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_agents
+      description: 'Registers a new AI agent identity. Mint short-lived access tokens for it with the mint-agent-token endpoint; agents resolve to actor_type `agent`.'
       summary: Create agent
       tags:
         - Agents
@@ -371,6 +296,7 @@ paths:
   /v1/tenants/{tenantID}/agents/{id}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_agents_ById
+      description: 'Deletes an agent identity. Prefer decommissioning, which preserves audit history, unless a hard delete is required.'
       summary: Delete agent
       tags:
         - Agents
@@ -662,9 +588,152 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/credentials/verify:
+    post:
+      operationId: post_v1_credentials_verify
+      summary: Verify credential (public)
+      description: >-
+        Any relying party can present a JWT-serialized W3C Verifiable Credential issued by this server; the response reports validity (signature, issuer, expiry, and revocation status) plus the credential subject + claims. No session required.
+      tags:
+        - Credentials
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - credential
+              properties:
+                credential:
+                  type: string
+                  description: The JWT-VC string.
+      responses:
+        '200':
+          description: '{ valid, subject, issuer, vc, ... }'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/credentials:
+    get:
+      operationId: get_v1_tenants_ByTenantID_credentials
+      description: 'Lists the verifiable credentials issued by the tenant.'
+      summary: List credentials
+      tags:
+        - Credentials
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Issued credentials (registry view)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_credentials
+      description: 'Issues a verifiable credential (W3C VC / JWT-VC) to a subject. A presented credential can later be checked with the public verify endpoint.'
+      summary: Issue credential
+      tags:
+        - Credentials
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - subject
+                - type
+              properties:
+                subject:
+                  type: string
+                type:
+                  type: string
+                claims:
+                  type: object
+                  additionalProperties: true
+                ttl_seconds:
+                  type: integer
+      responses:
+        '201':
+          description: Signed JWT-VC + credential id
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/credentials/{id}/revoke:
+    post:
+      operationId: post_v1_tenants_ByTenantID_credentials_ById_revoke
+      description: 'Revokes a previously issued credential. Verification of the revoked credential will subsequently fail.'
+      summary: Revoke credential
+      tags:
+        - Credentials
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/auth-hooks:
     get:
       operationId: get_v1_tenants_ByTenantID_auth_hooks
+      description: 'Lists the tenant''s authentication hooks — custom actions invoked at defined points in auth flows.'
       summary: List auth hooks
       tags:
         - Auth Hooks
@@ -696,6 +765,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: post_v1_tenants_ByTenantID_auth_hooks
+      description: 'Registers an authentication hook invoked during an auth flow. Hooks fail open by default: a hook error does not block authentication.'
       summary: Create auth hook
       tags:
         - Auth Hooks
@@ -741,6 +811,7 @@ paths:
   /v1/tenants/{tenantID}/auth-hooks/{id}:
     patch:
       operationId: patch_v1_tenants_ByTenantID_auth_hooks_ById
+      description: 'Updates an authentication hook''s configuration, such as its target URL or enabled state.'
       summary: Update auth hook
       tags:
         - Auth Hooks
@@ -780,6 +851,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: delete_v1_tenants_ByTenantID_auth_hooks_ById
+      description: 'Deletes an authentication hook so it no longer runs during auth flows.'
       summary: Delete auth hook
       tags:
         - Auth Hooks
@@ -806,6 +878,239 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/webhooks:
+    get:
+      operationId: get_v1_tenants_ByTenantID_webhooks
+      summary: List webhooks
+      tags:
+        - Webhooks
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/webhooks:
+    post:
+      operationId: post_v1_webhooks
+      summary: Create webhook
+      tags:
+        - Webhooks
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/webhooks/{id}:
+    get:
+      operationId: get_v1_webhooks_ById
+      description: 'Fetches a single webhook endpoint''s configuration and current status.'
+      summary: Get webhook
+      tags:
+        - Webhooks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Webhook subscription
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_webhooks_ById
+      summary: Disable webhook
+      tags:
+        - Webhooks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '204':
+          description: No Content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/webhooks/{id}/deliveries:
+    get:
+      operationId: get_v1_webhooks_ById_deliveries
+      description: 'Lists recent delivery attempts for a webhook, including status and response codes, for debugging failures. Retry a failed one with the retry-delivery endpoint.'
+      summary: List deliveries
+      tags:
+        - Webhooks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Recent deliveries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
+    post:
+      operationId: post_v1_webhooks_ById_deliveries_ByDeliveryID_retry
+      description: 'Re-attempts a specific previously-failed webhook delivery.'
+      summary: Retry delivery
+      tags:
+        - Webhooks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deliveryID
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Delivery re-queued
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/webhooks/{id}/test:
+    post:
+      operationId: post_v1_webhooks_ById_test
+      summary: Test webhook
+      tags:
+        - Webhooks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+        description: Request body summarized; see the handler for exact fields.
+      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/vault/{name}:
     get:
       operationId: get_v1_vault_ByName
@@ -1046,6 +1351,7 @@ paths:
   /v1/tenants/{tenantID}/vault/tokens/providers:
     post:
       operationId: post_v1_tenants_ByTenantID_vault_tokens_providers
+      description: 'Registers a third-party OAuth provider so the Token Vault can store and transparently refresh users'' access tokens for it.'
       summary: Register a Token Vault OAuth2 provider
       tags:
         - Token Vault
@@ -1135,6 +1441,7 @@ paths:
   /v1/tenants/{tenantID}/vault/tokens/providers/{provider}:
     delete:
       operationId: delete_v1_tenants_ByTenantID_vault_tokens_providers_ByProvider
+      description: 'Removes a registered Token Vault provider. Tokens already vaulted for that provider become unusable.'
       summary: Delete a Token Vault provider
       tags:
         - Token Vault
@@ -1267,6 +1574,7 @@ paths:
   /v1/vault/tokens/{provider}:
     delete:
       operationId: delete_v1_vault_tokens_ByProvider
+      description: 'Disconnects the current user''s stored third-party account for a provider, deleting the vaulted tokens.'
       summary: Disconnect a third-party account
       tags:
         - Token Vault
@@ -1286,236 +1594,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/tenants/{tenantID}/webhooks:
-    get:
-      operationId: get_v1_tenants_ByTenantID_webhooks
-      summary: List webhooks
-      tags:
-        - Webhooks
-      parameters:
-        - name: tenantID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/webhooks:
-    post:
-      operationId: post_v1_webhooks
-      summary: Create webhook
-      tags:
-        - Webhooks
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/webhooks/{id}:
-    get:
-      operationId: get_v1_webhooks_ById
-      summary: Get webhook
-      tags:
-        - Webhooks
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Webhook subscription
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      operationId: delete_v1_webhooks_ById
-      summary: Disable webhook
-      tags:
-        - Webhooks
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '204':
-          description: No Content
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-  /v1/webhooks/{id}/deliveries:
-    get:
-      operationId: get_v1_webhooks_ById_deliveries
-      summary: List deliveries
-      tags:
-        - Webhooks
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Recent deliveries
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /v1/webhooks/{id}/deliveries/{deliveryID}/retry:
-    post:
-      operationId: post_v1_webhooks_ById_deliveries_ByDeliveryID_retry
-      summary: Retry delivery
-      tags:
-        - Webhooks
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: deliveryID
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      responses:
-        '200':
-          description: Delivery re-queued
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /v1/webhooks/{id}/test:
-    post:
-      operationId: post_v1_webhooks_ById_test
-      summary: Test webhook
-      tags:
-        - Webhooks
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
 components:
@@ -1623,6 +1701,28 @@ components:
             detail:
               type: string
               description: Optional human detail
+            translation_key:
+              type: string
+              description: Optional i18n key the client can use to localize the message.
+            retryable:
+              type: boolean
+              description: Whether the client may safely retry the request.
+            fields:
+              type: array
+              description: Per-field validation errors (typically on 422 responses).
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  code:
+                    type: string
+                  message:
+                    type: string
+            metadata:
+              type: object
+              additionalProperties: true
+              description: Optional structured, error-specific context.
             request_id:
               type: string
               description: Correlates with the X-Request-Id header
