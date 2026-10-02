@@ -15,7 +15,7 @@ import (
 func startHTTPServer(cfg *config.Config, router http.Handler, stop func()) *http.Server {
 	srv := newHTTPServer(cfg, router)
 	go func() {
-		slog.Info("listening", "addr", srv.Addr, "service", cfg.ServiceName, "env", cfg.ServiceEnv)
+		slog.Info("listening", "addr", srv.Addr, "service", cfg.ServiceName, "env", cfg.ServiceEnv, "profile", cfg.ServiceProfile)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server error", "err", err)
 			stop()

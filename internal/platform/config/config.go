@@ -11,10 +11,36 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
 )
 
+// Recognised SERVICE_ENV values. Load rejects anything else, so the production
+// gates in Validate are switched on by an explicit value — never by a typo that
+// happens not to equal "dev".
+const (
+	// EnvDev is a developer workstation. Validate's gates are off, missing keys
+	// are generated ephemerally, and cookies are not marked Secure.
+	EnvDev = "dev"
+	// EnvLocal is a Local-tier runtime of the qeet-id-deploy test kit (the DEV,
+	// TEST and STAGING environments, selected by SERVICE_PROFILE).
+	// Every production gate applies; the only difference from prod is that its
+	// browser-facing hosts must be loopback names (localhost / *.localhost), so
+	// it cannot be deployed publicly by mistake.
+	EnvLocal = "local"
+	// EnvProd is production.
+	EnvProd = "prod"
+)
+
+// serviceProfiles are the SERVICE_PROFILE values accepted with SERVICE_ENV=local:
+// the local DEV, TEST (QA testing) and STAGING (UAT testing) environments.
+var serviceProfiles = map[string]bool{"dev": true, "test": true, "staging": true} //nolint:gochecknoglobals // fixed allowlist
+
 type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
-	ServiceEnv  string `envconfig:"SERVICE_ENV" default:"dev"`
-	HTTPPort    string `envconfig:"HTTP_PORT" default:"4001"`
+	// ServiceEnv is one of EnvDev, EnvLocal or EnvProd (L0 QEET_ENV mapping:
+	// dev and local are the Local tier, prod is Production).
+	ServiceEnv string `envconfig:"SERVICE_ENV" default:"dev"`
+	// ServiceProfile names the local environment ("dev", "test" or "staging"). It
+	// is only valid with SERVICE_ENV=local, and is reported on /healthz and in logs.
+	ServiceProfile string `envconfig:"SERVICE_PROFILE" default:""`
+	HTTPPort       string `envconfig:"HTTP_PORT" default:"4001"`
 	// TrustedProxyHops is the number of reverse proxies in front of this server
 	// that APPEND to X-Forwarded-For (Caddy, nginx, ALB all do). It decides how
 	// the client IP is read — see httpx.ClientIP.
@@ -276,16 +302,46 @@ func Load() (*Config, error) {
 	if err := envconfig.Process("", &c); err != nil {
 		return nil, err
 	}
+	if err := c.checkEnvironment(); err != nil {
+		return nil, err
+	}
 	return &c, nil
 }
 
+// IsDev reports whether this is a developer workstation (SERVICE_ENV=dev), the
+// only environment in which the production gates and Secure cookies are off.
+func (c *Config) IsDev() bool { return c.ServiceEnv == EnvDev }
+
+// checkEnvironment rejects an unrecognised SERVICE_ENV, and a SERVICE_PROFILE
+// that is unknown or used outside SERVICE_ENV=local.
+func (c *Config) checkEnvironment() error {
+	switch c.ServiceEnv {
+	case EnvDev, EnvLocal, EnvProd:
+	default:
+		return fmt.Errorf("SERVICE_ENV %q is not recognised (want %q, %q or %q)", c.ServiceEnv, EnvDev, EnvLocal, EnvProd)
+	}
+	if c.ServiceProfile == "" {
+		return nil
+	}
+	if c.ServiceEnv != EnvLocal {
+		return fmt.Errorf("SERVICE_PROFILE is only valid with SERVICE_ENV=%q (got SERVICE_ENV=%q)", EnvLocal, c.ServiceEnv)
+	}
+	if !serviceProfiles[c.ServiceProfile] {
+		return fmt.Errorf("SERVICE_PROFILE %q is not recognised (want \"dev\", \"test\" or \"staging\")", c.ServiceProfile)
+	}
+	return nil
+}
+
 // Validate enforces production-safety invariants. Inside SERVICE_ENV=dev it is
-// a no-op (dev needs the escape hatches and self-signed defaults); outside dev
-// it refuses to start when a dev-only convenience or an insecure default is
-// still in place. Failing loudly here is far cheaper than discovering a
+// a no-op (dev needs the escape hatches and self-signed defaults); in local and
+// prod it refuses to start when a dev-only convenience or an insecure default
+// is still in place. Failing loudly here is far cheaper than discovering a
 // production deploy shipped with CSRF off or a placeholder secret.
 func (c *Config) Validate() error {
-	if c.ServiceEnv == "dev" {
+	if err := c.checkEnvironment(); err != nil {
+		return err
+	}
+	if c.IsDev() {
 		return nil
 	}
 	var problems []string
@@ -334,8 +390,22 @@ func (c *Config) Validate() error {
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
 	}
-	if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) {
-		problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost")
+	switch c.ServiceEnv {
+	case EnvProd:
+		if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) {
+			problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost")
+		}
+	case EnvLocal:
+		// A local runtime is reachable only on this machine: its browser-facing
+		// hosts must be loopback names, so it can never be deployed publicly.
+		for _, v := range []struct{ name, raw string }{
+			{"APP_BASE_URL", c.AppBaseURL},
+			{"LOGIN_BASE_URL", c.LoginBaseURL},
+		} {
+			if u, err := url.Parse(v.raw); err != nil || !isLoopbackName(u.Hostname()) {
+				problems = append(problems, v.name+" must use localhost or a *.localhost host with SERVICE_ENV=local")
+			}
+		}
 	}
 	// Qeetai: if a provider is named, the API key must also be set.
 	if strings.TrimSpace(c.QeetaiProvider) != "" && strings.TrimSpace(c.QeetaiAPIKey) == "" {
@@ -364,7 +434,14 @@ func isWeakSecret(s string) bool {
 
 func isLocalHost(h string) bool {
 	h = strings.ToLower(h)
-	return h == "localhost" || h == "127.0.0.1" || h == "::1" || strings.HasSuffix(h, ".local")
+	return isLoopbackName(h) || h == "127.0.0.1" || h == "::1" || strings.HasSuffix(h, ".local")
+}
+
+// isLoopbackName reports whether h is "localhost" or a subdomain of it
+// (RFC 6761: *.localhost always resolves to loopback).
+func isLoopbackName(h string) bool {
+	h = strings.TrimSuffix(strings.ToLower(h), ".")
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
 }
 
 func (c *Config) AllowedOrigins() []string {

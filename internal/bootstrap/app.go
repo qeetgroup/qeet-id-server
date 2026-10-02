@@ -52,7 +52,7 @@ func Run() {
 
 	level := parseLogLevel(cfg.LogLevel)
 	var handler slog.Handler
-	useText := cfg.ServiceEnv != "prod" && isatty.IsTerminal(os.Stdout.Fd())
+	useText := cfg.ServiceEnv != config.EnvProd && isatty.IsTerminal(os.Stdout.Fd())
 	switch strings.ToLower(cfg.LogFormat) {
 	case "json":
 		useText = false
@@ -69,7 +69,7 @@ func Run() {
 	// Client IP resolution must be configured before the listener starts: it
 	// keys the login rate limiter and every audit record.
 	httpx.SetTrustedProxyHops(cfg.TrustedProxyHops)
-	if cfg.ServiceEnv != "dev" && cfg.TrustedProxyHops == 0 {
+	if !cfg.IsDev() && cfg.TrustedProxyHops == 0 {
 		slog.Warn("TRUSTED_PROXY_HOPS is 0: X-Forwarded-For is ignored and every " +
 			"client IP will be the transport peer. Set it to the number of reverse " +
 			"proxies in front of this server (1 for a single Caddy/nginx/ALB).")

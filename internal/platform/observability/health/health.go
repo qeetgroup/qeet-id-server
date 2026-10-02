@@ -33,8 +33,11 @@ type namedCheck struct {
 type Handler struct {
 	ServiceName string
 	ServiceEnv  string
-	StartedAt   time.Time
-	Build       buildinfo.Info
+	// ServiceProfile is the local environment (dev/test/staging); empty elsewhere
+	// and then omitted from the liveness body.
+	ServiceProfile string
+	StartedAt      time.Time
+	Build          buildinfo.Info
 
 	checks []namedCheck
 }
@@ -55,13 +58,17 @@ func (h *Handler) AddReadiness(name string, c Check) {
 
 // Liveness always returns 200 with service metadata. See package docs.
 func (h *Handler) Liveness(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"status":  "ok",
 		"service": h.ServiceName,
 		"env":     h.ServiceEnv,
 		"uptime":  time.Since(h.StartedAt).String(),
 		"build":   h.Build,
-	})
+	}
+	if h.ServiceProfile != "" {
+		body["profile"] = h.ServiceProfile
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
 // Readiness runs every registered check under a 2 s timeout and returns

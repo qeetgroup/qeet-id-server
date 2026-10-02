@@ -7,7 +7,16 @@ COPY . .
 # TARGETOS/TARGETARCH are set by buildx from --platform; default to linux/amd64.
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/qeet-id-server ./cmd/api
+# Build metadata surfaced on /healthz and the build_info metric. Defaults match
+# an unstamped build, so a plain `docker build` behaves exactly as before.
+ARG VERSION=dev
+ARG COMMIT=none
+ARG DATE=unknown
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
+      -ldflags "-X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Version=${VERSION} \
+                -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Commit=${COMMIT} \
+                -X github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo.Date=${DATE}" \
+      -o /out/qeet-id-server ./cmd/api
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/qeet-id-server /qeet-id-server

@@ -267,6 +267,13 @@ locally, are gitignored, and must never be read into a committed file.
 
 ### The boot gate
 
+`SERVICE_ENV` is an explicit enum — `dev`, `local`, `prod` — and `config.Load()` rejects any other
+value, so the gate below is switched on deliberately rather than by "anything that is not `dev`".
+`local` is a Local-tier runtime of the `qeet-id-deploy` test kit — the DEV, TEST (QA testing) and
+STAGING (UAT testing) environments, selected by `SERVICE_PROFILE=dev|test|staging`: every production gate applies, and `APP_BASE_URL`/`LOGIN_BASE_URL` must be
+`localhost` or `*.localhost`. `prod` additionally rejects `*.localhost`. Code asks `cfg.IsDev()`
+instead of comparing strings.
+
 `Config.Validate()` **refuses to start** outside `SERVICE_ENV=dev` if any insecure setting is
 present — CSRF disabled, dev trust headers on, wildcard CORS origins, empty signing key. This is a
 control, not a convenience. Do not add an escape hatch.
