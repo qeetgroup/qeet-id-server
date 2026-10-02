@@ -176,6 +176,7 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 | `integration` | `go test -tags integration ./tests/integration/...` — **includes the OpenAPI route-coverage gate** |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
 | `sast` | `gosec` — advisory, reports findings as a warning |
+| `image` | On push to `release/**` only, after `test`/`lint`/`integration`/`vuln`: publish `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>` (amd64+arm64) for the `qeet-id-deploy` test kit. Never computes an RC number |
 | `deploy` | On push to `main` only: build, deploy to AWS via OIDC, then tag |
 
 ---

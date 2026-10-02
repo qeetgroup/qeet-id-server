@@ -107,7 +107,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Info("outbound integrations routed through egress proxy", "host", egressProxy.Host)
 	}
 	outboundPolicy := egress.NewPolicy(egress.Options{ProxyURL: egressProxy})
-	if cfg.ServiceEnv == "dev" {
+	if cfg.IsDev() {
 		outboundPolicy = egress.DevelopmentPolicy()
 	}
 	keyProvider, err := SecretsKeyProvider(rootCtx, cfg)
@@ -135,7 +135,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	signingKeyPEM := cfg.JWTSigningKey
 	ephemeralSigningKey := signingKeyPEM == ""
 	if signingKeyPEM == "" {
-		if cfg.ServiceEnv != "dev" {
+		if !cfg.IsDev() {
 			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
 			os.Exit(1)
 		}
@@ -152,7 +152,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		slog.Error("init signing key registry", "err", err)
 		os.Exit(1)
 	}
-	ephemeralEnvelopeKey := cfg.ServiceEnv == "dev" && (cfg.SecretsProvider == "" || cfg.SecretsProvider == "static") && cfg.SecretsKey == ""
+	ephemeralEnvelopeKey := cfg.IsDev() && (cfg.SecretsProvider == "" || cfg.SecretsProvider == "static") && cfg.SecretsKey == ""
 	activateSigningKey := cfg.JWTActivateSigningKey || ephemeralSigningKey || ephemeralEnvelopeKey
 	if err := signingKeyRegistry.Reconcile(rootCtx, signingKeyPEM, cfg.JWTRetiredKeys, activateSigningKey, cfg.JWTSigningKeyRetireGrace); err != nil {
 		slog.Error("reconcile JWT signing key registry", "err", err)
@@ -215,7 +215,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		TwilioAccountSID: cfg.TwilioAccountSID,
 		TwilioAuthToken:  cfg.TwilioAuthToken,
 		TwilioFrom:       cfg.TwilioFrom,
-		Dev:              cfg.ServiceEnv == "dev",
+		Dev:              cfg.IsDev(),
 	})
 	emailTransport, emailRouter := sender.(notifier.Router)
 	emailTestEnabled := emailRouter && emailTransport.Email != nil
@@ -322,6 +322,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 
 	startedAt := time.Now()
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
+	healthHandler.ServiceProfile = cfg.ServiceProfile
 	healthHandler.AddReadiness("db", health.PingDB(pool))
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
@@ -428,7 +429,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// ephemeral self-signed cert in dev when unset.
 	samlIdPKeyPEM, samlIdPCertPEM := cfg.SAMLIdPKey, cfg.SAMLIdPCert
 	if samlIdPKeyPEM == "" || samlIdPCertPEM == "" {
-		if cfg.ServiceEnv != "dev" {
+		if !cfg.IsDev() {
 			slog.Error("SAML_IDP_KEY and SAML_IDP_CERT are required outside dev (RSA private key + X.509 cert, PEM)")
 			os.Exit(1)
 		}
@@ -536,11 +537,11 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
 		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
-		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: cfg.ServiceEnv != "dev", Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
+		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
 		RBACChecker:   rbacRepo,
 		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.ServiceEnv == "dev"},
+		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev()},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
@@ -559,15 +560,15 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: cfg.ServiceEnv != "dev"},
-		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: cfg.ServiceEnv != "dev"},
-		Social:        &social.Handler{Service: socialService, CookieSecure: cfg.ServiceEnv != "dev", LoginBaseURL: cfg.LoginBaseURL},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
+		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
+		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},
 		SCIM:          &scim.Handler{Service: scimService},
 		Secret:        &secret.Handler{Service: secretService},
 		TokenVault:    &tokenvault.Handler{Service: tokenVaultService},
-		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: cfg.ServiceEnv != "dev"},
-		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: cfg.ServiceEnv != "dev"},
+		SAML:          &saml.Handler{Service: samlService, IdP: samlIdP, CookieSecure: !cfg.IsDev()},
+		AdminPortal:   &adminportal.Handler{Service: adminPortalService, SAML: samlService, SCIM: scimService, CookieSecure: !cfg.IsDev()},
 		LDAP:          &ldap.Handler{Service: ldapService},
 		Directory:     &directory.Handler{Service: directoryService},
 		IPAllow:       &ipallow.Handler{Service: ipAllowService},

@@ -60,6 +60,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/search"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/cache/ratelimit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
@@ -152,7 +153,7 @@ func NewRouter(d Deps) http.Handler {
 	// by TRUSTED_PROXY_HOPS.
 	r.Use(chimw.Recoverer)
 	r.Use(d.InFlight.Middleware)
-	r.Use(httpx.SecurityHeaders(d.ServiceEnv != "dev"))
+	r.Use(httpx.SecurityHeaders(d.ServiceEnv != config.EnvDev))
 	// Tracing wraps metrics so the server span spans the whole request; both
 	// derive low-cardinality names from the matched chi route pattern. When no
 	// OTLP endpoint is configured the global tracer is a no-op, so this is a
@@ -186,7 +187,7 @@ func NewRouter(d Deps) http.Handler {
 	if !d.CSRFDisabled {
 		r.Use(httpx.CSRF(httpx.CSRFConfig{
 			AllowedOrigins: d.AllowedOrigins,
-			CookieSecure:   d.ServiceEnv != "dev",
+			CookieSecure:   d.ServiceEnv != config.EnvDev,
 			CookieDomain:   d.CSRFCookieDomain,
 			// Exempt paths, two buckets:
 			//  1. Machine/IdP-driven, authenticated by something other than a

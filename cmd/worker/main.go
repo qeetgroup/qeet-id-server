@@ -69,7 +69,7 @@ func main() {
 
 	// Mirror the workers registered in internal/bootstrap/dependencies.go.
 	outboundPolicy := egress.NewPolicy(egress.Options{})
-	if cfg.ServiceEnv == "dev" {
+	if cfg.IsDev() {
 		outboundPolicy = egress.DevelopmentPolicy()
 	}
 	keyProvider, err := bootstrap.SecretsKeyProvider(rootCtx, cfg)

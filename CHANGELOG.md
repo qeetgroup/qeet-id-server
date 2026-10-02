@@ -19,6 +19,18 @@ Pre-1.0 minor versions may include breaking changes — they will be called out 
 
 The changes below are the work staged for that first release.
 
+### Release candidates and local test runtime
+
+- `SERVICE_ENV` is now an explicit enum: `dev`, `local` (new — the Local-tier test-kit runtime for
+  the DEV, TEST and STAGING environments, with every production gate on and loopback-only
+  `APP_BASE_URL`/`LOGIN_BASE_URL`) or `prod`. Any other value refuses to start. New
+  `SERVICE_PROFILE` (`dev`|`test`|`staging`, `local` only) is reported on `/healthz`. `prod` now also rejects a `*.localhost` `APP_BASE_URL`.
+- `qeet-id-server healthcheck` probes `/readyz` on loopback for container health checks (the image is
+  distroless).
+- The image is stamped with `VERSION`/`COMMIT`/`DATE` build args, surfaced on `/healthz`.
+- CI runs on `release/**`, and publishes an immutable `ghcr.io/qeetgroup/qeet-id-server:sha-<commit>`
+  multi-arch image for each release-branch commit that passes every gate.
+
 ### Security
 
 Remediation of a 2026-09-06 security review. Migration `0107`.

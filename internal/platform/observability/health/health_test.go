@@ -46,6 +46,22 @@ func TestLiveness_AlwaysOK(t *testing.T) {
 	}
 }
 
+func TestLiveness_ProfileOnlyWhenSet(t *testing.T) {
+	h := newHandler()
+	rec := httptest.NewRecorder()
+	h.Liveness(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if _, ok := decode(t, rec)["profile"]; ok {
+		t.Error("profile must be omitted when unset")
+	}
+
+	h.ServiceProfile = "staging"
+	rec = httptest.NewRecorder()
+	h.Liveness(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if got := decode(t, rec)["profile"]; got != "staging" {
+		t.Errorf("profile = %v, want staging", got)
+	}
+}
+
 func TestReadiness_OKWhenNoChecks(t *testing.T) {
 	rec := httptest.NewRecorder()
 	newHandler().Readiness(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))

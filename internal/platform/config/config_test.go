@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -47,6 +48,9 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"wildcard origins":         func(c *Config) { c.AllowedOriginsRaw = "*" },
 		"empty origins":            func(c *Config) { c.AllowedOriginsRaw = "" },
 		"localhost base url":       func(c *Config) { c.AppBaseURL = "http://localhost:3000" },
+		"*.localhost base url":     func(c *Config) { c.AppBaseURL = "http://console.test.id.qeet.localhost" },
+		"unknown env":              func(c *Config) { c.ServiceEnv = "production" },
+		"profile outside local":    func(c *Config) { c.ServiceProfile = "test" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -87,5 +91,96 @@ func TestWebAuthnRPExplicit(t *testing.T) {
 	}
 	if len(origins) != 2 || origins[0] != "https://app.acme.com" || origins[1] != "https://admin.acme.com" {
 		t.Errorf("origins = %v, want [https://app.acme.com https://admin.acme.com]", origins)
+	}
+}
+
+// localOK is the Local-tier test-kit shape: every production gate satisfied,
+// browser-facing hosts on *.localhost.
+func localOK() *Config {
+	c := prodOK()
+	c.ServiceEnv = EnvLocal
+	c.ServiceProfile = "test"
+	c.AllowedOriginsRaw = "http://login.test.id.qeet.localhost,http://console.test.id.qeet.localhost"
+	c.AppBaseURL = "http://console.test.id.qeet.localhost"
+	c.LoginBaseURL = "http://login.test.id.qeet.localhost"
+	return c
+}
+
+func TestValidate_LocalHappyPath(t *testing.T) {
+	for _, profile := range []string{"dev", "test", "staging"} {
+		c := localOK()
+		c.ServiceProfile = profile
+		if err := c.Validate(); err != nil {
+			t.Errorf("valid local %s config should pass: %v", profile, err)
+		}
+	}
+	c := localOK()
+	c.ServiceProfile = ""
+	if err := c.Validate(); err != nil {
+		t.Errorf("local without a profile should pass: %v", err)
+	}
+}
+
+// Local keeps every production gate; it only differs in requiring loopback hosts.
+func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
+	cases := map[string]func(*Config){
+		"csrf disabled":          func(c *Config) { c.CSRFDisabled = true },
+		"dev trust headers":      func(c *Config) { c.AuthDevTrustHeaders = true },
+		"payment sandbox":        func(c *Config) { c.PaymentSandbox = true },
+		"short secret":           func(c *Config) { c.JWTSecret = "too-short" },
+		"missing signing key":    func(c *Config) { c.JWTSigningKey = "" },
+		"missing secrets key":    func(c *Config) { c.SecretsKey = "" },
+		"wildcard origins":       func(c *Config) { c.AllowedOriginsRaw = "*" },
+		"public app base url":    func(c *Config) { c.AppBaseURL = "https://console.id.qeet.in" },
+		"public login url":       func(c *Config) { c.LoginBaseURL = "https://login.id.qeet.in" },
+		"lookalike login host":   func(c *Config) { c.LoginBaseURL = "http://login.localhost.example.com" },
+		"qa is not a profile":    func(c *Config) { c.ServiceProfile = "qa" },
+		"uat is not a profile":   func(c *Config) { c.ServiceProfile = "uat" },
+		"stage is not a profile": func(c *Config) { c.ServiceProfile = "stage" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := localOK()
+			mutate(c)
+			if err := c.Validate(); err == nil {
+				t.Errorf("expected %q to fail validation", name)
+			}
+		})
+	}
+}
+
+// setRequiredEnv provides the variables envconfig requires, so Load errors in
+// these tests can only come from the environment contract.
+func setRequiredEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("DB_URL", "postgres://u:p@localhost:5432/db?sslmode=disable")
+	t.Setenv("JWT_SECRET", "a-32-byte-or-longer-random-server-secret")
+}
+
+func TestLoad_RejectsUnknownEnvironment(t *testing.T) {
+	setRequiredEnv(t)
+	for _, env := range []string{"staging", "production", "Prod", ""} {
+		t.Setenv("SERVICE_ENV", env)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "SERVICE_ENV") {
+			t.Errorf("SERVICE_ENV=%q: want an environment error, got %v", env, err)
+		}
+	}
+}
+
+func TestLoad_ProfileRequiresLocal(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("SERVICE_ENV", EnvDev)
+	t.Setenv("SERVICE_PROFILE", "test")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SERVICE_PROFILE") {
+		t.Fatalf("Load must reject SERVICE_PROFILE outside SERVICE_ENV=local, got %v", err)
+	}
+	t.Setenv("SERVICE_ENV", EnvLocal)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("local+test should load: %v", err)
+	}
+	if c.IsDev() || c.ServiceProfile != "test" {
+		t.Errorf("got IsDev=%v profile=%q", c.IsDev(), c.ServiceProfile)
 	}
 }

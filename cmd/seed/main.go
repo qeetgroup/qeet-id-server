@@ -87,7 +87,7 @@ func main() {
 	defer pool.Close()
 
 	if *reset {
-		if cfg.ServiceEnv != "dev" {
+		if !cfg.IsDev() {
 			log.Fatalf("seed: refusing to -reset when SERVICE_ENV=%q (dev only)", cfg.ServiceEnv)
 		}
 		_, err := pool.Exec(ctx, `TRUNCATE TABLE audit.events, tenant.tenants, "user".users RESTART IDENTITY CASCADE`)
