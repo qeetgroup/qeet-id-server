@@ -12,12 +12,16 @@ concurrency:
 permissions:
   contents: write  # push the version tag after a successful deploy
   id-token: write  # required for GitHub OIDC → AWS role assumption
+  pull-requests: read  # find the merged release/x.y.z pull request (version)
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
 
 jobs:
   deploy:
+    # Production deploys only from main — a manual run on another branch (the
+    # default branch is develop) does nothing.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -29,11 +33,33 @@ jobs:
 
       - name: Determine next version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           latest=$(git tag --list 'v*' --sort=-version:refname | head -1)
           latest=${latest:-v0.0.0}
-          IFS='.' read -r major minor patch <<< "${latest#v}"
-          new_tag="v${major}.${minor}.$((patch + 1))"
+          # A merged release/x.y.z pull request releases exactly x.y.z, so every
+          # Qeet ID repository tags the same product version
+          # (qeet-id-deploy: docs/test-kit/release-process.md).
+          head=""
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main") | .head.ref][0] // ""')
+          fi
+          if [[ $head =~ ^release/([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            new_tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            if git rev-parse -q --verify "refs/tags/$new_tag" > /dev/null; then
+              echo "::error::$new_tag already exists"
+              exit 1
+            fi
+            if [ "$(printf '%s\n' "${latest#v}" "${new_tag#v}" | sort -V | tail -1)" != "${new_tag#v}" ]; then
+              echo "::error::$head is not newer than $latest"
+              exit 1
+            fi
+          else
+            IFS='.' read -r major minor patch <<< "${latest#v}"
+            new_tag="v${major}.${minor}.$((patch + 1))"
+          fi
           echo "Latest: $latest  →  new: $new_tag"
           echo "tag=$new_tag" >> "$GITHUB_OUTPUT"
 
