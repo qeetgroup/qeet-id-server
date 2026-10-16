@@ -229,6 +229,11 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **recovery:** "Forgot password" works from hosted login and the React SDK, and the emailed link
+  lands where the reset was requested. The request carried `tenant_id`, which the endpoint rejected
+  (400, no email). It is now accepted and ignored (email is unique platform-wide). A request with
+  `app: "hosted_login"` links to hosted login's `/reset` page, carrying `return_to` only when it is
+  this API's `/oauth/authorize` endpoint; otherwise the link opens the console's reset screen, as before.
 * **passkeys:** synced passkeys (iCloud Keychain, Google Password Manager, password managers) can
   sign in and complete passkey MFA. Their backup-eligible and backup-state flags were never stored,
   and go-webauthn rejects a login whose backup-eligible flag differs from the one at registration.

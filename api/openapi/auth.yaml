@@ -82,6 +82,20 @@ paths:
                 email:
                   type: string
                   format: email
+                app:
+                  type: string
+                  enum:
+                    - hosted_login
+                    - console
+                  description: 'Where the reset was requested from. `hosted_login` makes the emailed link open the hosted login''s own reset page. `console`, any other value, or omitting it opens the console''s reset screen (the default).'
+                return_to:
+                  type: string
+                  format: uri
+                  description: 'Hosted login only: where to continue after the reset, carried in the emailed link. Kept only if it is this API''s `/oauth/authorize` endpoint; anything else is ignored.'
+                tenant_id:
+                  type: string
+                  format: uuid
+                  description: 'Accepted for compatibility with clients that send it, and not used: an email address is unique across the platform.'
       responses:
         '200':
           description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message

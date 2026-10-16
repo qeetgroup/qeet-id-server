@@ -226,6 +226,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
+	recoveryService.SetHostedLogin(cfg.LoginBaseURL) // resets requested there link back to it
 	retentionService := retention.NewService(pool)
 	salesService := sales.NewService(pool, sender, cfg.SalesEmail)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
