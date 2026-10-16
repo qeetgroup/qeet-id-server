@@ -27,7 +27,7 @@ var (
 	ErrAuthEmailExists      = New(CodeAuthEmailExists, "An account with this email already exists.")
 	ErrAuthEmailRequired    = New(CodeAuthEmailRequired, "Enter your email address.")
 	ErrAuthSessionExpired   = New(CodeAuthSessionExpired, "Your session has expired. Please start again.").AsRetryable()
-	ErrAuthPasswordBreached = New(CodeAuthPasswordBreached, "This password has appeared in known data breaches. Please choose a different one.")
+	ErrAuthPasswordBreached = New(CodeAuthPasswordBreached, "This password has appeared in known data breaches. Please choose a different one.") // no longer returned: every password path reports ErrAuthPolicyPasswordBreached; the code stays reserved so it is never reused
 
 	ErrAuthInvalidCredentials       = New(CodeAuthInvalidCredentials, "Invalid email or password.")
 	ErrAuthAccountLocked            = New(CodeAuthAccountLocked, "Too many failed attempts. Your account is temporarily locked — please try again later.").AsRetryable()

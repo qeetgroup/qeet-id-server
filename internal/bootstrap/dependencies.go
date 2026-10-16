@@ -233,17 +233,25 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
 
+	// One password check for every path that sets or replaces a password:
+	// authPolicyService.ValidateForTenant (the organisation's rules, or the
+	// platform baseline for a tenant-less account; the offline strength
+	// baseline; the breach check). Sign-up, hosted registration and
+	// self-service change reach it through SetRegistrationPolicy below; admin
+	// create / set-password / bulk import through user.Handler.PasswordPolicy.
+	recoveryService.SetPasswordRules(authPolicyService) // password reset
+	inviteService.SetPasswordRules(authPolicyService)   // invite accept
+
 	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
 	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
-	// unaffected; when enabled it is injected into every password-setting flow
-	// and is fail-open at runtime (a HIBP outage allows the password). Only the
-	// 5-char SHA-1 prefix ever leaves the process — never the plaintext.
+	// unaffected; when enabled the password check above runs it on every
+	// password-setting path, and it is fail-open at runtime (a HIBP outage
+	// allows the password and is counted in
+	// breached_password_check_allowed_on_error_total). Only the 5-char SHA-1
+	// prefix ever leaves the process — never the plaintext.
 	if cfg.BreachedPasswordCheck {
 		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
-		authPolicyService.SetBreachChecker(breachChecker) // user set-password (via ValidateForTenant)
-		authService.SetBreachChecker(breachChecker)       // signup
-		recoveryService.SetBreachChecker(breachChecker)   // password reset
-		inviteService.SetBreachChecker(breachChecker)     // invite accept
+		authPolicyService.SetBreachChecker(breachChecker)
 		slog.Info("breached-password check enabled (HIBP k-anonymity; fail-open)", "min_count", cfg.BreachedPasswordMinCount)
 	}
 	apikeyService := apikey.NewService(pool)
@@ -251,7 +259,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender, cfg.ExpoPushURL)
 	mfaService.SetCipher(sharedCipher)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
-	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + validate new passwords per tenant
+	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
 	authHookService := authhook.NewService(pool, outboundPolicy)
 	authHookService.SetCipher(sharedCipher)

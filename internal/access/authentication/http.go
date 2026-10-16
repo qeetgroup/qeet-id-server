@@ -88,7 +88,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 
 type signupInput struct {
 	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"required,min=8,max=256"`
+	Password    string `json:"password" validate:"required,max=256"` // length + rules: the service's password check
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
@@ -298,7 +298,7 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 type registerInput struct {
 	TenantID    uuid.UUID `json:"tenant_id" validate:"required"`
 	Email       string    `json:"email" validate:"required,email"`
-	Password    string    `json:"password" validate:"required,min=8,max=256"`
+	Password    string    `json:"password" validate:"required,max=256"` // length + rules: the service's password check
 	DisplayName string    `json:"display_name" validate:"omitempty,max=200"`
 }
 
@@ -376,7 +376,7 @@ type changePasswordInput struct {
 	// Optional: required only when the account already has a password. A
 	// password-less account (social / passkey signup) omits it to SET one.
 	CurrentPassword string `json:"current_password" validate:"omitempty"`
-	NewPassword     string `json:"new_password" validate:"required,min=8,max=256"`
+	NewPassword     string `json:"new_password" validate:"required,max=256"` // length + rules: the service's password check
 }
 
 // passwordStatus reports whether the caller has a password set, so the account

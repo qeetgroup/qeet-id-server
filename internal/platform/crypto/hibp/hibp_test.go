@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // roundTripFunc is a fake http.RoundTripper that captures the outbound request
@@ -235,5 +237,57 @@ func TestNew_Defaults(t *testing.T) {
 	// Trailing slash trimmed so the path join stays clean.
 	if got := New(nil, "https://x.test/", 1).baseURL; got != "https://x.test" {
 		t.Errorf("baseURL trailing slash not trimmed: %q", got)
+	}
+}
+
+// allowedOnErrorCount reads the fail-open counter from the default registry —
+// the one /metrics serves. -1 means the metric is not registered.
+func allowedOnErrorCount(t *testing.T) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, f := range families {
+		if f.GetName() == "breached_password_check_allowed_on_error_total" {
+			var total float64
+			for _, m := range f.GetMetric() {
+				total += m.GetCounter().GetValue()
+			}
+			return total
+		}
+	}
+	return -1
+}
+
+// Every allowed-on-error evaluation (the provider could not be
+// reached, so the password was let through) is counted in a metric; a
+// definite answer and a disabled checker are not.
+func TestPwnedAllowOnError_CountsEveryFailOpen(t *testing.T) {
+	down := New(fakeClient(func(_ *http.Request) (*http.Response, error) {
+		return nil, errors.New("dial tcp: connection refused")
+	}), "https://hibp.test", 1)
+	unavailable := New(fakeClient(func(_ *http.Request) (*http.Response, error) {
+		return textResponse(http.StatusServiceUnavailable, "upstream down"), nil
+	}), "https://hibp.test", 1)
+	healthy := New(fakeClient(func(_ *http.Request) (*http.Response, error) {
+		return textResponse(http.StatusOK, suffixOf("password123")+":5\r\n"), nil
+	}), "https://hibp.test", 1)
+	var disabled *Checker
+
+	before := allowedOnErrorCount(t)
+	if down.PwnedAllowOnError(context.Background(), "x") || unavailable.PwnedAllowOnError(context.Background(), "x") {
+		t.Fatal("an unreachable provider must allow the password (fail-open)")
+	}
+	if !healthy.PwnedAllowOnError(context.Background(), "password123") {
+		t.Fatal("a definite breach must still be reported")
+	}
+	disabled.PwnedAllowOnError(context.Background(), "x")
+	after := allowedOnErrorCount(t)
+	if after < 0 {
+		t.Fatal("breached_password_check_allowed_on_error_total is not registered")
+	}
+	if after-before != 2 {
+		t.Fatalf("allowed-on-error count rose by %v, want 2 (one per fail-open)", after-before)
 	}
 }

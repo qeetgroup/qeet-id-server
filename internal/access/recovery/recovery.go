@@ -18,7 +18,6 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -47,9 +46,18 @@ type Service struct {
 	// requested from hosted login links to its own reset page. Empty = off
 	// (every reset link uses the console). Set via SetHostedLogin.
 	loginBaseURL string
-	// breach is the optional breached-password checker (nil = feature off, a
-	// no-op). Set via SetBreachChecker; consulted on ConfirmPasswordReset.
-	breach *hibp.Checker
+	// rules checks a new password on ConfirmPasswordReset (nil = resets are
+	// refused rather than set an unchecked password). Set via SetPasswordRules.
+	rules PasswordRules
+}
+
+// PasswordRules is the one password check every path that sets a password
+// runs: the rules of the organisation the account belongs to (uuid.Nil = none:
+// the platform baseline), the offline strength baseline and, when enabled,
+// the breach check. Satisfied by *authpolicy.Service; an interface so recovery
+// doesn't import it.
+type PasswordRules interface {
+	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -59,9 +67,9 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL}
 }
 
-// SetBreachChecker wires the breached-password checker. Called from
-// internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
-func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
+// SetPasswordRules wires the password check run on reset. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetPasswordRules(r PasswordRules) { s.rules = r }
 
 // SetHostedLogin wires the hosted login origin, so a reset requested there
 // links back to its own reset page. Called from internal/bootstrap/dependencies.go.
@@ -152,18 +160,14 @@ func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from
 	return raw, nil
 }
 
+// ConfirmPasswordReset sets a new password with a reset link. The password is
+// checked against the rules of the organisation the account belongs to (or
+// the platform baseline for a tenant-less account) once the link is known to
+// be good — the account, and so its rules, comes from the link. A refused
+// password leaves the credential and the link untouched.
 func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword string, ac AuditCtx) error {
-	if len(newPassword) < 8 {
-		return errs.ErrUnprocessable.WithMessage("Your new password must be at least 8 characters.")
-	}
-	// Offline strength baseline (common-password denylist, uniform/sequential).
-	if reason := password.WeakReason(newPassword, ""); reason != "" {
-		return errs.ErrUnprocessable.WithMessage(reason)
-	}
-	// Breached-password gate before any DB work. No-op when disabled (nil
-	// checker) and fail-open inside PwnedAllowOnError.
-	if s.breach.PwnedAllowOnError(ctx, newPassword) {
-		return errs.ErrUnprocessable.WithMessage("This password has appeared in known data breaches. Choose a different one.")
+	if s.rules == nil {
+		return errs.ErrNotImplemented
 	}
 	hash := codes.Hash(rawToken)
 	tx, err := s.pool.Begin(ctx)
@@ -185,6 +189,17 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	}
 	if time.Now().After(row.ExpiresAt) {
 		return errs.ErrRecoveryLinkExpired
+	}
+	account, err := qtx.GetResetAccount(ctx, row.UserID)
+	if err != nil {
+		return err
+	}
+	var tenantID uuid.UUID // uuid.Nil: the account belongs to no organisation
+	if account.TenantID.Valid {
+		tenantID = account.TenantID.Bytes
+	}
+	if err := s.rules.ValidateForTenant(ctx, tenantID, account.Email, newPassword); err != nil {
+		return err
 	}
 	pwHash, err := password.Hash(newPassword)
 	if err != nil {

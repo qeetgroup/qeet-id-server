@@ -1,16 +1,18 @@
 // Package authpolicy stores a tenant's authentication policy — password
-// complexity rules and which login methods are permitted — and enforces the
-// password rules on tenant-scoped password changes.
+// complexity rules and which login methods are permitted — and owns the one
+// check every path that sets or replaces a password runs (ValidateForTenant).
 //
-// Signup in this product is tenant-less, so password complexity applies to
-// in-tenant password operations (admin set-password / self-service change),
-// where a tenant context exists. The login-method toggles are persisted
-// configuration the auth flows consult as they are hardened per tenant.
+// The rules that apply are those of the organisation the account belongs to
+// (its home tenant). An account with no organisation — console sign-up is
+// tenant-less — gets the platform baseline, DefaultPolicy. The login-method
+// toggles are persisted configuration the auth flows consult as they are
+// hardened per tenant.
 package authpolicy
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"unicode"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -53,7 +56,9 @@ type Policy struct {
 }
 
 // DefaultPolicy mirrors the column defaults — returned when a tenant has no
-// explicit row yet.
+// explicit row yet. It is also the platform baseline: the password rules for
+// an account that belongs to no organisation (8 characters, no required
+// character classes). Update never lets a tenant go below it.
 func DefaultPolicy() Policy {
 	return Policy{
 		PasswordEnabled:     true,
@@ -65,10 +70,13 @@ func DefaultPolicy() Policy {
 }
 
 // ValidatePassword checks a plaintext password against the policy. Pure, so it
-// is unit-tested without a database.
+// is unit-tested without a database. Each refusal names the rule that failed
+// (the length one names the minimum) and never echoes the password.
 func ValidatePassword(p Policy, pw string) error {
 	if len([]rune(pw)) < p.PasswordMinLength {
-		return errs.ErrAuthPolicyPasswordTooShort
+		return errs.ErrAuthPolicyPasswordTooShort.
+			WithMessage(fmt.Sprintf("Your password must be at least %d characters.", p.PasswordMinLength)).
+			WithMetadata(map[string]any{"min_length": p.PasswordMinLength})
 	}
 	if p.PasswordRequireUppercase && !strings.ContainsFunc(pw, unicode.IsUpper) {
 		return errs.ErrAuthPolicyPasswordNoUppercase
@@ -89,8 +97,9 @@ type Service struct {
 	q    *dbgen.Queries
 	// breach is the optional breached-password checker. Nil disables the check
 	// (a no-op), so dev/CI/offline deploys are unaffected; when set it is
-	// consulted on every tenant-scoped password validation and is itself
-	// fail-open (a HIBP outage allows the password). Set via SetBreachChecker.
+	// consulted by ValidateForTenant — so on every path that sets a password —
+	// and is itself fail-open (a HIBP outage allows the password). Set via
+	// SetBreachChecker.
 	breach *hibp.Checker
 }
 
@@ -167,16 +176,36 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	return toDomain(row), nil
 }
 
-// ValidateForTenant loads the tenant policy and validates a password against
-// it, then (when enabled) rejects passwords known from breach corpora. Wired
-// into user.Handler so the user package needn't import this one.
-func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw string) error {
-	p, err := s.Get(ctx, tenantID)
-	if err != nil {
+// ValidateForTenant is the one check every path that sets or replaces a
+// password runs — sign-up (in a tenant and tenant-less), self-service change,
+// reset, invitation acceptance, admin set-password, admin create and bulk
+// import — so a password is judged the same way whichever path it takes:
+//
+//  1. the rules of the organisation the account belongs to (tenantID), or the
+//     platform baseline DefaultPolicy when it belongs to none (uuid.Nil);
+//  2. the always-on offline strength baseline (common passwords, the account's
+//     email, trivial sequences); email may be empty;
+//  3. the breached-password check, when enabled — fail-open: an unreachable
+//     provider allows the password (counted in a metric, see hibp).
+//
+// The first failure is returned. Each names the requirement that was not met
+// (authpolicy.password_* or auth.password_weak), and none echoes the password
+// or says anything about the account's current credential. Callers take it
+// through a consumer-declared interface so they needn't import this package.
+func (s *Service) ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error {
+	p := DefaultPolicy()
+	if tenantID != uuid.Nil {
+		tp, err := s.Get(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		p = *tp
+	}
+	if err := ValidatePassword(p, pw); err != nil {
 		return err
 	}
-	if err := ValidatePassword(*p, pw); err != nil {
-		return err
+	if reason := password.WeakReason(pw, email); reason != "" {
+		return errs.ErrAuthPasswordWeak.WithMessage(reason)
 	}
 	// Breached-password gate. No-op when the checker is nil (feature off) and
 	// fail-open inside PwnedAllowOnError (a HIBP outage allows the password).

@@ -20,7 +20,7 @@ func (allowSelfRegistration) SelfRegistrationEnabled(context.Context, uuid.UUID)
 	return true, nil
 }
 
-func (allowSelfRegistration) ValidateForTenant(context.Context, uuid.UUID, string) error {
+func (allowSelfRegistration) ValidateForTenant(context.Context, uuid.UUID, string, string) error {
 	return nil
 }
 

@@ -31,9 +31,10 @@ func init() {
 // passwords, passwords equal to the account email (or its local part), and
 // trivially uniform/sequential strings. email may be empty.
 //
-// This is a baseline only: callers that want full breach coverage should also
-// run the HIBP checker (see hibp.Checker). Length is enforced separately by the
-// request validators (min=8); this function does not re-check it.
+// This is a baseline only. It runs inside the one password check every
+// password-setting path uses (authpolicy ValidateForTenant), after the
+// organisation's length and character-class rules and before the HIBP
+// breach check (see hibp.Checker); this function does not check length.
 func WeakReason(plain, email string) string {
 	lower := strings.ToLower(strings.TrimSpace(plain))
 

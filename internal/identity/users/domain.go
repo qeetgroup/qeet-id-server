@@ -43,7 +43,7 @@ type DeletedUser struct {
 type CreateInput struct {
 	TenantID    uuid.UUID      `json:"tenant_id" validate:"required"`
 	Email       string         `json:"email" validate:"required,email"`
-	Password    string         `json:"password" validate:"omitempty,min=8,max=256"`
+	Password    string         `json:"password" validate:"omitempty,max=256"` // length + rules: Handler.PasswordPolicy
 	DisplayName string         `json:"display_name" validate:"omitempty,max=200"`
 	Phone       string         `json:"phone" validate:"omitempty,e164"`
 	Metadata    map[string]any `json:"metadata"`
@@ -52,7 +52,7 @@ type CreateInput struct {
 // BulkUserInput is one row of a bulk user import (POST /v1/users/bulk).
 type BulkUserInput struct {
 	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"omitempty,min=8,max=256"`
+	Password    string `json:"password" validate:"omitempty,max=256"` // length + rules: Handler.PasswordPolicy
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 	Phone       string `json:"phone" validate:"omitempty,e164"`
 }

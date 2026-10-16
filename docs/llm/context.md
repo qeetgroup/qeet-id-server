@@ -362,6 +362,14 @@ Implemented mechanisms: password · passkeys (WebAuthn) · magic link · email a
 push approval · social login · adaptive risk (**off by default**) · per-account lockout ·
 breached-password check (env-gated).
 
+Every path that sets or replaces a password (sign-up, hosted registration, self-service change,
+reset, invite accept, admin create / set-password, bulk import) runs one check,
+`authpolicy.Service.ValidateForTenant`: the rules of the organisation the account belongs to (the
+platform baseline `DefaultPolicy`, 8 characters, for a tenant-less account), the offline strength
+baseline, then the breach check — fail-open, each allowed-on-error counted in
+`breached_password_check_allowed_on_error_total`. Services reach it through consumer-declared
+interfaces and refuse (501) to set a password when it is not wired.
+
 **Per-package file pointers: [subsystems.md](subsystems.md#access--authentication).**
 For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 

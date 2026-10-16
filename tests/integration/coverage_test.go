@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
@@ -1376,6 +1377,7 @@ func TestRecoveryPasswordResetLifecycle(t *testing.T) {
 
 	rec := &recordSender{}
 	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc.SetPasswordRules(authpolicy.NewService(testPool))
 
 	// Anti-enumeration: an unknown email succeeds without sending mail or writing a row.
 	rec.last = notifier.Message{}
@@ -1450,6 +1452,7 @@ func TestRecoveryResetTokenExpiry(t *testing.T) {
 	}
 	rec := &recordSender{}
 	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc.SetPasswordRules(authpolicy.NewService(testPool))
 	if _, err := svc.StartPasswordReset(ctx, email); err != nil {
 		t.Fatalf("start reset: %v", err)
 	}
