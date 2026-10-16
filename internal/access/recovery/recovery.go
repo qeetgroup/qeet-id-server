@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,11 +40,13 @@ type Service struct {
 	q      *dbgen.Queries
 	sender notifier.Sender
 	ttl    time.Duration
-	// baseAppURL is the app origin used to build email links (password reset,
-	// magic-link). The link lands back in the app that initiated it, which
-	// completes the flow in-place — reset/magic-link are no longer routed to the
-	// separate hosted-login app.
+	// baseAppURL is the console origin: the default target of email links
+	// (password reset, magic link), completed in the console itself.
 	baseAppURL string
+	// loginBaseURL is the hosted login origin (LOGIN_BASE_URL). A reset
+	// requested from hosted login links to its own reset page. Empty = off
+	// (every reset link uses the console). Set via SetHostedLogin.
+	loginBaseURL string
 	// breach is the optional breached-password checker (nil = feature off, a
 	// no-op). Set via SetBreachChecker; consulted on ConfirmPasswordReset.
 	breach *hibp.Checker
@@ -60,6 +63,42 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 // internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
 func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 
+// SetHostedLogin wires the hosted login origin, so a reset requested there
+// links back to its own reset page. Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetHostedLogin(loginBaseURL string) { s.loginBaseURL = loginBaseURL }
+
+// AppHostedLogin marks a reset requested from the hosted login (ResetOrigin.App).
+const AppHostedLogin = "hosted_login"
+
+// ResetOrigin says where a password reset was requested from, which decides
+// where its emailed link lands.
+type ResetOrigin struct {
+	// App is AppHostedLogin for the hosted login. Anything else, or empty,
+	// means the console — the documented default.
+	App string
+	// ReturnTo (hosted login only) is where to continue after the reset. The
+	// caller must already have validated it; it is passed through as given.
+	ReturnTo string
+}
+
+// resetLink builds the emailed reset link: hosted login's own reset page for a
+// reset requested there, the console's reset screen otherwise. The token goes
+// last, after any return_to.
+func (s *Service) resetLink(raw string, from ResetOrigin) string {
+	if from.App == AppHostedLogin && s.loginBaseURL != "" {
+		q := url.Values{}
+		if from.ReturnTo != "" {
+			q.Set("return_to", from.ReturnTo)
+		}
+		prefix := ""
+		if len(q) > 0 {
+			prefix = q.Encode() + "&"
+		}
+		return fmt.Sprintf("%s/reset?%stoken=%s", s.loginBaseURL, prefix, url.QueryEscape(raw))
+	}
+	return fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
+}
+
 // StartPasswordReset issues a reset token for the account with this email, if
 // one exists. It always succeeds from the caller's perspective so it never
 // leaks whether an email is registered. Look-up is by email *globally* — email
@@ -68,6 +107,12 @@ func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
 // page. Returns the raw token so a dev-mode handler can surface the reset link
 // in local development; the token is empty when no account matched (or on error).
 func (s *Service) StartPasswordReset(ctx context.Context, email string) (string, error) {
+	return s.StartPasswordResetFrom(ctx, email, ResetOrigin{})
+}
+
+// StartPasswordResetFrom is StartPasswordReset for a reset requested from a
+// given application: the emailed link lands back there (see resetLink).
+func (s *Service) StartPasswordResetFrom(ctx context.Context, email string, from ResetOrigin) (string, error) {
 	var userID uuid.UUID
 	err := s.pool.QueryRow(ctx,
 		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, email,
@@ -89,9 +134,7 @@ func (s *Service) StartPasswordReset(ctx context.Context, email string) (string,
 	}); err != nil {
 		return "", err
 	}
-	// The reset is completed in the console itself (baseAppURL) at
-	// /forgot-password?token=…, not the separate hosted-login app.
-	resetURL := fmt.Sprintf("%s/forgot-password?token=%s", s.baseAppURL, raw)
+	resetURL := s.resetLink(raw, from)
 	if err := s.sender.Send(ctx, notifier.Message{
 		Channel: "email",
 		To:      email,

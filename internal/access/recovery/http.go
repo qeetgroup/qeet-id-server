@@ -3,6 +3,8 @@ package recovery
 import (
 	"context"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -35,6 +37,33 @@ func (h *Handler) Mount(r chi.Router) {
 
 type forgotInput struct {
 	Email string `json:"email"`
+	// TenantID is accepted because hosted login and the React SDK send it, and
+	// is not used: email is unique platform-wide, so the look-up needs no tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+	// App is where the reset was requested from: "hosted_login" makes the
+	// emailed link open hosted login's reset page. Anything else, or nothing,
+	// keeps the console link — the documented default.
+	App string `json:"app,omitempty"`
+	// ReturnTo (hosted login only) is where to continue after the reset. It is
+	// kept only if it is this service's own OAuth authorize endpoint.
+	ReturnTo string `json:"return_to,omitempty"`
+}
+
+// authorizeReturnTo keeps a return_to only if it points at this service's own
+// OAuth authorize endpoint — the URL the authorize redirect gives hosted login
+// (same host as this request), and the same rule hosted login applies. Anything
+// else returns "" (dropped), so an emailed link can never send the user to a
+// caller-chosen site.
+func authorizeReturnTo(r *http.Request, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host != r.Host ||
+		!strings.HasSuffix(u.Path, "/oauth/authorize") {
+		return ""
+	}
+	return u.String()
 }
 
 func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +72,10 @@ func (h *Handler) forgot(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.Service.StartPasswordReset(r.Context(), in.Email)
+	raw, err := h.Service.StartPasswordResetFrom(r.Context(), in.Email, ResetOrigin{
+		App:      in.App,
+		ReturnTo: authorizeReturnTo(r, in.ReturnTo),
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
