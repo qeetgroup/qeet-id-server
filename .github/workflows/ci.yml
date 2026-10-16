@@ -143,9 +143,9 @@ jobs:
 
   # Release branches only: publish one immutable, commit-addressed image
   # (ghcr.io/qeetgroup/qeet-id-server:sha-<commit>) after every gate above has
-  # passed. No rc.N is computed here — qeet-id-deploy assembles the product
-  # release candidate from these images (qeet-id-deploy:
-  # docs/test-kit/application-contract.md). Production keeps deploying from
+  # passed. No rc.N is computed here — qeet-id-kit assembles the product
+  # release candidate from these images (qeet-id-kit:
+  # docs/application-contract.md). Production keeps deploying from
   # deploy.yml (ECR, main); this job does not touch it.
   image:
     name: Release image
@@ -233,5 +233,5 @@ jobs:
             echo "| Digest | \`$digest\` |"
             echo "| Release | \`$RELEASE\` (schema $SCHEMA) |"
             echo
-            echo "Assemble a product RC in qeet-id-deploy → Actions → **publish-candidate** with server = \`$GITHUB_SHA\`."
+            echo "Assemble a product RC in qeet-id-kit → Actions → **publish-candidate** with server = \`$GITHUB_SHA\`."
           } >> "$GITHUB_STEP_SUMMARY"
