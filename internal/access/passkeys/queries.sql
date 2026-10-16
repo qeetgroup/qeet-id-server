@@ -38,15 +38,22 @@ VALUES ($1, $2, $3, $4) RETURNING id;
 DELETE FROM auth.webauthn_sessions WHERE id = $1
 RETURNING kind, user_id, data, expires_at;
 
+-- InsertSignupWebAuthnSession stores a pending passkey sign-up; invite_id names
+-- the invitation it accepts (NULL for an ordinary sign-up).
 -- name: InsertSignupWebAuthnSession :one
-INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id)
-VALUES ('signup', $1, $2, $3, $4, $5, $6) RETURNING id;
+INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id)
+VALUES ('signup', @data, @expires_at, @subject_id, @pending_email, @pending_display_name, @pending_tenant_id, sqlc.narg('invite_id')) RETURNING id;
+
+-- DeleteInviteWebAuthnSessions drops the earlier passkey ceremonies accepting
+-- an invitation, so starting again replaces an abandoned one.
+-- name: DeleteInviteWebAuthnSessions :exec
+DELETE FROM auth.webauthn_sessions WHERE pending_invite_id = @invite_id;
 
 -- TakeSignupWebAuthnSession atomically removes a signup session and returns its data.
 
 -- name: TakeSignupWebAuthnSession :one
 DELETE FROM auth.webauthn_sessions WHERE id = $1
-RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id;
+RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id;
 
 -- CheckEmailExistsNoTenant checks if an email is taken by a real user or a pending
 -- signup session for the tenant-less flow.

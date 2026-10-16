@@ -21,6 +21,10 @@ type AuthVerifier struct {
 	// decommissioning an agent denies its already-issued (stateless) tokens
 	// within one request cycle. nil skips the check.
 	AgentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
+	// SessionUsed, when set, is told of each request made with the access
+	// token of one of the user's own sessions (not an application's token),
+	// so the session's last use is known. Best effort; nil skips it.
+	SessionUsed func(ctx context.Context, sessionID uuid.UUID)
 }
 
 // RequireAuth wraps a handler so it only sees authenticated requests.
@@ -87,6 +91,9 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				p.SessionID = &sid
 			}
 			p.ClientID = claims.ClientID
+			if v.SessionUsed != nil && p.SessionID != nil && p.ClientID == "" && p.ActorType == "user" {
+				v.SessionUsed(r.Context(), *p.SessionID)
+			}
 			// AI-agent token: capture the agent id and enforce the agent's
 			// current lifecycle status, so a suspended/decommissioned agent's
 			// still-valid tokens are denied immediately (within one request).

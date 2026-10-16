@@ -13,8 +13,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getMagicLinkAccount = `-- name: GetMagicLinkAccount :one
+SELECT id, tenant_id FROM "user".users
+WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND status <> 'suspended'
+`
+
+type GetMagicLinkAccountRow struct {
+	ID       uuid.UUID
+	TenantID pgtype.UUID
+}
+
+// GetMagicLinkAccount finds the account a magic link signs in to: by its
+// address, platform-wide (an address is unique), not deleted or suspended.
+func (q *Queries) GetMagicLinkAccount(ctx context.Context, email string) (GetMagicLinkAccountRow, error) {
+	row := q.db.QueryRow(ctx, getMagicLinkAccount, email)
+	var i GetMagicLinkAccountRow
+	err := row.Scan(&i.ID, &i.TenantID)
+	return i, err
+}
+
 const getMagicLinkByToken = `-- name: GetMagicLinkByToken :one
-SELECT id, tenant_id, email, expires_at, used_at
+SELECT id, tenant_id, email, expires_at, used_at, app, return_to
 FROM auth.magic_links
 WHERE token_hash = $1
 FOR UPDATE
@@ -22,10 +41,12 @@ FOR UPDATE
 
 type GetMagicLinkByTokenRow struct {
 	ID        uuid.UUID
-	TenantID  uuid.UUID
+	TenantID  pgtype.UUID
 	Email     string
 	ExpiresAt time.Time
 	UsedAt    pgtype.Timestamptz
+	App       string
+	ReturnTo  *string
 }
 
 func (q *Queries) GetMagicLinkByToken(ctx context.Context, tokenHash string) (GetMagicLinkByTokenRow, error) {
@@ -37,6 +58,8 @@ func (q *Queries) GetMagicLinkByToken(ctx context.Context, tokenHash string) (Ge
 		&i.Email,
 		&i.ExpiresAt,
 		&i.UsedAt,
+		&i.App,
+		&i.ReturnTo,
 	)
 	return i, err
 }
@@ -106,23 +129,30 @@ func (q *Queries) GetUserIDByEmailForTenant(ctx context.Context, arg GetUserIDBy
 }
 
 const insertMagicLink = `-- name: InsertMagicLink :exec
-INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at, app, return_to)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertMagicLinkParams struct {
-	TenantID  uuid.UUID
+	TenantID  pgtype.UUID
 	Email     string
 	TokenHash string
 	ExpiresAt time.Time
+	App       string
+	ReturnTo  *string
 }
 
+// InsertMagicLink stores a link (only its token's hash). tenant_id is the
+// organisation it was asked for from (NULL from the console); app is where it
+// opens and return_to where the hosted journey continues.
 func (q *Queries) InsertMagicLink(ctx context.Context, arg InsertMagicLinkParams) error {
 	_, err := q.db.Exec(ctx, insertMagicLink,
 		arg.TenantID,
 		arg.Email,
 		arg.TokenHash,
 		arg.ExpiresAt,
+		arg.App,
+		arg.ReturnTo,
 	)
 	return err
 }

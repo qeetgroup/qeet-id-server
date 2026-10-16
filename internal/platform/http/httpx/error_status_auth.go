@@ -22,6 +22,9 @@ func init() {
 		errs.CodeAuthMFAChallengeExpired:      http.StatusUnauthorized,
 		errs.CodeAuthRefreshTokenInvalid:      http.StatusUnauthorized,
 		errs.CodeAuthSessionRevoked:           http.StatusUnauthorized,
+		errs.CodeAuthSessionTimedOut:          http.StatusUnauthorized,
+		errs.CodeAuthLastSignInMethod:         http.StatusConflict,
+		errs.CodeAuthSessionLimit:             http.StatusForbidden,
 		errs.CodeAuthAccountSuspended:         http.StatusUnauthorized,
 		errs.CodeAuthSignInUnavailable:        http.StatusServiceUnavailable,
 	})

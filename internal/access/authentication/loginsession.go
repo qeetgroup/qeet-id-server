@@ -24,8 +24,35 @@ import (
 // is HttpOnly (never readable by JS) — distinct from API access/refresh tokens.
 const LoginSessionCookie = "qe_ls"
 
-// loginSessionTTL is the idle lifetime of a hosted SSO session.
+// loginSessionTTL is the lifetime of a hosted SSO session — shorter when the
+// account's organisation (or, with none, the platform) bounds sessions more
+// tightly; see loginSessionLifetime.
 const loginSessionTTL = 30 * time.Minute
+
+// loginSessionLifetime is how long a hosted SSO session opened now for userID
+// lasts: loginSessionTTL, or the idle timeout or maximum age of the sessions
+// of the user's organisation (the platform's for a user with none) when
+// either is shorter, so signing in through the hosted page never outlasts
+// what the organisation allows any session.
+func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (time.Duration, error) {
+	maxAge, idle := s.sessionDefaults()
+	var orgMax, orgIdle *int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXTRACT(EPOCH FROM sp.session_max_age)::bigint, EXTRACT(EPOCH FROM sp.session_idle_timeout)::bigint
+		FROM "user".users u
+		JOIN tenant.security_policies sp ON sp.tenant_id = u.tenant_id
+		WHERE u.id = $1`, userID).Scan(&orgMax, &orgIdle)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, err
+	}
+	if orgMax != nil {
+		maxAge = time.Duration(*orgMax) * time.Second
+	}
+	if orgIdle != nil {
+		idle = time.Duration(*orgIdle) * time.Second
+	}
+	return min(loginSessionTTL, maxAge, idle), nil
+}
 
 // CreateLoginSession mints a hosted SSO session for a user and returns the raw
 // cookie value. Only the hash is persisted (like refresh tokens).
@@ -34,10 +61,14 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 	if err != nil {
 		return "", err
 	}
+	ttl, err := s.loginSessionLifetime(ctx, userID)
+	if err != nil {
+		return "", err
+	}
 	if err := s.q.InsertLoginSession(ctx, dbgen.InsertLoginSessionParams{
 		TokenHash: hash,
 		UserID:    userID,
-		ExpiresAt: time.Now().Add(loginSessionTTL),
+		ExpiresAt: time.Now().Add(ttl),
 		Ip:        ip,
 		UserAgent: &ua,
 	}); err != nil {

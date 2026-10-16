@@ -31,15 +31,24 @@ UPDATE auth.password_resets SET used_at = NOW() WHERE id = $1;
 -- name: RevokeUserSessions :exec
 UPDATE auth.sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL;
 
+-- InsertMagicLink stores a link (only its token's hash). tenant_id is the
+-- organisation it was asked for from (NULL from the console); app is where it
+-- opens and return_to where the hosted journey continues.
 -- name: InsertMagicLink :exec
-INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at)
-VALUES ($1, $2, $3, $4);
+INSERT INTO auth.magic_links (tenant_id, email, token_hash, expires_at, app, return_to)
+VALUES (sqlc.narg('tenant_id'), @email, @token_hash, @expires_at, @app, sqlc.narg('return_to'));
 
 -- name: GetMagicLinkByToken :one
-SELECT id, tenant_id, email, expires_at, used_at
+SELECT id, tenant_id, email, expires_at, used_at, app, return_to
 FROM auth.magic_links
 WHERE token_hash = $1
 FOR UPDATE;
+
+-- GetMagicLinkAccount finds the account a magic link signs in to: by its
+-- address, platform-wide (an address is unique), not deleted or suspended.
+-- name: GetMagicLinkAccount :one
+SELECT id, tenant_id FROM "user".users
+WHERE LOWER(email) = LOWER(@email) AND deleted_at IS NULL AND status <> 'suspended';
 
 -- name: MarkMagicLinkUsed :exec
 UPDATE auth.magic_links SET used_at = NOW() WHERE id = $1;

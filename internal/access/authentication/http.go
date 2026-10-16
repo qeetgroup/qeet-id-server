@@ -81,6 +81,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
+	r.Get("/auth/sign-in-methods", h.signInMethods)
 	if h.Throttle != nil {
 		r.With(h.Throttle).Post("/auth/password", h.changePassword)
 	} else {
@@ -399,6 +400,28 @@ type changePasswordInput struct {
 	NewPassword     string `json:"new_password" validate:"required,max=256"` // length + rules: the service's password check
 }
 
+// signInMethods reports how many ways the caller can sign in, so a client can
+// disable or explain removing the last one before trying. The server refuses
+// that removal anyway.
+func (h *Handler) signInMethods(w http.ResponseWriter, r *http.Request) {
+	userID, err := httpx.RequireUser(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	m, err := h.Service.SignInMethods(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"password":          m.Password,
+		"passkeys":          m.Passkeys,
+		"linked_identities": m.LinkedIdentities,
+		"total":             m.Total(),
+	})
+}
+
 // passwordStatus reports whether the caller has a password set, so the account
 // UI can offer "set a password" vs "change password".
 func (h *Handler) passwordStatus(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +536,11 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := h.Service.ListSessionsPage(r.Context(), *p.UserID, limit, r.URL.Query().Get("cursor"))
+	current := uuid.Nil
+	if p.SessionID != nil {
+		current = *p.SessionID
+	}
+	out, err := h.Service.ListSessionsPageFor(r.Context(), *p.UserID, current, limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

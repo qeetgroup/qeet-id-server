@@ -174,6 +174,8 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/ldap/{id}/test":                                              "connection.write",
 		"GET /v1/tenants/{tenantID}/social/providers":                                             "connection.read",
 		"POST /v1/social/providers":                                                               "connection.write",
+		"PATCH /v1/social/providers/{provider}":                                                   "connection.write",
+		"DELETE /v1/social/providers/{provider}":                                                  "connection.write",
 		"GET /v1/users/{userID}/social/identities":                                                "user.read",
 		"DELETE /v1/social/identities/{id}":                                                       "user.write",
 
@@ -341,6 +343,7 @@ func routePolicyMap() map[string]rbac.RoutePolicy {
 		"DELETE /v1/auth/sessions/{id}",
 		"GET /v1/auth/me",
 		"GET /v1/auth/password",
+		"GET /v1/auth/sign-in-methods",
 		"POST /v1/auth/password",
 		"GET /v1/me",
 		"PATCH /v1/me",

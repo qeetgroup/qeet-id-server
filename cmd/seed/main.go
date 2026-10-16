@@ -421,7 +421,8 @@ func main() {
 			IPDenylist:         []string{},
 			PasswordMinLength:  12,
 			PasswordComplexity: "standard",
-			SessionMaxAge:      12 * time.Hour,
+			SessionMaxAge:      policy.Duration(12 * time.Hour),
+			SessionIdleTimeout: policy.Duration(time.Hour),
 			MFAEnforcement:     "required",
 			Settings:           map[string]any{},
 		})

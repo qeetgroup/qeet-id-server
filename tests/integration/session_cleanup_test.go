@@ -22,14 +22,16 @@ import (
 
 // sessionAt opens an API session for userID and backdates it: opened at
 // opened, ended at revoked (nil: never), and every refresh token expiring at
-// expires.
+// expires. Its maximum age and idle timeout are set far enough out not to
+// matter (see boundedSession for sessions that reach them).
 func sessionAt(t *testing.T, ctx context.Context, svc *auth.Service, userID uuid.UUID, opened time.Time, revoked *time.Time, expires time.Time) uuid.UUID {
 	t.Helper()
 	pair, err := svc.IssuePair(ctx, userID, uuid.Nil, "198.51.100.7", "cleanup", "password")
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `UPDATE auth.sessions SET created_at = $2, last_seen_at = $2, revoked_at = $3 WHERE id = $1`,
+	if _, err := testPool.Exec(ctx, `UPDATE auth.sessions SET created_at = $2, last_seen_at = $2, revoked_at = $3,
+		expires_at = NOW() + INTERVAL '365 days', idle_timeout = INTERVAL '365 days' WHERE id = $1`,
 		pair.SessionID, opened, revoked); err != nil {
 		t.Fatalf("backdate session: %v", err)
 	}
@@ -38,6 +40,21 @@ func sessionAt(t *testing.T, ctx context.Context, svc *auth.Service, userID uuid
 		t.Fatalf("backdate refresh token: %v", err)
 	}
 	return pair.SessionID
+}
+
+// boundedSession opens an API session for userID that was opened 40 days ago,
+// last renewed at lastSeen with a one-day idle timeout, and ends however
+// active at maxAge; its refresh token stays usable for 20 more days, so only
+// the session's own bounds can have ended it.
+func boundedSession(t *testing.T, ctx context.Context, svc *auth.Service, userID uuid.UUID, lastSeen, maxAge time.Time) uuid.UUID {
+	t.Helper()
+	opened := time.Now().UTC().Add(-40 * 24 * time.Hour)
+	id := sessionAt(t, ctx, svc, userID, opened, nil, time.Now().UTC().Add(20*24*time.Hour))
+	if _, err := testPool.Exec(ctx, `UPDATE auth.sessions SET last_seen_at = $2, expires_at = $3, idle_timeout = INTERVAL '1 day' WHERE id = $1`,
+		id, lastSeen, maxAge); err != nil {
+		t.Fatalf("bound session: %v", err)
+	}
+	return id
 }
 
 // loginSessionExpiring opens a hosted-login session for userID expiring at exp.
@@ -73,9 +90,11 @@ func loginSessionsOf(t *testing.T, ctx context.Context, userID uuid.UUID) int {
 
 // TestSessionCleanupDeletesOnlyWhatIsPastRetention covers: the run completes on
 // the migrated schema; sessions ended, or with every refresh token expired,
-// before the window are deleted with their refresh tokens and counted; a
+// before the window are deleted with their refresh tokens and counted, and so
+// are sessions that reached their idle timeout or maximum age before it; a
 // session ended inside the window, a live session, a session whose refresh
-// token expired inside the window and one opened inside the window are kept;
+// token expired inside the window, sessions that reached their idle timeout or
+// maximum age inside it, and one opened inside the window are kept;
 // hosted-login sessions expired before the window are deleted and the rest
 // kept; and the next run, with nothing left to delete, succeeds with zero.
 func TestSessionCleanupDeletesOnlyWhatIsPastRetention(t *testing.T) {
@@ -95,7 +114,23 @@ func TestSessionCleanupDeletesOnlyWhatIsPastRetention(t *testing.T) {
 	live := sessionAt(t, ctx, svc, me, now.Add(-40*day), nil, now.Add(20*day))
 	expiredRecently := sessionAt(t, ctx, svc, me, now.Add(-40*day), nil, now.Add(-1*day))
 	openedRecently := sessionAt(t, ctx, svc, me, now.Add(-1*day), nil, now.Add(-1*time.Hour))
+	idleLongAgo := boundedSession(t, ctx, svc, me, now.Add(-9*day), now.Add(20*day))
+	maxAgeLongAgo := boundedSession(t, ctx, svc, me, now.Add(-1*time.Hour), now.Add(-8*day))
+	idleRecently := boundedSession(t, ctx, svc, me, now.Add(-2*day), now.Add(20*day))
+	maxAgeRecently := boundedSession(t, ctx, svc, me, now.Add(-1*time.Hour), now.Add(-1*day))
 
+	// Passkey ceremonies: one expired unfinished, one still open.
+	var expiredCeremony, openCeremony uuid.UUID
+	for _, c := range []struct {
+		id  *uuid.UUID
+		exp time.Time
+	}{{&expiredCeremony, now.Add(-time.Minute)}, {&openCeremony, now.Add(4 * time.Minute)}} {
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO auth.webauthn_sessions (kind, data, expires_at) VALUES ('login_discoverable', '{}', $1) RETURNING id`,
+			c.exp).Scan(c.id); err != nil {
+			t.Fatalf("seed ceremony: %v", err)
+		}
+	}
 	loginSessionExpiring(t, ctx, svc, me, now.Add(-8*day))
 	loginSessionExpiring(t, ctx, svc, me, now.Add(-1*day))
 	if _, err := svc.CreateLoginSession(ctx, me, "198.51.100.7", "cleanup"); err != nil {
@@ -106,10 +141,15 @@ func TestSessionCleanupDeletesOnlyWhatIsPastRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleanup run failed: %v", err)
 	}
-	if purged.Sessions < 2 || purged.LoginSessions < 1 {
-		t.Fatalf("cleanup counted %+v, want at least the 2 sessions and 1 hosted-login session past retention", purged)
+	if purged.Sessions < 4 || purged.LoginSessions < 1 {
+		t.Fatalf("cleanup counted %+v, want at least the 4 sessions and 1 hosted-login session past retention", purged)
 	}
-	for name, id := range map[string]uuid.UUID{"ended before the window": endedLongAgo, "all refresh tokens expired before the window": expiredLongAgo} {
+	for name, id := range map[string]uuid.UUID{
+		"ended before the window":                      endedLongAgo,
+		"all refresh tokens expired before the window": expiredLongAgo,
+		"idle timeout reached before the window":       idleLongAgo,
+		"maximum age reached before the window":        maxAgeLongAgo,
+	} {
 		if sessionExists(t, ctx, id) {
 			t.Errorf("session %s was kept", name)
 		}
@@ -126,10 +166,17 @@ func TestSessionCleanupDeletesOnlyWhatIsPastRetention(t *testing.T) {
 		"live":                    live,
 		"refresh token expired inside the window": expiredRecently,
 		"opened inside the window":                openedRecently,
+		"idle timeout reached inside the window":  idleRecently,
+		"maximum age reached inside the window":   maxAgeRecently,
 	} {
 		if !sessionExists(t, ctx, id) {
 			t.Errorf("session %s was deleted", name)
 		}
+	}
+	var ceremonies int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM auth.webauthn_sessions WHERE id = ANY($1)`,
+		[]uuid.UUID{expiredCeremony, openCeremony}).Scan(&ceremonies); err != nil || ceremonies != 1 || purged.Ceremonies < 1 {
+		t.Errorf("ceremonies left = %d (purged %d, %v), want only the open one", ceremonies, purged.Ceremonies, err)
 	}
 	if n := loginSessionsOf(t, ctx, me); n != 2 {
 		t.Errorf("hosted-login sessions left = %d, want the 2 not expired before the window", n)

@@ -223,12 +223,85 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Features
 
+* **auth:** an organisation can cap how many live sessions one person holds in it at once — new
+  `max_sessions` (none by default) and `session_limit_action` on its security policy. A sign-in at the cap
+  either ends the person's least recently used session (`evict_oldest`, the default: audited as
+  `auth.session_evicted`, announced as `session_limit`) or is refused with `auth.session_limit` (403, audited).
+  The count happens as the session opens, under the account's lock, so simultaneous sign-ins cannot exceed it.
+  Migration `0125`.
+* **auth:** the session list describes each session: `device` ("Chrome on macOS", "Unknown device") and
+  `device_kind` read from the user agent on the server, `country` where a trusted proxy reports one
+  (`GEO_COUNTRY_HEADER`; omitted otherwise, never taken from the client), and `current` on the caller's own
+  session. A session's last use now moves on requests made with its access tokens (at most once a minute), not
+  only on renewal, so its idle timeout counts from its last use. Migration `0124`.
+* **passkeys:** the session cleanup job also deletes passkey ceremony state that expired unfinished. The
+  console and hosted sign-in pages now start a passkey ceremony in the background as they load (so the browser
+  can offer passkeys in its autofill prompt), and most are never finished. The job's log line reports them as
+  `ceremonies`.
+* **auth:** magic-link sign-in works end to end. A link can be asked for from the console's sign-in page (no
+  organisation: the account is found by its address, as password sign-in finds it) and from an organisation's
+  hosted sign-in page (`app: "hosted_login"`, with the journey's `return_to`): the link opens where it was asked
+  for, and the hosted login exchanges it at the new `POST /v1/auth/magic-link/session`, which opens the
+  hosted-login session and returns where the journey continues. A link is exchanged only where it was issued
+  for. Asking answers the same, and takes the same minimum time, whether or not the address has an account, and
+  sends nothing to one without; requests are bounded to three per address and ten per caller (429), counted
+  either way. New `POST /v1/auth/magic-link/resend` replaces a used or expired link without the address being
+  typed again. Migration `0123`.
+* **invites:** an invited person can accept with a passkey instead of a password. `POST /v1/invites/lookup`
+  previews an invitation (organisation, address, whether an account already holds it, and the ways of accepting
+  it: a password always, a passkey where the organisation allows passkeys). `POST
+  /v1/invites/accept/passkey/begin` and `/finish` run the passkey ceremony: the email and organisation come from
+  the invitation, and finishing creates the account with the passkey and no password, grants the invited role and
+  accepts the invitation in one transaction, then returns a token pair as `POST /v1/invites/accept` does. A
+  ceremony that expires, is abandoned or replaced, or is submitted twice creates nothing and leaves the invitation
+  pending; an ordinary passkey sign-up cannot finish an invitation's ceremony. Migration `0122`.
 * **deploy:** add deploy/release layer (Compose, Helm, migrate image, AWS KMS, CI→CD) ([3e176c5](https://github.com/qeetgroup/qeet-id-server/commit/3e176c59a8fca6bbf1bf614a4c97b0bdab5a8dfb))
 * **frontend:** adopt @qeetrix/ui across admin, web, and docs ([c32b8b9](https://github.com/qeetgroup/qeet-id-server/commit/c32b8b9b7d152b1aeb94d8424ac3d7ef9d7667dd))
 
 
 ### Bug Fixes
 
+* **auth:** sessions end by themselves. A session used to end only when something revoked it: every renewal
+  issued a fresh 30-day refresh token, so a session renewed once a month never ended, and an organisation's
+  `session_max_age` was stored and shown but never applied. Now a session ends at its maximum age however
+  active it is, and once it goes longer than its idle timeout without a renewal (each renewal restarts it).
+  Both bounds come from the organisation's security policy when the session opens — new
+  `session_idle_timeout` next to `session_max_age` — or from the new `SESSION_MAX_AGE` (720h) and
+  `SESSION_IDLE_TIMEOUT` (24h) where it sets none; switching organisation never extends a session. An access
+  token never outlives its session (its `exp` is the session's end when that comes first, and the shortest idle
+  timeout is longer than an access token), and a hosted-login sign-in lasts no longer than the organisation's
+  idle timeout or maximum age when those are under its usual 30 minutes. A renewal
+  past either bound is refused with the new `auth.session_timed_out` (401); the session ends, the audit
+  records `auth.session_expired` with the bound reached, and `session.revoked` subscribers are told `expired`.
+  Sign-in and renewal responses add `session_expires_at` and `idle_expires_at`, and the session list adds
+  `expires_at`, `idle_expires_at` and `status` (`active`, `revoked`, `expired`); expired sessions are no longer
+  counted, listed as active, or ended again by a sign-out everywhere. An application's grant ends at the same
+  maximum age however often it is renewed. `ACCESS_TOKEN_TTL` must now be shorter than 15m, the shortest idle
+  timeout. Migration `0121`.
+* **auth:** an account can no longer lose its last way to sign in. Removing a passkey, unlinking a connected
+  account, or an administrator unlinking someone's identity used to delete it without looking at what the account
+  had left, so a passkey-only account could remove its passkey and never sign in again. Each removal now counts
+  the account's ways in — its password and passkeys while its organisation allows them, and linked identities
+  that can still sign in — under the
+  account's lock, in the same transaction, and refuses the last one with `auth.last_sign_in_method` (409),
+  recorded as `auth.sign_in_method_removal_refused`. New `GET /v1/auth/sign-in-methods` reports the counts so a
+  client can disable or explain the action first.
+* **social:** an organisation's social providers can be switched off, changed field by field and removed. A
+  provider could not be switched off — every save switched it back on — and a save without a secret replaced
+  the stored one with an empty one. New `PATCH /v1/social/providers/{provider}` changes only the fields given
+  (`enabled`, `client_id`, `client_secret`, `discovery_url`); `POST /v1/social/providers` keeps whether a
+  provider is on and keeps the stored secret when none is given. New `DELETE /v1/social/providers/{provider}`
+  removes one, keeping the identities people linked through it (they work again if it is added back); it is
+  refused with `social.provider_in_use` (409) while someone in the organisation can sign in only through it.
+  A switched-off or removed provider now refuses sign-in with the same answer as one never set up
+  (`social.provider_not_configured`), so the refusal does not reveal which. Every change is audited
+  (`social_provider.created`, `.updated`, `.enabled`, `.disabled`, `.deleted`), naming the fields changed but
+  never the secret.
+* **policy:** the organisation security policy could not be saved from the console: the API read
+  `session_max_age` as nanoseconds while the console sends `"720h"` (400), the console's "Basic" complexity and
+  "Disabled" MFA options are not values the database accepts (500), and omitting the IP lists failed (500).
+  Session bounds are now read and written as duration strings, every field is checked, and an out-of-range
+  value is refused with `validation_failed` naming the field.
 * **oidc:** an access token an application receives on a user's behalf can no longer manage the user's account or
   organisation. Such tokens verified like the user's own, so a token approved only for `openid email` could list
   and end the user's sessions or, for an administrator, delete users. They now carry `client_id` (RFC 9068) —

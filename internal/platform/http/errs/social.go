@@ -27,16 +27,24 @@ const (
 	CodeSocialLoginCodeExpired      = "social.login_code_expired"
 	CodeSocialAlreadyLinked         = "social.already_linked"
 	CodeSocialNoAccount             = "social.no_account"
+	CodeSocialProviderInUse         = "social.provider_in_use"
 )
 
 // Social-login errors. The Message is what the end user sees. Transient upstream
 // failures and expired/invalid ceremony tokens are marked retryable — the client
 // can safely restart the sign-in ceremony.
 var (
-	ErrSocialTenantRequired        = New(CodeSocialTenantRequired, "We couldn't determine which organization to sign you in to.")
-	ErrSocialTenantNotFound        = New(CodeSocialTenantNotFound, "We couldn't find that organization.")
-	ErrSocialProviderNotConfigured = New(CodeSocialProviderNotConfigured, "That sign-in provider isn't set up for this organization.")
-	ErrSocialProviderDisabled      = New(CodeSocialProviderDisabled, "That sign-in provider is currently disabled.")
+	ErrSocialTenantRequired = New(CodeSocialTenantRequired, "We couldn't determine which organization to sign you in to.")
+	ErrSocialTenantNotFound = New(CodeSocialTenantNotFound, "We couldn't find that organization.")
+	// ErrSocialProviderNotConfigured is also the answer for a provider the
+	// organisation has switched off, so sign-in does not reveal which.
+	ErrSocialProviderNotConfigured = New(CodeSocialProviderNotConfigured, "That sign-in option isn't available for this organization.")
+	// ErrSocialProviderDisabled is no longer returned (a switched-off provider
+	// reads as not set up); the code stays reserved so it is never reused.
+	ErrSocialProviderDisabled = New(CodeSocialProviderDisabled, "That sign-in provider is currently disabled.")
+	// ErrSocialProviderInUse refuses removing a provider some people can sign
+	// in only through; metadata.people says how many.
+	ErrSocialProviderInUse         = New(CodeSocialProviderInUse, "Some people can sign in only with this provider. Switch it off instead, or give them another way to sign in first.")
 	ErrSocialProviderNoDiscovery   = New(CodeSocialProviderNoDiscovery, "That sign-in provider isn't fully configured. Contact your administrator.")
 	ErrSocialDiscoveryFailed       = New(CodeSocialDiscoveryFailed, "We couldn't reach the sign-in provider. Please try again.").AsRetryable()
 	ErrSocialCallbackParamsMissing = New(CodeSocialCallbackParamsMissing, "This sign-in request is missing required information.")

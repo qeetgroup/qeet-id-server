@@ -59,6 +59,17 @@ func (q *Queries) CheckEmailExistsNoTenant(ctx context.Context, lower string) (*
 	return exists, err
 }
 
+const deleteInviteWebAuthnSessions = `-- name: DeleteInviteWebAuthnSessions :exec
+DELETE FROM auth.webauthn_sessions WHERE pending_invite_id = $1
+`
+
+// DeleteInviteWebAuthnSessions drops the earlier passkey ceremonies accepting
+// an invitation, so starting again replaces an abandoned one.
+func (q *Queries) DeleteInviteWebAuthnSessions(ctx context.Context, inviteID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteInviteWebAuthnSessions, inviteID)
+	return err
+}
+
 const deletePasskeyCredential = `-- name: DeletePasskeyCredential :execrows
 DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2
 `
@@ -182,8 +193,8 @@ func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskey
 }
 
 const insertSignupWebAuthnSession = `-- name: InsertSignupWebAuthnSession :one
-INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id)
-VALUES ('signup', $1, $2, $3, $4, $5, $6) RETURNING id
+INSERT INTO auth.webauthn_sessions (kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id)
+VALUES ('signup', $1, $2, $3, $4, $5, $6, $7) RETURNING id
 `
 
 type InsertSignupWebAuthnSessionParams struct {
@@ -193,8 +204,11 @@ type InsertSignupWebAuthnSessionParams struct {
 	PendingEmail       *string
 	PendingDisplayName *string
 	PendingTenantID    pgtype.UUID
+	InviteID           pgtype.UUID
 }
 
+// InsertSignupWebAuthnSession stores a pending passkey sign-up; invite_id names
+// the invitation it accepts (NULL for an ordinary sign-up).
 func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSignupWebAuthnSessionParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertSignupWebAuthnSession,
 		arg.Data,
@@ -203,6 +217,7 @@ func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSig
 		arg.PendingEmail,
 		arg.PendingDisplayName,
 		arg.PendingTenantID,
+		arg.InviteID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -345,7 +360,7 @@ func (q *Queries) RenamePasskeyCredential(ctx context.Context, arg RenamePasskey
 const takeSignupWebAuthnSession = `-- name: TakeSignupWebAuthnSession :one
 
 DELETE FROM auth.webauthn_sessions WHERE id = $1
-RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id
+RETURNING kind, data, expires_at, subject_id, pending_email, pending_display_name, pending_tenant_id, pending_invite_id
 `
 
 type TakeSignupWebAuthnSessionRow struct {
@@ -356,6 +371,7 @@ type TakeSignupWebAuthnSessionRow struct {
 	PendingEmail       *string
 	PendingDisplayName *string
 	PendingTenantID    pgtype.UUID
+	PendingInviteID    pgtype.UUID
 }
 
 // TakeSignupWebAuthnSession atomically removes a signup session and returns its data.
@@ -370,6 +386,7 @@ func (q *Queries) TakeSignupWebAuthnSession(ctx context.Context, id uuid.UUID) (
 		&i.PendingEmail,
 		&i.PendingDisplayName,
 		&i.PendingTenantID,
+		&i.PendingInviteID,
 	)
 	return i, err
 }

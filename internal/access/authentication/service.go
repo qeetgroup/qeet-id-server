@@ -25,6 +25,8 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
 )
 
 type Service struct {
@@ -61,6 +63,12 @@ type Service struct {
 	// every sign-in). See lockout.go.
 	lockout       LockoutConfig
 	lockoutSource LockoutSource
+	// sessionMaxAge and sessionIdle bound a session whose organisation sets
+	// no bounds of its own (zero = the platform defaults). See lifetime.go.
+	sessionMaxAge time.Duration
+	sessionIdle   time.Duration
+	// uses throttles the record of sessions' use; see SessionUsed.
+	uses sessionUses
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
@@ -297,8 +305,14 @@ type TokenPair struct {
 	TokenType    string    `json:"token_type"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	RefreshToken string    `json:"refresh_token"`
-	SessionID    uuid.UUID `json:"session_id"`
-	UserID       uuid.UUID `json:"user_id"`
+	// SessionExpiresAt is when the session ends however active it is, and
+	// IdleExpiresAt when it ends unless renewed before then, so a client can
+	// warn its user ahead of either. The server refuses the session after
+	// them whatever the client does.
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+	IdleExpiresAt    time.Time `json:"idle_expires_at"`
+	SessionID        uuid.UUID `json:"session_id"`
+	UserID           uuid.UUID `json:"user_id"`
 	// Tenant the token is scoped to; nil/omitted for a tenant-less session.
 	TenantID *uuid.UUID `json:"tenant_id,omitempty"`
 }
@@ -349,15 +363,20 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	// 3) Tenant-less session + access + refresh token, all in the same tx so
 	// signup is fully atomic.
 	sessionID := uuid.New()
-	if err := s.q.WithTx(tx).InsertTenantlessSession(ctx, dbgen.InsertTenantlessSessionParams{
-		ID:        sessionID,
-		UserID:    u.ID,
-		Ip:        in.IP,
-		UserAgent: &in.UserAgent,
-	}); err != nil {
+	maxAge, idle := s.sessionDefaults()
+	bounds, err := s.q.WithTx(tx).InsertTenantlessSession(ctx, dbgen.InsertTenantlessSessionParams{
+		ID:            sessionID,
+		UserID:        u.ID,
+		Ip:            in.IP,
+		UserAgent:     &in.UserAgent,
+		MaxAgeSeconds: maxAge.Seconds(),
+		IdleSeconds:   idle.Seconds(),
+		Country:       httpx.GeoCountry(ctx),
+	})
+	if err != nil {
 		return nil, nil, nil, err
 	}
-	access, exp, err := s.tokens.IssueAccess(u.ID, uuid.Nil, sessionID, "")
+	access, exp, err := s.tokens.IssueSessionAccess(u.ID, uuid.Nil, sessionID, nil, bounds.ExpiresAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -365,11 +384,10 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
 	if _, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		SessionID: sessionID,
 		TokenHash: refreshHash,
-		ExpiresAt: refreshExp,
+		ExpiresAt: s.refreshExpiry(bounds.ExpiresAt),
 	}); err != nil {
 		return nil, nil, nil, err
 	}
@@ -379,12 +397,14 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	}
 
 	return &TokenPair{
-		AccessToken:  access,
-		TokenType:    "Bearer",
-		ExpiresAt:    exp,
-		RefreshToken: refreshRaw,
-		SessionID:    sessionID,
-		UserID:       u.ID,
+		AccessToken:      access,
+		TokenType:        "Bearer",
+		ExpiresAt:        exp,
+		RefreshToken:     refreshRaw,
+		SessionExpiresAt: bounds.ExpiresAt,
+		IdleExpiresAt:    bounds.IdleExpiresAt,
+		SessionID:        sessionID,
+		UserID:           u.ID,
 	}, u, nil, nil
 }
 
@@ -455,8 +475,16 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 		}
 		return nil, err
 	}
+	// The same sign-in, so the new session ends when this one would have.
+	ends, err := q.SessionEnd(ctx, dbgen.SessionEndParams{SessionID: in.FromSessionID, UserID: in.UserID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrUnauthorized
+	}
+	if err != nil {
+		return nil, err
+	}
 	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.TenantID, in.IP, in.UserAgent, "tenant_switch", claims,
-		map[string]any{"previous_session_id": in.FromSessionID})
+		map[string]any{"previous_session_id": in.FromSessionID}, ends)
 	if err != nil {
 		return nil, err
 	}
@@ -938,7 +966,7 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil)
+	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil, time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -950,8 +978,9 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 
 // issuePairTx is issuePair inside the caller's transaction, which commits. The
 // hook claims are stored with the session so renewals issue them again;
-// auditMeta (may be nil) is added to the sign-in audit record.
-func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any) (*TokenPair, error) {
+// auditMeta (may be nil) is added to the sign-in audit record. notAfter (zero:
+// none) is when the sign-in this session continues ends: it ends no later.
+func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
 	sessionID := uuid.New()
 	var ipArg any
 	if ip != "" {
@@ -973,13 +1002,31 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		}
 		hookClaims = raw
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims)
-		VALUES ($1, $2, $3, NULLIF($4,'')::inet, $5, $6)
-	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims); err != nil {
+	// The organisation's limit on one person's simultaneous sessions.
+	if tenantID != uuid.Nil {
+		if err := s.enforceSessionLimit(ctx, tx, userID, tenantID, ip, ua); err != nil {
+			return nil, err
+		}
+	}
+	// The organisation's own session bounds, else the platform's; taken now,
+	// so a later change to the policy applies to new sessions only.
+	maxAge, idle := s.sessionDefaults()
+	var sessionExp, idleExp time.Time
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country)
+		SELECT $1, $2, $3, NULLIF($4,'')::inet, $5, $6,
+		       LEAST(NOW() + COALESCE(sp.session_max_age, make_interval(secs => $7::float8)),
+		             COALESCE($9::timestamptz, 'infinity'::timestamptz)),
+		       COALESCE(sp.session_idle_timeout, make_interval(secs => $8::float8)),
+		       NULLIF($10, '')
+		FROM (VALUES (1)) AS one
+		LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $3
+		RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)
+	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims, maxAge.Seconds(), idle.Seconds(), notAfterArg(notAfter),
+		httpx.GeoCountry(ctx)).Scan(&sessionExp, &idleExp); err != nil {
 		return nil, err
 	}
-	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
+	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
 	if err != nil {
 		return nil, err
 	}
@@ -987,11 +1034,10 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	if err != nil {
 		return nil, err
 	}
-	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
 	if _, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		SessionID: sessionID,
 		TokenHash: refreshHash,
-		ExpiresAt: refreshExp,
+		ExpiresAt: s.refreshExpiry(sessionExp),
 	}); err != nil {
 		return nil, err
 	}
@@ -1016,14 +1062,34 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		return nil, err
 	}
 	return &TokenPair{
-		AccessToken:  access,
-		TokenType:    "Bearer",
-		ExpiresAt:    exp,
-		RefreshToken: refreshRaw,
-		SessionID:    sessionID,
-		UserID:       userID,
-		TenantID:     tenantPtr,
+		AccessToken:      access,
+		TokenType:        "Bearer",
+		ExpiresAt:        exp,
+		RefreshToken:     refreshRaw,
+		SessionExpiresAt: sessionExp,
+		IdleExpiresAt:    idleExp,
+		SessionID:        sessionID,
+		UserID:           userID,
+		TenantID:         tenantPtr,
 	}, nil
+}
+
+// notAfterArg is a session's latest end for the insert: NULL for none.
+func notAfterArg(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
+// refreshExpiry is when a refresh token issued now expires: its usual
+// lifetime, but never after the session it renews has ended.
+func (s *Service) refreshExpiry(sessionExp time.Time) time.Time {
+	exp := time.Now().UTC().Add(s.tokens.RefreshTTL())
+	if sessionExp.Before(exp) {
+		return sessionExp
+	}
+	return exp
 }
 
 // Refresh rotates the provided refresh token: the old row is marked used,
@@ -1051,21 +1117,54 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		userStatus  string
 		userDeleted *time.Time
 		hookClaims  []byte
+		sessionExp  time.Time
+		pastMaxAge  bool
+		pastIdle    bool
 	)
+	// Whether the session had reached its maximum age or idle timeout by the
+	// time it ended — now, if it has not ended — is decided on the database's
+	// clock, as the bounds were set.
 	row := tx.QueryRow(ctx, `
 		SELECT rt.id, rt.session_id, rt.used_at, rt.expires_at,
-		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims
+		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims,
+		       s.expires_at,
+		       s.expires_at <= COALESCE(s.revoked_at, NOW()),
+		       s.last_seen_at + s.idle_timeout <= COALESCE(s.revoked_at, NOW())
 		FROM auth.refresh_tokens rt
 		JOIN auth.sessions s ON s.id = rt.session_id
 		JOIN "user".users u ON u.id = s.user_id
 		WHERE rt.token_hash = $1
-		FOR UPDATE OF rt
+		FOR UPDATE OF rt, s
 	`, hash)
-	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims); err != nil {
+	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims,
+		&sessionExp, &pastMaxAge, &pastIdle); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrAuthRefreshTokenInvalid
 		}
 		return nil, err
+	}
+	// uuid.Nil = tenant-less session; preserved across refresh.
+	var tenantID uuid.UUID
+	if tenantPtr != nil {
+		tenantID = *tenantPtr
+	}
+	// A session past its maximum age or idle timeout has ended, whatever the
+	// client was told and whether or not it is the first renewal to notice.
+	// The first one records the ending; it is never renewed.
+	if pastMaxAge || pastIdle {
+		if sessionRev == nil {
+			reason := timedOutIdle
+			if pastMaxAge {
+				reason = timedOutMaxAge
+			}
+			if err := s.endTimedOutSession(ctx, tx, userID, tenantID, sessionID, reason, in); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return nil, errs.ErrAuthSessionTimedOut
 	}
 	if sessionRev != nil {
 		return nil, errs.ErrAuthSessionRevoked
@@ -1080,11 +1179,6 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	}
 	if time.Now().After(expiresAt) {
 		return nil, errs.ErrAuthRefreshTokenInvalid
-	}
-	// uuid.Nil = tenant-less session; preserved across refresh.
-	var tenantID uuid.UUID
-	if tenantPtr != nil {
-		tenantID = *tenantPtr
 	}
 	if usedAt != nil {
 		// Reuse — assume theft. Revoke the session, write an audit row,
@@ -1105,11 +1199,10 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if err != nil {
 		return nil, err
 	}
-	newExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
 	newID, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		SessionID: sessionID,
 		TokenHash: newHash,
-		ExpiresAt: newExp,
+		ExpiresAt: s.refreshExpiry(sessionExp),
 	})
 	if err != nil {
 		return nil, err
@@ -1120,7 +1213,9 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID); err != nil {
+	// The renewal is the session's use: its idle timeout counts from now.
+	idleExp, err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID)
+	if err != nil {
 		return nil, err
 	}
 	// The hook ran when the session was opened; its claims stay with the session.
@@ -1130,7 +1225,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			return nil, err
 		}
 	}
-	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
+	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,13 +1233,15 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		return nil, err
 	}
 	return &TokenPair{
-		AccessToken:  access,
-		TokenType:    "Bearer",
-		ExpiresAt:    exp,
-		RefreshToken: newRaw,
-		SessionID:    sessionID,
-		UserID:       userID,
-		TenantID:     tenantPtr,
+		AccessToken:      access,
+		TokenType:        "Bearer",
+		ExpiresAt:        exp,
+		RefreshToken:     newRaw,
+		SessionExpiresAt: sessionExp,
+		IdleExpiresAt:    idleExp,
+		SessionID:        sessionID,
+		UserID:           userID,
+		TenantID:         tenantPtr,
 	}, nil
 }
 
@@ -1582,6 +1679,11 @@ func (s *Service) ReauthPassword(ctx context.Context, userID uuid.UUID, plain st
 	return true, plain != "" && password.Verify(hash, plain), nil
 }
 
+// SignInMethods counts the user's ways to sign in (see user.SignInMethods).
+func (s *Service) SignInMethods(ctx context.Context, userID uuid.UUID) (user.SignInMethods, error) {
+	return user.CountSignInMethods(ctx, s.pool, userID)
+}
+
 type Session struct {
 	ID         uuid.UUID  `json:"id"`
 	UserID     uuid.UUID  `json:"user_id"`
@@ -1591,6 +1693,24 @@ type Session struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeenAt time.Time  `json:"last_seen_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+	// ExpiresAt is when the session ends however active it is, and
+	// IdleExpiresAt when it ends unless renewed first. Status is "active",
+	// "revoked" (ended by sign-out or revocation) or "expired" (reached its
+	// maximum age or idle timeout first).
+	ExpiresAt     time.Time `json:"expires_at"`
+	IdleExpiresAt time.Time `json:"idle_expires_at"`
+	Status        string    `json:"status"`
+	// Device describes the device and browser in words ("Chrome on macOS",
+	// "Unknown device"), read from the user agent on the server so every
+	// surface names it alike; DeviceKind is desktop, mobile, tablet or
+	// unknown. The raw user agent stays in UserAgent, for support.
+	Device     string `json:"device"`
+	DeviceKind string `json:"device_kind"`
+	// Country is where the session was opened, approximately (ISO 3166-1
+	// alpha-2), when the deployment supplies it; omitted otherwise.
+	Country string `json:"country,omitempty"`
+	// Current marks the session the request listing them was made with.
+	Current bool `json:"current"`
 }
 
 func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session, error) {
@@ -1608,7 +1728,14 @@ type SessionPage struct {
 	Total      int       `json:"total"`
 }
 
+// ListSessionsPage lists the user's sessions, newest first.
 func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit int, cursor string) (*SessionPage, error) {
+	return s.ListSessionsPageFor(ctx, userID, uuid.Nil, limit, cursor)
+}
+
+// ListSessionsPageFor is ListSessionsPage marking current (uuid.Nil: none) as
+// the caller's own session.
+func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.UUID, limit int, cursor string) (*SessionPage, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1640,8 +1767,14 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 	// `users.deleted_at`.
 	rows, err := s.pool.Query(ctx, `
 		SELECT sess.id, sess.user_id, sess.tenant_id, host(sess.ip), sess.user_agent,
-		       sess.created_at, sess.last_seen_at, sess.revoked_at
+		       sess.created_at, sess.last_seen_at, sess.revoked_at,
+		       sess.expires_at, ends.idle,
+		       CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
+		            WHEN sess.revoked_at IS NOT NULL THEN 'revoked'
+		            ELSE 'active' END,
+		       COALESCE(sess.country, '')
 		FROM auth.sessions sess
+		CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
 		JOIN "user".users u ON u.id = sess.user_id
 		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
 		  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3, $4))
@@ -1656,9 +1789,17 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 	for rows.Next() {
 		var session Session
 		var tenantID pgtype.UUID
-		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt); err != nil {
+		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
+			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country); err != nil {
 			return nil, err
 		}
+		ua := ""
+		if session.UserAgent != nil {
+			ua = *session.UserAgent
+		}
+		device := useragent.Parse(ua)
+		session.Device, session.DeviceKind = device.Label(), device.Kind
+		session.Current = current != uuid.Nil && session.ID == current
 		if tenantID.Valid {
 			session.TenantID = uuid.UUID(tenantID.Bytes)
 		}

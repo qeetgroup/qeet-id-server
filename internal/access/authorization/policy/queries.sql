@@ -3,10 +3,9 @@
 -- cleanly model:
 --
 --   Get:    ip_allowlist::text[], ip_denylist::text[]        — cidr[] cast to text[]
---           EXTRACT(EPOCH FROM session_max_age)*INTERVAL'1 second' — interval arithmetic
---                                                              whose result type sqlc
---                                                              cannot infer as time.Duration
+--           EXTRACT(EPOCH FROM session_max_age / session_idle_timeout) — intervals read
+--                                                              as seconds for Duration
 --   Upsert: $2::cidr[], $3::cidr[]                          — cidr[] parameter
---           ($6::bigint || ' seconds')::interval             — dynamic interval construction
+--           make_interval(secs => $6 / $7)                   — intervals built from seconds
 --
 -- All SQL therefore remains hand-written in policy.go.

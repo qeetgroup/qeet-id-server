@@ -85,6 +85,14 @@ type Config struct {
 	// token.claims_change webhook signals that let a relying party react at once.
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
+	// SessionMaxAge and SessionIdleTimeout bound the API and console sessions
+	// of an organisation whose security policy sets no bounds of its own, and
+	// of accounts with no organisation: a session ends SessionMaxAge after
+	// sign-in however active it is, and once it goes SessionIdleTimeout without
+	// being renewed. SessionMaxAge also bounds an application's grant. The
+	// limits an organisation may set are the same (see checkSessionLifetime).
+	SessionMaxAge      time.Duration `envconfig:"SESSION_MAX_AGE" default:"720h"`
+	SessionIdleTimeout time.Duration `envconfig:"SESSION_IDLE_TIMEOUT" default:"24h"`
 
 	// JWTSigningKey is the PEM-encoded EC P-256 private key (PKCS#8 or SEC1)
 	// used to sign access & ID tokens with ES256. Empty is allowed only in
@@ -337,7 +345,40 @@ func Load() (*Config, error) {
 	if err := c.checkSignInLockout(); err != nil {
 		return nil, err
 	}
+	if err := c.checkSessionLifetime(); err != nil {
+		return nil, err
+	}
 	return &c, nil
+}
+
+// Session lifetime limits, for the platform defaults here and for an
+// organisation's own policy alike. The idle timeout must outlast an access
+// token: a client renews when its access token runs out, and a renewal is what
+// keeps a session from going idle.
+const (
+	SessionMaxAgeMin      = time.Hour
+	SessionMaxAgeMax      = 365 * 24 * time.Hour
+	SessionIdleTimeoutMin = 15 * time.Minute
+)
+
+// checkSessionLifetime rejects session bounds outside the limits above, an
+// idle timeout longer than the maximum age, and access tokens that outlive the
+// shortest idle timeout an organisation may set.
+func (c *Config) checkSessionLifetime() error {
+	var problems []string
+	if c.SessionMaxAge < SessionMaxAgeMin || c.SessionMaxAge > SessionMaxAgeMax {
+		problems = append(problems, "SESSION_MAX_AGE must lie within 1h..8760h")
+	}
+	if c.SessionIdleTimeout < SessionIdleTimeoutMin || c.SessionIdleTimeout > c.SessionMaxAge {
+		problems = append(problems, "SESSION_IDLE_TIMEOUT must be at least 15m and at most SESSION_MAX_AGE")
+	}
+	if c.AccessTokenTTL <= 0 || c.AccessTokenTTL >= SessionIdleTimeoutMin {
+		problems = append(problems, "ACCESS_TOKEN_TTL must be positive and shorter than 15m, the shortest session idle timeout")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid session lifetime configuration:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+	return nil
 }
 
 // checkSignInLockout rejects lockout settings that would not protect sign-in:

@@ -74,6 +74,9 @@ const (
 	// ReasonExpired: every refresh token of the session expired without it
 	// being ended; announced when the cleanup removes it.
 	ReasonExpired = "expired"
+	// ReasonSessionLimit: a new sign-in reached the organisation's limit on
+	// simultaneous sessions, and this, the least recently used, was ended.
+	ReasonSessionLimit = "session_limit"
 )
 
 // Session is one ended session. TenantID is uuid.Nil for a session with no
@@ -157,11 +160,13 @@ func (s *Signaller) queue(ctx context.Context, tx pgx.Tx, reason string, session
 // EndUserSessions ends every live session of userID inside tx and returns
 // them, for Revoked. Used where an account change ends all of its sessions:
 // password reset, an administrator setting the password, suspension,
-// reactivation, deprovisioning and erasure.
+// reactivation, deprovisioning and erasure. A session past its maximum age or
+// idle timeout has already ended and is left as expired.
 func EndUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]Session, error) {
 	rows, err := tx.Query(ctx, `
 		UPDATE auth.sessions SET revoked_at = NOW()
 		WHERE user_id = $1 AND revoked_at IS NULL
+		  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 		RETURNING id, COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)`, userID)
 	if err != nil {
 		return nil, err

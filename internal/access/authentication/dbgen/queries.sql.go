@@ -362,28 +362,47 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 	return id, err
 }
 
-const insertTenantlessSession = `-- name: InsertTenantlessSession :exec
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
-VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4)
+const insertTenantlessSession = `-- name: InsertTenantlessSession :one
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country)
+VALUES ($1, $2, NULL, NULLIF($3::text, '')::inet, $4,
+        NOW() + make_interval(secs => $5::float8),
+        make_interval(secs => $6::float8),
+        NULLIF($7::text, ''))
+RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
 `
 
 type InsertTenantlessSessionParams struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Ip        string
-	UserAgent *string
+	ID            uuid.UUID
+	UserID        uuid.UUID
+	Ip            string
+	UserAgent     *string
+	MaxAgeSeconds float64
+	IdleSeconds   float64
+	Country       string
+}
+
+type InsertTenantlessSessionRow struct {
+	ExpiresAt     time.Time
+	IdleExpiresAt time.Time
 }
 
 // Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
 // NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
-func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantlessSessionParams) error {
-	_, err := q.db.Exec(ctx, insertTenantlessSession,
+// With no organisation, the platform's session bounds apply. Returns when it
+// ends however active, and when it ends unless renewed.
+func (q *Queries) InsertTenantlessSession(ctx context.Context, arg InsertTenantlessSessionParams) (InsertTenantlessSessionRow, error) {
+	row := q.db.QueryRow(ctx, insertTenantlessSession,
 		arg.ID,
 		arg.UserID,
 		arg.Ip,
 		arg.UserAgent,
+		arg.MaxAgeSeconds,
+		arg.IdleSeconds,
+		arg.Country,
 	)
-	return err
+	var i InsertTenantlessSessionRow
+	err := row.Scan(&i.ExpiresAt, &i.IdleExpiresAt)
+	return i, err
 }
 
 const insertTenantlessUser = `-- name: InsertTenantlessUser :one
@@ -416,6 +435,7 @@ const isSessionLiveForUser = `-- name: IsSessionLiveForUser :one
 SELECT EXISTS (
     SELECT 1 FROM auth.sessions
     WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+      AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 ) AS live
 `
 
@@ -425,7 +445,7 @@ type IsSessionLiveForUserParams struct {
 }
 
 // IsSessionLiveForUser reports whether the session exists, belongs to the
-// user and has not been revoked.
+// user, has not been revoked and is not past its maximum age or idle timeout.
 func (q *Queries) IsSessionLiveForUser(ctx context.Context, arg IsSessionLiveForUserParams) (bool, error) {
 	row := q.db.QueryRow(ctx, isSessionLiveForUser, arg.SessionID, arg.UserID)
 	var live bool
@@ -489,9 +509,12 @@ DELETE FROM auth.sessions s
 WHERE s.created_at < $1
   AND (
       (s.revoked_at IS NOT NULL AND s.revoked_at < $1)
-      OR (s.revoked_at IS NULL AND NOT EXISTS (
-          SELECT 1 FROM auth.refresh_tokens rt
-          WHERE rt.session_id = s.id AND rt.expires_at >= $1))
+      OR (s.revoked_at IS NULL AND (
+          s.expires_at < $1
+          OR s.last_seen_at + s.idle_timeout < $1
+          OR NOT EXISTS (
+              SELECT 1 FROM auth.refresh_tokens rt
+              WHERE rt.session_id = s.id AND rt.expires_at >= $1)))
   )
 RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired
 `
@@ -504,11 +527,12 @@ type PurgeEndedSessionsRow struct {
 }
 
 // PurgeEndedSessions deletes API and console sessions past retention: ended
-// (revoked) before the cutoff, or never ended but with every refresh token
-// expired before the cutoff (none was usable after it). A session opened after
-// the cutoff is always kept. Their refresh tokens go with them (cascade).
-// Returns what it deleted; expired marks the sessions that were never ended
-// (their refresh tokens expired), which are announced as expired.
+// (revoked) before the cutoff, or never ended but past its maximum age or idle
+// timeout before the cutoff, or with every refresh token expired before it
+// (none was usable after it). A session opened after the cutoff is always kept.
+// Their refresh tokens go with them (cascade). Returns what it deleted;
+// expired marks the sessions that were never ended, which are announced as
+// expired.
 func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]PurgeEndedSessionsRow, error) {
 	rows, err := q.db.Query(ctx, purgeEndedSessions, cutoff)
 	if err != nil {
@@ -532,6 +556,21 @@ func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]P
 		return nil, err
 	}
 	return items, nil
+}
+
+const purgeExpiredCeremonies = `-- name: PurgeExpiredCeremonies :execrows
+DELETE FROM auth.webauthn_sessions WHERE expires_at < NOW()
+`
+
+// PurgeExpiredCeremonies deletes passkey ceremony state that has expired
+// unfinished — every sign-in page now starts one in the background, and most
+// are never completed. An expired ceremony can no longer be finished.
+func (q *Queries) PurgeExpiredCeremonies(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredCeremonies)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const purgeExpiredLoginSessions = `-- name: PurgeExpiredLoginSessions :execrows
@@ -672,6 +711,7 @@ func (q *Queries) RecordSourceFailure(ctx context.Context, arg RecordSourceFailu
 const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING id, tenant_id
 `
 
@@ -681,7 +721,8 @@ type RevokeAllSessionsForUserRow struct {
 }
 
 // RevokeAllSessionsForUser ends every live session of the user, the caller's
-// own included. Ending a session is what kills its refresh tokens.
+// own included. Ending a session is what kills its refresh tokens. A session
+// past its maximum age or idle timeout has already ended and is left as expired.
 func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID) ([]RevokeAllSessionsForUserRow, error) {
 	rows, err := q.db.Query(ctx, revokeAllSessionsForUser, userID)
 	if err != nil {
@@ -761,6 +802,7 @@ func (q *Queries) RevokeAppGrantsForUser(ctx context.Context, userID uuid.UUID) 
 const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING id, tenant_id
 `
 
@@ -776,7 +818,8 @@ type RevokeOtherSessionsForUserRow struct {
 
 // RevokeOtherSessionsForUser revokes all of a user's active sessions except the
 // one they're currently on — used after a password change/set so a compromised
-// session can't survive the credential rotation.
+// session can't survive the credential rotation. A session past its maximum age
+// or idle timeout has already ended and is left as expired.
 func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) ([]RevokeOtherSessionsForUserRow, error) {
 	rows, err := q.db.Query(ctx, revokeOtherSessionsForUser, arg.UserID, arg.KeepSessionID)
 	if err != nil {
@@ -811,6 +854,7 @@ func (q *Queries) RevokeSessionById(ctx context.Context, sessionID uuid.UUID) er
 const revokeSessionForUser = `-- name: RevokeSessionForUser :one
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING tenant_id
 `
 
@@ -821,12 +865,31 @@ type RevokeSessionForUserParams struct {
 
 // Revokes a session scoped to its owner and returns the (nullable) tenant for
 // event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
-// or was already revoked — a safe no-op, never a cross-user takedown.
+// or has already ended (revoked, or past its maximum age or idle timeout) — a
+// safe no-op, never a cross-user takedown.
 func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
 	var tenant_id pgtype.UUID
 	err := row.Scan(&tenant_id)
 	return tenant_id, err
+}
+
+const sessionEnd = `-- name: SessionEnd :one
+SELECT expires_at FROM auth.sessions WHERE id = $1 AND user_id = $2
+`
+
+type SessionEndParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// SessionEnd is when one of the user's sessions ends however active it is.
+// No row: not theirs.
+func (q *Queries) SessionEnd(ctx context.Context, arg SessionEndParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, sessionEnd, arg.SessionID, arg.UserID)
+	var expires_at time.Time
+	err := row.Scan(&expires_at)
+	return expires_at, err
 }
 
 const spendAuthorizationCodesForUser = `-- name: SpendAuthorizationCodesForUser :execrows
@@ -849,6 +912,7 @@ func (q *Queries) SpendAuthorizationCodesForUser(ctx context.Context, userID uui
 const supersedeSession = `-- name: SupersedeSession :one
 UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = $1
 WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING tenant_id
 `
 
@@ -859,9 +923,10 @@ type SupersedeSessionParams struct {
 }
 
 // SupersedeSession ends the session a switch of organisation was made from —
-// only while it is live and the caller's own — and records the session that
-// replaced it. Ending it is what stops its refresh tokens. Returns the
-// organization it belonged to (NULL for none). No row: it had already ended.
+// only while it is live (not revoked, not past its maximum age or idle timeout)
+// and the caller's own — and records the session that replaced it. Ending it
+// is what stops its refresh tokens. Returns the organization it belonged to
+// (NULL for none). No row: it had already ended.
 func (q *Queries) SupersedeSession(ctx context.Context, arg SupersedeSessionParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, supersedeSession, arg.NewSessionID, arg.SessionID, arg.UserID)
 	var tenant_id pgtype.UUID
@@ -927,6 +992,22 @@ func (q *Queries) ThrottleSource(ctx context.Context, arg ThrottleSourceParams) 
 	return throttled_until, err
 }
 
+const touchSession = `-- name: TouchSession :exec
+UPDATE auth.sessions SET last_seen_at = NOW()
+WHERE id = $1 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
+  AND last_seen_at < NOW() - INTERVAL '1 minute'
+`
+
+// TouchSession records a use of a live session: last_seen_at, from which its
+// idle timeout counts, moves to now. A session that has ended — revoked, or
+// past its maximum age or idle timeout — is never revived. Writes at most
+// once a minute per session.
+func (q *Queries) TouchSession(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, touchSession, sessionID)
+	return err
+}
+
 const touchTrustedDevice = `-- name: TouchTrustedDevice :execrows
 UPDATE auth.trusted_devices SET last_used_at = NOW()
 WHERE token_hash = $1 AND user_id = $2 AND expires_at > NOW()
@@ -961,11 +1042,16 @@ func (q *Queries) UpdatePasswordCredentialHash(ctx context.Context, arg UpdatePa
 	return err
 }
 
-const updateSessionLastSeen = `-- name: UpdateSessionLastSeen :exec
+const updateSessionLastSeen = `-- name: UpdateSessionLastSeen :one
 UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = $1
+RETURNING LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at
 `
 
-func (q *Queries) UpdateSessionLastSeen(ctx context.Context, sessionID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, updateSessionLastSeen, sessionID)
-	return err
+// UpdateSessionLastSeen records a renewal as the session's latest use and
+// returns when it now ends unless renewed again (never after it ends anyway).
+func (q *Queries) UpdateSessionLastSeen(ctx context.Context, sessionID uuid.UUID) (time.Time, error) {
+	row := q.db.QueryRow(ctx, updateSessionLastSeen, sessionID)
+	var idle_expires_at time.Time
+	err := row.Scan(&idle_expires_at)
+	return idle_expires_at, err
 }
