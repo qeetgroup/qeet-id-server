@@ -25,4 +25,7 @@ type TenantAuthPolicy struct {
 	MagicLinkTtlMinutes      int32
 	SelfRegistrationEnabled  bool
 	RememberDeviceEnabled    bool
+	LockoutThreshold         *int32
+	LockoutWindowMinutes     *int32
+	LockoutDurationMinutes   *int32
 }

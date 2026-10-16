@@ -113,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password.'
       summary: Sign in
       tags:
         - Auth
@@ -154,6 +154,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/SignInUnavailable'
   /v1/auth/mfa:
     post:
       operationId: post_v1_auth_mfa
@@ -383,7 +385,10 @@ paths:
           description: Session revoked, cookie cleared
     post:
       operationId: post_v1_auth_session
-      description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.'
+      description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
+
+
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed).'
       summary: Create SSO session
       tags:
         - Auth
@@ -393,7 +398,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: '#/components/schemas/SessionRequest'
       responses:
         '200':
           description: |
@@ -424,6 +429,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          description: The account is locked for this network or everywhere (`auth.account_locked`), or the source network is throttled for spraying (`too_many_requests`). The same answer whatever the password and whether the address has an account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/SignInUnavailable'
   /v1/auth/session/mfa:
     post:
       operationId: post_v1_auth_session_mfa
@@ -3045,15 +3058,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: The tenant's authentication policy (defaults when none is stored), including its sign-in lockout settings and, read-only, the platform defaults and bounds for them.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AuthPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3083,18 +3095,16 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/AuthPolicy'
+        description: The whole policy (a full replace). `lockout_limits` is read-only and ignored.
+      description: 'Replaces the tenant''s authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped.'
       responses:
         '200':
-          description: OK
+          description: The stored policy
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AuthPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3102,7 +3112,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          $ref: '#/components/responses/Unprocessable'
+          description: A lockout setting is outside the documented bounds; nothing was stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/policy:
@@ -3561,8 +3575,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Anomaly'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3692,6 +3705,12 @@ components:
             $ref: '#/components/schemas/Error'
     TooManyRequests:
       description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SignInUnavailable:
+      description: The sign-in lockout could not be evaluated (its counters could not be read or written), so the attempt was refused (`auth.sign_in_unavailable`, retryable). The same answer whatever the password and whether the address has an account.
       content:
         application/json:
           schema:
@@ -3892,6 +3911,115 @@ components:
           format: email
         password:
           type: string
+    SessionRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        client_id:
+          type: string
+          maxLength: 255
+          description: The OAuth client the hosted login is serving. Its tenant's sign-in lockout settings apply; omitted or unknown = the platform defaults.
+    AuthPolicy:
+      type: object
+      properties:
+        password_enabled:
+          type: boolean
+        password_min_length:
+          type: integer
+          minimum: 8
+          maximum: 128
+        password_require_uppercase:
+          type: boolean
+        password_require_number:
+          type: boolean
+        password_require_symbol:
+          type: boolean
+        magic_link_enabled:
+          type: boolean
+        magic_link_ttl_minutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+        passkey_enabled:
+          type: boolean
+        otp_email_enabled:
+          type: boolean
+        otp_sms_enabled:
+          type: boolean
+        self_registration_enabled:
+          type: boolean
+        remember_device_enabled:
+          type: boolean
+        lockout_threshold:
+          type: [integer, 'null']
+          description: Failed password sign-ins to one account from one network, each within the window of the last, that lock the account for that network. null = the platform default. Must lie within lockout_limits (default bounds 3..20).
+        lockout_window_minutes:
+          type: [integer, 'null']
+          description: A failure is forgotten once this many minutes pass with no new failure. null = the platform default. Must lie within lockout_limits (default bounds 1..1440).
+        lockout_duration_minutes:
+          type: [integer, 'null']
+          description: How long a lock lasts. null = the platform default. Must lie within lockout_limits (default bounds 1..1440).
+        lockout_limits:
+          $ref: '#/components/schemas/LockoutLimits'
+    LockoutSettings:
+      type: object
+      properties:
+        threshold:
+          type: integer
+        window_minutes:
+          type: integer
+        duration_minutes:
+          type: integer
+    LockoutLimits:
+      type: object
+      readOnly: true
+      description: The platform defaults for the lockout settings (LOGIN_LOCKOUT_THRESHOLD / _WINDOW / _DURATION, built-in 5 / 15 / 15) and the inclusive bounds a tenant may choose within (LOGIN_LOCKOUT_*_MIN / _MAX). Ignored on update.
+      properties:
+        defaults:
+          $ref: '#/components/schemas/LockoutSettings'
+        min:
+          $ref: '#/components/schemas/LockoutSettings'
+        max:
+          $ref: '#/components/schemas/LockoutSettings'
+    Anomaly:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          description: e.g. credential_stuffing (an account locked after repeated failed sign-ins) or password_spraying (a source network throttled for failing against many accounts).
+        severity:
+          type: string
+        detail:
+          type: string
+        status:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        user_email:
+          type: string
+        ip:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+          description: 'The detection''s structured context. For a sign-in lock: reason, account, network, counter (account_network or account), failures, threshold, window_minutes, locked_until. For a throttled source: reason, network, counter (source), distinct_accounts, window_minutes, throttled_until.'
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
     RefreshRequest:
       type: object
       required:

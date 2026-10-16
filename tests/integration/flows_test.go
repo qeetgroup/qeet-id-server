@@ -745,10 +745,10 @@ func TestHostedLoginSession(t *testing.T) {
 	}
 
 	// Wrong password is rejected by the shared credential check.
-	if _, _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
+	if _, _, err := svc.CheckPassword(ctx, auth.SignInAttempt{Email: email, Password: "nope"}); err == nil {
 		t.Error("CheckPassword must reject a wrong password")
 	}
-	u, _, err := svc.CheckPassword(ctx, email, "Kx7mQ2vLp9Wz")
+	u, _, err := svc.CheckPassword(ctx, auth.SignInAttempt{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("CheckPassword: %v", err)
 	}

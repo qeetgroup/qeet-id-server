@@ -261,11 +261,35 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
+
+	// Sign-in lockout (authentication/lockout.go): failures counted per account
+	// + source network (the tenant-configurable lock), per account at a looser
+	// cap, and per source across accounts (spraying). The platform defaults and
+	// the bounds a tenant may choose within come from LOGIN_LOCKOUT_* /
+	// LOGIN_SPRAY_* (validated by config.Load); a tenant's own settings live in
+	// its authentication policy and apply on the next attempt.
+	lockoutDefaults := authpolicy.Lockout{Threshold: cfg.LoginLockoutThreshold, Window: cfg.LoginLockoutWindow, Duration: cfg.LoginLockoutDuration}
+	authPolicyService.SetLockoutLimits(authpolicy.LockoutLimits{
+		Defaults: lockoutDefaults,
+		Min:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMin, Window: cfg.LoginLockoutWindowMin, Duration: cfg.LoginLockoutDurationMin},
+		Max:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMax, Window: cfg.LoginLockoutWindowMax, Duration: cfg.LoginLockoutDurationMax},
+	})
+	authService.SetLockoutConfig(auth.LockoutConfig{
+		Defaults:          auth.Lockout(lockoutDefaults),
+		AccountMultiplier: cfg.LoginLockoutAccountMultiplier,
+		SourceAccounts:    cfg.LoginSprayAccounts,
+		SourceWindow:      cfg.LoginSprayWindow,
+		SourceBlock:       cfg.LoginSprayBlock,
+	})
+	authService.SetLockoutSource(func(ctx context.Context, tenantID uuid.UUID) (auth.Lockout, error) {
+		l, err := authPolicyService.SignInLockout(ctx, tenantID)
+		return auth.Lockout(l), err
+	})
 	authHookService := authhook.NewService(pool, outboundPolicy)
 	authHookService.SetCipher(sharedCipher)
 	authService.SetLoginHook(authHookService) // synchronous Actions/Hooks gate (no-op until configured)
 	threatService := threat.NewService(pool)
-	authService.SetAnomalyRecorder(threatService) // record credential-stuffing anomalies on lockout
+	authService.SetAnomalyRecorder(threatService) // record sign-in lock and spraying-source anomalies
 	notificationService := notification.NewService(pool)
 	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
 	riskService := risk.NewService(pool)

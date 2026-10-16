@@ -21,5 +21,6 @@ func init() {
 		errs.CodeAuthRefreshTokenInvalid:      http.StatusUnauthorized,
 		errs.CodeAuthSessionRevoked:           http.StatusUnauthorized,
 		errs.CodeAuthAccountSuspended:         http.StatusUnauthorized,
+		errs.CodeAuthSignInUnavailable:        http.StatusServiceUnavailable,
 	})
 }

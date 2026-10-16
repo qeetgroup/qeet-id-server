@@ -4,12 +4,15 @@
 //
 // The store is deliberately detection-agnostic: type/severity/status are open
 // strings so new signals (new_device, geo anomalies, bot verdicts) plug in
-// without schema or API changes. The first wired detection is brute-force /
-// credential-stuffing, recorded when an account crosses the lockout threshold.
+// without schema or API changes. The wired detections come from the sign-in
+// lockout: an account locked after repeated failed sign-ins
+// (credential_stuffing) and a source network throttled for failing against
+// many accounts (password_spraying).
 package threat
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/threat/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -55,20 +59,25 @@ type Event struct {
 	Status    string
 	IP        string
 	UserAgent string
+	// Metadata is the detection's structured context (e.g. for a lockout the
+	// reason, the source network and which counter tripped). Optional.
+	Metadata map[string]any
 }
 
 // Anomaly is the read projection returned to the admin screen.
 type Anomaly struct {
-	ID         uuid.UUID  `json:"id"`
-	Type       string     `json:"type"`
-	Severity   string     `json:"severity"`
-	Detail     string     `json:"detail"`
-	Status     string     `json:"status"`
-	UserID     *uuid.UUID `json:"user_id,omitempty"`
-	UserEmail  *string    `json:"user_email,omitempty"`
-	IP         *string    `json:"ip,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
+	ID        uuid.UUID  `json:"id"`
+	Type      string     `json:"type"`
+	Severity  string     `json:"severity"`
+	Detail    string     `json:"detail"`
+	Status    string     `json:"status"`
+	UserID    *uuid.UUID `json:"user_id,omitempty"`
+	UserEmail *string    `json:"user_email,omitempty"`
+	IP        *string    `json:"ip,omitempty"`
+	// Metadata is the detection's structured context; {} when it has none.
+	Metadata   map[string]any `json:"metadata"`
+	CreatedAt  time.Time      `json:"created_at"`
+	ResolvedAt *time.Time     `json:"resolved_at,omitempty"`
 }
 
 // Summary feeds the four KPI cards above the anomaly table.
@@ -90,20 +99,31 @@ func (s *Service) Record(ctx context.Context, e Event) error {
 	if e.Status == "" {
 		e.Status = "open"
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO auth.security_events (tenant_id, user_id, type, severity, detail, status, ip, user_agent)
-		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,'')::inet, NULLIF($8,''))
-	`, e.TenantID, e.UserID, e.Type, e.Severity, e.Detail, e.Status, e.IP, e.UserAgent)
+	if e.Metadata == nil {
+		e.Metadata = map[string]any{}
+	}
+	meta, err := json.Marshal(e.Metadata)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO auth.security_events (tenant_id, user_id, type, severity, detail, status, ip, user_agent, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,'')::inet, NULLIF($8,''), $9)
+	`, e.TenantID, e.UserID, e.Type, e.Severity, e.Detail, e.Status, e.IP, e.UserAgent, meta)
 	return err
 }
 
 // OnAccountLocked implements the auth package's AnomalyRecorder: it is called
-// when an account crosses the failed-login lockout threshold. It resolves the
-// offending email to a tenant + user and records a credential-stuffing anomaly.
-// Best-effort throughout — an unknown email (probing) has no tenant to scope to
-// and is simply skipped; storage errors are logged, not surfaced.
-func (s *Service) OnAccountLocked(ctx context.Context, email string) {
-	row, err := s.q.GetUserForAnomaly(ctx, email)
+// once for each sign-in lock, by the failure that set it. It resolves the
+// account to a tenant + user and records a credential-stuffing anomaly whose
+// detail states the reason and whose metadata carries the contributing
+// dimensions: the account, the source network and which counter tripped.
+// Best-effort throughout — an address with no account, or an account with no
+// organisation, has no tenant to scope an incident to and is skipped (the lock
+// is still counted in sign_in_lockouts_total and logged); storage errors are
+// logged, not surfaced.
+func (s *Service) OnAccountLocked(ctx context.Context, lock auth.AccountLock) {
+	row, err := s.q.GetUserForAnomaly(ctx, lock.Email)
 	if err != nil {
 		// No matching tenant user (unknown email or tenant-less) — nothing to
 		// scope a tenant incident to.
@@ -114,13 +134,28 @@ func (s *Service) OnAccountLocked(ctx context.Context, email string) {
 	}
 	userID := row.ID
 	tenantID := uuid.UUID(row.TenantID.Bytes)
+	where := "from one network"
+	if lock.Counter == auth.CounterAccount {
+		where = "from any network"
+	}
 	if rerr := s.Record(ctx, Event{
 		TenantID: tenantID,
 		UserID:   &userID,
 		Type:     "credential_stuffing",
 		Severity: "high",
 		Status:   "rate-limited",
-		Detail:   "Account temporarily locked after repeated failed sign-in attempts.",
+		Detail:   "Account temporarily locked after repeated failed sign-in attempts " + where + ".",
+		IP:       lock.Network,
+		Metadata: map[string]any{
+			"reason":         lock.Reason,
+			"account":        lock.Email,
+			"network":        lock.Network,
+			"counter":        lock.Counter,
+			"failures":       lock.Failures,
+			"threshold":      lock.Threshold,
+			"window_minutes": int(lock.Window / time.Minute),
+			"locked_until":   lock.LockedUntil,
+		},
 	}); rerr != nil {
 		slog.Warn("record credential_stuffing anomaly", "err", rerr)
 	}
@@ -135,6 +170,42 @@ func (s *Service) OnAccountLocked(ctx context.Context, email string) {
 	}
 }
 
+// OnSourceThrottled implements the auth package's AnomalyRecorder: it is
+// called once when a source network is throttled for failing password sign-in
+// against many distinct accounts (spraying). It records one password-spraying
+// anomaly in each organisation whose accounts the source targeted, carrying
+// the source network and the number of accounts. Addresses with no account or
+// no organisation have no tenant to report to (the throttle is still counted
+// in sign_in_source_throttles_total and logged). Best-effort, like
+// OnAccountLocked.
+func (s *Service) OnSourceThrottled(ctx context.Context, t auth.SourceThrottle) {
+	tenants, err := s.q.ListTenantsForEmails(ctx, t.Accounts)
+	if err != nil {
+		slog.Warn("resolve password_spraying targets", "err", err)
+		return
+	}
+	for _, tenantID := range tenants {
+		if rerr := s.Record(ctx, Event{
+			TenantID: tenantID,
+			Type:     "password_spraying",
+			Severity: "high",
+			Status:   "rate-limited",
+			Detail:   "A network was blocked from password sign-in after failing against many accounts, including accounts in this organisation.",
+			IP:       t.Network,
+			Metadata: map[string]any{
+				"reason":            t.Reason,
+				"network":           t.Network,
+				"counter":           auth.CounterSource,
+				"distinct_accounts": len(t.Accounts),
+				"window_minutes":    int(t.Window / time.Minute),
+				"throttled_until":   t.ThrottledUntil,
+			},
+		}); rerr != nil {
+			slog.Warn("record password_spraying anomaly", "err", rerr)
+		}
+	}
+}
+
 // List returns the most recent anomalies for a tenant, newest first.
 // Left hand-written: COALESCE(host(e.ip),”) causes sqlc to generate
 // interface{} for the column, preventing type-safe scanning.
@@ -144,7 +215,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int) ([]An
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, e.type, e.severity, e.detail, e.status, e.user_id, u.email,
-		       host(e.ip), e.created_at, e.resolved_at
+		       host(e.ip), e.metadata, e.created_at, e.resolved_at
 		FROM auth.security_events e
 		LEFT JOIN "user".users u ON u.id = e.user_id
 		WHERE e.tenant_id = $1
@@ -159,7 +230,7 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID, limit int) ([]An
 	for rows.Next() {
 		var a Anomaly
 		if err := rows.Scan(&a.ID, &a.Type, &a.Severity, &a.Detail, &a.Status,
-			&a.UserID, &a.UserEmail, &a.IP, &a.CreatedAt, &a.ResolvedAt); err != nil {
+			&a.UserID, &a.UserEmail, &a.IP, &a.Metadata, &a.CreatedAt, &a.ResolvedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

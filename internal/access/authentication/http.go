@@ -222,6 +222,9 @@ func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 type sessionInput struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=1"`
+	// ClientID is the OAuth client the hosted login is serving; its tenant's
+	// sign-in lockout settings apply. Optional (none = the platform defaults).
+	ClientID string `json:"client_id" validate:"omitempty,max=255"`
 }
 
 // createSession is the hosted-login credential endpoint. On success it sets the
@@ -248,7 +251,12 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if c, cerr := r.Cookie(TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
-	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent(), trusted, h.geoCountry(r))
+	res, err := h.Service.BeginLoginSession(r.Context(), SignInAttempt{
+		Email:    in.Email,
+		Password: in.Password,
+		IP:       httpx.ClientIP(r),
+		ClientID: in.ClientID,
+	}, r.UserAgent(), trusted, h.geoCountry(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

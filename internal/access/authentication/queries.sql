@@ -7,33 +7,114 @@
 -- would silently treat the zero UUID as NULL.
 -- The Refresh join (FOR UPDATE OF rt across three tables) is also left raw.
 
--- name: GetLoginAttempt :one
--- Returns the locked_until column for a given email; pgx.ErrNoRows when no row.
-SELECT locked_until FROM auth.login_attempts WHERE email = @email;
+-- Sign-in lockout (lockout.go). Every timestamp is the caller's @now, so one
+-- attempt is judged against a single instant. Keys: @email is the lowercased
+-- address (whether or not an account has it); @network the source network.
 
--- name: UpsertLoginAttempt :one
--- Upserts the failed-login counter. @window_start resets the counter when the
--- last failure is older than the failure window; @max_failed_logins and
--- @lock_until trigger the lockout.
-INSERT INTO auth.login_attempts (email, failed_count, first_failed_at, last_failed_at)
-VALUES (@email, 1, NOW(), NOW())
+-- name: GetSignInLocks :one
+-- In one round trip: until when the source network is throttled, and until
+-- when the account is locked for that network and everywhere. NULL = not.
+SELECT t.throttled_until AS source_throttled_until,
+       n.locked_until    AS network_locked_until,
+       a.locked_until    AS account_locked_until
+FROM (SELECT 1) AS attempt
+LEFT JOIN auth.login_source_throttles t
+       ON t.network = @network AND t.throttled_until > @now::timestamptz
+LEFT JOIN auth.login_attempts_by_network n
+       ON n.email = @email AND n.network = @network AND n.locked_until > @now::timestamptz
+LEFT JOIN auth.login_attempts a
+       ON a.email = @email AND a.locked_until > @now::timestamptz;
+
+-- name: RecordNetworkFailure :one
+-- Counts a failure for the account from one network. The count starts afresh
+-- when the last failure is older than the window or a lock has run its
+-- course; reaching @threshold sets the lock (an active lock is kept as is).
+-- locked_until = @lock_until on return means this failure set the lock.
+INSERT INTO auth.login_attempts_by_network AS c
+    (email, network, failed_count, first_failed_at, last_failed_at, locked_until)
+VALUES (@email, @network, 1, @now::timestamptz, @now::timestamptz,
+        CASE WHEN @threshold::int4 <= 1 THEN @lock_until::timestamptz END)
+ON CONFLICT (email, network) DO UPDATE SET
+    failed_count = CASE
+        WHEN c.last_failed_at < @window_start::timestamptz OR c.locked_until <= @now::timestamptz THEN 1
+        ELSE c.failed_count + 1 END,
+    first_failed_at = CASE
+        WHEN c.last_failed_at < @window_start::timestamptz OR c.locked_until <= @now::timestamptz THEN @now::timestamptz
+        ELSE c.first_failed_at END,
+    last_failed_at = @now::timestamptz,
+    locked_until = CASE
+        WHEN c.locked_until > @now::timestamptz THEN c.locked_until
+        WHEN (CASE
+            WHEN c.last_failed_at < @window_start::timestamptz OR c.locked_until <= @now::timestamptz THEN 1
+            ELSE c.failed_count + 1 END) >= @threshold::int4 THEN @lock_until::timestamptz
+        ELSE NULL END
+RETURNING failed_count, locked_until;
+
+-- name: RecordAccountFailure :one
+-- RecordNetworkFailure for the account alone, whichever network failed.
+INSERT INTO auth.login_attempts AS c
+    (email, failed_count, first_failed_at, last_failed_at, locked_until)
+VALUES (@email, 1, @now::timestamptz, @now::timestamptz,
+        CASE WHEN @threshold::int4 <= 1 THEN @lock_until::timestamptz END)
 ON CONFLICT (email) DO UPDATE SET
     failed_count = CASE
-        WHEN login_attempts.last_failed_at < @window_start THEN 1
-        ELSE login_attempts.failed_count + 1 END,
+        WHEN c.last_failed_at < @window_start::timestamptz OR c.locked_until <= @now::timestamptz THEN 1
+        ELSE c.failed_count + 1 END,
     first_failed_at = CASE
-        WHEN login_attempts.last_failed_at < @window_start THEN NOW()
-        ELSE login_attempts.first_failed_at END,
-    last_failed_at = NOW(),
+        WHEN c.last_failed_at < @window_start::timestamptz OR c.locked_until <= @now::timestamptz THEN @now::timestamptz
+        ELSE c.first_failed_at END,
+    last_failed_at = @now::timestamptz,
     locked_until = CASE
+        WHEN c.locked_until > @now::timestamptz THEN c.locked_until
         WHEN (CASE
-            WHEN login_attempts.last_failed_at < @window_start THEN 1
-            ELSE login_attempts.failed_count + 1 END) >= @max_failed_logins::int4
-        THEN @lock_until::timestamptz ELSE NULL END
-RETURNING failed_count;
+            WHEN c.last_failed_at < @window_start::timestamptz OR c.locked_until <= @now::timestamptz THEN 1
+            ELSE c.failed_count + 1 END) >= @threshold::int4 THEN @lock_until::timestamptz
+        ELSE NULL END
+RETURNING failed_count, locked_until;
 
--- name: DeleteLoginAttempt :exec
-DELETE FROM auth.login_attempts WHERE email = @email;
+-- name: RecordSourceFailure :exec
+-- Remembers that a source network failed to sign in to an account.
+INSERT INTO auth.login_source_failures (network, email, last_failed_at)
+VALUES (@network, @email, @now::timestamptz)
+ON CONFLICT (network, email) DO UPDATE SET last_failed_at = EXCLUDED.last_failed_at;
+
+-- name: ForgetSourceFailuresBefore :exec
+DELETE FROM auth.login_source_failures
+WHERE network = @network AND last_failed_at < @window_start::timestamptz;
+
+-- name: CountSourceAccounts :one
+-- Distinct accounts the network failed against (stale rows already forgotten).
+SELECT COUNT(*) FROM auth.login_source_failures WHERE network = @network;
+
+-- name: ThrottleSource :one
+-- Throttles a source network unless it already is: no row on return means
+-- another attempt set the throttle first.
+INSERT INTO auth.login_source_throttles AS t (network, throttled_at, throttled_until, distinct_accounts)
+VALUES (@network, @now::timestamptz, @throttled_until::timestamptz, @distinct_accounts::int4)
+ON CONFLICT (network) DO UPDATE SET
+    throttled_at      = EXCLUDED.throttled_at,
+    throttled_until   = EXCLUDED.throttled_until,
+    distinct_accounts = EXCLUDED.distinct_accounts
+WHERE t.throttled_until <= EXCLUDED.throttled_at
+RETURNING throttled_until;
+
+-- name: TakeSourceAccounts :many
+-- The accounts a source was just throttled for; it starts afresh once the
+-- throttle lifts.
+DELETE FROM auth.login_source_failures WHERE network = @network RETURNING email;
+
+-- name: ClearSignInFailures :exec
+-- After a successful sign-in: forget the account's failures from this network
+-- and its account-wide count. Other networks' counts stay.
+WITH by_network AS (
+    DELETE FROM auth.login_attempts_by_network n WHERE n.email = @email AND n.network = @network
+)
+DELETE FROM auth.login_attempts a WHERE a.email = @email;
+
+-- name: GetClientTenant :one
+-- The tenant an OAuth client belongs to (whose policy a hosted sign-in for it
+-- is held to).
+SELECT tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: InsertLoginSession :exec
 INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent)

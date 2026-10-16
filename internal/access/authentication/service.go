@@ -53,10 +53,15 @@ type Service struct {
 	// emitter delivers session.revoked signals to a tenant's webhook
 	// subscriptions (nil = emission off). Set via SetEmitter.
 	emitter EventEmitter
+	// lockout is the platform-wide sign-in lockout configuration, and
+	// lockoutSource the per-tenant settings (nil = the platform defaults for
+	// every sign-in). See lockout.go.
+	lockout       LockoutConfig
+	lockoutSource LockoutSource
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t}
+	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t, lockout: DefaultLockoutConfig()}
 }
 
 // EventEmitter delivers a webhook-shaped event to a tenant's subscriptions.
@@ -133,11 +138,13 @@ func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUI
 }
 
 // AnomalyRecorder receives security signals from the auth flow (nil = recording
-// off). Currently notified when an account crosses the brute-force lockout
-// threshold. Kept as an interface so auth doesn't import the threat package;
-// satisfied by *threat.Service. Wired via SetAnomalyRecorder.
+// off): once for each sign-in lock, from the failure that set it, and once for
+// each source network throttled for spraying (see lockout.go). Kept as an
+// interface so auth doesn't import the threat package; satisfied by
+// *threat.Service. Wired via SetAnomalyRecorder.
 type AnomalyRecorder interface {
-	OnAccountLocked(ctx context.Context, email string)
+	OnAccountLocked(ctx context.Context, lock AccountLock)
+	OnSourceThrottled(ctx context.Context, throttle SourceThrottle)
 }
 
 // SetAnomalyRecorder wires the security-anomaly recorder. Called from
@@ -213,6 +220,18 @@ type LoginInput struct {
 	Password  string
 	IP        string
 	UserAgent string
+}
+
+// SignInAttempt is one password sign-in as the API received it.
+type SignInAttempt struct {
+	Email    string
+	Password string
+	// IP is the client IP as httpx.ClientIP derives it; its network keys the
+	// lockout counters. "" when unknown.
+	IP string
+	// ClientID is the OAuth client a hosted login is serving ("" = none). Its
+	// tenant's lockout settings apply (see SignInTenant).
+	ClientID string
 }
 
 type SignupInput struct {
@@ -357,7 +376,7 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 // returns an MFA challenge instead of tokens (complete it via CompleteMFALogin).
 // Otherwise it returns a full token pair.
 func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
-	u, claims, err := s.CheckPassword(ctx, in.Email, in.Password)
+	u, claims, err := s.CheckPassword(ctx, SignInAttempt{Email: in.Email, Password: in.Password, IP: in.IP})
 	if err != nil {
 		return nil, err
 	}
@@ -387,12 +406,12 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 // CompleteMFALoginSession). Otherwise it mints the SSO session cookie value.
 // Without this check the cookie flow would bypass MFA that the token flow
 // enforces.
-func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua, trustedToken, country string) (*LoginSessionResult, error) {
+func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, trustedToken, country string) (*LoginSessionResult, error) {
 	// Hook-issued claims aren't threaded into the hosted-login cookie flow: the
 	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
 	// flow for a specific client, decoupled from this call — a separate,
 	// larger integration than the direct API-token login this powers.
-	u, _, err := s.CheckPassword(ctx, email, password)
+	u, _, err := s.CheckPassword(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +420,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 		if err != nil {
 			return nil, err
 		}
-		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, ip, ua, country) {
+		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, in.IP, ua, country) {
 			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, nil)
 			if err != nil {
 				return nil, err
@@ -409,7 +428,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, email, password, ip, ua
 			return &LoginSessionResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
 		}
 	}
-	raw, err := s.CreateLoginSession(ctx, u.ID, ip, ua)
+	raw, err := s.CreateLoginSession(ctx, u.ID, in.IP, ua)
 	if err != nil {
 		return nil, err
 	}
@@ -703,24 +722,32 @@ func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, i
 	return userID, tid, raw, nil
 }
 
-// CheckPassword runs the full credential check — brute-force lockout, user
-// lookup, password verify, transparent Argon2id rehash-on-login, and
-// clear-on-success — returning the authenticated user plus any custom claims
-// a wired Auth Hook asked to be injected into the eventual access token
-// (nil when no hook is wired, or the hook returned none). Shared by API login
-// (which then issues tokens) and the hosted-login SSO session (which sets a
-// cookie). It deliberately does not mint tokens or sessions itself.
-func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*user.User, map[string]any, error) {
-	email := strings.ToLower(strings.TrimSpace(rawEmail))
-	if _, locked := s.loginLockedUntil(ctx, email); locked {
-		return nil, nil, errs.ErrAuthAccountLocked
+// CheckPassword runs the full credential check — sign-in lockout (see
+// lockout.go), user lookup, password verify, transparent Argon2id
+// rehash-on-login, and clear-on-success — returning the authenticated user
+// plus any custom claims a wired Auth Hook asked to be injected into the
+// eventual access token (nil when no hook is wired, or the hook returned
+// none). Shared by API login (which then issues tokens) and the hosted-login
+// SSO session (which sets a cookie). It deliberately does not mint tokens or
+// sessions itself.
+func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.User, map[string]any, error) {
+	attempt, err := s.newSignInAttempt(ctx, in)
+	if err != nil {
+		return nil, nil, err
 	}
-	u, err := s.users.GetByEmailGlobal(ctx, rawEmail)
+	if err := s.checkLockout(ctx, attempt); err != nil {
+		return nil, nil, err
+	}
+	u, err := s.users.GetByEmailGlobal(ctx, in.Email)
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
-			// Throttle unknown emails identically so probing can't distinguish
-			// "no such account" from "wrong password" by behaviour.
-			s.recordFailedLogin(ctx, email)
+			// No such account: spend a password verification and count the
+			// failure exactly as for a wrong password, so neither the answer,
+			// its timing nor the lockout tells the two apart.
+			verifyPassword("", in.Password)
+			if err := s.recordFailedSignIn(ctx, attempt); err != nil {
+				return nil, nil, err
+			}
 			return nil, nil, errs.ErrAuthInvalidCredentials
 		}
 		return nil, nil, err
@@ -732,15 +759,19 @@ func (s *Service) CheckPassword(ctx context.Context, rawEmail, plain string) (*u
 	if err != nil {
 		return nil, nil, err
 	}
-	if hash == "" || !password.Verify(hash, plain) {
-		s.recordFailedLogin(ctx, email)
+	if !verifyPassword(hash, in.Password) {
+		if err := s.recordFailedSignIn(ctx, attempt); err != nil {
+			return nil, nil, err
+		}
 		return nil, nil, errs.ErrAuthInvalidCredentials
 	}
-	s.clearLoginAttempts(ctx, email)
+	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
+		return nil, nil, err
+	}
 	// Transparently upgrade legacy bcrypt / weak-param hashes to current
 	// Argon2id on a successful login. Best-effort: never fail the login on it.
 	if password.NeedsRehash(hash) {
-		if nh, herr := password.Hash(plain); herr == nil {
+		if nh, herr := password.Hash(in.Password); herr == nil {
 			if uerr := s.q.UpdatePasswordCredentialHash(ctx, dbgen.UpdatePasswordCredentialHashParams{
 				PasswordHash: nh,
 				UserID:       u.ID,

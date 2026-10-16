@@ -37,13 +37,35 @@ func (q *Queries) CheckTenantMembership(ctx context.Context, arg CheckTenantMemb
 	return is_member, err
 }
 
-const deleteLoginAttempt = `-- name: DeleteLoginAttempt :exec
-DELETE FROM auth.login_attempts WHERE email = $1
+const clearSignInFailures = `-- name: ClearSignInFailures :exec
+WITH by_network AS (
+    DELETE FROM auth.login_attempts_by_network n WHERE n.email = $1 AND n.network = $2
+)
+DELETE FROM auth.login_attempts a WHERE a.email = $1
 `
 
-func (q *Queries) DeleteLoginAttempt(ctx context.Context, email string) error {
-	_, err := q.db.Exec(ctx, deleteLoginAttempt, email)
+type ClearSignInFailuresParams struct {
+	Email   string
+	Network string
+}
+
+// After a successful sign-in: forget the account's failures from this network
+// and its account-wide count. Other networks' counts stay.
+func (q *Queries) ClearSignInFailures(ctx context.Context, arg ClearSignInFailuresParams) error {
+	_, err := q.db.Exec(ctx, clearSignInFailures, arg.Email, arg.Network)
 	return err
+}
+
+const countSourceAccounts = `-- name: CountSourceAccounts :one
+SELECT COUNT(*) FROM auth.login_source_failures WHERE network = $1
+`
+
+// Distinct accounts the network failed against (stale rows already forgotten).
+func (q *Queries) CountSourceAccounts(ctx context.Context, network string) (int64, error) {
+	row := q.db.QueryRow(ctx, countSourceAccounts, network)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const deleteLoginSession = `-- name: DeleteLoginSession :exec
@@ -83,25 +105,32 @@ func (q *Queries) EndLoginSessionsForUser(ctx context.Context, userID uuid.UUID)
 	return live, err
 }
 
-const getLoginAttempt = `-- name: GetLoginAttempt :one
-
-SELECT locked_until FROM auth.login_attempts WHERE email = $1
+const forgetSourceFailuresBefore = `-- name: ForgetSourceFailuresBefore :exec
+DELETE FROM auth.login_source_failures
+WHERE network = $1 AND last_failed_at < $2::timestamptz
 `
 
-// Queries for the authentication domain.
-// Static queries with fully-typed, non-nullable parameters are converted.
-// Queries involving nullable UUID columns passed as Go interface{}/nil
-// (sessions.tenant_id, mfa_login_challenges.tenant_id, trusted_devices.tenant_id)
-// remain hand-written because they require Go-nil → SQL NULL semantics that
-// sqlc's uuid override cannot express without additional NULLIF wrappers that
-// would silently treat the zero UUID as NULL.
-// The Refresh join (FOR UPDATE OF rt across three tables) is also left raw.
-// Returns the locked_until column for a given email; pgx.ErrNoRows when no row.
-func (q *Queries) GetLoginAttempt(ctx context.Context, email string) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, getLoginAttempt, email)
-	var locked_until pgtype.Timestamptz
-	err := row.Scan(&locked_until)
-	return locked_until, err
+type ForgetSourceFailuresBeforeParams struct {
+	Network     string
+	WindowStart time.Time
+}
+
+func (q *Queries) ForgetSourceFailuresBefore(ctx context.Context, arg ForgetSourceFailuresBeforeParams) error {
+	_, err := q.db.Exec(ctx, forgetSourceFailuresBefore, arg.Network, arg.WindowStart)
+	return err
+}
+
+const getClientTenant = `-- name: GetClientTenant :one
+SELECT tenant_id FROM auth.oidc_clients WHERE client_id = $1
+`
+
+// The tenant an OAuth client belongs to (whose policy a hosted sign-in for it
+// is held to).
+func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getClientTenant, clientID)
+	var tenant_id uuid.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
 }
 
 const getLoginSession = `-- name: GetLoginSession :one
@@ -143,6 +172,53 @@ func (q *Queries) GetLoginSessionUser(ctx context.Context, tokenHash string) (Ge
 	row := q.db.QueryRow(ctx, getLoginSessionUser, tokenHash)
 	var i GetLoginSessionUserRow
 	err := row.Scan(&i.UserID, &i.TenantID)
+	return i, err
+}
+
+const getSignInLocks = `-- name: GetSignInLocks :one
+
+
+SELECT t.throttled_until AS source_throttled_until,
+       n.locked_until    AS network_locked_until,
+       a.locked_until    AS account_locked_until
+FROM (SELECT 1) AS attempt
+LEFT JOIN auth.login_source_throttles t
+       ON t.network = $1 AND t.throttled_until > $2::timestamptz
+LEFT JOIN auth.login_attempts_by_network n
+       ON n.email = $3 AND n.network = $1 AND n.locked_until > $2::timestamptz
+LEFT JOIN auth.login_attempts a
+       ON a.email = $3 AND a.locked_until > $2::timestamptz
+`
+
+type GetSignInLocksParams struct {
+	Network string
+	Now     time.Time
+	Email   string
+}
+
+type GetSignInLocksRow struct {
+	SourceThrottledUntil pgtype.Timestamptz
+	NetworkLockedUntil   pgtype.Timestamptz
+	AccountLockedUntil   pgtype.Timestamptz
+}
+
+// Queries for the authentication domain.
+// Static queries with fully-typed, non-nullable parameters are converted.
+// Queries involving nullable UUID columns passed as Go interface{}/nil
+// (sessions.tenant_id, mfa_login_challenges.tenant_id, trusted_devices.tenant_id)
+// remain hand-written because they require Go-nil → SQL NULL semantics that
+// sqlc's uuid override cannot express without additional NULLIF wrappers that
+// would silently treat the zero UUID as NULL.
+// The Refresh join (FOR UPDATE OF rt across three tables) is also left raw.
+// Sign-in lockout (lockout.go). Every timestamp is the caller's @now, so one
+// attempt is judged against a single instant. Keys: @email is the lowercased
+// address (whether or not an account has it); @network the source network.
+// In one round trip: until when the source network is throttled, and until
+// when the account is locked for that network and everywhere. NULL = not.
+func (q *Queries) GetSignInLocks(ctx context.Context, arg GetSignInLocksParams) (GetSignInLocksRow, error) {
+	row := q.db.QueryRow(ctx, getSignInLocks, arg.Network, arg.Now, arg.Email)
+	var i GetSignInLocksRow
+	err := row.Scan(&i.SourceThrottledUntil, &i.NetworkLockedUntil, &i.AccountLockedUntil)
 	return i, err
 }
 
@@ -327,6 +403,127 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 	return err
 }
 
+const recordAccountFailure = `-- name: RecordAccountFailure :one
+INSERT INTO auth.login_attempts AS c
+    (email, failed_count, first_failed_at, last_failed_at, locked_until)
+VALUES ($1, 1, $2::timestamptz, $2::timestamptz,
+        CASE WHEN $3::int4 <= 1 THEN $4::timestamptz END)
+ON CONFLICT (email) DO UPDATE SET
+    failed_count = CASE
+        WHEN c.last_failed_at < $5::timestamptz OR c.locked_until <= $2::timestamptz THEN 1
+        ELSE c.failed_count + 1 END,
+    first_failed_at = CASE
+        WHEN c.last_failed_at < $5::timestamptz OR c.locked_until <= $2::timestamptz THEN $2::timestamptz
+        ELSE c.first_failed_at END,
+    last_failed_at = $2::timestamptz,
+    locked_until = CASE
+        WHEN c.locked_until > $2::timestamptz THEN c.locked_until
+        WHEN (CASE
+            WHEN c.last_failed_at < $5::timestamptz OR c.locked_until <= $2::timestamptz THEN 1
+            ELSE c.failed_count + 1 END) >= $3::int4 THEN $4::timestamptz
+        ELSE NULL END
+RETURNING failed_count, locked_until
+`
+
+type RecordAccountFailureParams struct {
+	Email       string
+	Now         time.Time
+	Threshold   int32
+	LockUntil   time.Time
+	WindowStart time.Time
+}
+
+type RecordAccountFailureRow struct {
+	FailedCount int32
+	LockedUntil pgtype.Timestamptz
+}
+
+// RecordNetworkFailure for the account alone, whichever network failed.
+func (q *Queries) RecordAccountFailure(ctx context.Context, arg RecordAccountFailureParams) (RecordAccountFailureRow, error) {
+	row := q.db.QueryRow(ctx, recordAccountFailure,
+		arg.Email,
+		arg.Now,
+		arg.Threshold,
+		arg.LockUntil,
+		arg.WindowStart,
+	)
+	var i RecordAccountFailureRow
+	err := row.Scan(&i.FailedCount, &i.LockedUntil)
+	return i, err
+}
+
+const recordNetworkFailure = `-- name: RecordNetworkFailure :one
+INSERT INTO auth.login_attempts_by_network AS c
+    (email, network, failed_count, first_failed_at, last_failed_at, locked_until)
+VALUES ($1, $2, 1, $3::timestamptz, $3::timestamptz,
+        CASE WHEN $4::int4 <= 1 THEN $5::timestamptz END)
+ON CONFLICT (email, network) DO UPDATE SET
+    failed_count = CASE
+        WHEN c.last_failed_at < $6::timestamptz OR c.locked_until <= $3::timestamptz THEN 1
+        ELSE c.failed_count + 1 END,
+    first_failed_at = CASE
+        WHEN c.last_failed_at < $6::timestamptz OR c.locked_until <= $3::timestamptz THEN $3::timestamptz
+        ELSE c.first_failed_at END,
+    last_failed_at = $3::timestamptz,
+    locked_until = CASE
+        WHEN c.locked_until > $3::timestamptz THEN c.locked_until
+        WHEN (CASE
+            WHEN c.last_failed_at < $6::timestamptz OR c.locked_until <= $3::timestamptz THEN 1
+            ELSE c.failed_count + 1 END) >= $4::int4 THEN $5::timestamptz
+        ELSE NULL END
+RETURNING failed_count, locked_until
+`
+
+type RecordNetworkFailureParams struct {
+	Email       string
+	Network     string
+	Now         time.Time
+	Threshold   int32
+	LockUntil   time.Time
+	WindowStart time.Time
+}
+
+type RecordNetworkFailureRow struct {
+	FailedCount int32
+	LockedUntil pgtype.Timestamptz
+}
+
+// Counts a failure for the account from one network. The count starts afresh
+// when the last failure is older than the window or a lock has run its
+// course; reaching @threshold sets the lock (an active lock is kept as is).
+// locked_until = @lock_until on return means this failure set the lock.
+func (q *Queries) RecordNetworkFailure(ctx context.Context, arg RecordNetworkFailureParams) (RecordNetworkFailureRow, error) {
+	row := q.db.QueryRow(ctx, recordNetworkFailure,
+		arg.Email,
+		arg.Network,
+		arg.Now,
+		arg.Threshold,
+		arg.LockUntil,
+		arg.WindowStart,
+	)
+	var i RecordNetworkFailureRow
+	err := row.Scan(&i.FailedCount, &i.LockedUntil)
+	return i, err
+}
+
+const recordSourceFailure = `-- name: RecordSourceFailure :exec
+INSERT INTO auth.login_source_failures (network, email, last_failed_at)
+VALUES ($1, $2, $3::timestamptz)
+ON CONFLICT (network, email) DO UPDATE SET last_failed_at = EXCLUDED.last_failed_at
+`
+
+type RecordSourceFailureParams struct {
+	Network string
+	Email   string
+	Now     time.Time
+}
+
+// Remembers that a source network failed to sign in to an account.
+func (q *Queries) RecordSourceFailure(ctx context.Context, arg RecordSourceFailureParams) error {
+	_, err := q.db.Exec(ctx, recordSourceFailure, arg.Network, arg.Email, arg.Now)
+	return err
+}
+
 const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :execrows
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND revoked_at IS NULL
@@ -424,6 +621,64 @@ func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionFor
 	return tenant_id, err
 }
 
+const takeSourceAccounts = `-- name: TakeSourceAccounts :many
+DELETE FROM auth.login_source_failures WHERE network = $1 RETURNING email
+`
+
+// The accounts a source was just throttled for; it starts afresh once the
+// throttle lifts.
+func (q *Queries) TakeSourceAccounts(ctx context.Context, network string) ([]string, error) {
+	rows, err := q.db.Query(ctx, takeSourceAccounts, network)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		items = append(items, email)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const throttleSource = `-- name: ThrottleSource :one
+INSERT INTO auth.login_source_throttles AS t (network, throttled_at, throttled_until, distinct_accounts)
+VALUES ($1, $2::timestamptz, $3::timestamptz, $4::int4)
+ON CONFLICT (network) DO UPDATE SET
+    throttled_at      = EXCLUDED.throttled_at,
+    throttled_until   = EXCLUDED.throttled_until,
+    distinct_accounts = EXCLUDED.distinct_accounts
+WHERE t.throttled_until <= EXCLUDED.throttled_at
+RETURNING throttled_until
+`
+
+type ThrottleSourceParams struct {
+	Network          string
+	Now              time.Time
+	ThrottledUntil   time.Time
+	DistinctAccounts int32
+}
+
+// Throttles a source network unless it already is: no row on return means
+// another attempt set the throttle first.
+func (q *Queries) ThrottleSource(ctx context.Context, arg ThrottleSourceParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, throttleSource,
+		arg.Network,
+		arg.Now,
+		arg.ThrottledUntil,
+		arg.DistinctAccounts,
+	)
+	var throttled_until time.Time
+	err := row.Scan(&throttled_until)
+	return throttled_until, err
+}
+
 const touchTrustedDevice = `-- name: TouchTrustedDevice :execrows
 UPDATE auth.trusted_devices SET last_used_at = NOW()
 WHERE token_hash = $1 AND user_id = $2 AND expires_at > NOW()
@@ -465,45 +720,4 @@ UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = $1
 func (q *Queries) UpdateSessionLastSeen(ctx context.Context, sessionID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, updateSessionLastSeen, sessionID)
 	return err
-}
-
-const upsertLoginAttempt = `-- name: UpsertLoginAttempt :one
-INSERT INTO auth.login_attempts (email, failed_count, first_failed_at, last_failed_at)
-VALUES ($1, 1, NOW(), NOW())
-ON CONFLICT (email) DO UPDATE SET
-    failed_count = CASE
-        WHEN login_attempts.last_failed_at < $2 THEN 1
-        ELSE login_attempts.failed_count + 1 END,
-    first_failed_at = CASE
-        WHEN login_attempts.last_failed_at < $2 THEN NOW()
-        ELSE login_attempts.first_failed_at END,
-    last_failed_at = NOW(),
-    locked_until = CASE
-        WHEN (CASE
-            WHEN login_attempts.last_failed_at < $2 THEN 1
-            ELSE login_attempts.failed_count + 1 END) >= $3::int4
-        THEN $4::timestamptz ELSE NULL END
-RETURNING failed_count
-`
-
-type UpsertLoginAttemptParams struct {
-	Email           string
-	WindowStart     time.Time
-	MaxFailedLogins int32
-	LockUntil       time.Time
-}
-
-// Upserts the failed-login counter. @window_start resets the counter when the
-// last failure is older than the failure window; @max_failed_logins and
-// @lock_until trigger the lockout.
-func (q *Queries) UpsertLoginAttempt(ctx context.Context, arg UpsertLoginAttemptParams) (int32, error) {
-	row := q.db.QueryRow(ctx, upsertLoginAttempt,
-		arg.Email,
-		arg.WindowStart,
-		arg.MaxFailedLogins,
-		arg.LockUntil,
-	)
-	var failed_count int32
-	err := row.Scan(&failed_count)
-	return failed_count, err
 }

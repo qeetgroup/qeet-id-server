@@ -7,6 +7,11 @@
 // tenant-less — gets the platform baseline, DefaultPolicy. The login-method
 // toggles are persisted configuration the auth flows consult as they are
 // hardened per tenant.
+//
+// It also stores a tenant's sign-in lockout settings (threshold, window and
+// lock duration), which the password sign-in reads through SignInLockout. The
+// platform defaults and the bounds a tenant may choose within are platform
+// configuration (LOGIN_LOCKOUT_*); a write outside the bounds is refused.
 package authpolicy
 
 import (
@@ -15,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
@@ -53,6 +59,98 @@ type Policy struct {
 	// skip the second factor on a previously-trusted device. Off by default so
 	// MFA stays always-on unless a tenant opts in.
 	RememberDeviceEnabled bool `json:"remember_device_enabled"`
+	// Sign-in lockout. After LockoutThreshold failed password sign-ins to one
+	// account from one network, each within LockoutWindowMinutes of the last,
+	// the account is locked for that network for LockoutDurationMinutes. nil
+	// (JSON null) = the platform default. A value outside LockoutLimits is
+	// refused.
+	LockoutThreshold       *int `json:"lockout_threshold"`
+	LockoutWindowMinutes   *int `json:"lockout_window_minutes"`
+	LockoutDurationMinutes *int `json:"lockout_duration_minutes"`
+	// LockoutLimits documents the platform defaults and the bounds for the
+	// three settings above. Read-only: returned by Get, ignored by Update.
+	LockoutLimits *LockoutLimitsView `json:"lockout_limits,omitempty"`
+}
+
+// Lockout is the sign-in lockout a tenant applies (see Policy.LockoutThreshold).
+type Lockout struct {
+	Threshold int
+	Window    time.Duration
+	Duration  time.Duration
+}
+
+// LockoutLimits are the platform defaults for the lockout settings and the
+// documented bounds a tenant may choose within. Platform configuration
+// (LOGIN_LOCKOUT_*), validated at start-up; windows and durations are whole
+// minutes.
+type LockoutLimits struct {
+	Defaults Lockout
+	Min      Lockout
+	Max      Lockout
+}
+
+// DefaultLockoutLimits are the built-in limits: five failures within fifteen
+// minutes lock for fifteen minutes; a tenant may choose a threshold of 3 to
+// 20, and a window and a duration of 1 minute to 24 hours.
+func DefaultLockoutLimits() LockoutLimits {
+	return LockoutLimits{
+		Defaults: Lockout{Threshold: 5, Window: 15 * time.Minute, Duration: 15 * time.Minute},
+		Min:      Lockout{Threshold: 3, Window: time.Minute, Duration: time.Minute},
+		Max:      Lockout{Threshold: 20, Window: 24 * time.Hour, Duration: 24 * time.Hour},
+	}
+}
+
+// LockoutSettingsView is a lockout in API units (minutes).
+type LockoutSettingsView struct {
+	Threshold       int `json:"threshold"`
+	WindowMinutes   int `json:"window_minutes"`
+	DurationMinutes int `json:"duration_minutes"`
+}
+
+// LockoutLimitsView is LockoutLimits in API units.
+type LockoutLimitsView struct {
+	Defaults LockoutSettingsView `json:"defaults"`
+	Min      LockoutSettingsView `json:"min"`
+	Max      LockoutSettingsView `json:"max"`
+}
+
+func lockoutView(l Lockout) LockoutSettingsView {
+	return LockoutSettingsView{
+		Threshold:       l.Threshold,
+		WindowMinutes:   int(l.Window / time.Minute),
+		DurationMinutes: int(l.Duration / time.Minute),
+	}
+}
+
+func (l LockoutLimits) view() *LockoutLimitsView {
+	return &LockoutLimitsView{Defaults: lockoutView(l.Defaults), Min: lockoutView(l.Min), Max: lockoutView(l.Max)}
+}
+
+// CheckLockout reports each lockout setting in p that lies outside the
+// bounds. Unset (nil) settings take the platform default and are not checked.
+// Pure, so it is unit-tested without a database.
+func (l LockoutLimits) CheckLockout(p Policy) []errs.FieldError {
+	lo, hi := lockoutView(l.Min), lockoutView(l.Max)
+	var out []errs.FieldError
+	for _, f := range []struct {
+		field  string
+		value  *int
+		lo, hi int
+		unit   string
+	}{
+		{"lockout_threshold", p.LockoutThreshold, lo.Threshold, hi.Threshold, "failed attempts"},
+		{"lockout_window_minutes", p.LockoutWindowMinutes, lo.WindowMinutes, hi.WindowMinutes, "minutes"},
+		{"lockout_duration_minutes", p.LockoutDurationMinutes, lo.DurationMinutes, hi.DurationMinutes, "minutes"},
+	} {
+		if f.value != nil && (*f.value < f.lo || *f.value > f.hi) {
+			out = append(out, errs.FieldError{
+				Field:   f.field,
+				Code:    "out_of_range",
+				Message: fmt.Sprintf("Must be between %d and %d %s.", f.lo, f.hi, f.unit),
+			})
+		}
+	}
+	return out
 }
 
 // DefaultPolicy mirrors the column defaults — returned when a tenant has no
@@ -101,9 +199,18 @@ type Service struct {
 	// and is itself fail-open (a HIBP outage allows the password). Set via
 	// SetBreachChecker.
 	breach *hibp.Checker
+	// lockout holds the platform lockout defaults and the bounds a tenant's
+	// settings must stay within. Set via SetLockoutLimits.
+	lockout LockoutLimits
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool, q: dbgen.New(pool)} }
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, q: dbgen.New(pool), lockout: DefaultLockoutLimits()}
+}
+
+// SetLockoutLimits sets the platform lockout defaults and bounds (from
+// LOGIN_LOCKOUT_*). Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetLockoutLimits(l LockoutLimits) { s.lockout = l }
 
 // SetBreachChecker wires (or clears, with nil) the breached-password checker.
 // Called from internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
@@ -126,23 +233,77 @@ func toDomain(row dbgen.TenantAuthPolicy) *Policy {
 		OTPSMSEnabled:            row.OtpSmsEnabled,
 		SelfRegistrationEnabled:  row.SelfRegistrationEnabled,
 		RememberDeviceEnabled:    row.RememberDeviceEnabled,
+		LockoutThreshold:         intOrNil(row.LockoutThreshold),
+		LockoutWindowMinutes:     intOrNil(row.LockoutWindowMinutes),
+		LockoutDurationMinutes:   intOrNil(row.LockoutDurationMinutes),
 	}
 }
 
-// Get returns the tenant's policy, or defaults when none is stored.
+func intOrNil(v *int32) *int {
+	if v == nil {
+		return nil
+	}
+	n := int(*v)
+	return &n
+}
+
+func int32OrNil(v *int) *int32 {
+	if v == nil {
+		return nil
+	}
+	n := int32(*v)
+	return &n
+}
+
+// Get returns the tenant's policy, or defaults when none is stored, with the
+// lockout limits attached.
 func (s *Service) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
 	row, err := s.q.GetAuthPolicy(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		def := DefaultPolicy()
+		def.LockoutLimits = s.lockout.view()
 		return &def, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return toDomain(row), nil
+	p := toDomain(row)
+	p.LockoutLimits = s.lockout.view()
+	return p, nil
 }
 
+// SignInLockout returns the lockout a password sign-in for tenantID is held
+// to: each setting the tenant chose, the platform default for the rest.
+// uuid.Nil (a sign-in with no tenant) gets the platform defaults without a
+// read. Which tenant a sign-in belongs to is the caller's decision.
+func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockout, error) {
+	l := s.lockout.Defaults
+	if tenantID == uuid.Nil {
+		return l, nil
+	}
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return Lockout{}, err
+	}
+	if p.LockoutThreshold != nil {
+		l.Threshold = *p.LockoutThreshold
+	}
+	if p.LockoutWindowMinutes != nil {
+		l.Window = time.Duration(*p.LockoutWindowMinutes) * time.Minute
+	}
+	if p.LockoutDurationMinutes != nil {
+		l.Duration = time.Duration(*p.LockoutDurationMinutes) * time.Minute
+	}
+	return l, nil
+}
+
+// Update stores a tenant's whole policy. Lockout settings outside the bounds
+// are refused with a validation error naming each field, before anything is
+// written; the password length and magic-link lifetime are clamped as before.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
+	if fields := s.lockout.CheckLockout(p); len(fields) > 0 {
+		return nil, errs.ErrValidationFailed.WithFields(fields)
+	}
 	if p.PasswordMinLength < 8 {
 		p.PasswordMinLength = 8
 	}
@@ -169,11 +330,16 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 		OtpSmsEnabled:            p.OTPSMSEnabled,
 		SelfRegistrationEnabled:  p.SelfRegistrationEnabled,
 		RememberDeviceEnabled:    p.RememberDeviceEnabled,
+		LockoutThreshold:         int32OrNil(p.LockoutThreshold),
+		LockoutWindowMinutes:     int32OrNil(p.LockoutWindowMinutes),
+		LockoutDurationMinutes:   int32OrNil(p.LockoutDurationMinutes),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return toDomain(row), nil
+	out := toDomain(row)
+	out.LockoutLimits = s.lockout.view()
+	return out, nil
 }
 
 // ValidateForTenant is the one check every path that sets or replaces a
@@ -327,8 +493,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
 		Metadata: map[string]any{
-			"password_min_length": p.PasswordMinLength,
-			"password_enabled":    p.PasswordEnabled,
+			"password_min_length":      p.PasswordMinLength,
+			"password_enabled":         p.PasswordEnabled,
+			"lockout_threshold":        p.LockoutThreshold,
+			"lockout_window_minutes":   p.LockoutWindowMinutes,
+			"lockout_duration_minutes": p.LockoutDurationMinutes,
 		},
 	}); err != nil {
 		httpx.WriteError(w, r, err)

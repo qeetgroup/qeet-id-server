@@ -199,3 +199,37 @@ func TestLoad_ProfileRequiresLocal(t *testing.T) {
 		t.Errorf("got IsDev=%v profile=%q", c.IsDev(), c.ServiceProfile)
 	}
 }
+
+func TestLoad_SignInLockoutDefaults(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("defaults should load: %v", err)
+	}
+	if c.LoginLockoutThreshold != 5 || c.LoginLockoutWindow != 15*time.Minute || c.LoginLockoutDuration != 15*time.Minute {
+		t.Errorf("lockout defaults = %d / %v / %v, want 5 / 15m / 15m",
+			c.LoginLockoutThreshold, c.LoginLockoutWindow, c.LoginLockoutDuration)
+	}
+}
+
+func TestLoad_RejectsUnsafeSignInLockout(t *testing.T) {
+	for name, env := range map[string][2]string{
+		"default above its maximum":   {"LOGIN_LOCKOUT_THRESHOLD", "50"},
+		"default below its minimum":   {"LOGIN_LOCKOUT_THRESHOLD", "1"},
+		"window not whole minutes":    {"LOGIN_LOCKOUT_WINDOW", "90s"},
+		"duration above its maximum":  {"LOGIN_LOCKOUT_DURATION", "48h"},
+		"minimum threshold zero":      {"LOGIN_LOCKOUT_THRESHOLD_MIN", "0"},
+		"account multiplier of one":   {"LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER", "1"},
+		"spraying limit of one":       {"LOGIN_SPRAY_ACCOUNTS", "1"},
+		"spraying block of no time":   {"LOGIN_SPRAY_BLOCK", "0s"},
+		"window maximum below window": {"LOGIN_LOCKOUT_WINDOW_MAX", "10m"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(env[0], env[1])
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "LOGIN_") {
+				t.Errorf("%s=%s: want a lockout configuration error, got %v", env[0], env[1], err)
+			}
+		})
+	}
+}

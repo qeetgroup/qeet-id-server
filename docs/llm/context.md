@@ -360,8 +360,18 @@ successful login. bcrypt remains in use for MFA recovery codes and API-key secre
 requirement, and correct for those.
 
 Implemented mechanisms: password · passkeys (WebAuthn) · magic link · email and SMS OTP · TOTP ·
-push approval · social login · adaptive risk (**off by default**) · per-account lockout ·
+push approval · social login · adaptive risk (**off by default**) · sign-in lockout ·
 breached-password check (env-gated).
+
+Password sign-in lockout (`authentication/lockout.go`) counts failures per account + source network
+(the client IP from `httpx.ClientIP`; IPv4 address or IPv6 /64) — the lock a tenant configures in its
+authentication policy within the `LOGIN_LOCKOUT_*` bounds — plus a looser per-account cap and a
+per-source counter across accounts (spraying). Unknown addresses are counted and timed like real
+ones. Whose settings apply: the tenant of the OAuth client a hosted sign-in names
+(`auth.Service.SignInTenant`), else the platform defaults — never the account's own tenant before the
+password is verified. If its counters cannot be read or written the sign-in **fails closed** (503
+`auth.sign_in_unavailable`, counted in `sign_in_lockout_unavailable_total`). Locks and throttled
+sources reach the Threats → Anomalies store (`credential_stuffing`, `password_spraying`).
 
 Every path that sets or replaces a password (sign-up, hosted registration, self-service change,
 reset, invite accept, admin create / set-password, bulk import) runs one check,

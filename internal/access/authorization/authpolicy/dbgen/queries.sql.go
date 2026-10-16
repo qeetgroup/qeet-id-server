@@ -13,7 +13,7 @@ import (
 
 const getAuthPolicy = `-- name: GetAuthPolicy :one
 
-SELECT tenant_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled FROM tenant.auth_policy WHERE tenant_id = $1
+SELECT tenant_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled, lockout_threshold, lockout_window_minutes, lockout_duration_minutes FROM tenant.auth_policy WHERE tenant_id = $1
 `
 
 // Queries for the authpolicy domain.
@@ -37,6 +37,9 @@ func (q *Queries) GetAuthPolicy(ctx context.Context, tenantID uuid.UUID) (Tenant
 		&i.MagicLinkTtlMinutes,
 		&i.SelfRegistrationEnabled,
 		&i.RememberDeviceEnabled,
+		&i.LockoutThreshold,
+		&i.LockoutWindowMinutes,
+		&i.LockoutDurationMinutes,
 	)
 	return i, err
 }
@@ -46,11 +49,13 @@ INSERT INTO tenant.auth_policy
     (tenant_id, password_enabled, password_min_length, password_require_uppercase,
      password_require_number, password_require_symbol, magic_link_enabled,
      magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
-     self_registration_enabled, remember_device_enabled, updated_at)
+     self_registration_enabled, remember_device_enabled,
+     lockout_threshold, lockout_window_minutes, lockout_duration_minutes, updated_at)
 VALUES ($1, $2, $3, $4,
         $5, $6, $7,
         $8, $9, $10, $11,
-        $12, $13, NOW())
+        $12, $13,
+        $14, $15, $16, NOW())
 ON CONFLICT (tenant_id) DO UPDATE SET
     password_enabled          = EXCLUDED.password_enabled,
     password_min_length       = EXCLUDED.password_min_length,
@@ -64,8 +69,11 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     otp_sms_enabled           = EXCLUDED.otp_sms_enabled,
     self_registration_enabled = EXCLUDED.self_registration_enabled,
     remember_device_enabled   = EXCLUDED.remember_device_enabled,
+    lockout_threshold         = EXCLUDED.lockout_threshold,
+    lockout_window_minutes    = EXCLUDED.lockout_window_minutes,
+    lockout_duration_minutes  = EXCLUDED.lockout_duration_minutes,
     updated_at                = NOW()
-RETURNING tenant_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled
+RETURNING tenant_id, password_enabled, password_min_length, password_require_uppercase, password_require_number, password_require_symbol, magic_link_enabled, passkey_enabled, otp_email_enabled, otp_sms_enabled, updated_at, magic_link_ttl_minutes, self_registration_enabled, remember_device_enabled, lockout_threshold, lockout_window_minutes, lockout_duration_minutes
 `
 
 type UpsertAuthPolicyParams struct {
@@ -82,6 +90,9 @@ type UpsertAuthPolicyParams struct {
 	OtpSmsEnabled            bool
 	SelfRegistrationEnabled  bool
 	RememberDeviceEnabled    bool
+	LockoutThreshold         *int32
+	LockoutWindowMinutes     *int32
+	LockoutDurationMinutes   *int32
 }
 
 func (q *Queries) UpsertAuthPolicy(ctx context.Context, arg UpsertAuthPolicyParams) (TenantAuthPolicy, error) {
@@ -99,6 +110,9 @@ func (q *Queries) UpsertAuthPolicy(ctx context.Context, arg UpsertAuthPolicyPara
 		arg.OtpSmsEnabled,
 		arg.SelfRegistrationEnabled,
 		arg.RememberDeviceEnabled,
+		arg.LockoutThreshold,
+		arg.LockoutWindowMinutes,
+		arg.LockoutDurationMinutes,
 	)
 	var i TenantAuthPolicy
 	err := row.Scan(
@@ -116,6 +130,9 @@ func (q *Queries) UpsertAuthPolicy(ctx context.Context, arg UpsertAuthPolicyPara
 		&i.MagicLinkTtlMinutes,
 		&i.SelfRegistrationEnabled,
 		&i.RememberDeviceEnabled,
+		&i.LockoutThreshold,
+		&i.LockoutWindowMinutes,
+		&i.LockoutDurationMinutes,
 	)
 	return i, err
 }
