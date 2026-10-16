@@ -19,11 +19,13 @@ func TestRunBulkImport_PartialSuccess(t *testing.T) {
 	v := validator.New()
 	tenant := uuid.New()
 	rows := []BulkUserInput{
-		{Email: "a@example.com", DisplayName: "A"},  // 1: ok
-		{Email: "not-an-email"},                     // 2: invalid email
-		{Email: "dupe@example.com"},                 // 3: creator returns conflict
-		{Email: "b@example.com", Password: "short"}, // 4: password too short
-		{Email: "c@example.com"},                    // 5: ok
+		{Email: "a@example.com", DisplayName: "A"}, // 1: ok
+		{Email: "not-an-email"},                    // 2: invalid email
+		{Email: "dupe@example.com"},                // 3: creator returns conflict
+		// 4: password over the hashing bound (its length and other rules are the
+		// organisation's, checked when the row is created — see the test below)
+		{Email: "b@example.com", Password: strings.Repeat("x", 257)},
+		{Email: "c@example.com"}, // 5: ok
 	}
 
 	var calls int
@@ -78,5 +80,29 @@ func TestRunBulkImport_AllValid(t *testing.T) {
 	if res.Succeeded != 2 || res.Failed != 0 || len(res.Errors) != 0 {
 		t.Errorf("all-valid: got succeeded=%d failed=%d errors=%d, want 2/0/0",
 			res.Succeeded, res.Failed, len(res.Errors))
+	}
+}
+
+// A row whose password the organisation's rules refuse is reported
+// with the reason (the rule that failed), not a generic failure, so an
+// operator can fix and resubmit that row alone.
+func TestRunBulkImport_RefusedPasswordReportsTheRule(t *testing.T) {
+	tenant := uuid.New()
+	rows := []BulkUserInput{
+		{Email: "ok@example.com", Password: "Correct-Horse-Battery-9"},
+		{Email: "nosymbol@example.com", Password: "CorrectHorseBattery99"},
+	}
+	create := func(_ context.Context, in CreateInput) (*User, error) {
+		if in.Password == "CorrectHorseBattery99" {
+			return nil, errs.ErrAuthPolicyPasswordNoSymbol
+		}
+		return &User{ID: uuid.New(), TenantID: in.TenantID, Email: in.Email}, nil
+	}
+	res := runBulkImport(context.Background(), validator.New(), tenant, rows, create)
+	if res.Succeeded != 1 || res.Failed != 1 || len(res.Errors) != 1 {
+		t.Fatalf("result = %+v, want 1 created and 1 refused", res)
+	}
+	if got := res.Errors[0]; got.Line != 2 || got.Message != errs.ErrAuthPolicyPasswordNoSymbol.Message {
+		t.Errorf("row error = %+v, want line 2 with %q", got, errs.ErrAuthPolicyPasswordNoSymbol.Message)
 	}
 }

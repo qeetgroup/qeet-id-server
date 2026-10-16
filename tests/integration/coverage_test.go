@@ -19,6 +19,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
@@ -432,6 +434,13 @@ func TestOIDCRevokeAccessTokenHintNoop(t *testing.T) {
 func newPasskeySvc(t *testing.T) *passkey.Service {
 	t.Helper()
 	authSvc, _ := newAuth()
+	return newPasskeySvcWithAuth(t, authSvc)
+}
+
+// newPasskeySvcWithAuth builds the passkey service on a given auth service, for
+// tests that need extra auth wiring (for example a registration policy).
+func newPasskeySvcWithAuth(t *testing.T, authSvc *auth.Service) *passkey.Service {
+	t.Helper()
 	// Mirror the production config in internal/bootstrap/dependencies.go —
 	// crucially AuthenticatorSelection.UserVerification, which is what gates
 	// go-webauthn's UV check. A test config that omits it silently verifies
@@ -463,7 +472,7 @@ func TestPasskeyFinishRegisterSessionMismatch(t *testing.T) {
 		t.Fatalf("begin register: %v", err)
 	}
 	// A different user presenting the owner's session id is rejected.
-	err = svc.FinishRegister(ctx, attacker, sid, []byte(`{}`), "")
+	err = svc.FinishRegister(ctx, attacker, sid, []byte(`{}`), "", "")
 	if err == nil {
 		t.Fatal("finishing another user's registration session must fail")
 	}
@@ -489,7 +498,7 @@ func TestPasskeyFinishRegisterExpiredSession(t *testing.T) {
 		`UPDATE auth.webauthn_sessions SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, sid); err != nil {
 		t.Fatalf("expire session: %v", err)
 	}
-	err = svc.FinishRegister(ctx, userID, sid, []byte(`{}`), "")
+	err = svc.FinishRegister(ctx, userID, sid, []byte(`{}`), "", "")
 	if err == nil {
 		t.Fatal("an expired ceremony session must be refused")
 	}
@@ -1368,6 +1377,7 @@ func TestRecoveryPasswordResetLifecycle(t *testing.T) {
 
 	rec := &recordSender{}
 	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc.SetPasswordRules(authpolicy.NewService(testPool))
 
 	// Anti-enumeration: an unknown email succeeds without sending mail or writing a row.
 	rec.last = notifier.Message{}
@@ -1442,6 +1452,7 @@ func TestRecoveryResetTokenExpiry(t *testing.T) {
 	}
 	rec := &recordSender{}
 	svc := recovery.NewService(testPool, rec, time.Hour, "https://app.qeet.com")
+	svc.SetPasswordRules(authpolicy.NewService(testPool))
 	if _, err := svc.StartPasswordReset(ctx, email); err != nil {
 		t.Fatalf("start reset: %v", err)
 	}

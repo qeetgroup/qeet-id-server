@@ -15,6 +15,11 @@ FROM auth.password_resets
 WHERE token_hash = $1
 FOR UPDATE;
 
+-- GetResetAccount returns the organisation (NULL = none) and email of the
+-- account a reset is for, so the new password is checked against its rules.
+-- name: GetResetAccount :one
+SELECT tenant_id, email FROM "user".users WHERE id = $1;
+
 -- name: UpsertPasswordCredential :exec
 INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
 VALUES ($1, $2, NOW())

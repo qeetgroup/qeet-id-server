@@ -271,6 +271,35 @@ type Config struct {
 	// self-hosted mirrors). Empty uses the public api.pwnedpasswords.com.
 	BreachedPasswordAPIURL string `envconfig:"BREACHED_PASSWORD_API_URL" default:""`
 
+	// Sign-in lockout (internal/access/authentication/lockout.go). After
+	// LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to one account from one
+	// network, each within LOGIN_LOCKOUT_WINDOW of the last, the account is
+	// locked for that network for LOGIN_LOCKOUT_DURATION. These are the
+	// platform defaults; a tenant may set its own within the _MIN/_MAX bounds
+	// through its authentication policy. Windows and durations are whole
+	// minutes; Load refuses a default outside its bounds.
+	LoginLockoutThreshold    int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD" default:"5"`
+	LoginLockoutWindow       time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW" default:"15m"`
+	LoginLockoutDuration     time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION" default:"15m"`
+	LoginLockoutThresholdMin int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD_MIN" default:"3"`
+	LoginLockoutThresholdMax int           `envconfig:"LOGIN_LOCKOUT_THRESHOLD_MAX" default:"20"`
+	LoginLockoutWindowMin    time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW_MIN" default:"1m"`
+	LoginLockoutWindowMax    time.Duration `envconfig:"LOGIN_LOCKOUT_WINDOW_MAX" default:"24h"`
+	LoginLockoutDurationMin  time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION_MIN" default:"1m"`
+	LoginLockoutDurationMax  time.Duration `envconfig:"LOGIN_LOCKOUT_DURATION_MAX" default:"24h"`
+	// LoginLockoutAccountMultiplier sets the looser per-account cap: threshold
+	// × multiplier failures from any mix of networks lock the account
+	// everywhere, so an attack spread over many networks stays bounded.
+	// At least 2, or one network could lock the owner out again.
+	LoginLockoutAccountMultiplier int `envconfig:"LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER" default:"4"`
+	// A source network that fails password sign-in against LOGIN_SPRAY_ACCOUNTS
+	// distinct accounts within LOGIN_SPRAY_WINDOW is refused password sign-in
+	// for LOGIN_SPRAY_BLOCK (broad-and-shallow spraying). Raise the count for a
+	// deployment whose users share one address (a large NAT).
+	LoginSprayAccounts int           `envconfig:"LOGIN_SPRAY_ACCOUNTS" default:"30"`
+	LoginSprayWindow   time.Duration `envconfig:"LOGIN_SPRAY_WINDOW" default:"15m"`
+	LoginSprayBlock    time.Duration `envconfig:"LOGIN_SPRAY_BLOCK" default:"15m"`
+
 	// WebAuthn Relying Party config. Empty values default from AppBaseURL /
 	// ServiceName (see WebAuthnRP). RP_ID is the effective domain (no scheme/
 	// port); RP_ORIGINS is a comma-separated allow-list of full origins.
@@ -305,7 +334,51 @@ func Load() (*Config, error) {
 	if err := c.checkEnvironment(); err != nil {
 		return nil, err
 	}
+	if err := c.checkSignInLockout(); err != nil {
+		return nil, err
+	}
 	return &c, nil
+}
+
+// checkSignInLockout rejects lockout settings that would not protect sign-in:
+// a bound that is not positive or not whole minutes, a minimum above its
+// maximum, a default outside its bounds, an account multiplier below 2, or a
+// spraying limit that is not positive.
+func (c *Config) checkSignInLockout() error {
+	var problems []string
+	minutes := func(name string, d time.Duration) {
+		if d < time.Minute || d%time.Minute != 0 {
+			problems = append(problems, name+" must be a whole number of minutes, at least 1m")
+		}
+	}
+	minutes("LOGIN_LOCKOUT_WINDOW", c.LoginLockoutWindow)
+	minutes("LOGIN_LOCKOUT_DURATION", c.LoginLockoutDuration)
+	minutes("LOGIN_LOCKOUT_WINDOW_MIN", c.LoginLockoutWindowMin)
+	minutes("LOGIN_LOCKOUT_WINDOW_MAX", c.LoginLockoutWindowMax)
+	minutes("LOGIN_LOCKOUT_DURATION_MIN", c.LoginLockoutDurationMin)
+	minutes("LOGIN_LOCKOUT_DURATION_MAX", c.LoginLockoutDurationMax)
+	if c.LoginLockoutThresholdMin < 1 {
+		problems = append(problems, "LOGIN_LOCKOUT_THRESHOLD_MIN must be at least 1")
+	}
+	if c.LoginLockoutThreshold < c.LoginLockoutThresholdMin || c.LoginLockoutThreshold > c.LoginLockoutThresholdMax {
+		problems = append(problems, "LOGIN_LOCKOUT_THRESHOLD must lie within LOGIN_LOCKOUT_THRESHOLD_MIN..LOGIN_LOCKOUT_THRESHOLD_MAX")
+	}
+	if c.LoginLockoutWindow < c.LoginLockoutWindowMin || c.LoginLockoutWindow > c.LoginLockoutWindowMax {
+		problems = append(problems, "LOGIN_LOCKOUT_WINDOW must lie within LOGIN_LOCKOUT_WINDOW_MIN..LOGIN_LOCKOUT_WINDOW_MAX")
+	}
+	if c.LoginLockoutDuration < c.LoginLockoutDurationMin || c.LoginLockoutDuration > c.LoginLockoutDurationMax {
+		problems = append(problems, "LOGIN_LOCKOUT_DURATION must lie within LOGIN_LOCKOUT_DURATION_MIN..LOGIN_LOCKOUT_DURATION_MAX")
+	}
+	if c.LoginLockoutAccountMultiplier < 2 {
+		problems = append(problems, "LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER must be at least 2")
+	}
+	if c.LoginSprayAccounts < 2 || c.LoginSprayWindow <= 0 || c.LoginSprayBlock <= 0 {
+		problems = append(problems, "LOGIN_SPRAY_ACCOUNTS must be at least 2, and LOGIN_SPRAY_WINDOW and LOGIN_SPRAY_BLOCK positive")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid sign-in lockout configuration:\n  - %s", strings.Join(problems, "\n  - "))
+	}
+	return nil
 }
 
 // IsDev reports whether this is a developer workstation (SERVICE_ENV=dev), the
@@ -460,7 +533,8 @@ func (c *Config) AllowedOrigins() []string {
 
 // WebAuthnRP returns the effective Relying Party config, defaulting the ID to
 // the AppBaseURL host, the display name to ServiceName, and the origins to
-// AppBaseURL when the explicit env vars are unset.
+// AppBaseURL and LoginBaseURL when the explicit env vars are unset. The hosted
+// login runs passkey sign-in, sign-up and enrolment from its own origin.
 func (c *Config) WebAuthnRP() (id, displayName string, origins []string) {
 	id = c.WebAuthnRPID
 	if id == "" {
@@ -480,6 +554,10 @@ func (c *Config) WebAuthnRP() (id, displayName string, origins []string) {
 		}
 	} else {
 		origins = []string{c.AppBaseURL}
+		login := strings.TrimSuffix(c.LoginBaseURL, "/")
+		if login != "" && login != strings.TrimSuffix(c.AppBaseURL, "/") {
+			origins = append(origins, login)
+		}
 	}
 	return id, displayName, origins
 }

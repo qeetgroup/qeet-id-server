@@ -768,22 +768,6 @@ func (q *Queries) RestoreUser(ctx context.Context, id uuid.UUID) (int64, error) 
 	return result.RowsAffected(), nil
 }
 
-const revokeAllUserSessions = `-- name: RevokeAllUserSessions :execrows
-UPDATE auth.sessions
-SET revoked_at = NOW()
-WHERE user_id = $1 AND revoked_at IS NULL
-`
-
-// RevokeAllUserSessions revokes every live session for a user (admin force
-// sign-out). Returns the number of sessions revoked.
-func (q *Queries) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAllUserSessions, userID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const setPassword = `-- name: SetPassword :exec
 INSERT INTO auth.password_credentials (user_id, password_hash, updated_at)
 VALUES ($1, $2, NOW())

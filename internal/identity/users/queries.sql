@@ -133,13 +133,6 @@ WHERE user_id = $1 AND revoked_at IS NULL
 ORDER BY last_seen_at DESC
 LIMIT 100;
 
--- RevokeAllUserSessions revokes every live session for a user (admin force
--- sign-out). Returns the number of sessions revoked.
--- name: RevokeAllUserSessions :execrows
-UPDATE auth.sessions
-SET revoked_at = NOW()
-WHERE user_id = $1 AND revoked_at IS NULL;
-
 -- ListUserRolesInTenant returns the roles directly assigned to a user within a
 -- tenant (group-inherited roles are reflected in effective permissions elsewhere).
 -- name: ListUserRolesInTenant :many

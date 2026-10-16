@@ -9,6 +9,11 @@ SELECT id, tenant_id FROM "user".users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL AND tenant_id IS NOT NULL
 LIMIT 1;
 
+-- name: ListTenantsForEmails :many
+-- The organisations the given (lowercased) addresses belong to.
+SELECT DISTINCT tenant_id::uuid AS tenant_id FROM "user".users
+WHERE LOWER(email) = ANY(@emails::text[]) AND deleted_at IS NULL AND tenant_id IS NOT NULL;
+
 -- ListSecurityEvents is intentionally hand-written in threat.go because
 -- COALESCE(host(e.ip),'') causes sqlc to generate interface{} for the column,
 -- making type-safe scanning impossible without runtime assertions.

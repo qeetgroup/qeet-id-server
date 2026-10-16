@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
@@ -67,7 +68,11 @@ func mustIssuer() *tokens.Issuer {
 func newAuth() (*auth.Service, *user.Repository) {
 	users := user.NewRepository(testPool)
 	issuer := mustIssuer()
-	return auth.NewService(testPool, users, issuer), users
+	svc := auth.NewService(testPool, users, issuer)
+	policy := authpolicy.NewService(testPool)
+	svc.SetRegistrationPolicy(policy) // the password check, as bootstrap wires it
+	svc.SetMethodPolicy(policy)       // which sign-in methods an organisation allows
+	return svc, users
 }
 
 func TestOrganizationSelectionEligibility(t *testing.T) {
@@ -139,17 +144,18 @@ func TestOrganizationSelectionEligibility(t *testing.T) {
 		}
 	}
 	for _, denied := range []uuid.UUID{foreign, suspended, deleted} {
-		if _, err := svc.SwitchTenant(ctx, userID, denied, "", ""); !errors.Is(err, errs.ErrAuthNotTenantMember) {
+		if _, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: userID, FromSessionID: current.SessionID, TenantID: denied}); !errors.Is(err, errs.ErrAuthNotTenantMember) {
 			t.Fatalf("ineligible switch allowed: %v", err)
 		}
 	}
-	if _, err := svc.SwitchTenant(ctx, userID, eligible[2], "", ""); err != nil {
+	switched, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: userID, FromSessionID: current.SessionID, TenantID: eligible[2]})
+	if err != nil {
 		t.Fatalf("eligible switch rejected: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id=$1 AND tenant_id=$2`, userID, eligible[2]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SwitchTenant(ctx, userID, eligible[2], "", ""); !errors.Is(err, errs.ErrAuthNotTenantMember) {
+	if _, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: userID, FromSessionID: switched.SessionID, TenantID: eligible[2]}); !errors.Is(err, errs.ErrAuthNotTenantMember) {
 		t.Fatal("removed membership remained switchable")
 	}
 	if _, err := repository.EligibleOrganizations(ctx, userID, current.SessionID, 200, "invalid"); err == nil {
@@ -225,6 +231,7 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	svc := auth.NewService(testPool, users, mustIssuer())
+	svc.SetRegistrationPolicy(authpolicy.NewService(testPool))
 	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	mfaSvc.SetCipher(testEnvelope(t))
 	svc.SetMFA(mfaSvc)
@@ -303,6 +310,7 @@ func TestMFALoginAttemptBudgetAndConcurrentConsumption(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	authService := auth.NewService(testPool, users, mustIssuer())
+	authService.SetRegistrationPolicy(authpolicy.NewService(testPool))
 	mfaService := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	mfaService.SetCipher(testEnvelope(t))
 	authService.SetMFA(mfaService)
@@ -418,6 +426,7 @@ func TestChangePasswordIsAtomicWithSessionRevocationAndEvidence(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	service := auth.NewService(testPool, users, mustIssuer())
+	service.SetRegistrationPolicy(authpolicy.NewService(testPool))
 
 	createAccount := func(prefix string) (*auth.TokenPair, *user.User) {
 		t.Helper()
@@ -672,6 +681,7 @@ func TestAdminResetMFA(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	svc := auth.NewService(testPool, users, mustIssuer())
+	svc.SetRegistrationPolicy(authpolicy.NewService(testPool))
 	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	mfaSvc.SetCipher(testEnvelope(t))
 
@@ -738,10 +748,10 @@ func TestHostedLoginSession(t *testing.T) {
 	}
 
 	// Wrong password is rejected by the shared credential check.
-	if _, _, err := svc.CheckPassword(ctx, email, "nope"); err == nil {
+	if _, _, err := svc.CheckPassword(ctx, auth.SignInAttempt{Email: email, Password: "nope"}); err == nil {
 		t.Error("CheckPassword must reject a wrong password")
 	}
-	u, _, err := svc.CheckPassword(ctx, email, "Kx7mQ2vLp9Wz")
+	u, _, err := svc.CheckPassword(ctx, auth.SignInAttempt{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("CheckPassword: %v", err)
 	}
@@ -1576,6 +1586,7 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 	defer idp.Close()
 
 	tenantID := createTenant(t, ctx, uniqueSlug("soc"))
+	setSelfRegistration(t, ctx, tenantID, true) // this flow provisions a new account
 	provider := "testidp"
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, discovery_url)
@@ -2560,6 +2571,7 @@ func TestSocialEmailVerifiedStatesOnProvisioning(t *testing.T) {
 			defer idp.Close()
 
 			tenantID := createTenant(t, ctx, uniqueSlug("social-state"))
+			setSelfRegistration(t, ctx, tenantID, true) // provisioning needs open registration
 			authService, _ := newAuth()
 			service := social.NewService(testPool, authService, "http://app.local", egress.DevelopmentPolicy())
 			service.SetCipher(testEnvelope(t))

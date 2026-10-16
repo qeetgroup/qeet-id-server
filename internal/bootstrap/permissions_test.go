@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -130,3 +131,77 @@ func TestNoAuthenticatedRouteIsCSRFExempt(t *testing.T) {
 }
 
 var routeParamPattern = regexp.MustCompile(`\{[^}]+\}`)
+
+// TestLoginSessionRoutesStayNarrow guards the routes that accept the hosted
+// login's session cookie in place of a bearer token: exactly the passkey list,
+// rename and enrolment routes, each mounted in the authenticated tree, open to
+// users only, and CSRF-checked. Removing a passkey stays token-only.
+func TestLoginSessionRoutesStayNarrow(t *testing.T) {
+	want := []string{
+		"GET /v1/passkeys",
+		"PATCH /v1/passkeys/{id}",
+		"POST /v1/passkeys/register/begin",
+		"POST /v1/passkeys/register/finish",
+	}
+	got := LoginSessionRoutes()
+	sorted := append([]string(nil), got...)
+	sort.Strings(sorted)
+	if !reflect.DeepEqual(sorted, want) {
+		t.Fatalf("hosted-login session routes = %v, want %v", sorted, want)
+	}
+
+	router := chi.NewRouter()
+	router.Route("/v1", func(r chi.Router) {
+		mountAuthenticatedRoutes(r, routeInventoryDeps(t))
+	})
+	mounted := map[string]struct{}{}
+	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		mounted[method+" "+route] = struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk authenticated router: %v", err)
+	}
+	policies := routePolicyMap()
+	for _, route := range got {
+		if _, ok := mounted[route]; !ok {
+			t.Errorf("%s is not an authenticated route", route)
+		}
+		if !reflect.DeepEqual(policies[route], rbac.UserOnlyPolicy()) {
+			t.Errorf("%s policy = %+v, want user-only", route, policies[route])
+		}
+		method, path, _ := strings.Cut(route, " ")
+		concrete := routeParamPattern.ReplaceAllString(path, "00000000-0000-0000-0000-000000000000")
+		for _, pattern := range csrfExemptPaths() {
+			if method != http.MethodGet && httpx.MatchExemptPathForTest(pattern, concrete) {
+				t.Errorf("%s is CSRF-exempt (by %s)", route, pattern)
+			}
+		}
+	}
+}
+
+// TestApplicationTokenRoutesStayNarrow pins the authenticated routes that
+// accept a token issued to an application: only the endpoint returning the
+// signed-in user's own claims. Every one must be a mounted authenticated route.
+func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
+	want := []string{"GET /v1/oauth/userinfo"}
+	got := ApplicationTokenRoutes()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("application-token routes = %v, want %v", got, want)
+	}
+	router := chi.NewRouter()
+	router.Route("/v1", func(r chi.Router) {
+		mountAuthenticatedRoutes(r, routeInventoryDeps(t))
+	})
+	mounted := map[string]struct{}{}
+	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		mounted[method+" "+route] = struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk authenticated router: %v", err)
+	}
+	for _, route := range got {
+		if _, ok := mounted[route]; !ok {
+			t.Errorf("%s is not an authenticated route", route)
+		}
+	}
+}

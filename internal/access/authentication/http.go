@@ -76,6 +76,8 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/auth/switch-tenant", h.switchTenant)
 	r.Get("/auth/sessions", h.listSessions)
 	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
+	r.Post("/auth/sessions/revoke-others", h.revokeOtherSessions)
+	r.Post("/auth/sessions/revoke-all", h.revokeAllSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
@@ -88,7 +90,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 
 type signupInput struct {
 	Email       string `json:"email" validate:"required,email"`
-	Password    string `json:"password" validate:"required,min=8,max=256"`
+	Password    string `json:"password" validate:"required,max=256"` // length + rules: the service's password check
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
@@ -220,6 +222,9 @@ func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 type sessionInput struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=1"`
+	// ClientID is the OAuth client the hosted login is serving; its tenant's
+	// sign-in lockout settings apply. Optional (none = the platform defaults).
+	ClientID string `json:"client_id" validate:"omitempty,max=255"`
 }
 
 // createSession is the hosted-login credential endpoint. On success it sets the
@@ -246,7 +251,12 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if c, cerr := r.Cookie(TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
-	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent(), trusted, h.geoCountry(r))
+	res, err := h.Service.BeginLoginSession(r.Context(), SignInAttempt{
+		Email:    in.Email,
+		Password: in.Password,
+		IP:       httpx.ClientIP(r),
+		ClientID: in.ClientID,
+	}, r.UserAgent(), trusted, h.geoCountry(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -298,7 +308,7 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 type registerInput struct {
 	TenantID    uuid.UUID `json:"tenant_id" validate:"required"`
 	Email       string    `json:"email" validate:"required,email"`
-	Password    string    `json:"password" validate:"required,min=8,max=256"`
+	Password    string    `json:"password" validate:"required,max=256"` // length + rules: the service's password check
 	DisplayName string    `json:"display_name" validate:"omitempty,max=200"`
 }
 
@@ -336,10 +346,20 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
-// destroySession is hosted logout: revoke the SSO session and clear the cookie.
+// destroySession is the hosted login signing itself out: it ends the browser's
+// SSO session and what it started (EndLoginSession) and clears the cookie. A
+// request without a session cookie ends nothing and still answers 204. If the
+// sign-out cannot be completed the cookie is kept, so the browser can retry
+// instead of believing it is signed out.
 func (h *Handler) destroySession(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(LoginSessionCookie); err == nil {
-		_ = h.Service.RevokeLoginSession(r.Context(), c.Value)
+		if _, err := h.Service.EndLoginSession(r.Context(), EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: SignOutByHostedLogin,
+			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		}); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	ClearLoginSessionCookie(w, h.CookieSecure)
 	w.WriteHeader(http.StatusNoContent)
@@ -376,7 +396,7 @@ type changePasswordInput struct {
 	// Optional: required only when the account already has a password. A
 	// password-less account (social / passkey signup) omits it to SET one.
 	CurrentPassword string `json:"current_password" validate:"omitempty"`
-	NewPassword     string `json:"new_password" validate:"required,min=8,max=256"`
+	NewPassword     string `json:"new_password" validate:"required,max=256"` // length + rules: the service's password check
 }
 
 // passwordStatus reports whether the caller has a password set, so the account
@@ -444,10 +464,12 @@ type switchTenantInput struct {
 	TenantID string `json:"tenant_id" validate:"required,uuid"`
 }
 
-// switchTenant returns a token pair scoped to a tenant the caller belongs to (403 otherwise).
+// switchTenant → POST /v1/auth/switch-tenant. Replaces the caller's session
+// with one in another organization they belong to (Service.SwitchTenant); the
+// session in the presented access token is the one that ends.
 func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil {
+	if p == nil || p.UserID == nil || p.SessionID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
@@ -465,7 +487,10 @@ func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	pair, err := h.Service.SwitchTenant(r.Context(), *p.UserID, tid, httpx.ClientIP(r), r.UserAgent())
+	pair, err := h.Service.SwitchTenant(r.Context(), SwitchTenantInput{
+		UserID: *p.UserID, FromSessionID: *p.SessionID, TenantID: tid,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -513,6 +538,62 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Session revoked."})
+}
+
+// revokeOtherSessions → POST /v1/auth/sessions/revoke-others. Ends all of the
+// caller's sessions except the one behind the presented access token, in one
+// step, and reports how many ended ({"revoked": n}, the same shape as the admin
+// revoke-all). Access tokens already issued to the ended sessions stay valid
+// until they expire; their refresh tokens stop working at once.
+func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || p.SessionID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	n, err := h.Service.RevokeOtherSessions(r.Context(), RevokeOtherSessionsInput{
+		UserID: *p.UserID, CurrentSessionID: *p.SessionID, TenantID: p.TenantID,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
+}
+
+// revokeAllSessions → POST /v1/auth/sessions/revoke-all. Signs the caller out
+// everywhere — every API and console session including the one behind the
+// presented access token, every hosted-login session, every application grant
+// — in one step, and reports how many ended: {"revoked": total} (the shape of
+// the other bulk revocations) plus the count per place. Access tokens already
+// issued stay valid until they expire; renewal stops at once. A repeat
+// succeeds with zeros.
+func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || p.SessionID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	ended, err := h.Service.RevokeAllSessions(r.Context(), RevokeAllSessionsInput{
+		UserID: *p.UserID, SessionID: *p.SessionID, TenantID: p.TenantID,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Every hosted-login session has ended server-side, whichever browser holds
+	// it; a browser calling directly also drops its cookie.
+	ClearLoginSessionCookie(w, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"revoked":                ended.Total(),
+		"sessions":               ended.Sessions,
+		"hosted_login_sessions":  ended.LoginSessions,
+		"app_grants":             ended.AppGrants,
+		"trusted_devices":        ended.TrustedDevices,
+		"pending_authorizations": ended.PendingAuthorizations,
+	})
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {

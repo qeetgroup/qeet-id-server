@@ -69,6 +69,32 @@ func (q *Queries) GetUserForAnomaly(ctx context.Context, lower string) (GetUserF
 	return i, err
 }
 
+const listTenantsForEmails = `-- name: ListTenantsForEmails :many
+SELECT DISTINCT tenant_id::uuid AS tenant_id FROM "user".users
+WHERE LOWER(email) = ANY($1::text[]) AND deleted_at IS NULL AND tenant_id IS NOT NULL
+`
+
+// The organisations the given (lowercased) addresses belong to.
+func (q *Queries) ListTenantsForEmails(ctx context.Context, emails []string) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listTenantsForEmails, emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var tenant_id uuid.UUID
+		if err := rows.Scan(&tenant_id); err != nil {
+			return nil, err
+		}
+		items = append(items, tenant_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resolveSecurityEvent = `-- name: ResolveSecurityEvent :execrows
 UPDATE auth.security_events
 SET status = 'resolved', resolved_at = NOW()

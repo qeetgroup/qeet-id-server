@@ -10,11 +10,13 @@ INSERT INTO tenant.auth_policy
     (tenant_id, password_enabled, password_min_length, password_require_uppercase,
      password_require_number, password_require_symbol, magic_link_enabled,
      magic_link_ttl_minutes, passkey_enabled, otp_email_enabled, otp_sms_enabled,
-     self_registration_enabled, remember_device_enabled, updated_at)
+     self_registration_enabled, remember_device_enabled,
+     lockout_threshold, lockout_window_minutes, lockout_duration_minutes, updated_at)
 VALUES (@tenant_id, @password_enabled, @password_min_length, @password_require_uppercase,
         @password_require_number, @password_require_symbol, @magic_link_enabled,
         @magic_link_ttl_minutes, @passkey_enabled, @otp_email_enabled, @otp_sms_enabled,
-        @self_registration_enabled, @remember_device_enabled, NOW())
+        @self_registration_enabled, @remember_device_enabled,
+        sqlc.narg(lockout_threshold), sqlc.narg(lockout_window_minutes), sqlc.narg(lockout_duration_minutes), NOW())
 ON CONFLICT (tenant_id) DO UPDATE SET
     password_enabled          = EXCLUDED.password_enabled,
     password_min_length       = EXCLUDED.password_min_length,
@@ -28,5 +30,8 @@ ON CONFLICT (tenant_id) DO UPDATE SET
     otp_sms_enabled           = EXCLUDED.otp_sms_enabled,
     self_registration_enabled = EXCLUDED.self_registration_enabled,
     remember_device_enabled   = EXCLUDED.remember_device_enabled,
+    lockout_threshold         = EXCLUDED.lockout_threshold,
+    lockout_window_minutes    = EXCLUDED.lockout_window_minutes,
+    lockout_duration_minutes  = EXCLUDED.lockout_duration_minutes,
     updated_at                = NOW()
 RETURNING *;

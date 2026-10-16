@@ -8,6 +8,14 @@ FROM auth.passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC;
 -- name: DeletePasskeyCredential :execrows
 DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2;
 
+-- RenamePasskeyCredential is scoped to the owner like the delete: another
+-- user's passkey matches no row.
+
+-- name: RenamePasskeyCredential :one
+UPDATE auth.passkey_credentials SET name = $1
+WHERE id = $2 AND user_id = $3
+RETURNING id, user_id, name, transports, last_used_at, created_at;
+
 -- name: GetUserForWebAuthn :one
 SELECT email, display_name, tenant_id FROM "user".users
 WHERE id = $1 AND deleted_at IS NULL;
@@ -17,7 +25,7 @@ SELECT id FROM "user".users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
 
 -- name: GetPasskeyCredentialsForCeremony :many
-SELECT credential_id, public_key, sign_count, aaguid, transports
+SELECT credential_id, public_key, sign_count, aaguid, transports, backup_eligible, backup_state
 FROM auth.passkey_credentials WHERE user_id = $1;
 
 -- name: InsertWebAuthnSession :one
@@ -66,14 +74,18 @@ SELECT EXISTS (
 ) AS exists;
 
 -- name: InsertUserFromSignup :one
-INSERT INTO "user".users (tenant_id, email, display_name)
-VALUES ($1, $2, $3)
+-- The id is the WebAuthn user ID the signup passkey was registered under: the
+-- authenticator returns it as the user handle on every sign-in.
+INSERT INTO "user".users (id, tenant_id, email, display_name)
+VALUES ($1, $2, $3, $4)
 RETURNING id;
 
 -- name: InsertPasskeyCredential :exec
-INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name)
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name, backup_eligible, backup_state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: UpdatePasskeySignCount :exec
-UPDATE auth.passkey_credentials SET sign_count = $1, last_used_at = NOW()
-WHERE credential_id = $2;
+-- After a verified assertion: the new counter and the current backup state
+-- (backup eligibility never changes, so it is not updated).
+UPDATE auth.passkey_credentials SET sign_count = $1, backup_state = $2, last_used_at = NOW()
+WHERE credential_id = $3;

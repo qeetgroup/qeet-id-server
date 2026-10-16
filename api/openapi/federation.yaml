@@ -521,7 +521,7 @@ paths:
   /v1/oauth/login-context:
     get:
       operationId: get_v1_oauth_login_context
-      description: 'Returns the context the hosted-login application needs to render itself for a given OAuth client: the client''s display name and tenant, the tenant''s enabled social login providers, self-registration and remember-device flags, and optional per-tenant branding. Consumed by the hosted login UI during the authorize flow and gated by the SSO session cookie. It carries no tokens and performs no state change.'
+      description: 'Returns the context the hosted-login application needs to render itself for a given OAuth client: the client''s display name and tenant, the tenant''s enabled social login providers, self-registration and remember-device flags, and optional per-tenant branding. Consumed by the hosted login UI during the authorize flow and gated by the SSO session cookie. It carries no tokens and performs no state change. sign_in_methods ({password, passkey, magic_link}) says which first-factor methods the client''s organisation allows, so the hosted login offers only those.'
       summary: Login context
       tags:
         - OIDC
@@ -562,11 +562,16 @@ paths:
   /v1/oauth/logout:
     get:
       operationId: get_v1_oauth_logout
-      description: 'Performs OpenID Connect RP-initiated logout, clearing the hosted-login SSO session and its cookie. When the client supplies a registered post_logout_redirect_uri the browser is redirected there with any provided state; otherwise the hosted logged-out page is shown. Advertised as end_session_endpoint in discovery; a POST variant exists at the same path for relying parties that submit the request as a form.'
+      description: 'Performs OpenID Connect RP-initiated logout: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — and clears the cookie. Only the cookie identifies the session to end; without it nothing is ended. The sign-out is recorded in the audit log (auth.signed_out), naming client_id when it is a registered application. When the client supplies a registered post_logout_redirect_uri the browser is redirected there with any provided state; otherwise the hosted logged-out page is shown. Other browsers and API sessions are unaffected. Advertised as end_session_endpoint in discovery; a POST variant exists at the same path for relying parties that submit the request as a form.'
       summary: RP-initiated logout
       tags:
         - OIDC
       parameters:
+        - in: query
+          name: client_id
+          description: The application asking for the sign-out. Required for post_logout_redirect_uri to be honoured, and recorded with the sign-out when registered.
+          schema:
+            type: string
         - in: query
           name: id_token_hint
           schema:
@@ -589,11 +594,16 @@ paths:
           $ref: '#/components/responses/BadRequest'
     post:
       operationId: post_v1_oauth_logout
-      description: 'Identical to GET /v1/oauth/logout for relying parties that issue the logout request as a POST: it clears the hosted-login SSO session and cookie, then redirects to a registered post_logout_redirect_uri with state when supplied, or to the hosted logged-out page. Advertised as end_session_endpoint in discovery.'
+      description: 'Identical to GET /v1/oauth/logout for relying parties that issue the logout request as a POST: it ends the hosted-login SSO session and the application grants and unredeemed codes it started, clears the cookie, then redirects to a registered post_logout_redirect_uri with state when supplied, or to the hosted logged-out page. Advertised as end_session_endpoint in discovery.'
       summary: RP-initiated logout
       tags:
         - OIDC
       parameters:
+        - in: query
+          name: client_id
+          description: The application asking for the sign-out. Required for post_logout_redirect_uri to be honoured, and recorded with the sign-out when registered.
+          schema:
+            type: string
         - in: query
           name: id_token_hint
           schema:
@@ -712,7 +722,7 @@ paths:
   /v1/oauth/userinfo:
     get:
       operationId: get_v1_oauth_userinfo
-      description: 'Returns OpenID Connect UserInfo claims for the subject identified by the presented bearer access token (or API key), with Qeet acting as the OpenID provider. The response includes at least the subject and tenant identifiers. Advertised as userinfo_endpoint in discovery.'
+      description: 'Returns OpenID Connect UserInfo claims for the subject identified by the presented bearer access token (or API key), with Qeet acting as the OpenID provider. The response includes at least the subject and tenant identifiers. Advertised as userinfo_endpoint in discovery. Accepts an access token issued to an application (one carrying client_id) — the one authenticated endpoint that does.'
       summary: UserInfo
       tags:
         - OIDC
@@ -1534,6 +1544,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
+      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. Other failures send it there with error=social.'
       summary: Social login callback
       tags:
         - Social
@@ -1544,7 +1555,6 @@ paths:
           schema:
             type: string
       security: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
           description: OK
@@ -3944,7 +3954,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Authenticated but not permitted
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
       content:
         application/json:
           schema:

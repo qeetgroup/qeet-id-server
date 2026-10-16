@@ -82,6 +82,20 @@ paths:
                 email:
                   type: string
                   format: email
+                app:
+                  type: string
+                  enum:
+                    - hosted_login
+                    - console
+                  description: 'Where the reset was requested from. `hosted_login` makes the emailed link open the hosted login''s own reset page. `console`, any other value, or omitting it opens the console''s reset screen (the default).'
+                return_to:
+                  type: string
+                  format: uri
+                  description: 'Hosted login only: where to continue after the reset, carried in the emailed link. Kept only if it is this API''s `/oauth/authorize` endpoint; anything else is ignored.'
+                tenant_id:
+                  type: string
+                  format: uuid
+                  description: 'Accepted for compatibility with clients that send it, and not used: an email address is unique across the platform.'
       responses:
         '200':
           description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message
@@ -99,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled.'
       summary: Sign in
       tags:
         - Auth
@@ -140,6 +154,8 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/SignInUnavailable'
   /v1/auth/mfa:
     post:
       operationId: post_v1_auth_mfa
@@ -179,7 +195,7 @@ paths:
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
-      description: 'Signs the caller out and revokes the session behind the presented credential. The associated refresh token stops working as soon as this returns, so any subsequent authenticated call must start a fresh sign-in. Other active sessions for the same user are unaffected; remove those individually with the session-revocation call.'
+      description: 'Signs the caller out and revokes the session behind the presented credential. The associated refresh token stops working as soon as this returns, so any subsequent authenticated call must start a fresh sign-in. Other active sessions for the same user are unaffected; remove those individually with the session-revocation call, or all at once with the revoke-other-sessions call.'
       summary: Logout
       tags:
         - Auth
@@ -209,7 +225,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: post_v1_auth_magic_link_consume
-      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call.'
+      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused.'
       summary: Magic link consume
       tags:
         - Auth
@@ -241,7 +257,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the supplied address. It always returns a neutral confirmation whether or not the address maps to an account, preventing enumeration, and it is rate limited. Finish the flow by redeeming the emailed token at the magic-link consume call.'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the supplied address. It always returns a neutral confirmation whether or not the address maps to an account, preventing enumeration, and it is rate limited. Finish the flow by redeeming the emailed token at the magic-link consume call. Refused with 403 auth.method_disabled, issuing and sending nothing, when the organisation has switched magic links off; a link it issues lives for the organisation''s magic_link_ttl_minutes.'
       summary: Magic link start
       tags:
         - Auth
@@ -319,7 +335,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
-      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. On success the password is updated and the user can sign in with the new credentials.'
+      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials.'
       summary: Reset password
       tags:
         - Auth
@@ -359,17 +375,20 @@ paths:
   /v1/auth/session:
     delete:
       operationId: delete_v1_auth_session
-      description: 'Revokes the hosted-login SSO session and clears the qe_ls cookie, ending the browser''s single sign-on state. This is the counterpart to the create-SSO-session call and returns no content. Bearer-token API sessions are unaffected; sign those out with the logout call.'
+      description: 'Signs the browser out of the hosted login: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — then clears the cookie. The sign-out is recorded in the audit log (auth.signed_out). Other browsers, bearer-token API sessions and grants started elsewhere are unaffected; sign API sessions out with the logout call, or everything with sign out everywhere. Without a session cookie nothing is ended and the response is the same. If the sign-out cannot be completed an error is returned and the cookie kept, so it can be retried. Access tokens already issued stay valid until they expire.'
       summary: Destroy SSO session (logout)
       tags:
         - Auth
       security: []
       responses:
         '204':
-          description: Session revoked, cookie cleared
+          description: Signed out (or there was no session to end), cookie cleared
     post:
       operationId: post_v1_auth_session
-      description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.'
+      description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
+
+
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified.'
       summary: Create SSO session
       tags:
         - Auth
@@ -379,7 +398,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: '#/components/schemas/SessionRequest'
       responses:
         '200':
           description: |
@@ -410,6 +429,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          description: The account is locked for this network or everywhere (`auth.account_locked`), or the source network is throttled for spraying (`too_many_requests`). The same answer whatever the password and whether the address has an account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/SignInUnavailable'
   /v1/auth/session/mfa:
     post:
       operationId: post_v1_auth_session_mfa
@@ -461,8 +488,9 @@ paths:
       description: |
         Creates a new end-user in the client's tenant and sets the SSO cookie
         (qe_ls) so they continue into the OAuth authorize flow. Gated by the
-        tenant's self_registration_enabled policy (403 when disabled).
-        Enumeration-safe: an existing email returns a neutral 422.
+        tenant's self_registration_enabled policy (403 when disabled). The
+        password must meet that tenant's password rules (422 naming the rule
+        that failed). Enumeration-safe: an existing email returns a neutral 422.
       tags:
         - Auth
       security: []
@@ -531,7 +559,7 @@ paths:
     post:
       operationId: post_v1_auth_password
       summary: Change or set my password
-      description: Rotates (or sets) the signed-in user's password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password is checked against the breached-password list. Self-service and tenant-independent.
+      description: Rotates (or sets) the signed-in user's password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session's tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service.
       tags:
         - Auth
       security:
@@ -609,7 +637,7 @@ paths:
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions
-      description: 'Lists the caller''s own active sessions, each with its device, address, and timestamp metadata, for review in account security settings. Results are cursor-paginated: pass the returned next_cursor to fetch the following page until has_more is false. Terminate any listed session individually with the session-revocation call.'
+      description: 'Lists the caller''s own active sessions, each with its device, address, and timestamp metadata, for review in account security settings. Results are cursor-paginated: pass the returned next_cursor to fetch the following page until has_more is false. Terminate any listed session individually with the session-revocation call, or every session except the current one with the revoke-other-sessions call.'
       summary: List sessions
       tags:
         - Auth
@@ -654,6 +682,112 @@ paths:
                     minimum: 0
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/auth/sessions/revoke-others:
+    post:
+      operationId: post_v1_auth_sessions_revokeOthers
+      summary: Revoke all other sessions
+      description: >-
+        Ends every one of the caller's sessions except the one they are using,
+        in a single all-or-nothing step, and returns how many were ended. The
+        session that is kept is the one behind the presented access token; the
+        request takes no body and no session identifiers. Refresh tokens of the
+        ended sessions stop working as soon as this returns, but access tokens
+        already issued to them stay valid until they expire (minutes), so do not
+        present this as an instant cut-off. Succeeds with `revoked: 0` when
+        there is no other session. If any session cannot be ended the call fails
+        and none are ended. Returns 401 `auth.session_revoked` when the caller's
+        own session has already ended. Sessions in hosted login and tokens held
+        by applications are not affected; the sign-out-everywhere call ends
+        those too.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The other sessions were ended
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Number of sessions ended by this call; 0 when there were none.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/auth/sessions/revoke-all:
+    post:
+      operationId: post_v1_auth_sessions_revokeAll
+      summary: Sign out everywhere
+      description: >-
+        Signs the caller out everywhere in a single all-or-nothing step and
+        reports how many sign-ins ended. It ends every one of the caller's
+        sessions, including the one behind the presented access token; every
+        hosted-login (browser) session, so the next authorization asks the
+        person to sign in again; and every refresh grant held by applications
+        the person signed in to. The response also clears the hosted-login
+        cookie for a browser that calls directly. The request takes no body.
+        Refresh tokens and application grants stop working as soon as this
+        returns, but access tokens already issued stay valid until they expire
+        (minutes), so do not present this as an instant cut-off everywhere. The
+        presented access token must belong to one of the caller's own sessions
+        (an application's access token is refused with 401). Repeating the call
+        succeeds with every count at 0 and changes nothing. If anything cannot
+        be ended the call fails and nothing is ended. To keep the current
+        session, use the revoke-other-sessions call instead.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The caller was signed out everywhere
+          headers:
+            Set-Cookie:
+              description: Clears the hosted-login cookie (`qe_ls`).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, sessions, hosted_login_sessions, app_grants, trusted_devices, pending_authorizations]
+                properties:
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Number of sign-ins ended by this call, all places together; 0 when there were none.
+                  sessions:
+                    type: integer
+                    minimum: 0
+                    description: Sessions ended, the current one included.
+                  hosted_login_sessions:
+                    type: integer
+                    minimum: 0
+                    description: Hosted-login browser sessions ended.
+                  app_grants:
+                    type: integer
+                    minimum: 0
+                    description: Application refresh grants ended.
+                  trusted_devices:
+                    type: integer
+                    minimum: 0
+                    description: Devices remembered to skip the second factor that were forgotten; each is asked for the second factor at its next sign-in.
+                  pending_authorizations:
+                    type: integer
+                    minimum: 0
+                    description: Unredeemed authorisation codes spent, and device or back-channel sign-in requests (pending, or approved but not collected) denied.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/auth/sessions/{id}:
     delete:
       operationId: delete_v1_auth_sessions_ById
@@ -689,7 +823,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: post_v1_auth_signup
-      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. A duplicate email is rejected, and the endpoint is rate limited.'
+      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. A duplicate email is rejected, and the endpoint is rate limited.'
       summary: Sign up
       tags:
         - Auth
@@ -727,7 +861,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
-      description: 'Issues a new token pair scoped to the target tenant for a user who belongs to more than one. The caller must already be a member of the requested tenant; a non-membership is refused. The previously issued token keeps working for its original scope, so retain the returned pair for calls against the newly selected tenant. Confirm the active scope afterward with the current-principal call.'
+      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, or an access token whose session has already ended (401). Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -770,7 +904,12 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+        - ssoCookie: []
+      description: >-
+        The signed-in user's passkeys, newest first, and whether they may add
+        one. Also accepts the hosted-login session cookie (qe_ls) in place of a
+        bearer token, so the hosted login can show a signed-in user their
+        passkeys.
       responses:
         '200':
           description: OK
@@ -778,7 +917,22 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required:
+                  - items
+                  - enrollment_allowed
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Passkey'
+                  enrollment_allowed:
+                    type: boolean
+                    description: >-
+                      False when the user's organization has passkeys switched
+                      off (auth policy passkey_enabled): do not offer adding a
+                      passkey, which register begin and finish then refuse
+                      (403 passkey.disabled). Always true for a user without an
+                      organization.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -834,7 +988,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
       responses:
         '201':
           description: Created
@@ -858,6 +1012,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       requestBody:
         required: false
         content:
@@ -866,7 +1021,14 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Starts adding a passkey for the signed-in user and returns the WebAuthn
+        creation options with a single-use ceremony id (valid five minutes,
+        bound to this user). Also accepts the hosted-login session cookie (qe_ls)
+        in place of a bearer token; that call, being a cookie session, needs the
+        CSRF token (X-CSRF-Token echoing the qe_csrf cookie) and an allowed
+        Origin. Refused with 403 passkey.disabled when the user's organization
+        has passkeys switched off.
       responses:
         '201':
           description: Created
@@ -894,6 +1056,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       requestBody:
         required: false
         content:
@@ -902,7 +1065,20 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Verifies the attestation and stores the passkey. An optional `name` is
+        cleaned and checked as in Rename passkey (422 when too long, before the
+        ceremony is used, so it can be finished again with a corrected name);
+        without one the passkey is named after the enrolling browser, for example
+        "Chrome on macOS", or "Passkey". The passkey sign-up finish calls name the
+        passkey the same way. The passkey belongs to the signed-in user (and so
+        to their organization); the body cannot name another. The ceremony id is
+        single-use and only the user it was issued to can finish it: an expired
+        or already-used one is refused (400 auth.session_expired), another
+        user's with 400 passkey.session_mismatch. Refused with 403
+        passkey.disabled when the user's organization has switched passkeys off
+        since the ceremony began. Accepts the hosted-login session cookie like
+        Register begin, with the same CSRF requirement.
       responses:
         '201':
           description: Created
@@ -1071,6 +1247,64 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/passkeys/{id}:
+    patch:
+      operationId: patch_v1_passkeys_ById
+      summary: Rename passkey
+      description: >-
+        Renames one of the signed-in user's own passkeys. The name is cleaned
+        first: control characters count as spaces, bidirectional control
+        characters are removed, runs of spaces collapse into one and the ends are
+        trimmed. Markup is stored as typed and must be shown as text. Another
+        user's passkey, like an unknown id, is not found and is left unchanged.
+        Also accepts the hosted-login session cookie (qe_ls), with the CSRF
+        token, in place of a bearer token. Delete passkey does not: it takes a
+        bearer token only.
+      tags:
+        - Passkeys
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+        - ssoCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  description: 1 to 64 characters after cleaning; empty or whitespace-only is refused.
+                  maxLength: 64
+      responses:
+        '200':
+          description: The renamed passkey
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Passkey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
     delete:
       operationId: delete_v1_passkeys_ById
       summary: Delete passkey
@@ -2832,15 +3066,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: The tenant's authentication policy (defaults when none is stored), including its sign-in lockout settings and, read-only, the platform defaults and bounds for them.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AuthPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2870,18 +3103,16 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/AuthPolicy'
+        description: The whole policy (a full replace). `lockout_limits` is read-only and ignored.
+      description: 'Replaces the tenant''s authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped. Refused with 422 validation_failed, storing nothing, when the change would switch off every sign-in method (password, passkey and magic link; field password_enabled, code no_sign_in_method) or switch on otp_email_enabled / otp_sms_enabled (code not_available — no one-time-code sign-in exists). Changes apply to the next sign-in; the policy is not cached.'
       responses:
         '200':
-          description: OK
+          description: The stored policy
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AuthPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2889,7 +3120,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          $ref: '#/components/responses/Unprocessable'
+          description: A lockout setting is outside the documented bounds; nothing was stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/tenants/{tenantID}/policy:
@@ -3348,8 +3583,7 @@ paths:
                   items:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/Anomaly'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3439,7 +3673,7 @@ components:
       type: apiKey
       in: cookie
       name: qe_ls
-      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow, and by the few signed-in routes the hosted login calls itself (listing, renaming and adding passkeys). State-changing calls made with it need the CSRF token.
   responses:
     BadRequest:
       description: Malformed request
@@ -3454,7 +3688,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Authenticated but not permitted
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
       content:
         application/json:
           schema:
@@ -3479,6 +3713,12 @@ components:
             $ref: '#/components/schemas/Error'
     TooManyRequests:
       description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SignInUnavailable:
+      description: The sign-in lockout could not be evaluated (its counters could not be read or written), so the attempt was refused (`auth.sign_in_unavailable`, retryable). The same answer whatever the password and whether the address has an account.
       content:
         application/json:
           schema:
@@ -3598,6 +3838,38 @@ components:
     Session:
       type: object
       additionalProperties: true
+    Passkey:
+      type: object
+      required:
+        - id
+        - user_id
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            User-supplied text: show it as text, never as markup. Null for a
+            passkey enrolled before passkeys were named by default.
+        transports:
+          type: array
+          nullable: true
+          items:
+            type: string
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
       description: An active session (id, ip, user agent, timestamps).
     SignupRequest:
       type: object
@@ -3647,6 +3919,115 @@ components:
           format: email
         password:
           type: string
+    SessionRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        client_id:
+          type: string
+          maxLength: 255
+          description: The OAuth client the hosted login is serving. Its tenant's sign-in lockout settings apply; omitted or unknown = the platform defaults.
+    AuthPolicy:
+      type: object
+      properties:
+        password_enabled:
+          type: boolean
+        password_min_length:
+          type: integer
+          minimum: 8
+          maximum: 128
+        password_require_uppercase:
+          type: boolean
+        password_require_number:
+          type: boolean
+        password_require_symbol:
+          type: boolean
+        magic_link_enabled:
+          type: boolean
+        magic_link_ttl_minutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+        passkey_enabled:
+          type: boolean
+        otp_email_enabled:
+          type: boolean
+        otp_sms_enabled:
+          type: boolean
+        self_registration_enabled:
+          type: boolean
+        remember_device_enabled:
+          type: boolean
+        lockout_threshold:
+          type: [integer, 'null']
+          description: Failed password sign-ins to one account from one network, each within the window of the last, that lock the account for that network. null = the platform default. Must lie within lockout_limits (default bounds 3..20).
+        lockout_window_minutes:
+          type: [integer, 'null']
+          description: A failure is forgotten once this many minutes pass with no new failure. null = the platform default. Must lie within lockout_limits (default bounds 1..1440).
+        lockout_duration_minutes:
+          type: [integer, 'null']
+          description: How long a lock lasts. null = the platform default. Must lie within lockout_limits (default bounds 1..1440).
+        lockout_limits:
+          $ref: '#/components/schemas/LockoutLimits'
+    LockoutSettings:
+      type: object
+      properties:
+        threshold:
+          type: integer
+        window_minutes:
+          type: integer
+        duration_minutes:
+          type: integer
+    LockoutLimits:
+      type: object
+      readOnly: true
+      description: The platform defaults for the lockout settings (LOGIN_LOCKOUT_THRESHOLD / _WINDOW / _DURATION, built-in 5 / 15 / 15) and the inclusive bounds a tenant may choose within (LOGIN_LOCKOUT_*_MIN / _MAX). Ignored on update.
+      properties:
+        defaults:
+          $ref: '#/components/schemas/LockoutSettings'
+        min:
+          $ref: '#/components/schemas/LockoutSettings'
+        max:
+          $ref: '#/components/schemas/LockoutSettings'
+    Anomaly:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          description: e.g. credential_stuffing (an account locked after repeated failed sign-ins) or password_spraying (a source network throttled for failing against many accounts).
+        severity:
+          type: string
+        detail:
+          type: string
+        status:
+          type: string
+        user_id:
+          type: string
+          format: uuid
+        user_email:
+          type: string
+        ip:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+          description: 'The detection''s structured context. For a sign-in lock: reason, account, network, counter (account_network or account), failures, threshold, window_minutes, locked_until. For a throttled source: reason, network, counter (source), distinct_accounts, window_minutes, throttled_until.'
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
     RefreshRequest:
       type: object
       required:

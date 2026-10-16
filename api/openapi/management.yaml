@@ -664,7 +664,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     post:
       operationId: post_v1_users
-      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. Requires an existing tenant.'
+      description: 'Creates a user within the caller''s tenant. An initial password may be supplied, otherwise the account is created without a password credential and the user signs in via passkey, magic link, or an admin-triggered reset. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). A refused password writes nothing. Requires an existing tenant.'
       summary: Create user
       tags:
         - Users
@@ -698,7 +698,7 @@ paths:
     post:
       operationId: post_v1_users_bulk
       summary: Bulk-create users
-      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row is reported in the response rather than failing the whole batch (partial success).
+      description: Create many users in one call. Each row is attempted independently — a bad or duplicate row, or one whose password the tenant's password rules refuse, is reported in the response with its reason rather than failing the whole batch (partial success).
       tags:
         - Users
       security:
@@ -898,7 +898,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      description: 'Administratively sets or replaces a user''s password, applying the tenant''s password-complexity policy when one is configured. All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call.'
+      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call.'
       summary: Set password
       tags:
         - Users
@@ -1060,7 +1060,12 @@ paths:
     post:
       operationId: post_v1_users_ById_sessions_revokeAll
       summary: Revoke all of a user's sessions
-      description: Admin force sign-out — revokes every live session for the user. Requires `user.write`.
+      description: >-
+        Admin force sign-out — ends every way the user is signed in, in one
+        all-or-nothing step: every live session, every hosted-login (browser)
+        session and every refresh grant held by applications, and records it as
+        an administrative force sign-out. Access tokens already issued stay
+        valid until they expire (minutes). Requires `user.write`.
       tags:
         - Users
       parameters:
@@ -1079,8 +1084,32 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [revoked, sessions, hosted_login_sessions, app_grants, trusted_devices, pending_authorizations]
                 properties:
-                  revoked: { type: integer }
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Number of sign-ins ended, all places together.
+                  sessions:
+                    type: integer
+                    minimum: 0
+                    description: Sessions ended.
+                  hosted_login_sessions:
+                    type: integer
+                    minimum: 0
+                    description: Hosted-login browser sessions ended.
+                  app_grants:
+                    type: integer
+                    minimum: 0
+                    description: Application refresh grants ended.
+                  trusted_devices:
+                    type: integer
+                    minimum: 0
+                    description: Devices remembered to skip the second factor that were forgotten; each is asked for the second factor at its next sign-in.
+                  pending_authorizations:
+                    type: integer
+                    minimum: 0
+                    description: Unredeemed authorisation codes spent, and device or back-channel sign-in requests (pending, or approved but not collected) denied.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2439,7 +2468,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Authenticated but not permitted
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
       content:
         application/json:
           schema:

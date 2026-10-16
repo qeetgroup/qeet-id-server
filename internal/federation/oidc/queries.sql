@@ -94,17 +94,19 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- Authorization codes
 -- ==========================================================================
 
+-- login_session_id is the hosted-login session the code was minted through
+-- (NULL when there was none), so signing out of it can spend the code.
 -- name: InsertAuthorizationCode :exec
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id
 ) VALUES (@code_hash, @client_id, @user_id, @tenant_id, @redirect_uri,
           @scopes, NULLIF(@nonce,''), NULLIF(@code_challenge,''), NULLIF(@code_challenge_method,''),
-          NOW() + INTERVAL '10 minutes');
+          NOW() + INTERVAL '10 minutes', sqlc.narg('login_session_id'));
 
 -- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id
 FROM auth.oidc_authorization_codes
 WHERE code_hash = @code_hash AND client_id = @client_id
 FOR UPDATE;
@@ -128,20 +130,22 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- Refresh tokens
 -- ==========================================================================
 
+-- login_session_id is the hosted-login session the grant was started through
+-- (NULL when there was none); renewals carry it forward.
 -- name: InsertRefreshToken :exec
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
-VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes, @expires_at, sqlc.narg('resource'));
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id)
+VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes, @expires_at, sqlc.narg('resource'), sqlc.narg('login_session_id'));
 
 -- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource
+       used_at, revoked_at, resource, login_session_id
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 
 -- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
-VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes, @expires_at, sqlc.narg('resource'))
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id)
+VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes, @expires_at, sqlc.narg('resource'), sqlc.narg('login_session_id'))
 RETURNING id;
 
 -- name: MarkRefreshTokenUsed :exec

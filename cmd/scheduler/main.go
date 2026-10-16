@@ -15,9 +15,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 )
@@ -58,6 +61,9 @@ func main() {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)
 	}
+	// Sessions the cleanup removes that were never ended are announced
+	// (session.revoked, reason expired) to the organisations' subscribers.
+	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
 	defer pool.Close()
 
 	auditVerifier := audit.NewVerifier(pool)
@@ -82,12 +88,11 @@ func main() {
 			name:     "session-expiry-cleanup",
 			interval: 15 * time.Minute,
 			run: func(ctx context.Context) error {
-				tag, err := pool.Exec(ctx,
-					`DELETE FROM auth.sessions WHERE expires_at < now() - interval '7 days'`)
+				purged, err := auth.PurgeEndedSessions(ctx, pool, auth.SessionRetention, sessionSignals)
 				if err != nil {
 					return err
 				}
-				slog.Info("sessions cleaned", "deleted", tag.RowsAffected())
+				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions)
 				return nil
 			},
 		},

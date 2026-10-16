@@ -77,16 +77,18 @@ func (q *Queries) DeletePasskeyCredential(ctx context.Context, arg DeletePasskey
 }
 
 const getPasskeyCredentialsForCeremony = `-- name: GetPasskeyCredentialsForCeremony :many
-SELECT credential_id, public_key, sign_count, aaguid, transports
+SELECT credential_id, public_key, sign_count, aaguid, transports, backup_eligible, backup_state
 FROM auth.passkey_credentials WHERE user_id = $1
 `
 
 type GetPasskeyCredentialsForCeremonyRow struct {
-	CredentialID []byte
-	PublicKey    []byte
-	SignCount    int64
-	Aaguid       pgtype.UUID
-	Transports   []string
+	CredentialID   []byte
+	PublicKey      []byte
+	SignCount      int64
+	Aaguid         pgtype.UUID
+	Transports     []string
+	BackupEligible bool
+	BackupState    bool
 }
 
 func (q *Queries) GetPasskeyCredentialsForCeremony(ctx context.Context, userID uuid.UUID) ([]GetPasskeyCredentialsForCeremonyRow, error) {
@@ -104,6 +106,8 @@ func (q *Queries) GetPasskeyCredentialsForCeremony(ctx context.Context, userID u
 			&i.SignCount,
 			&i.Aaguid,
 			&i.Transports,
+			&i.BackupEligible,
+			&i.BackupState,
 		); err != nil {
 			return nil, err
 		}
@@ -146,18 +150,20 @@ func (q *Queries) GetUserIDByEmail(ctx context.Context, lower string) (uuid.UUID
 }
 
 const insertPasskeyCredential = `-- name: InsertPasskeyCredential :exec
-INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name, backup_eligible, backup_state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertPasskeyCredentialParams struct {
-	UserID       uuid.UUID
-	CredentialID []byte
-	PublicKey    []byte
-	SignCount    int64
-	Aaguid       pgtype.UUID
-	Transports   []string
-	Name         *string
+	UserID         uuid.UUID
+	CredentialID   []byte
+	PublicKey      []byte
+	SignCount      int64
+	Aaguid         pgtype.UUID
+	Transports     []string
+	Name           *string
+	BackupEligible bool
+	BackupState    bool
 }
 
 func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskeyCredentialParams) error {
@@ -169,6 +175,8 @@ func (q *Queries) InsertPasskeyCredential(ctx context.Context, arg InsertPasskey
 		arg.Aaguid,
 		arg.Transports,
 		arg.Name,
+		arg.BackupEligible,
+		arg.BackupState,
 	)
 	return err
 }
@@ -202,19 +210,27 @@ func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSig
 }
 
 const insertUserFromSignup = `-- name: InsertUserFromSignup :one
-INSERT INTO "user".users (tenant_id, email, display_name)
-VALUES ($1, $2, $3)
+INSERT INTO "user".users (id, tenant_id, email, display_name)
+VALUES ($1, $2, $3, $4)
 RETURNING id
 `
 
 type InsertUserFromSignupParams struct {
+	ID          uuid.UUID
 	TenantID    pgtype.UUID
 	Email       string
 	DisplayName *string
 }
 
+// The id is the WebAuthn user ID the signup passkey was registered under: the
+// authenticator returns it as the user handle on every sign-in.
 func (q *Queries) InsertUserFromSignup(ctx context.Context, arg InsertUserFromSignupParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserFromSignup, arg.TenantID, arg.Email, arg.DisplayName)
+	row := q.db.QueryRow(ctx, insertUserFromSignup,
+		arg.ID,
+		arg.TenantID,
+		arg.Email,
+		arg.DisplayName,
+	)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -288,6 +304,44 @@ func (q *Queries) ListPasskeyCredentials(ctx context.Context, userID uuid.UUID) 
 	return items, nil
 }
 
+const renamePasskeyCredential = `-- name: RenamePasskeyCredential :one
+
+UPDATE auth.passkey_credentials SET name = $1
+WHERE id = $2 AND user_id = $3
+RETURNING id, user_id, name, transports, last_used_at, created_at
+`
+
+type RenamePasskeyCredentialParams struct {
+	Name   *string
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+type RenamePasskeyCredentialRow struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Name       *string
+	Transports []string
+	LastUsedAt pgtype.Timestamptz
+	CreatedAt  time.Time
+}
+
+// RenamePasskeyCredential is scoped to the owner like the delete: another
+// user's passkey matches no row.
+func (q *Queries) RenamePasskeyCredential(ctx context.Context, arg RenamePasskeyCredentialParams) (RenamePasskeyCredentialRow, error) {
+	row := q.db.QueryRow(ctx, renamePasskeyCredential, arg.Name, arg.ID, arg.UserID)
+	var i RenamePasskeyCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Transports,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const takeSignupWebAuthnSession = `-- name: TakeSignupWebAuthnSession :one
 
 DELETE FROM auth.webauthn_sessions WHERE id = $1
@@ -347,16 +401,19 @@ func (q *Queries) TakeWebAuthnSession(ctx context.Context, id uuid.UUID) (TakeWe
 }
 
 const updatePasskeySignCount = `-- name: UpdatePasskeySignCount :exec
-UPDATE auth.passkey_credentials SET sign_count = $1, last_used_at = NOW()
-WHERE credential_id = $2
+UPDATE auth.passkey_credentials SET sign_count = $1, backup_state = $2, last_used_at = NOW()
+WHERE credential_id = $3
 `
 
 type UpdatePasskeySignCountParams struct {
 	SignCount    int64
+	BackupState  bool
 	CredentialID []byte
 }
 
+// After a verified assertion: the new counter and the current backup state
+// (backup eligibility never changes, so it is not updated).
 func (q *Queries) UpdatePasskeySignCount(ctx context.Context, arg UpdatePasskeySignCountParams) error {
-	_, err := q.db.Exec(ctx, updatePasskeySignCount, arg.SignCount, arg.CredentialID)
+	_, err := q.db.Exec(ctx, updatePasskeySignCount, arg.SignCount, arg.BackupState, arg.CredentialID)
 	return err
 }

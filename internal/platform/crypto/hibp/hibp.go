@@ -10,10 +10,11 @@
 // COUNT above the configured threshold means the password is known-breached.
 //
 // The Checker is OFF by default (constructed only when enabled) and FAIL-OPEN:
-// any transport error, timeout, or non-200 status logs a warning and reports
-// not-breached, so a HIBP outage can never block a password change. Wiring is
-// in internal/bootstrap/dependencies.go; the validation hooks live in the password-setting
-// flows (auth signup, recovery reset, invite accept, user set-password).
+// any transport error, timeout, or non-200 status logs a warning, reports
+// not-breached and is counted in breached_password_check_allowed_on_error_total,
+// so a HIBP outage can never block a password change but is visible. Wiring is
+// in internal/bootstrap/dependencies.go: the one checker is held by the
+// authpolicy service, whose ValidateForTenant every password-setting flow runs.
 package hibp
 
 import (
@@ -29,6 +30,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 // DefaultBaseURL is the public Pwned Passwords range API. Overridable for tests.
@@ -37,6 +41,14 @@ const DefaultBaseURL = "https://api.pwnedpasswords.com"
 // defaultTimeout bounds a single range lookup so a slow HIBP never stalls a
 // password change; on timeout the Checker fails open (see Pwned).
 const defaultTimeout = 3 * time.Second
+
+// allowedOnError counts the passwords let through because the provider could
+// not give an answer (fail-open), so an outage — or a misconfigured
+// BREACHED_PASSWORD_API_URL — shows up on /metrics instead of only in logs.
+var allowedOnError = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "breached_password_check_allowed_on_error_total",
+	Help: "Breached-password checks that could not reach the provider and allowed the password (fail-open).",
+})
 
 // Checker queries the HIBP range API. The zero value is not usable; build one
 // with New. A nil *Checker is a valid no-op (Pwned reports not-breached) so
@@ -106,12 +118,14 @@ func (c *Checker) Pwned(ctx context.Context, password string) (breached bool, co
 
 // PwnedAllowOnError is the fail-open convenience used by the password-setting
 // flows: it returns whether the password is breached, swallowing any error
-// (logging a warning) so a HIBP outage never blocks the user. A nil checker
-// always returns false (the feature is disabled).
+// (logging a warning and counting it in allowedOnError) so a HIBP outage never
+// blocks the user. A nil checker always returns false (the feature is
+// disabled) and is not counted.
 func (c *Checker) PwnedAllowOnError(ctx context.Context, password string) bool {
 	breached, _, err := c.Pwned(ctx, password)
 	if err != nil {
 		// FAIL-OPEN: never block a password change on a third-party outage.
+		allowedOnError.Inc()
 		slog.Warn("breached-password check failed; allowing password (fail-open)", "err", err)
 		return false
 	}

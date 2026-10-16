@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
-	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -55,6 +54,10 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 			// stable code rather than identity.
 			if e := errs.As(err); e != nil && e.Code == errs.ErrAuthEmailExists.Code {
 				msg = "a user with this email already exists"
+			} else if e != nil && isPasswordRefusal(e.Code) {
+				// Name the rule the row's password broke, so the operator can
+				// fix that row and resubmit it alone.
+				msg = e.Message
 			}
 			res.Errors = append(res.Errors, BulkImportError{Line: line, Email: row.Email, Message: msg})
 			continue
@@ -62,6 +65,18 @@ func runBulkImport(ctx context.Context, v *validator.Validate, tenantID uuid.UUI
 		res.Succeeded++
 	}
 	return res
+}
+
+// isPasswordRefusal reports whether code is a refusal from the password check
+// (the organisation's rules, the offline baseline or the breach check).
+func isPasswordRefusal(code string) bool {
+	switch code {
+	case errs.CodeAuthPolicyPasswordTooShort, errs.CodeAuthPolicyPasswordNoUppercase,
+		errs.CodeAuthPolicyPasswordNoNumber, errs.CodeAuthPolicyPasswordNoSymbol,
+		errs.CodeAuthPolicyPasswordBreached, errs.CodeAuthPasswordWeak:
+		return true
+	}
+	return false
 }
 
 // firstValidationMsg renders a concise message from a validator error.
@@ -99,10 +114,12 @@ func (h *Handler) bulkCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Each row's password is checked against the tenant's rules before its
+	// user is written; a refused row is reported and the batch carries on.
 	create := func(ctx context.Context, ci CreateInput) (*User, error) {
 		var hash string
 		if ci.Password != "" {
-			ph, herr := password.Hash(ci.Password)
+			ph, herr := h.hashNewPassword(ctx, tenantID, ci.Email, ci.Password)
 			if herr != nil {
 				return nil, herr
 			}

@@ -159,7 +159,7 @@ make kill                        # free a stuck :4001
 There is no `make help`, no `dev-*` variants beyond `dev-secrets`, and no `test-*` beyond
 `test-integration`.
 
-**`make lint` runs `go vet` only.** CI additionally runs `golangci-lint` v2.12.2 on new code, with
+**`make lint` runs `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 on new code, with
 `errcheck`, `govet`, `staticcheck` and `misspell`. Passing `make lint` locally does not mean CI lint
 will pass.
 
@@ -172,7 +172,7 @@ Single test: `go test ./internal/access/authentication/... -run TestName`
 | Job | Runs |
 |---|---|
 | `test` | `go build ./...`, `go vet ./...`, `go test -race -count=1 ./...` — includes architecture fitness |
-| `lint` | `golangci-lint` v2.12.2, new code only |
+| `lint` | `golangci-lint` v2.14.0, new code only |
 | `integration` | `go test -tags integration ./tests/integration/...` — **includes the OpenAPI route-coverage gate** |
 | `vuln` | `govulncheck ./cmd/... ./internal/...` blocking, plus an advisory full-tree scan |
 | `sast` | `gosec` — advisory, reports findings as a warning |

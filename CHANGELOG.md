@@ -33,6 +33,17 @@ The changes below are the work staged for that first release.
 
 ### Security
 
+**Dependencies and toolchain (2026-10-16)**
+
+* **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
+  library): Go toolchain 1.27.2 and `golang.org/x/net` v0.60.0. Go 1.25 has no fix, so the module
+  now requires Go 1.26 and CI uses the same Go 1.27.2 the Dockerfile builds with (CI had been testing
+  with 1.25.13 while the image was built with 1.27).
+* `golang.org/x/crypto` v0.58.0 fixes GO-2026-6354/6355 (`x/crypto/ssh`, reachable only from test
+  fixtures). `google.golang.org/grpc` v1.83.2 fixes GHSA-2v4p-qf9q-27wj (xDS servers, not used here).
+* CI: `govulncheck` v1.9.0 and `golangci-lint` v2.14.0, which support Go 1.27 (v1.7.0 and v2.12.2
+  could not run on it).
+
 Remediation of a 2026-09-06 security review. Migration `0107`.
 
 **Cross-tenant (P0)**
@@ -218,7 +229,81 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **oidc:** an access token an application receives on a user's behalf can no longer manage the user's account or
+  organisation. Such tokens verified like the user's own, so a token approved only for `openid email` could list
+  and end the user's sessions or, for an administrator, delete users. They now carry `client_id` (RFC 9068) —
+  authorization code, refresh, device, back-channel and token exchange alike — and every authenticated route
+  refuses them with `auth.application_token` (403) except `GET /v1/oauth/userinfo`. The user's own tokens are
+  unchanged. Granting applications specific management scopes is still to come.
+* **auth:** signing out everywhere — and an administrator's force sign-out — also closes the other ways back in:
+  the person's remembered devices are forgotten (the second factor is asked again), their unredeemed authorisation
+  codes are spent, and their device and back-channel sign-in requests that are pending or approved but not yet
+  collected are denied. The responses and audit records add `trusted_devices` and `pending_authorizations`.
+* **auth:** every way a session ends is announced to subscribed applications. `session.revoked` used to fire
+  only for sign-out and refresh-token reuse, and never for a session with no organisation. Now sign-out,
+  reuse detection, signing out other sessions or everywhere, an administrator's force sign-out or password
+  set, password change (not for the session kept) and reset, organisation switch, suspension and
+  reactivation, SCIM deprovisioning, erasure (before the account is redacted) and expiry (when the cleanup
+  removes the session) each queue one signal per ended session, naming `user_id`, `session_id`, `reason`,
+  `revoked_at` and a per-signal `event_id`. A session with no organisation is announced to every organisation
+  the user belongs to (`tenant_id` null). Signals are queued in the transaction that ends the session
+  (`EnqueueTx`) under a savepoint: if queueing fails the session still ends and
+  `session_revocation_signal_failures_total` counts it. Delivery, signing and retries are unchanged.
+* **auth:** an organisation's sign-in method switches are enforced. `password_enabled`, `passkey_enabled` and
+  `magic_link_enabled` used to change only the stored policy. Now a switched-off method is refused where the
+  credential is accepted — `auth.method_disabled` (403) for passwords and magic links, `passkey.disabled` for
+  passkeys — as an access decision, not a wrong credential: a hosted sign-in that names its application is
+  refused before the password is checked, the console's once it is verified, and a passkey before the assertion
+  is verified. Magic links are issued, and stay valid, only while allowed, for the organisation's
+  `magic_link_ttl_minutes` instead of a fixed hour. The hosted login reads `sign_in_methods` from the
+  login context and offers only those. A policy write that would switch every method off, or switch on the email
+  or SMS one-time-code sign-in (which does not exist), is refused with 422; the console no longer offers those
+  two switches. Changes apply to the next sign-in (the policy is not cached).
+* **social:** signing in with a social provider no longer creates an account in an organisation that does not
+  allow self-registration. **Behaviour change:** the setting now governs social sign-up as it already did
+  password and passkey sign-up, and it defaults to off — an organisation that wants social sign-up must turn
+  self-registration on. A refused attempt writes nothing but an audit entry (`social.signup_refused`: the
+  provider and the asserted address), and the hosted login tells the person registration is closed
+  (`error=registration_closed`) instead of reporting a provider failure. Accounts already linked to the
+  provider, and existing accounts matched by a verified address, sign in as before.
+* **scheduler:** the `session-expiry-cleanup` job works. It deleted by a session expiry column that
+  does not exist, so every run failed with an undefined-column error and no session was ever removed.
+  It now deletes API and console sessions ended — or whose refresh tokens all expired — more than seven
+  days ago (their refresh tokens go with them) and hosted-login sessions expired more than seven days
+  ago, keeps every live session and anything ended inside the window, and logs how many it removed
+  (zero when there is nothing to remove). The scheduler process itself is still not part of the
+  deployed image; shipping and starting it is tracked separately.
+* **auth:** switching organisation (`POST /v1/auth/switch-tenant`) replaces the session instead of
+  adding one. **Behaviour change:** the session switched from now ends — its refresh token is refused
+  and `session.revoked` subscribers are told, with reason `tenant_switch` — where before it stayed
+  renewable for 30 days and every switch left another live session behind. The new token carries the
+  claims the target organisation's authentication hook adds (the hook may also refuse the switch),
+  and renewals keep a session's hook claims instead of dropping them after the first access token
+  expires. An access token whose session has already ended can no longer switch (it used to open a
+  fresh session). The person's own session list shows one entry per sign-in. Migration `0120`.
+* **auth:** signing out of the hosted login now signs the browser out of the applications it signed
+  in to. Both ways of signing out — the hosted login's own (`DELETE /v1/auth/session`) and an
+  application's (`/v1/oauth/logout`) — used to delete only the browser's SSO session, so every
+  application kept renewing its refresh grant for up to 30 days. Now the grants started through that
+  session are revoked (renewals included), codes it minted that no application has redeemed can no
+  longer be redeemed, and the sign-out is audited (`auth.signed_out`: the session, the registered
+  application that asked, what was ended). Other browsers and API sessions stay signed in; without a
+  session cookie nothing is ended. Migration `0119` records which hosted-login session started each
+  code and grant; grants issued before it are not tied to a session and are not ended this way.
+* **recovery:** "Forgot password" works from hosted login and the React SDK, and the emailed link
+  lands where the reset was requested. The request carried `tenant_id`, which the endpoint rejected
+  (400, no email). It is now accepted and ignored (email is unique platform-wide). A request with
+  `app: "hosted_login"` links to hosted login's `/reset` page, carrying `return_to` only when it is
+  this API's `/oauth/authorize` endpoint; otherwise the link opens the console's reset screen, as before.
+* **passkeys:** synced passkeys (iCloud Keychain, Google Password Manager, password managers) can
+  sign in and complete passkey MFA. Their backup-eligible and backup-state flags were never stored,
+  and go-webauthn rejects a login whose backup-eligible flag differs from the one at registration.
+  Migration `0116` adds the columns; passkeys registered before it must be registered again.
 * **api:** align Postman baseUrl to port 4000 (matches standardized backend port) ([202aa84](https://github.com/qeetgroup/qeet-id-server/commit/202aa845ad0d527367d32c0e1a454b9cfd2b12f3))
+* **passkeys:** an account created by passkey signup (console or hosted login) can sign in with
+  that passkey. The account was created with a database-generated id instead of the WebAuthn user ID
+  the passkey was registered under, so the user handle the browser returns matched no user.
+  Accounts created this way before the fix must add their passkey again (or reset their password).
 * **deploy:** assemble DB_URL via interpolation; drop distroless-incompatible healthcheck ([94da569](https://github.com/qeetgroup/qeet-id-server/commit/94da5697a3c1f8f0fc48a3418965d8b2c7c5b9b9))
 * **oidc:** derive issuer/discovery scheme from X-Forwarded-Proto ([f03b6dd](https://github.com/qeetgroup/qeet-id-server/commit/f03b6dd193fd94b1e162e0f8364575385d6937bd))
 * **repo:** correct doc drift, dead docs targets, eslint login wiring, image license ([c250c60](https://github.com/qeetgroup/qeet-id-server/commit/c250c603d4fdf9dc8af5ddb91b6a381992436e4a))

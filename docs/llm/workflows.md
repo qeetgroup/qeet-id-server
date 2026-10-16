@@ -49,7 +49,8 @@ staging or production.
 
 **Decide first: public or authenticated?** `internal/bootstrap/router.go` has two `/v1` groups. The
 authenticated group applies API-key resolution → `RequireAuth` → `EnforceTenantScope` → rate limits →
-`rbac.Enforce`. **Putting a route in the public group opts out of all of it** — do that only for
+`rbac.Enforce`. Authenticated routes take a bearer token or API key only; the hosted login's session
+cookie is accepted just on the short `LoginSessionRoutes()` list in the same file. **Putting a route in the public group opts out of all of it** — do that only for
 genuinely unauthenticated endpoints, and say why in the code.
 
 **If the route is tenant-scoped:** take the tenant from `httpx.RequireTenant(r)`, never from the
@@ -57,6 +58,10 @@ path or body, and carry `WHERE tenant_id = $1` into every query.
 
 **The coverage gate will fail CI** if the route is not in an OpenAPI document —
 `tests/integration/coverage_test.go`.
+
+A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
+by default: they are for the application's own use, not account or organisation management. Only routes
+meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test).
 
 ---
 
@@ -257,7 +262,7 @@ If the change touched a route, also:
 make test-integration      # includes the OpenAPI route-coverage gate
 ```
 
-**`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.12.2 with `errcheck`,
+**`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 with `errcheck`,
 `staticcheck` and `misspell` on new code. Passing locally does not guarantee CI passes.
 
 ### Ask before proceeding if the change would

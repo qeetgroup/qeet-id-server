@@ -121,7 +121,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 
 | Layer | Technology |
 | :--- | :--- |
-| Language | Go 1.25 |
+| Language | Go 1.27 (minimum 1.26) |
 | HTTP | chi v5, REST, OpenAPI 3.1 |
 | Database | PostgreSQL 16, pgx v5, SQL/sqlc |
 | Authentication | WebAuthn/FIDO2, OAuth 2.0, OpenID Connect, SAML 2.0, SCIM 2.0 |
@@ -134,7 +134,7 @@ bounded context must not import `cmd/*` or `internal/bootstrap`.
 
 ## 🚀 Quick start
 
-**You need:** Go 1.25 or newer &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
+**You need:** Go 1.26 or newer (it fetches the pinned toolchain, go1.27.2, itself) &middot; Docker (with Compose) &middot; `make` &middot; `openssl`
 
 ```bash
 git clone https://github.com/qeetgroup/qeet-id-server.git
@@ -231,7 +231,7 @@ CI adds race detection, `golangci-lint` on changed code, integration tests, `gov
 an advisory `gosec` scan.
 
 > [!NOTE]
-> **`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.12.2 against new and
+> **`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 against new and
 > changed code. A clean local lint does not guarantee a green CI lint.
 
 ## 📚 API & Documentation

@@ -6,8 +6,8 @@ set -euo pipefail
 info() { echo "▶ $*"; }
 ok()   { echo "  ✓ $*"; }
 
-info "Go (1.25)"
-if ! go version 2>/dev/null | grep -q "go1.25"; then
+info "Go (1.26 or newer; go.mod's toolchain line fetches go1.27.2 automatically)"
+if ! go version 2>/dev/null | grep -qE "go1\.(2[6-9]|[3-9][0-9])"; then
   brew install go
 fi
 ok "$(go version)"

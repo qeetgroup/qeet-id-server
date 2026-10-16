@@ -25,6 +25,10 @@ type Principal struct {
 	SessionID *uuid.UUID
 	// AgentID is set when the token is an AI-agent token (ActorType == "agent").
 	AgentID *uuid.UUID
+	// ClientID is set when the token was issued to an application through the
+	// authorization server (its client_id claim); empty for the user's own
+	// tokens. See RefuseApplicationTokens.
+	ClientID string
 }
 
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {

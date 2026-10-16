@@ -78,6 +78,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -226,23 +227,33 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	emailtmpl.SetLogoPNGURL(strings.TrimRight(cfg.AppBaseURL, "/") + "/logo192.png")
 	verifyService := verification.NewService(pool, sender, 10*time.Minute)
 	recoveryService := recovery.NewService(pool, sender, time.Hour, cfg.AppBaseURL)
+	recoveryService.SetHostedLogin(cfg.LoginBaseURL) // resets requested there link back to it
 	retentionService := retention.NewService(pool)
 	salesService := sales.NewService(pool, sender, cfg.SalesEmail)
 	inviteService := invite.NewService(pool, sender, 14*24*time.Hour, cfg.AppBaseURL)
 	authService := auth.NewService(pool, userRepo, issuer)
 	authPolicyService := authpolicy.NewService(pool)
 
+	// One password check for every path that sets or replaces a password:
+	// authPolicyService.ValidateForTenant (the organisation's rules, or the
+	// platform baseline for a tenant-less account; the offline strength
+	// baseline; the breach check). Sign-up, hosted registration and
+	// self-service change reach it through SetRegistrationPolicy below; admin
+	// create / set-password / bulk import through user.Handler.PasswordPolicy.
+	recoveryService.SetPasswordRules(authPolicyService)   // password reset
+	recoveryService.SetMagicLinkPolicy(authPolicyService) // magic links only where the tenant allows them, with its lifetime
+	inviteService.SetPasswordRules(authPolicyService)     // invite accept
+
 	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
 	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
-	// unaffected; when enabled it is injected into every password-setting flow
-	// and is fail-open at runtime (a HIBP outage allows the password). Only the
-	// 5-char SHA-1 prefix ever leaves the process — never the plaintext.
+	// unaffected; when enabled the password check above runs it on every
+	// password-setting path, and it is fail-open at runtime (a HIBP outage
+	// allows the password and is counted in
+	// breached_password_check_allowed_on_error_total). Only the 5-char SHA-1
+	// prefix ever leaves the process — never the plaintext.
 	if cfg.BreachedPasswordCheck {
 		breachChecker := hibp.New(&http.Client{Timeout: 3 * time.Second}, cfg.BreachedPasswordAPIURL, cfg.BreachedPasswordMinCount)
-		authPolicyService.SetBreachChecker(breachChecker) // user set-password (via ValidateForTenant)
-		authService.SetBreachChecker(breachChecker)       // signup
-		recoveryService.SetBreachChecker(breachChecker)   // password reset
-		inviteService.SetBreachChecker(breachChecker)     // invite accept
+		authPolicyService.SetBreachChecker(breachChecker)
 		slog.Info("breached-password check enabled (HIBP k-anonymity; fail-open)", "min_count", cfg.BreachedPasswordMinCount)
 	}
 	apikeyService := apikey.NewService(pool)
@@ -250,13 +261,38 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender, cfg.ExpoPushURL)
 	mfaService.SetCipher(sharedCipher)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
-	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + validate new passwords per tenant
+	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
+	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
+
+	// Sign-in lockout (authentication/lockout.go): failures counted per account
+	// + source network (the tenant-configurable lock), per account at a looser
+	// cap, and per source across accounts (spraying). The platform defaults and
+	// the bounds a tenant may choose within come from LOGIN_LOCKOUT_* /
+	// LOGIN_SPRAY_* (validated by config.Load); a tenant's own settings live in
+	// its authentication policy and apply on the next attempt.
+	lockoutDefaults := authpolicy.Lockout{Threshold: cfg.LoginLockoutThreshold, Window: cfg.LoginLockoutWindow, Duration: cfg.LoginLockoutDuration}
+	authPolicyService.SetLockoutLimits(authpolicy.LockoutLimits{
+		Defaults: lockoutDefaults,
+		Min:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMin, Window: cfg.LoginLockoutWindowMin, Duration: cfg.LoginLockoutDurationMin},
+		Max:      authpolicy.Lockout{Threshold: cfg.LoginLockoutThresholdMax, Window: cfg.LoginLockoutWindowMax, Duration: cfg.LoginLockoutDurationMax},
+	})
+	authService.SetLockoutConfig(auth.LockoutConfig{
+		Defaults:          auth.Lockout(lockoutDefaults),
+		AccountMultiplier: cfg.LoginLockoutAccountMultiplier,
+		SourceAccounts:    cfg.LoginSprayAccounts,
+		SourceWindow:      cfg.LoginSprayWindow,
+		SourceBlock:       cfg.LoginSprayBlock,
+	})
+	authService.SetLockoutSource(func(ctx context.Context, tenantID uuid.UUID) (auth.Lockout, error) {
+		l, err := authPolicyService.SignInLockout(ctx, tenantID)
+		return auth.Lockout(l), err
+	})
 	authHookService := authhook.NewService(pool, outboundPolicy)
 	authHookService.SetCipher(sharedCipher)
 	authService.SetLoginHook(authHookService) // synchronous Actions/Hooks gate (no-op until configured)
 	threatService := threat.NewService(pool)
-	authService.SetAnomalyRecorder(threatService) // record credential-stuffing anomalies on lockout
+	authService.SetAnomalyRecorder(threatService) // record sign-in lock and spraying-source anomalies
 	notificationService := notification.NewService(pool)
 	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
 	riskService := risk.NewService(pool)
@@ -310,9 +346,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// CAEP/SSF-shaped signals over the existing webhook dispatcher: a tenant
 	// that subscribes to these can react to a revoked session or a changed
 	// role grant immediately, instead of waiting out the access-token TTL.
-	authService.SetEmitter(webhookService.Enqueue)
+	// Every path that ends a session announces it (session.revoked) in the
+	// transaction that ends it; see sessionsignal for reasons and destinations.
+	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
+	authService.SetSessionSignals(sessionSignals)
+	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
+	gdprService.SetSessionSignals(sessionSignals)
 	auditReader := audit.NewReader(pool)
 	auditVerifier := audit.NewVerifier(pool)
 	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
@@ -354,6 +395,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		os.Exit(1)
 	}
 	passkeyService := passkey.NewService(pool, wa, authService)
+	passkeyService.SetMethodPolicy(authPolicyService) // offer and accept new passkeys only where the tenant allows them
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	socialService.SetCipher(sharedCipher)
 	// Allowlist for the hosted flow's return_to. The callback sets the SSO
@@ -381,6 +423,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
+	scimService.SetSessionSignals(sessionSignals)
 	secretService, err := secret.NewService(rootCtx, pool, keyProvider)
 	if err != nil {
 		slog.Error("init secrets vault", "err", err)
@@ -535,7 +578,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	})
 	deps := Deps{
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
-		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService},
+		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
@@ -560,7 +603,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
 		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},

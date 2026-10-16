@@ -67,6 +67,24 @@ func (q *Queries) GetPasswordResetByToken(ctx context.Context, tokenHash string)
 	return i, err
 }
 
+const getResetAccount = `-- name: GetResetAccount :one
+SELECT tenant_id, email FROM "user".users WHERE id = $1
+`
+
+type GetResetAccountRow struct {
+	TenantID pgtype.UUID
+	Email    string
+}
+
+// GetResetAccount returns the organisation (NULL = none) and email of the
+// account a reset is for, so the new password is checked against its rules.
+func (q *Queries) GetResetAccount(ctx context.Context, id uuid.UUID) (GetResetAccountRow, error) {
+	row := q.db.QueryRow(ctx, getResetAccount, id)
+	var i GetResetAccountRow
+	err := row.Scan(&i.TenantID, &i.Email)
+	return i, err
+}
+
 const getUserIDByEmailForTenant = `-- name: GetUserIDByEmailForTenant :one
 
 SELECT id FROM "user".users

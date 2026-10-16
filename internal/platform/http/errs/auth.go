@@ -14,11 +14,14 @@ const (
 	CodeAuthAccountLocked            = "auth.account_locked"
 	CodeAuthNotTenantMember          = "auth.not_tenant_member"
 	CodeAuthSelfRegistrationDisabled = "auth.self_registration_disabled"
+	CodeAuthMethodDisabled           = "auth.method_disabled"
+	CodeAuthApplicationToken         = "auth.application_token"
 	CodeAuthPasswordWeak             = "auth.password_weak"
 	CodeAuthMFAChallengeExpired      = "auth.mfa_challenge_expired"
 	CodeAuthRefreshTokenInvalid      = "auth.refresh_token_invalid"
 	CodeAuthSessionRevoked           = "auth.session_revoked"
 	CodeAuthAccountSuspended         = "auth.account_suspended"
+	CodeAuthSignInUnavailable        = "auth.sign_in_unavailable"
 )
 
 var (
@@ -27,15 +30,26 @@ var (
 	ErrAuthEmailExists      = New(CodeAuthEmailExists, "An account with this email already exists.")
 	ErrAuthEmailRequired    = New(CodeAuthEmailRequired, "Enter your email address.")
 	ErrAuthSessionExpired   = New(CodeAuthSessionExpired, "Your session has expired. Please start again.").AsRetryable()
-	ErrAuthPasswordBreached = New(CodeAuthPasswordBreached, "This password has appeared in known data breaches. Please choose a different one.")
+	ErrAuthPasswordBreached = New(CodeAuthPasswordBreached, "This password has appeared in known data breaches. Please choose a different one.") // no longer returned: every password path reports ErrAuthPolicyPasswordBreached; the code stays reserved so it is never reused
 
 	ErrAuthInvalidCredentials       = New(CodeAuthInvalidCredentials, "Invalid email or password.")
 	ErrAuthAccountLocked            = New(CodeAuthAccountLocked, "Too many failed attempts. Your account is temporarily locked — please try again later.").AsRetryable()
 	ErrAuthNotTenantMember          = New(CodeAuthNotTenantMember, "You're not a member of this organization.")
 	ErrAuthSelfRegistrationDisabled = New(CodeAuthSelfRegistrationDisabled, "Self-registration is not enabled for this application.")
-	ErrAuthPasswordWeak             = New(CodeAuthPasswordWeak, "Choose a stronger password.")
-	ErrAuthMFAChallengeExpired      = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
-	ErrAuthRefreshTokenInvalid      = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
-	ErrAuthSessionRevoked           = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
-	ErrAuthAccountSuspended         = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	// ErrAuthApplicationToken: the token was issued to an application, which
+	// may read who the user is but not manage their account or organisation.
+	ErrAuthApplicationToken = New(CodeAuthApplicationToken, "This token was issued to an application and can't be used here. Sign in to Qeet ID to manage your account.")
+	// ErrAuthMethodDisabled: the organisation has switched this sign-in method
+	// off. An access decision, not a wrong credential; it says nothing about
+	// whether an account exists.
+	ErrAuthMethodDisabled      = New(CodeAuthMethodDisabled, "This sign-in method isn't available for this organisation. Use another way to sign in.")
+	ErrAuthPasswordWeak        = New(CodeAuthPasswordWeak, "Choose a stronger password.")
+	ErrAuthMFAChallengeExpired = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
+	ErrAuthRefreshTokenInvalid = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
+	ErrAuthSessionRevoked      = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
+	ErrAuthAccountSuspended    = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	// ErrAuthSignInUnavailable refuses a password sign-in whose failed-attempt
+	// counters could not be read or written: the lockout fails closed. The same
+	// answer whatever the password and whether the address has an account.
+	ErrAuthSignInUnavailable = New(CodeAuthSignInUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
 )

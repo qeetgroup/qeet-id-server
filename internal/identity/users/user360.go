@@ -21,6 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/users/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -213,11 +215,6 @@ func (r *Repository) ListUserSessions(ctx context.Context, id uuid.UUID) ([]Sess
 	return out, nil
 }
 
-// RevokeAllUserSessions revokes every live session for a user; returns the count.
-func (r *Repository) RevokeAllUserSessions(ctx context.Context, id uuid.UUID) (int64, error) {
-	return r.q.RevokeAllUserSessions(ctx, id)
-}
-
 func (r *Repository) UserRolesInTenant(ctx context.Context, id, tenantID uuid.UUID) ([]RoleInfo, error) {
 	rows, err := r.q.ListUserRolesInTenant(ctx, dbgen.ListUserRolesInTenantParams{UserID: id, TenantID: tenantID})
 	if err != nil {
@@ -376,20 +373,69 @@ func (h *Handler) getSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // revokeAllSessions → POST /v1/users/{id}/sessions/revoke-all (user.write).
-// Admin force sign-out: invalidates every live session for the user.
+// Admin force sign-out: ends every way the user is signed in — API and console
+// sessions, hosted-login sessions, applications' refresh grants — and records
+// it, all in one transaction. Reports {"revoked": total} plus the count per
+// place, the shape of the user's own sign-out everywhere. Access tokens already
+// issued stay valid until they expire.
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, tenantID, err := h.scopedID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	n, err := h.Repo.RevokeAllUserSessions(r.Context(), id)
+	if h.SignIns == nil {
+		httpx.WriteError(w, r, errs.ErrNotImplemented)
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	h.auditUserAction(r, "session.admin_revoked_all", id)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
+	defer tx.Rollback(ctx)
+	ended, err := h.SignIns.EndAllSignIns(ctx, tx, id, sessionsignal.ReasonAdminRevokedAll)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var actorID *uuid.UUID
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID = p.UserID
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tenantID,
+		ActorUserID:  actorID,
+		Action:       "session.admin_revoked_all",
+		ResourceType: "user",
+		ResourceID:   &id,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    r.UserAgent(),
+		RequestID:    httpx.RequestID(r),
+		Metadata: map[string]any{
+			"revoked_sessions":             ended.Sessions,
+			"revoked_login_sessions":       ended.LoginSessions,
+			"revoked_app_grants":           ended.AppGrants,
+			"revoked_trusted_devices":      ended.TrustedDevices,
+			"ended_pending_authorizations": ended.PendingAuthorizations,
+		},
+	}); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"revoked":                ended.Total(),
+		"sessions":               ended.Sessions,
+		"hosted_login_sessions":  ended.LoginSessions,
+		"app_grants":             ended.AppGrants,
+		"trusted_devices":        ended.TrustedDevices,
+		"pending_authorizations": ended.PendingAuthorizations,
+	})
 }
 
 // getAccess → GET /v1/users/{id}/access (user.read).

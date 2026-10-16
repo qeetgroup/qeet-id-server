@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -23,15 +24,67 @@ type mfaResetter interface {
 	ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
 }
 
+// signInEnder ends, inside tx, every way a user is signed in — API and console
+// sessions, hosted-login browser sessions and applications' refresh grants —
+// and reports how many of each it ended (admin force sign-out). Kept as an
+// interface because the authentication package imports this one.
+type signInEnder interface {
+	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (SignInsEnded, error)
+}
+
+// SignInsEnded counts what ending every way a person is signed in ended
+// (signInEnder.EndAllSignIns, the administrator's force sign-out and the
+// person's own sign out everywhere).
+type SignInsEnded struct {
+	// Sessions are API and console sessions; ending one is what makes its
+	// refresh tokens stop working.
+	Sessions int64
+	// LoginSessions are hosted-login browser sessions.
+	LoginSessions int64
+	// AppGrants are the refresh grants applications hold, counted once per
+	// grant.
+	AppGrants int64
+	// TrustedDevices are devices remembered so they skip the second factor.
+	TrustedDevices int64
+	// PendingAuthorizations are unredeemed authorisation codes and device or
+	// back-channel sign-in requests that were pending or approved but not yet
+	// collected.
+	PendingAuthorizations int64
+}
+
+// Total is the number of sign-ins ended, all places together.
+func (e SignInsEnded) Total() int64 { return e.Sessions + e.LoginSessions + e.AppGrants }
+
 type Handler struct {
 	Repo     *Repository
 	Validate *validator.Validate
-	// PasswordPolicy enforces the tenant's password complexity rules on a
-	// password change. Optional; nil skips the check (e.g. tests). Kept as a
-	// function so the user package needn't depend on the authpolicy package.
-	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, password string) error
+	// PasswordPolicy is the password check every password this handler sets
+	// goes through (admin create, bulk import, admin set-password): the
+	// tenant's rules, the offline strength baseline and, when enabled, the
+	// breach check. Required to set a password — nil refuses (501) rather than
+	// store an unchecked one. A function so the user package needn't depend on
+	// the authpolicy package (authpolicy.Service.ValidateForTenant).
+	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, email, password string) error
 	// MFA resets a user's second factors (admin recovery). Optional.
 	MFA mfaResetter
+	// Signals announces the sessions an account change ends (nil = announces
+	// nothing).
+	Signals *sessionsignal.Signaller
+	// SignIns ends every way a user is signed in (admin force sign-out).
+	// Without it that route answers 501.
+	SignIns signInEnder
+}
+
+// hashNewPassword checks a password for an account in tenantID with the given
+// email, then hashes it.
+func (h *Handler) hashNewPassword(ctx context.Context, tenantID uuid.UUID, email, plain string) (string, error) {
+	if h.PasswordPolicy == nil {
+		return "", errs.ErrNotImplemented
+	}
+	if err := h.PasswordPolicy(ctx, tenantID, email, plain); err != nil {
+		return "", err
+	}
+	return password.Hash(plain)
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -260,9 +313,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	// The password is checked before anything is written, so a refused one
+	// leaves no user row behind.
 	var hash string
 	if in.Password != "" {
-		ph, err := password.Hash(in.Password)
+		ph, err := h.hashNewPassword(r.Context(), tenantID, in.Email, in.Password)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -444,7 +499,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 type setPasswordInput struct {
-	Password string `json:"password" validate:"required,min=8,max=256"`
+	Password string `json:"password" validate:"required,max=256"` // length + rules: PasswordPolicy
 }
 
 func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
@@ -462,14 +517,12 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	// Enforce the tenant's password-complexity policy when set.
-	if h.PasswordPolicy != nil {
-		if perr := h.PasswordPolicy(r.Context(), tenantID, in.Password); perr != nil {
-			httpx.WriteError(w, r, perr)
-			return
-		}
+	target, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	hash, err := password.Hash(in.Password)
+	hash, err := h.hashNewPassword(r.Context(), tenantID, target.Email, in.Password)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -507,12 +560,11 @@ func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid
 	// Every session, including any the admin is not aware of. Unlike the
 	// self-service change there is no session to preserve here: the caller is a
 	// different person from the account holder.
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.sessions SET revoked_at = NOW()
-		WHERE user_id = $1 AND revoked_at IS NULL
-	`, userID); err != nil {
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
 		return err
 	}
+	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonAdminPasswordSet, ended...)
 
 	actor := httpx.PrincipalFromCtx(ctx)
 	var actorID *uuid.UUID
