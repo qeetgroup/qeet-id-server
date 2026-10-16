@@ -18,6 +18,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -53,6 +54,9 @@ type Service struct {
 	// long they live (nil = allowed, the default lifetime). Set via
 	// SetMagicLinkPolicy.
 	magicLinks MagicLinkPolicy
+	// signals announces ended sessions (nil = announces nothing). Set via
+	// SetSessionSignals.
+	signals *sessionsignal.Signaller
 }
 
 // PasswordRules is the one password check every path that sets a password
@@ -70,6 +74,10 @@ type PasswordRules interface {
 type MagicLinkPolicy interface {
 	MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (enabled bool, ttl time.Duration, err error)
 }
+
+// SetSessionSignals wires the announcement of ended sessions. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
 // SetMagicLinkPolicy wires the magic-link policy. Called from
 // internal/bootstrap/dependencies.go.
@@ -248,10 +256,12 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	if err := qtx.MarkPasswordResetUsed(ctx, row.ID); err != nil {
 		return err
 	}
-	// Invalidate all existing sessions on password reset.
-	if err := qtx.RevokeUserSessions(ctx, row.UserID); err != nil {
+	// Invalidate all existing sessions on password reset, and announce them.
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, row.UserID)
+	if err != nil {
 		return err
 	}
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordReset, ended...)
 	userID := row.UserID
 	target := userID
 	if err := audit.Record(ctx, tx, audit.Event{

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	dbgen "github.com/qeetgroup/qeet-id-server/internal/operations/gdpr/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -39,6 +40,24 @@ type Service struct {
 	grace    time.Duration
 	workerID uuid.UUID
 	lease    time.Duration
+	// signals announces the sessions an erasure ends (nil = announces
+	// nothing). Set via SetSessionSignals.
+	signals *sessionsignal.Signaller
+}
+
+// SetSessionSignals wires the announcement of ended sessions. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
+
+// endSessions ends every session of the account being erased and announces
+// each one (reason deleted) in the erasure's transaction.
+func (s *Service) endSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonDeleted, ended...)
+	return nil
 }
 
 func NewService(pool *pgxpool.Pool, grace time.Duration) *Service {
@@ -248,7 +267,7 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 		return tx.Commit(ctx)
 	}
 
-	if err := purgeTenantUserData(ctx, tx, qTx, requestTenant, userID); err != nil {
+	if err := s.purgeTenantUserData(ctx, tx, qTx, requestTenant, userID); err != nil {
 		return err
 	}
 	tag, err := tx.Exec(ctx, `
@@ -265,7 +284,11 @@ func (s *Service) purgeOne(ctx context.Context, requestID, userID uuid.UUID) err
 	return tx.Commit(ctx)
 }
 
-func purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen.Queries, tenantID, userID uuid.UUID) error {
+func (s *Service) purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen.Queries, tenantID, userID uuid.UUID) error {
+	// Sessions first, announced before anything about the account is redacted.
+	if err := s.endSessions(ctx, tx, userID); err != nil {
+		return err
+	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE "user".users
 		SET email              = 'redacted-' || id::text || '@gdpr.invalid',
@@ -294,7 +317,7 @@ func purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen.Queries, ten
 	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
 		return err
 	}
-	return qTx.RevokeUserSessions(ctx, userID)
+	return nil
 }
 
 // purgeUserData replaces the user's PII with redacted markers and drops all
@@ -302,7 +325,12 @@ func purgeTenantUserData(ctx context.Context, tx pgx.Tx, qTx *dbgen.Queries, ten
 // user row is kept as a redacted tombstone and audit rows are left intact, so
 // historical events stay verifiable. Shared by the admin grace-period sweep and
 // self-service deletion.
-func purgeUserData(ctx context.Context, qTx *dbgen.Queries, userID uuid.UUID) error {
+func (s *Service) purgeUserData(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error {
+	// Sessions first, announced before anything about the account is redacted.
+	if err := s.endSessions(ctx, tx, userID); err != nil {
+		return err
+	}
+	qTx := dbgen.New(tx)
 	if err := qTx.PurgeUserPII(ctx, userID); err != nil {
 		return err
 	}
@@ -315,7 +343,7 @@ func purgeUserData(ctx context.Context, qTx *dbgen.Queries, userID uuid.UUID) er
 	if err := qTx.DeleteMFARecoveryCodes(ctx, userID); err != nil {
 		return err
 	}
-	return qTx.RevokeUserSessions(ctx, userID)
+	return nil
 }
 
 // PurgeSelf immediately erases the current user's own PII and credentials — no
@@ -327,7 +355,7 @@ func (s *Service) PurgeSelf(ctx context.Context, userID uuid.UUID) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err := purgeUserData(ctx, dbgen.New(tx), userID); err != nil {
+	if err := s.purgeUserData(ctx, tx, userID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

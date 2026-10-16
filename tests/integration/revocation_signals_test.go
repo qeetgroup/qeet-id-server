@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 )
 
 // subscribeTo creates a webhook subscription scoped to exactly the given
@@ -68,6 +69,17 @@ func queuedDeliveries(t *testing.T, ctx context.Context, tenantID uuid.UUID, eve
 	return out
 }
 
+// deliveriesForSession keeps the deliveries announcing sessionID.
+func deliveriesForSession(ds []queuedDelivery, sessionID uuid.UUID) []queuedDelivery {
+	var out []queuedDelivery
+	for _, d := range ds {
+		if d.Payload["session_id"] == sessionID.String() {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
 // tenantScopedSession signs a fresh tenant-less user in, makes them a member
 // of tenantID, and switches into it — the shortest path to a real,
 // tenant-scoped session + refresh token for these tests.
@@ -100,7 +112,7 @@ func TestLogout_EmitsSessionRevokedWebhook(t *testing.T) {
 	authSvc, _ := newAuth()
 	wh := webhook.NewService(testPool)
 	wh.SetCipher(testEnvelope(t))
-	authSvc.SetEmitter(wh.Enqueue)
+	authSvc.SetSessionSignals(sessionsignal.New(wh.EnqueueTx))
 	subscribeTo(t, ctx, wh, tenantID, []string{"session.revoked"})
 
 	pair, userID := tenantScopedSession(t, ctx, authSvc, tenantID)
@@ -109,9 +121,11 @@ func TestLogout_EmitsSessionRevokedWebhook(t *testing.T) {
 		t.Fatalf("logout: %v", err)
 	}
 
-	deliveries := queuedDeliveries(t, ctx, tenantID, "session.revoked")
+	// Only this session's signal: switching into the organisation also ended
+	// (and announced) the session the sign-up opened.
+	deliveries := deliveriesForSession(queuedDeliveries(t, ctx, tenantID, "session.revoked"), pair.SessionID)
 	if len(deliveries) != 1 {
-		t.Fatalf("queued session.revoked deliveries = %d, want 1", len(deliveries))
+		t.Fatalf("queued session.revoked deliveries for the session = %d, want 1", len(deliveries))
 	}
 	d := deliveries[0]
 	if d.Payload["reason"] != "logout" {
@@ -125,7 +139,7 @@ func TestLogout_EmitsSessionRevokedWebhook(t *testing.T) {
 	if err := authSvc.Logout(ctx, pair.SessionID, userID); err != nil {
 		t.Fatalf("second logout: %v", err)
 	}
-	if got := queuedDeliveries(t, ctx, tenantID, "session.revoked"); len(got) != 1 {
+	if got := deliveriesForSession(queuedDeliveries(t, ctx, tenantID, "session.revoked"), pair.SessionID); len(got) != 1 {
 		t.Fatalf("deliveries after repeat logout = %d, want still 1", len(got))
 	}
 }
@@ -141,7 +155,7 @@ func TestRefreshReuse_EmitsSessionRevokedWebhook(t *testing.T) {
 	authSvc, _ := newAuth()
 	wh := webhook.NewService(testPool)
 	wh.SetCipher(testEnvelope(t))
-	authSvc.SetEmitter(wh.Enqueue)
+	authSvc.SetSessionSignals(sessionsignal.New(wh.EnqueueTx))
 	subscribeTo(t, ctx, wh, tenantID, []string{"session.revoked"})
 
 	pair, _ := tenantScopedSession(t, ctx, authSvc, tenantID)
@@ -156,9 +170,9 @@ func TestRefreshReuse_EmitsSessionRevokedWebhook(t *testing.T) {
 	}
 	_ = rotated
 
-	deliveries := queuedDeliveries(t, ctx, tenantID, "session.revoked")
+	deliveries := deliveriesForSession(queuedDeliveries(t, ctx, tenantID, "session.revoked"), pair.SessionID)
 	if len(deliveries) != 1 {
-		t.Fatalf("queued session.revoked deliveries = %d, want 1", len(deliveries))
+		t.Fatalf("queued session.revoked deliveries for the session = %d, want 1", len(deliveries))
 	}
 	if deliveries[0].Payload["reason"] != "reuse_detected" {
 		t.Errorf("payload.reason = %v, want reuse_detected", deliveries[0].Payload["reason"])

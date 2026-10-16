@@ -297,11 +297,21 @@ func (s *Service) RetryDelivery(ctx context.Context, deliveryID, tenantID uuid.U
 
 // Enqueue persists a delivery for every matching subscription.
 func (s *Service) Enqueue(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error {
+	return s.enqueue(ctx, s.q, tenantID, eventType, payload)
+}
+
+// EnqueueTx is Enqueue inside the caller's transaction, so the deliveries are
+// committed — or rolled back — with the change they describe (ADR-0009).
+func (s *Service) EnqueueTx(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, eventType string, payload any) error {
+	return s.enqueue(ctx, s.q.WithTx(tx), tenantID, eventType, payload)
+}
+
+func (s *Service) enqueue(ctx context.Context, q *dbgen.Queries, tenantID uuid.UUID, eventType string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	ids, err := s.q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{
+	ids, err := q.GetSubscriptionsForEvent(ctx, dbgen.GetSubscriptionsForEventParams{
 		TenantID:  tenantID,
 		EventType: eventType,
 	})
@@ -309,7 +319,7 @@ func (s *Service) Enqueue(ctx context.Context, tenantID uuid.UUID, eventType str
 		return err
 	}
 	for _, id := range ids {
-		if err := s.q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{
+		if err := q.InsertDelivery(ctx, dbgen.InsertDeliveryParams{
 			SubscriptionID: id,
 			EventType:      eventType,
 			Payload:        body,

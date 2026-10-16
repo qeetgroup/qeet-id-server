@@ -102,7 +102,7 @@ func TestSessionCleanupDeletesOnlyWhatIsPastRetention(t *testing.T) {
 		t.Fatalf("open live hosted-login session: %v", err)
 	}
 
-	purged, err := auth.PurgeEndedSessions(ctx, testPool, auth.SessionRetention)
+	purged, err := auth.PurgeEndedSessions(ctx, testPool, auth.SessionRetention, nil)
 	if err != nil {
 		t.Fatalf("cleanup run failed: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSessionCleanupDeletesOnlyWhatIsPastRetention(t *testing.T) {
 		t.Errorf("hosted-login sessions left = %d, want the 2 not expired before the window", n)
 	}
 
-	again, err := auth.PurgeEndedSessions(ctx, testPool, auth.SessionRetention)
+	again, err := auth.PurgeEndedSessions(ctx, testPool, auth.SessionRetention, nil)
 	if err != nil {
 		t.Fatalf("second cleanup run failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSessionCleanupKeepsALiveSessionUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open session: %v", err)
 	}
-	if _, err := auth.PurgeEndedSessions(ctx, testPool, auth.SessionRetention); err != nil {
+	if _, err := auth.PurgeEndedSessions(ctx, testPool, auth.SessionRetention, nil); err != nil {
 		t.Fatalf("cleanup run failed: %v", err)
 	}
 	if _, err := svc.Refresh(ctx, auth.RefreshInput{RefreshToken: pair.RefreshToken}); err != nil {

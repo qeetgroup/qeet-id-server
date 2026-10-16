@@ -414,6 +414,11 @@ const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
 SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
 `
 
+// LockUserForSessionRevocation row-locks the account so bulk session
+// revocations for one user (and password changes, which lock the same row FOR
+// UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
+// session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
+// are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
 func (q *Queries) LockUserForSessionRevocation(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, lockUserForSessionRevocation, userID)
 	var id uuid.UUID
@@ -435,7 +440,7 @@ func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshToken
 	return err
 }
 
-const purgeEndedSessions = `-- name: PurgeEndedSessions :execrows
+const purgeEndedSessions = `-- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
 WHERE s.created_at < $1
   AND (
@@ -444,18 +449,45 @@ WHERE s.created_at < $1
           SELECT 1 FROM auth.refresh_tokens rt
           WHERE rt.session_id = s.id AND rt.expires_at >= $1))
   )
+RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired
 `
+
+type PurgeEndedSessionsRow struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID pgtype.UUID
+	Expired  bool
+}
 
 // PurgeEndedSessions deletes API and console sessions past retention: ended
 // (revoked) before the cutoff, or never ended but with every refresh token
 // expired before the cutoff (none was usable after it). A session opened after
 // the cutoff is always kept. Their refresh tokens go with them (cascade).
-func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) (int64, error) {
-	result, err := q.db.Exec(ctx, purgeEndedSessions, cutoff)
+// Returns what it deleted; expired marks the sessions that were never ended
+// (their refresh tokens expired), which are announced as expired.
+func (q *Queries) PurgeEndedSessions(ctx context.Context, cutoff time.Time) ([]PurgeEndedSessionsRow, error) {
+	rows, err := q.db.Query(ctx, purgeEndedSessions, cutoff)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []PurgeEndedSessionsRow{}
+	for rows.Next() {
+		var i PurgeEndedSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TenantID,
+			&i.Expired,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const purgeExpiredLoginSessions = `-- name: PurgeExpiredLoginSessions :execrows
@@ -593,19 +625,37 @@ func (q *Queries) RecordSourceFailure(ctx context.Context, arg RecordSourceFailu
 	return err
 }
 
-const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :execrows
+const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND revoked_at IS NULL
+RETURNING id, tenant_id
 `
+
+type RevokeAllSessionsForUserRow struct {
+	ID       uuid.UUID
+	TenantID pgtype.UUID
+}
 
 // RevokeAllSessionsForUser ends every live session of the user, the caller's
 // own included. Ending a session is what kills its refresh tokens.
-func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeAllSessionsForUser, userID)
+func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID) ([]RevokeAllSessionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, revokeAllSessionsForUser, userID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []RevokeAllSessionsForUserRow{}
+	for rows.Next() {
+		var i RevokeAllSessionsForUserRow
+		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeAppGrantsForLoginSession = `-- name: RevokeAppGrantsForLoginSession :one
@@ -664,9 +714,10 @@ func (q *Queries) RevokeAppGrantsForUser(ctx context.Context, userID uuid.UUID) 
 	return i, err
 }
 
-const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :execrows
+const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
+RETURNING id, tenant_id
 `
 
 type RevokeOtherSessionsForUserParams struct {
@@ -674,15 +725,32 @@ type RevokeOtherSessionsForUserParams struct {
 	KeepSessionID uuid.UUID
 }
 
+type RevokeOtherSessionsForUserRow struct {
+	ID       uuid.UUID
+	TenantID pgtype.UUID
+}
+
 // RevokeOtherSessionsForUser revokes all of a user's active sessions except the
 // one they're currently on — used after a password change/set so a compromised
 // session can't survive the credential rotation.
-func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeOtherSessionsForUser, arg.UserID, arg.KeepSessionID)
+func (q *Queries) RevokeOtherSessionsForUser(ctx context.Context, arg RevokeOtherSessionsForUserParams) ([]RevokeOtherSessionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, revokeOtherSessionsForUser, arg.UserID, arg.KeepSessionID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []RevokeOtherSessionsForUserRow{}
+	for rows.Next() {
+		var i RevokeOtherSessionsForUserRow
+		if err := rows.Scan(&i.ID, &i.TenantID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const revokeSessionById = `-- name: RevokeSessionById :exec
@@ -729,11 +797,6 @@ type SupersedeSessionParams struct {
 	UserID       uuid.UUID
 }
 
-// LockUserForSessionRevocation row-locks the account so bulk session
-// revocations for one user (and password changes, which lock the same row FOR
-// UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
-// session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
-// are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
 // SupersedeSession ends the session a switch of organisation was made from —
 // only while it is live and the caller's own — and records the session that
 // replaced it. Ending it is what stops its refresh tokens. Returns the

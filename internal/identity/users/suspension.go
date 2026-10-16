@@ -13,6 +13,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -257,9 +258,15 @@ func (handler *Handler) updateStatusWithEvidence(request *http.Request, tenantID
 				return nil, err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
+		reason := sessionsignal.ReasonReactivated
+		if *input.Status == "suspended" {
+			reason = sessionsignal.ReasonSuspended
+		}
+		ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+		if err != nil {
 			return nil, err
 		}
+		handler.Signals.Revoked(ctx, tx, reason, ended...)
 		if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, action); err != nil {
 			return nil, err
 		}
@@ -321,10 +328,12 @@ func (handler *Handler) reactivateUser(response http.ResponseWriter, request *ht
 		httpx.WriteError(response, request, err)
 		return
 	}
-	if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
 		httpx.WriteError(response, request, err)
 		return
 	}
+	handler.Signals.Revoked(ctx, tx, sessionsignal.ReasonReactivated, ended...)
 	if err := recordSuspensionEvidence(ctx, tx, request, tenantID, userID, "user.reactivated"); err != nil {
 		httpx.WriteError(response, request, err)
 		return

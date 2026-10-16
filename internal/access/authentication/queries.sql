@@ -195,15 +195,11 @@ WHERE user_id = @user_id;
 -- RevokeOtherSessionsForUser revokes all of a user's active sessions except the
 -- one they're currently on — used after a password change/set so a compromised
 -- session can't survive the credential rotation.
--- name: RevokeOtherSessionsForUser :execrows
+-- name: RevokeOtherSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
-WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL;
+WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL
+RETURNING id, tenant_id;
 
--- LockUserForSessionRevocation row-locks the account so bulk session
--- revocations for one user (and password changes, which lock the same row FOR
--- UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
--- session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
--- are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
 -- SupersedeSession ends the session a switch of organisation was made from —
 -- only while it is live and the caller's own — and records the session that
 -- replaced it. Ending it is what stops its refresh tokens. Returns the
@@ -213,6 +209,11 @@ UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = @new_session_id
 WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
 RETURNING tenant_id;
 
+-- LockUserForSessionRevocation row-locks the account so bulk session
+-- revocations for one user (and password changes, which lock the same row FOR
+-- UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
+-- session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
+-- are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
 -- name: LockUserForSessionRevocation :one
 SELECT id FROM "user".users WHERE id = @user_id FOR NO KEY UPDATE;
 
@@ -234,9 +235,10 @@ SELECT EXISTS (
 
 -- RevokeAllSessionsForUser ends every live session of the user, the caller's
 -- own included. Ending a session is what kills its refresh tokens.
--- name: RevokeAllSessionsForUser :execrows
+-- name: RevokeAllSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
-WHERE user_id = @user_id AND revoked_at IS NULL;
+WHERE user_id = @user_id AND revoked_at IS NULL
+RETURNING id, tenant_id;
 
 -- EndLoginSessionsForUser ends every hosted-login (browser) session of the
 -- user — the way hosted sign-out ends one, by deleting it — and returns how
@@ -314,7 +316,9 @@ DELETE FROM auth.mfa_login_challenges WHERE id = @id;
 -- (revoked) before the cutoff, or never ended but with every refresh token
 -- expired before the cutoff (none was usable after it). A session opened after
 -- the cutoff is always kept. Their refresh tokens go with them (cascade).
--- name: PurgeEndedSessions :execrows
+-- Returns what it deleted; expired marks the sessions that were never ended
+-- (their refresh tokens expired), which are announced as expired.
+-- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
 WHERE s.created_at < @cutoff
   AND (
@@ -322,7 +326,8 @@ WHERE s.created_at < @cutoff
       OR (s.revoked_at IS NULL AND NOT EXISTS (
           SELECT 1 FROM auth.refresh_tokens rt
           WHERE rt.session_id = s.id AND rt.expires_at >= @cutoff))
-  );
+  )
+RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired;
 
 -- PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
 -- the cutoff. Their cookie stopped being sent when they expired.
