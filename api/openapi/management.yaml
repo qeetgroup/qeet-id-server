@@ -2468,7 +2468,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Authenticated but not permitted
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
       content:
         application/json:
           schema:

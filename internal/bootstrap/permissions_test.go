@@ -178,3 +178,30 @@ func TestLoginSessionRoutesStayNarrow(t *testing.T) {
 		}
 	}
 }
+
+// TestApplicationTokenRoutesStayNarrow pins the authenticated routes that
+// accept a token issued to an application: only the endpoint returning the
+// signed-in user's own claims. Every one must be a mounted authenticated route.
+func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
+	want := []string{"GET /v1/oauth/userinfo"}
+	got := ApplicationTokenRoutes()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("application-token routes = %v, want %v", got, want)
+	}
+	router := chi.NewRouter()
+	router.Route("/v1", func(r chi.Router) {
+		mountAuthenticatedRoutes(r, routeInventoryDeps(t))
+	})
+	mounted := map[string]struct{}{}
+	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		mounted[method+" "+route] = struct{}{}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk authenticated router: %v", err)
+	}
+	for _, route := range got {
+		if _, ok := mounted[route]; !ok {
+			t.Errorf("%s is not an authenticated route", route)
+		}
+	}
+}

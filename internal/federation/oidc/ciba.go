@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -290,7 +291,9 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	userID := cr.UserID
 	tenantID := cr.TenantID
 	scopes := cr.Scopes
-	access, _, err := s.issuer.IssueAccess(userID, tenantID, uuid.New(), strings.Join(scopes, " "))
+	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
+		UserID: userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), ClientID: clientID,
+	})
 	if err != nil {
 		return nil, err
 	}

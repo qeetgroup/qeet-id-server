@@ -15,6 +15,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -356,7 +357,9 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 	}
 	tenantID := dc.TenantID
 	scopes := dc.Scopes
-	access, _, err := s.issuer.IssueAccess(*userID, tenantID, uuid.New(), strings.Join(scopes, " "))
+	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
+		UserID: *userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), ClientID: clientID,
+	})
 	if err != nil {
 		return nil, err
 	}
