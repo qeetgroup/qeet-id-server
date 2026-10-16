@@ -20,6 +20,9 @@ const (
 	CodeAuthMFAChallengeExpired      = "auth.mfa_challenge_expired"
 	CodeAuthRefreshTokenInvalid      = "auth.refresh_token_invalid"
 	CodeAuthSessionRevoked           = "auth.session_revoked"
+	CodeAuthSessionTimedOut          = "auth.session_timed_out"
+	CodeAuthLastSignInMethod         = "auth.last_sign_in_method"
+	CodeAuthSessionLimit             = "auth.session_limit"
 	CodeAuthAccountSuspended         = "auth.account_suspended"
 	CodeAuthSignInUnavailable        = "auth.sign_in_unavailable"
 )
@@ -47,7 +50,16 @@ var (
 	ErrAuthMFAChallengeExpired = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
 	ErrAuthRefreshTokenInvalid = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
 	ErrAuthSessionRevoked      = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
-	ErrAuthAccountSuspended    = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	// ErrAuthSessionTimedOut: the session reached its maximum age or went
+	// unrenewed for longer than its idle timeout, and has ended.
+	ErrAuthSessionTimedOut = New(CodeAuthSessionTimedOut, "Your session has timed out. Please sign in again.").AsRetryable()
+	// ErrAuthLastSignInMethod refuses removing an account's only remaining way
+	// to sign in (a passkey, a password, a linked identity).
+	ErrAuthLastSignInMethod = New(CodeAuthLastSignInMethod, "This is the only way to sign in to this account. Add another — a passkey or a password — before removing it.")
+	// ErrAuthSessionLimit refuses a sign-in that would exceed the
+	// organisation's limit on one person's simultaneous sessions.
+	ErrAuthSessionLimit     = New(CodeAuthSessionLimit, "You're signed in on too many devices for this organisation. Sign out of one of them, then try again.")
+	ErrAuthAccountSuspended = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
 	// ErrAuthSignInUnavailable refuses a password sign-in whose failed-attempt
 	// counters could not be read or written: the lockout fails closed. The same
 	// answer whatever the password and whether the address has an account.

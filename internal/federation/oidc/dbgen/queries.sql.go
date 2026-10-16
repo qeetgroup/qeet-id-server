@@ -599,19 +599,26 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 const insertRefreshToken = `-- name: InsertRefreshToken :exec
 
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at)
+SELECT $1, $2, $3, $4, $5, LEAST($6::timestamptz, g.ends),
+       $7, $8, g.ends
+FROM (
+    SELECT NOW() + COALESCE(
+        (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = $4),
+        make_interval(secs => $9::float8)) AS ends
+) g
 `
 
 type InsertRefreshTokenParams struct {
-	TokenHash      string
-	ClientID       string
-	UserID         uuid.UUID
-	TenantID       uuid.UUID
-	Scopes         []string
-	ExpiresAt      time.Time
-	Resource       *string
-	LoginSessionID pgtype.UUID
+	TokenHash            string
+	ClientID             string
+	UserID               uuid.UUID
+	TenantID             uuid.UUID
+	Scopes               []string
+	ExpiresAt            time.Time
+	Resource             *string
+	LoginSessionID       pgtype.UUID
+	DefaultMaxAgeSeconds float64
 }
 
 // ==========================================================================
@@ -619,6 +626,9 @@ type InsertRefreshTokenParams struct {
 // ==========================================================================
 // login_session_id is the hosted-login session the grant was started through
 // (NULL when there was none); renewals carry it forward.
+// InsertRefreshToken starts a grant. However often it is renewed, it ends at
+// grant_expires_at: the organisation's maximum session age from now, or the
+// platform's when the organisation sets none. No token outlives the grant.
 func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
 	_, err := q.db.Exec(ctx, insertRefreshToken,
 		arg.TokenHash,
@@ -629,14 +639,17 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.ExpiresAt,
 		arg.Resource,
 		arg.LoginSessionID,
+		arg.DefaultMaxAgeSeconds,
 	)
 	return err
 }
 
 const insertRotatedRefreshToken = `-- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at)
+VALUES ($1, $2, $3, $4, $5,
+        LEAST($6::timestamptz, $7::timestamptz),
+        $8, $9, $7::timestamptz)
 RETURNING id
 `
 
@@ -647,10 +660,13 @@ type InsertRotatedRefreshTokenParams struct {
 	TenantID       uuid.UUID
 	Scopes         []string
 	ExpiresAt      time.Time
+	GrantExpiresAt time.Time
 	Resource       *string
 	LoginSessionID pgtype.UUID
 }
 
+// InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
+// the new token expires no later than it.
 func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotatedRefreshTokenParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertRotatedRefreshToken,
 		arg.TokenHash,
@@ -659,6 +675,7 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 		arg.TenantID,
 		arg.Scopes,
 		arg.ExpiresAt,
+		arg.GrantExpiresAt,
 		arg.Resource,
 		arg.LoginSessionID,
 	)
@@ -1083,7 +1100,7 @@ func (q *Queries) LockOIDCClientForUpdate(ctx context.Context, arg LockOIDCClien
 
 const lockRefreshToken = `-- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id
+       used_at, revoked_at, resource, login_session_id, grant_expires_at
 FROM auth.oidc_refresh_tokens WHERE token_hash = $1 FOR UPDATE
 `
 
@@ -1098,6 +1115,7 @@ type LockRefreshTokenRow struct {
 	RevokedAt      pgtype.Timestamptz
 	Resource       *string
 	LoginSessionID pgtype.UUID
+	GrantExpiresAt time.Time
 }
 
 func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
@@ -1114,6 +1132,7 @@ func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockR
 		&i.RevokedAt,
 		&i.Resource,
 		&i.LoginSessionID,
+		&i.GrantExpiresAt,
 	)
 	return i, err
 }

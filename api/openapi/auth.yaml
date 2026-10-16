@@ -257,7 +257,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the supplied address. It always returns a neutral confirmation whether or not the address maps to an account, preventing enumeration, and it is rate limited. Finish the flow by redeeming the emailed token at the magic-link consume call. Refused with 403 auth.method_disabled, issuing and sending nothing, when the organisation has switched magic links off; a link it issues lives for the organisation''s magic_link_ttl_minutes.'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the account holding the address. It answers the same whether or not the address has an account, takes the same minimum time, and sends nothing when it has none. Asked for from an organisation''s sign-in page (tenant_id), it is refused with 403 auth.method_disabled when that organisation has magic links off; from the console (no tenant_id) the account''s own organisation decides, and nothing is sent when it has them off. A link lives for the organisation''s magic_link_ttl_minutes and works once. With app hosted_login the link opens the hosted login''s magic page and, once exchanged at the magic-link session call, continues the sign-in journey at return_to (kept only if it is this service''s authorize endpoint); otherwise it opens the console''s, exchanged at the consume call. Requests are bounded to three per address (then one every five minutes) and ten per caller (then one a minute), counted whether or not the address has an account: 429 past either.'
       summary: Magic link start
       tags:
         - Auth
@@ -274,6 +274,17 @@ paths:
                 email:
                   type: string
                   format: email
+                tenant_id:
+                  type: string
+                  format: uuid
+                  description: The organisation whose sign-in page asks; omitted from the console.
+                app:
+                  type: string
+                  enum: [hosted_login]
+                  description: hosted_login opens the link in the hosted login; omitted for the console.
+                return_to:
+                  type: string
+                  description: Hosted login only — where the sign-in journey continues.
       responses:
         '200':
           description: Accepted (always, to avoid account enumeration); returns a neutral confirmation message
@@ -286,6 +297,89 @@ paths:
                     type: string
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/magic-link/session:
+    post:
+      operationId: post_v1_auth_magic_link_session
+      summary: Magic link — hosted-login session
+      description: >-
+        Exchanges a magic link issued for the hosted login (app hosted_login)
+        for the hosted-login session cookie, and returns where the sign-in
+        journey continues (return_to, empty for none). The link works once:
+        used, expired or unknown links, and console links, are refused
+        (recovery.link_used, recovery.link_expired,
+        recovery.magic_link_invalid), and so are links of an organisation that
+        has since switched magic links off.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Signed in to the hosted login; the cookie is set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  return_to:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/magic-link/resend:
+    post:
+      operationId: post_v1_auth_magic_link_resend
+      summary: Magic link — send a new one
+      description: >-
+        Sends a new sign-in link in place of the one a token names — used,
+        expired or not — to the same address, opening in the same place and
+        continuing the same journey, so the user need not type the address
+        again. Answers the same whatever the token names, and is bounded like
+        the start call (429).
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: A neutral confirmation message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/me:
@@ -310,7 +404,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
-      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in.'
+      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired.'
       summary: Refresh
       tags:
         - Auth
@@ -530,6 +624,45 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/sign-in-methods:
+    get:
+      operationId: get_v1_auth_sign_in_methods
+      summary: My ways to sign in
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: >-
+        How many ways the caller's account can sign in: its password, each
+        passkey, and each linked identity that can still sign in (a SAML or
+        directory link, a social provider its organisation has switched on, or
+        a social account connected to the console account). Resetting a
+        password by email is recovery and is not counted. Removing the last
+        way — a passkey, a connected account, or an administrator unlinking an
+        identity — is refused with 409 auth.last_sign_in_method and recorded
+        (auth.sign_in_method_removal_refused); use total to disable or explain
+        that action first.
+      responses:
+        '200':
+          description: The counts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  password:
+                    type: boolean
+                  passkeys:
+                    type: integer
+                  linked_identities:
+                    type: integer
+                  total:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/password:
@@ -3142,15 +3275,14 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: The organisation's security policy. An organisation that has not saved one reads the platform defaults.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/SecurityPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3180,18 +3312,19 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              $ref: '#/components/schemas/SecurityPolicy'
+        description: The whole policy; tenant_id is taken from the path.
+      description: >-
+        Replaces the organisation's security policy. Session bounds apply to
+        sessions and application grants started afterwards. A value out of
+        range is refused with 422 validation_failed naming the field.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/SecurityPolicy'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -3803,6 +3936,22 @@ components:
           format: date-time
         refresh_token:
           type: string
+        session_expires_at:
+          type: string
+          format: date-time
+          description: >-
+            When the session ends however active it is: the organisation's
+            maximum session age from sign-in (the platform default where it
+            sets none). Switching organisation never moves it later.
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: >-
+            When the session ends unless it is renewed before then: the
+            organisation's idle timeout from this sign-in or renewal, never
+            after session_expires_at. Clients can warn the user ahead of either
+            time; the server refuses a renewal after them with 401
+            auth.session_timed_out whatever the client does.
         session_id:
           type: string
           format: uuid
@@ -3838,6 +3987,130 @@ components:
     Session:
       type: object
       additionalProperties: true
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        ip:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          description: The session's last renewal, from which its idle timeout counts.
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          description: When the session ends however active it is.
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: When the session ends unless renewed first (never after expires_at).
+        status:
+          type: string
+          enum: [active, revoked, expired]
+          description: >-
+            active, revoked (ended by sign-out or revocation) or expired
+            (reached its maximum age or idle timeout first). Only active
+            sessions can be revoked.
+        device:
+          type: string
+          example: Chrome on macOS
+          description: >-
+            The device and browser in words, read from the user agent on the
+            server ("Unknown device" when it says nothing recognisable). Show
+            this; user_agent stays for support.
+        device_kind:
+          type: string
+          enum: [desktop, mobile, tablet, unknown]
+        country:
+          type: string
+          example: IN
+          description: >-
+            Where the session was opened, approximately — the ISO 3166-1
+            alpha-2 country a trusted upstream proxy reported
+            (GEO_COUNTRY_HEADER). Omitted when the deployment supplies none.
+        current:
+          type: boolean
+          description: True for the session the listing request was made with.
+    SecurityPolicy:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        ip_allowlist:
+          type: array
+          items:
+            type: string
+        ip_denylist:
+          type: array
+          items:
+            type: string
+        password_min_length:
+          type: integer
+          minimum: 8
+          maximum: 128
+        password_complexity:
+          type: string
+          enum: [relaxed, standard, strict]
+        session_max_age:
+          type: string
+          example: 720h
+          description: >-
+            How long a session lasts after sign-in however active it is, and an
+            application's grant however often it is renewed: a duration such as
+            "720h" or "90m", between 1h and 8760h. Applies to sessions and grants
+            started after it is saved. Omitted or zero on update: the platform
+            default.
+        session_idle_timeout:
+          type: string
+          example: 24h
+          description: >-
+            How long a session may go without being renewed before it ends: a
+            duration of at least 15m and no longer than session_max_age. Applies
+            to sessions started after it is saved. Omitted or zero on update:
+            the platform default (no longer than session_max_age).
+        max_sessions:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 1000
+          description: >-
+            How many live sessions one person may hold in the organisation at
+            once; null for no limit (the default). Counted and enforced as a
+            session opens, so simultaneous sign-ins cannot exceed it.
+        session_limit_action:
+          type: string
+          enum: [evict_oldest, refuse]
+          description: >-
+            What a sign-in at max_sessions does: evict_oldest ends the person's
+            least recently used session (renewal stops at once; an access token
+            it already issued lasts out its own lifetime, ACCESS_TOKEN_TTL),
+            announced to session.revoked subscribers as session_limit; refuse
+            refuses the sign-in with 403 auth.session_limit. Both are audited.
+        mfa_enforcement:
+          type: string
+          enum: [optional, required, admin_only]
+        settings:
+          type: object
+          additionalProperties: true
     Passkey:
       type: object
       required:

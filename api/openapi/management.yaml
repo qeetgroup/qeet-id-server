@@ -2121,6 +2121,170 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/invites/lookup:
+    post:
+      operationId: post_v1_invites_lookup
+      summary: Look up an invitation (public)
+      description: >-
+        Previews the invitation an emailed link names, so the acceptance screen
+        can show the organisation and address and offer the ways of accepting
+        it. A password is always offered; a passkey where the organisation
+        allows passkeys. account_exists means an account already holds the
+        address, so the invitee signs in and accepts as themselves. Refused like
+        acceptance: invite.link_invalid, invite.invalid (no longer pending),
+        invite.expired. Read-only. The token travels in the body so it stays out
+        of logs.
+      tags:
+        - Invites
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: The invitation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organization:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      slug:
+                        type: string
+                  email:
+                    type: string
+                  expires_at:
+                    type: string
+                    format: date-time
+                  account_exists:
+                    type: boolean
+                  methods:
+                    type: object
+                    properties:
+                      password:
+                        type: boolean
+                      passkey:
+                        type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/invites/accept/passkey/begin:
+    post:
+      operationId: post_v1_invites_accept_passkey_begin
+      summary: Accept an invitation with a passkey — begin (public)
+      description: >-
+        Starts accepting an invitation by founding the new account on a passkey
+        instead of a password, returning the WebAuthn credential-creation
+        options. The account's email and organisation come from the invitation,
+        never from the request. Refused like POST /v1/invites/accept
+        (invite.link_invalid, invite.invalid, invite.expired,
+        invite.account_exists — the invitee signs in and accepts as themselves),
+        and with passkey.disabled when the organisation has passkeys switched
+        off. Starting again replaces an unfinished ceremony for the same
+        invitation; the invitation stays pending until one finishes.
+      tags:
+        - Invites
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                display_name:
+                  type: string
+                  maxLength: 200
+      responses:
+        '200':
+          description: session_id and the publicKey creation options
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/invites/accept/passkey/finish:
+    post:
+      operationId: post_v1_invites_accept_passkey_finish
+      summary: Accept an invitation with a passkey — finish (public)
+      description: >-
+        Verifies the passkey and, in one transaction, creates the account in the
+        inviting organisation with it, grants the invited role and marks the
+        invitation accepted; then signs the invitee in, returning a token pair
+        as POST /v1/invites/accept does. Each ceremony finishes once: a second
+        attempt, or one after the ceremony expired (auth.session_expired),
+        creates nothing and leaves the invitation as it was. Refused, with
+        nothing created, when the invitation was accepted, revoked or expired
+        meanwhile, or the organisation switched passkeys off.
+      tags:
+        - Invites
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session_id
+                - credential
+              properties:
+                session_id:
+                  type: string
+                  format: uuid
+                credential:
+                  type: object
+                  additionalProperties: true
+                name:
+                  type: string
+                  description: The passkey's name; defaults to one from the device.
+      responses:
+        '200':
+          description: Token pair for the new session
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/me/invites:
     get:
       operationId: get_v1_me_invites

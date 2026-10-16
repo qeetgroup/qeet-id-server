@@ -204,6 +204,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	brandingRepo := branding.NewRepository(pool)
 	emailTemplateService := email.NewService(pool)
 	policyRepo := policy.NewRepository(pool)
+	policyRepo.SetSessionDefaults(cfg.SessionMaxAge, cfg.SessionIdleTimeout)
 
 	sender := notifier.New(notifier.Config{
 		EmailProvider:    cfg.EmailProvider,
@@ -243,6 +244,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	recoveryService.SetPasswordRules(authPolicyService)   // password reset
 	recoveryService.SetMagicLinkPolicy(authPolicyService) // magic links only where the tenant allows them, with its lifetime
 	inviteService.SetPasswordRules(authPolicyService)     // invite accept
+	inviteService.SetAcceptMethods(authPolicyService)     // which ways of accepting the acceptance screen offers
 
 	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
 	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
@@ -350,6 +352,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// transaction that ends it; see sessionsignal for reasons and destinations.
 	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
 	authService.SetSessionSignals(sessionSignals)
+	authService.SetSessionLifetime(cfg.SessionMaxAge, cfg.SessionIdleTimeout) // session bounds where the organisation sets none
+	verifier.SessionUsed = authService.SessionUsed                            // a session's last use, for its idle timeout and the session list
 	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
@@ -367,7 +371,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	healthHandler.AddReadiness("db", health.PingDB(pool))
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
-	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
+	oidcService.SetGrantMaxAge(cfg.SessionMaxAge) // grant bound where the organisation sets none
+	oidcService.SetNotifier(notificationService)  // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
 	// UserVerification: Required is load-bearing, not a preference.
 	//
@@ -396,6 +401,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	passkeyService := passkey.NewService(pool, wa, authService)
 	passkeyService.SetMethodPolicy(authPolicyService) // offer and accept new passkeys only where the tenant allows them
+	passkeyService.SetInvitations(inviteService)      // accept an invitation with a passkey
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	socialService.SetCipher(sharedCipher)
 	// Allowlist for the hosted flow's return_to. The callback sets the SSO
@@ -554,6 +560,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		lim.LoadOverrides(rootCtx)
 		return lim
 	}
+	// Magic-link requests are bounded more tightly than sign-in: three per
+	// address, then one every five minutes; ten per caller, then one a minute.
+	magicStore := rlStore
+	if magicStore == nil {
+		magicStore = ratelimit.NewMemStore()
+	}
+	recoveryService.SetMagicLinkLimits(
+		ratelimit.NewWithStore(magicStore, 1.0/300, 3),
+		ratelimit.NewWithStore(magicStore, 1.0/60, 10),
+	)
 	tenantTenantLim := newTenantLim(100, 500, "tenant")
 	tenantUserLim := newTenantLim(30, 100, "user")
 	tenantAPIKeyLim := newTenantLim(50, 200, "api_key")
@@ -584,7 +600,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
 		RBACChecker:   rbacRepo,
 		Verification:  &verification.Handler{Service: verifyService},
-		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev()},
+		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev()},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},

@@ -92,7 +92,7 @@ func main() {
 				if err != nil {
 					return err
 				}
-				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions)
+				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions, "ceremonies", purged.Ceremonies)
 				return nil
 			},
 		},

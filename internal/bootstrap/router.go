@@ -152,6 +152,7 @@ func NewRouter(d Deps) http.Handler {
 	// caller-controlled. Client IP resolution lives in httpx.ClientIP, governed
 	// by TRUSTED_PROXY_HOPS.
 	r.Use(chimw.Recoverer)
+	r.Use(httpx.GeoCountryContext) // the trusted upstream country, for the sessions a request opens
 	r.Use(d.InFlight.Middleware)
 	r.Use(httpx.SecurityHeaders(d.ServiceEnv != config.EnvDev))
 	// Tracing wraps metrics so the server span spans the whole request; both
@@ -451,12 +452,14 @@ func csrfExemptPaths() []string {
 		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
 		"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
 		"/v1/passkeys/login/",
-		"/v1/social/exchange",    // one-time code exchange, no cookie session
-		"/v1/social/*/callback",  // Apple response_mode=form_post lands cross-site
-		"/v1/invites/accept",     //
-		"/v1/billing/webhooks/",  // provider-signed (Stripe/Razorpay), no cookie session
-		"/v1/billing/sandbox/",   // dev-only mock hosted-checkout page + pay (no cookie session)
-		"/v1/agents/token",       // agent-credential auth (no cookie session)
-		"/v1/credentials/verify", // public JWT-VC verification (no cookie session)
+		"/v1/social/exchange",         // one-time code exchange, no cookie session
+		"/v1/social/*/callback",       // Apple response_mode=form_post lands cross-site
+		"/v1/invites/accept",          // invitation token in the body, no cookie session
+		"/v1/invites/accept/passkey/", // the same, accepting with a passkey
+		"/v1/invites/lookup",          // read-only preview by invitation token
+		"/v1/billing/webhooks/",       // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/billing/sandbox/",        // dev-only mock hosted-checkout page + pay (no cookie session)
+		"/v1/agents/token",            // agent-credential auth (no cookie session)
+		"/v1/credentials/verify",      // public JWT-VC verification (no cookie session)
 	}
 }

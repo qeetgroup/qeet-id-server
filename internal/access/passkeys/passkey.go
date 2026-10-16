@@ -25,6 +25,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/passkeys/dbgen"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -49,6 +50,9 @@ type Service struct {
 	// policy says whether an organization permits passkeys (nil = no
 	// restriction). Set via SetMethodPolicy.
 	policy MethodPolicy
+	// invitations lets an invited person found their account on a passkey
+	// (nil = that path is off). Set via SetInvitations; see invite.go.
+	invitations InvitationAcceptor
 }
 
 func NewService(pool *pgxpool.Pool, wa *webauthn.WebAuthn, authSvc *auth.Service) *Service {
@@ -158,8 +162,20 @@ func (s *Service) Rename(ctx context.Context, id, userID uuid.UUID, name string)
 }
 
 // Delete is scoped to the owner so one user can't delete another's passkey.
-func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID) error {
-	n, err := s.q.DeletePasskeyCredential(ctx, dbgen.DeletePasskeyCredentialParams{
+// Delete removes one of the user's own passkeys. ErrNotFound when it is not
+// theirs (nothing is deleted); ErrAuthLastSignInMethod, recorded, when it is
+// their account's only way to sign in.
+func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	methods, err := user.LockSignInMethods(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.WithTx(tx).DeletePasskeyCredential(ctx, dbgen.DeletePasskeyCredentialParams{
 		ID:     id,
 		UserID: userID,
 	})
@@ -169,7 +185,11 @@ func (s *Service) Delete(ctx context.Context, id, userID uuid.UUID) error {
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if methods.Total() <= 1 {
+		_ = tx.Rollback(ctx)
+		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, nil, "passkey", id, by)
+	}
+	return tx.Commit(ctx)
 }
 
 // --- WebAuthn ceremony ---
@@ -409,18 +429,21 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 // the authenticator stores that ID and returns it as the user handle on every
 // sign-in, so the account must answer to it.
 
-// signupSession is a decoded pending-signup ceremony.
+// signupSession is a decoded pending-signup ceremony. inviteID is the
+// invitation it accepts (uuid.Nil for an ordinary sign-up).
 type signupSession struct {
 	subjectID   uuid.UUID
 	email       string
 	displayName string
 	tenantID    uuid.UUID
+	inviteID    uuid.UUID
 	data        *webauthn.SessionData
 }
 
 // storeSignupSession persists an in-flight pre-account registration ceremony.
-// tenantID is uuid.Nil for a tenant-less (direct) signup.
-func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, email, displayName string, tenantID uuid.UUID, data *webauthn.SessionData) (uuid.UUID, error) {
+// tenantID is uuid.Nil for a tenant-less (direct) signup, inviteID for one
+// that accepts no invitation.
+func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, email, displayName string, tenantID, inviteID uuid.UUID, data *webauthn.SessionData) (uuid.UUID, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return uuid.Nil, err
@@ -440,6 +463,7 @@ func (s *Service) storeSignupSession(ctx context.Context, subjectID uuid.UUID, e
 		PendingEmail:       &email,
 		PendingDisplayName: dnPtr,
 		PendingTenantID:    tenantPG,
+		InviteID:           pgtype.UUID{Bytes: inviteID, Valid: inviteID != uuid.Nil},
 	})
 }
 
@@ -473,6 +497,9 @@ func (s *Service) takeSignupSession(ctx context.Context, id uuid.UUID) (*signupS
 	if row.PendingTenantID.Valid {
 		sess.tenantID = uuid.UUID(row.PendingTenantID.Bytes)
 	}
+	if row.PendingInviteID.Valid {
+		sess.inviteID = uuid.UUID(row.PendingInviteID.Bytes)
+	}
 	return sess, nil
 }
 
@@ -497,6 +524,12 @@ func (s *Service) BeginTenantSignup(ctx context.Context, tenantID uuid.UUID, ema
 }
 
 func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
+	return s.beginSignupFor(ctx, tenantID, uuid.Nil, email, displayName)
+}
+
+// beginSignupFor starts a passkey sign-up ceremony for email in tenantID,
+// accepting inviteID (uuid.Nil: none).
+func (s *Service) beginSignupFor(ctx context.Context, tenantID, inviteID uuid.UUID, email, displayName string) (uuid.UUID, *protocol.CredentialCreation, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return uuid.Nil, nil, errs.ErrAuthEmailRequired
@@ -510,9 +543,13 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 	// sessions (5-min TTL) so an abandoned ceremony can't lock the email out.
 	var existsPtr *bool
 	var err error
-	if tenantID == uuid.Nil {
+	switch {
+	case inviteID != uuid.Nil:
+		// The invitation was checked for an existing account, and only its
+		// holder can begin it; the unique email still decides at the end.
+	case tenantID == uuid.Nil:
 		existsPtr, err = s.q.CheckEmailExistsNoTenant(ctx, email)
-	} else {
+	default:
 		existsPtr, err = s.q.CheckEmailExistsForTenant(ctx, dbgen.CheckEmailExistsForTenantParams{
 			Lower:    email,
 			TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
@@ -543,7 +580,7 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 	if err != nil {
 		return uuid.Nil, nil, errs.ErrPasskeyCeremonyFailed.Wrap(err)
 	}
-	id, err := s.storeSignupSession(ctx, subjectID, email, displayName, tenantID, sessionData)
+	id, err := s.storeSignupSession(ctx, subjectID, email, displayName, tenantID, inviteID, sessionData)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
@@ -562,7 +599,12 @@ func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credent
 	if err != nil {
 		return nil, uuid.Nil, err
 	}
-	userID, err := s.createUserFromSignup(ctx, sess, cred, name)
+	// A ceremony that accepts an invitation finishes only through
+	// FinishInviteSignup, which grants the invited role and consumes it.
+	if sess.inviteID != uuid.Nil {
+		return nil, uuid.Nil, errs.ErrPasskeySessionInvalid
+	}
+	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
 	if err != nil {
 		return nil, uuid.Nil, err
 	}
@@ -586,10 +628,10 @@ func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, c
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	if sess.tenantID == uuid.Nil {
+	if sess.tenantID == uuid.Nil || sess.inviteID != uuid.Nil {
 		return uuid.Nil, "", errs.ErrPasskeySessionInvalid
 	}
-	userID, err := s.createUserFromSignup(ctx, sess, cred, name)
+	userID, err := s.createUserFromSignup(ctx, sess, cred, name, nil)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -624,8 +666,10 @@ func (s *Service) verifySignupAttestation(ctx context.Context, sessionID uuid.UU
 }
 
 // createUserFromSignup inserts the user row (no password credential) and
-// attaches the verified passkey as its founding credential, atomically.
-func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession, cred *webauthn.Credential, name string) (uuid.UUID, error) {
+// attaches the verified passkey as its founding credential, atomically. within
+// (may be nil) runs in the same transaction once both exist; its error undoes
+// everything.
+func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession, cred *webauthn.Credential, name string, within func(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error) (uuid.UUID, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -680,6 +724,11 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 			return uuid.Nil, errs.ErrPasskeyExists
 		}
 		return uuid.Nil, err
+	}
+	if within != nil {
+		if err := within(ctx, tx, userID); err != nil {
+			return uuid.Nil, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -924,6 +973,8 @@ func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/signup/passkey/finish", h.signupFinish)
 	r.Post("/register/passkey/begin", h.tenantSignupBegin)
 	r.Post("/register/passkey/finish", h.tenantSignupFinish)
+	r.Post("/invites/accept/passkey/begin", h.inviteSignupBegin)
+	r.Post("/invites/accept/passkey/finish", h.inviteSignupFinish)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
@@ -986,7 +1037,8 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Delete(r.Context(), id, userID); err != nil {
+	by := user.Remover{UserID: &userID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if err := h.Service.Delete(r.Context(), id, userID, by); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

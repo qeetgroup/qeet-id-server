@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"encoding/json"
 	"net"
 	"testing"
+	"time"
 )
 
 // TestPolicyAllowed_DecisionMatrix is the IP allow/deny decision engine: a
@@ -101,5 +103,60 @@ func TestPolicyAllowed_DenyOnlyDoesNotGate(t *testing.T) {
 	}
 	if p.Allowed(net.ParseIP("198.51.100.7")) {
 		t.Error("denied IP must be blocked")
+	}
+}
+
+// TestDurationJSON: session bounds are written as duration strings the console
+// edits, and read back from those or from the nanoseconds earlier responses
+// carried.
+func TestDurationJSON(t *testing.T) {
+	for in, want := range map[time.Duration]string{
+		720 * time.Hour:  `"720h"`,
+		90 * time.Minute: `"90m"`,
+		90 * time.Second: `"1m30s"`,
+	} {
+		got, err := json.Marshal(Duration(in))
+		if err != nil || string(got) != want {
+			t.Errorf("marshal %v = %s, %v; want %s", in, got, err, want)
+		}
+	}
+	for raw, want := range map[string]time.Duration{
+		`"720h"`:           720 * time.Hour,
+		`"30m"`:            30 * time.Minute,
+		`2592000000000000`: 720 * time.Hour,
+	} {
+		var d Duration
+		if err := json.Unmarshal([]byte(raw), &d); err != nil || time.Duration(d) != want {
+			t.Errorf("unmarshal %s = %v, %v; want %v", raw, time.Duration(d), err, want)
+		}
+	}
+	var d Duration
+	if err := json.Unmarshal([]byte(`"a month"`), &d); err == nil {
+		t.Error("an unparseable duration was accepted")
+	}
+}
+
+// TestNormalizeFillsDefaultsAndRefusesOutOfRange: bounds left out take the
+// platform defaults, the idle timeout no longer than the maximum age; values
+// out of range are named.
+func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
+	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
+	p := Policy{PasswordMinLength: 8, PasswordComplexity: "standard", MFAEnforcement: "optional", SessionMaxAge: Duration(2 * time.Hour)}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Fatalf("valid policy refused: %+v", bad)
+	}
+	if time.Duration(p.SessionIdleTimeout) != 2*time.Hour || p.IPAllowlist == nil || p.IPDenylist == nil {
+		t.Errorf("defaults not filled: idle %v allow %v deny %v", time.Duration(p.SessionIdleTimeout), p.IPAllowlist, p.IPDenylist)
+	}
+	p = Policy{PasswordMinLength: 4, PasswordComplexity: "basic", MFAEnforcement: "disabled",
+		SessionMaxAge: Duration(30 * time.Minute), SessionIdleTimeout: Duration(time.Hour)}
+	got := map[string]bool{}
+	for _, f := range r.normalize(&p) {
+		got[f.Field] = true
+	}
+	for _, want := range []string{"session_max_age", "session_idle_timeout", "password_min_length", "password_complexity", "mfa_enforcement"} {
+		if !got[want] {
+			t.Errorf("%s out of range was not named (named: %v)", want, got)
+		}
 	}
 }

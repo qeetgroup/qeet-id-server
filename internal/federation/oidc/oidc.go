@@ -52,11 +52,19 @@ type Service struct {
 	notifier Notifier
 	// limits gates application (relying-party) registration by plan (nil = off).
 	limits PlanLimiter
+	// grantMaxAge ends a grant that long after it starts however often it is
+	// renewed, where its organisation sets no maximum session age of its own.
+	grantMaxAge time.Duration
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour}
 }
+
+// SetGrantMaxAge sets how long an application's grant lasts however often it
+// is renewed, where its organisation sets no maximum session age (config
+// SESSION_MAX_AGE). Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetGrantMaxAge(d time.Duration) { s.grantMaxAge = d }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =
 // unlimited). Satisfied by operations/entitlements.Service, injected via
@@ -819,6 +827,7 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 	if err := q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
 		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
+		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(),
 	}); err != nil {
 		return "", err
 	}
@@ -890,6 +899,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	newID, err := q.InsertRotatedRefreshToken(ctx, dbgen.InsertRotatedRefreshTokenParams{
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
 		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
+		GrantExpiresAt: rt.GrantExpiresAt,
 	})
 	if err != nil {
 		return nil, err

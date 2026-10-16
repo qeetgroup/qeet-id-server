@@ -19,8 +19,10 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
+	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -136,24 +138,53 @@ func NewService(pool *pgxpool.Pool, authSvc *auth.Service, appBaseURL string, po
 	}
 }
 
+// CreateProviderInput adds a provider, or replaces the settings of one the
+// organisation already has. Replacing keeps whether it is switched on, and an
+// empty ClientSecret keeps the stored secret (a new provider needs one).
 type CreateProviderInput struct {
 	TenantID     uuid.UUID `json:"tenant_id"`
 	Provider     string    `json:"provider"`
 	ClientID     string    `json:"client_id"`
 	ClientSecret string    `json:"client_secret"`
 	DiscoveryURL string    `json:"discovery_url"`
+	// ChangedBy is who saved it, for the audit record.
+	ChangedBy ChangedBy `json:"-"`
 }
 
 func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*Provider, error) {
 	if _, err := s.egress.ValidateHTTPURL(in.DiscoveryURL); err != nil {
 		return nil, errs.ErrSocialProviderNoDiscovery
 	}
-	if s.box == nil {
-		return nil, errs.ErrInternalServer.WithDetail("social provider secret encryption is unavailable")
+	if strings.TrimSpace(in.Provider) == "" || strings.TrimSpace(in.ClientID) == "" {
+		return nil, errs.ErrValidationFailed.WithFields([]errs.FieldError{
+			{Field: "client_id", Code: "required", Message: "Enter the provider and its client ID."},
+		})
 	}
-	ciphertext, nonce, err := s.box.Seal(in.TenantID, "social-provider", in.Provider, []byte(in.ClientSecret))
+	replaceSecret := in.ClientSecret != ""
+	var ciphertext, nonce []byte
+	if replaceSecret {
+		var err error
+		if ciphertext, nonce, err = s.sealSecret(in.TenantID, in.Provider, in.ClientSecret); err != nil {
+			return nil, err
+		}
+	}
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var existingID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM tenant.social_providers WHERE tenant_id = $1 AND provider = $2 FOR UPDATE`,
+		in.TenantID, in.Provider).Scan(&existingID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	existing := err == nil
+	if !existing && !replaceSecret {
+		return nil, errs.ErrValidationFailed.WithFields([]errs.FieldError{
+			{Field: "client_secret", Code: "required", Message: "Enter the client secret."},
+		})
 	}
 	var r struct {
 		ID                 uuid.UUID
@@ -163,24 +194,50 @@ func (s *Service) UpsertProvider(ctx context.Context, in CreateProviderInput) (*
 		Enabled            bool
 		CreatedAt          time.Time
 	}
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO tenant.social_providers
-		    (tenant_id, provider, client_id, client_secret, client_secret_ct,
-		     client_secret_nonce, encryption_version, discovery_url)
-		VALUES ($1, $2, $3, '', $4, $5, 1, NULLIF($6, ''))
-		ON CONFLICT (tenant_id, provider) DO UPDATE SET
-		    client_id = EXCLUDED.client_id,
-		    client_secret = '',
-		    client_secret_ct = EXCLUDED.client_secret_ct,
-		    client_secret_nonce = EXCLUDED.client_secret_nonce,
-		    encryption_version = 1,
-		    discovery_url = EXCLUDED.discovery_url,
-		    enabled = TRUE
-		RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
-	`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL).Scan(
-		&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt,
-	)
+	if existing {
+		// Replacing keeps whether the provider is switched on, and the stored
+		// secret when none is given.
+		err = tx.QueryRow(ctx, `
+			UPDATE tenant.social_providers SET
+			    client_id = $3,
+			    discovery_url = NULLIF($6, ''),
+			    client_secret = CASE WHEN $7::boolean THEN '' ELSE client_secret END,
+			    client_secret_ct = CASE WHEN $7::boolean THEN $4 ELSE client_secret_ct END,
+			    client_secret_nonce = CASE WHEN $7::boolean THEN $5 ELSE client_secret_nonce END,
+			    encryption_version = CASE WHEN $7::boolean THEN 1 ELSE encryption_version END
+			WHERE tenant_id = $1 AND provider = $2
+			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
+		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL, replaceSecret).Scan(
+			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt,
+		)
+	} else {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO tenant.social_providers
+			    (tenant_id, provider, client_id, client_secret, client_secret_ct,
+			     client_secret_nonce, encryption_version, discovery_url)
+			VALUES ($1, $2, $3, '', $4, $5, 1, NULLIF($6, ''))
+			RETURNING id, tenant_id, provider, client_id, discovery_url, enabled, created_at
+		`, in.TenantID, in.Provider, in.ClientID, ciphertext, nonce, in.DiscoveryURL).Scan(
+			&r.ID, &r.TenantID, &r.Provider, &r.ClientID, &r.DiscoveryURL, &r.Enabled, &r.CreatedAt,
+		)
+		if pgxerr.IsUnique(err) {
+			// Added by a concurrent save; this one is a replacement after all.
+			return nil, errs.ErrConflict
+		}
+	}
 	if err != nil {
+		return nil, err
+	}
+	action, meta := "social_provider.created", map[string]any{"provider": in.Provider}
+	if existing {
+		action = "social_provider.updated"
+		meta["fields"] = []string{"client_id", "discovery_url"}
+		meta["secret_replaced"] = replaceSecret
+	}
+	if err := s.recordProviderChange(ctx, tx, in.ChangedBy, in.TenantID, r.ID, action, meta); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	p := Provider{
@@ -240,9 +297,28 @@ func (s *Service) ListIdentities(ctx context.Context, userID, tenantID uuid.UUID
 	return out, nil
 }
 
-// Unlink is tenant-scoped so an identity can only be removed within its tenant.
-func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID) error {
-	n, err := s.q.DeleteExternalIdentity(ctx, dbgen.DeleteExternalIdentityParams{
+// Unlink is an administrator removing an identity linked to an account in
+// their organisation: tenant-scoped, so an identity can only be removed within
+// its tenant. Refused, and recorded, when it is the account's only way to sign
+// in.
+func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID, by user.Remover) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var owner uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM "user".external_identities WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID).Scan(&owner); errors.Is(err, pgx.ErrNoRows) {
+		return errs.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	methods, err := user.LockSignInMethods(ctx, tx, owner)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.WithTx(tx).DeleteExternalIdentity(ctx, dbgen.DeleteExternalIdentityParams{
 		ID:       id,
 		TenantID: tenantID,
 	})
@@ -252,7 +328,12 @@ func (s *Service) Unlink(ctx context.Context, id, tenantID uuid.UUID) error {
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if methods.Total() <= 1 {
+		_ = tx.Rollback(ctx)
+		tid := tenantID
+		return user.RefuseLastMethodRemoval(ctx, s.pool, owner, &tid, "linked_identity", id, by)
+	}
+	return tx.Commit(ctx)
 }
 
 // ListIdentitiesForUser returns the caller's connected social accounts. Console
@@ -278,9 +359,20 @@ func (s *Service) ListIdentitiesForUser(ctx context.Context, userID uuid.UUID) (
 	return out, nil
 }
 
-// UnlinkForUser removes one of the caller's connected platform social accounts.
-func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID) error {
-	n, err := s.q.DeletePlatformSocialIdentityForUser(ctx, dbgen.DeletePlatformSocialIdentityForUserParams{
+// UnlinkForUser removes one of the caller's connected platform social
+// accounts. ErrNotFound when it is not theirs (nothing is removed); refused,
+// and recorded, when it is their account's only way to sign in.
+func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID, by user.Remover) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	methods, err := user.LockSignInMethods(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+	n, err := s.q.WithTx(tx).DeletePlatformSocialIdentityForUser(ctx, dbgen.DeletePlatformSocialIdentityForUserParams{
 		ID:     id,
 		UserID: userID,
 	})
@@ -290,7 +382,11 @@ func (s *Service) UnlinkForUser(ctx context.Context, id, userID uuid.UUID) error
 	if n == 0 {
 		return errs.ErrNotFound
 	}
-	return nil
+	if methods.Total() <= 1 {
+		_ = tx.Rollback(ctx)
+		return user.RefuseLastMethodRemoval(ctx, s.pool, userID, nil, "linked_identity", id, by)
+	}
+	return tx.Commit(ctx)
 }
 
 const (
@@ -352,8 +448,10 @@ func (s *Service) loadProvider(ctx context.Context, tenantID uuid.UUID, provider
 	if err != nil {
 		return pc, err
 	}
+	// Switched off reads exactly like never set up: an unauthenticated
+	// caller cannot tell an organisation has switched a provider off.
 	if !enabled {
-		return pc, errs.ErrSocialProviderDisabled
+		return pc, errs.ErrSocialProviderNotConfigured
 	}
 	if discoveryURL == nil || *discoveryURL == "" {
 		return pc, errs.ErrSocialProviderNoDiscovery
@@ -740,6 +838,8 @@ type Handler struct {
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/social/providers", h.upsertProvider)
+	r.Patch("/social/providers/{provider}", h.updateProvider)
+	r.Delete("/social/providers/{provider}", h.deleteProvider)
 	r.Get("/tenants/{tenantID}/social/providers", h.listProviders)
 	r.Get("/users/{userID}/social/identities", h.listIdentities)
 	r.Delete("/social/identities/{id}", h.unlink)
@@ -791,6 +891,7 @@ func (h *Handler) upsertProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tenantID // scope comes from the principal, never the body
+	in.ChangedBy = changedBy(r)
 	p, err := h.Service.UpsertProvider(r.Context(), in)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -852,7 +953,12 @@ func (h *Handler) unlink(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.Unlink(r.Context(), id, tenantID); err != nil {
+	var by user.Remover
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		by.UserID = p.UserID
+	}
+	by.IP, by.UserAgent, by.RequestID = httpx.ClientIP(r), r.UserAgent(), httpx.RequestID(r)
+	if err := h.Service.Unlink(r.Context(), id, tenantID, by); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -909,7 +1015,8 @@ func (h *Handler) unlinkMine(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
 		return
 	}
-	if err := h.Service.UnlinkForUser(r.Context(), id, *p.UserID); err != nil {
+	by := user.Remover{UserID: p.UserID, IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if err := h.Service.UnlinkForUser(r.Context(), id, *p.UserID, by); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

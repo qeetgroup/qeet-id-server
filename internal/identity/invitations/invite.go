@@ -52,6 +52,9 @@ type Service struct {
 	rules PasswordRules
 	// limits gates invite creation by the plan seat limit (nil = off).
 	limits PlanLimiter
+	// methods says which ways of accepting an organisation allows (nil = a
+	// password only). Set via SetAcceptMethods; see passkey.go.
+	methods AcceptMethods
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {

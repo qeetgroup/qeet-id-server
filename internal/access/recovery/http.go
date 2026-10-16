@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 // tokenIssuer is the slice of auth.Service this handler needs (mockable).
 type tokenIssuer interface {
 	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
+	CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error)
 }
 
 type Handler struct {
@@ -26,6 +28,9 @@ type Handler struct {
 	// development (SERVICE_ENV=dev), so the flow is completable without a real
 	// email provider. Never enabled in production.
 	DevMode bool
+	// CookieSecure marks the hosted-login session cookie a hosted magic link
+	// opens Secure; set from SERVICE_ENV != "dev".
+	CookieSecure bool
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -33,6 +38,8 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/reset-password", h.reset)
 	r.Post("/auth/magic-link/start", h.magicStart)
 	r.Post("/auth/magic-link/consume", h.magicConsume)
+	r.Post("/auth/magic-link/session", h.magicSession)
+	r.Post("/auth/magic-link/resend", h.magicResend)
 }
 
 type forgotInput struct {
@@ -114,17 +121,34 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 }
 
 type magicStartInput struct {
+	// TenantID is the organisation whose sign-in page asks; omitted from the
+	// console's.
 	TenantID uuid.UUID `json:"tenant_id"`
 	Email    string    `json:"email"`
+	// App "hosted_login" opens the link in the hosted login, continuing at
+	// ReturnTo (kept only if it is this service's authorize endpoint).
+	App      string `json:"app,omitempty"`
+	ReturnTo string `json:"return_to,omitempty"`
 }
 
+// magicFloor is how long a magic-link request takes at least, so its timing
+// does not reveal whether a link was sent.
+const magicFloor = 250 * time.Millisecond
+
 func (h *Handler) magicStart(w http.ResponseWriter, r *http.Request) {
+	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), magicFloor)
 	var in magicStartInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.StartMagicLink(r.Context(), in.TenantID, in.Email); err != nil {
+	if err := h.Service.RequestMagicLink(r.Context(), MagicLinkRequest{
+		Email:    in.Email,
+		TenantID: in.TenantID,
+		App:      in.App,
+		ReturnTo: authorizeReturnTo(r, in.ReturnTo),
+		Caller:   httpx.ClientIP(r),
+	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -160,4 +184,45 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+// magicSession exchanges a hosted-login magic link for the hosted-login
+// session cookie and says where the sign-in journey continues.
+func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
+	var in magicConsumeInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ac := AuditCtx{IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	res, err := h.Service.ConsumeHostedMagicLink(r.Context(), in.Token, ac)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	raw, err := h.AuthService.CreateLoginSession(r.Context(), res.UserID, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID, "return_to": res.ReturnTo})
+}
+
+// magicResend sends a new link in place of the one a token names, to the same
+// address — for a link that was used or has expired.
+func (h *Handler) magicResend(w http.ResponseWriter, r *http.Request) {
+	defer httpx.ConstantTimeFloor(r.Context(), time.Now(), magicFloor)
+	var in magicConsumeInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.Service.ResendMagicLink(r.Context(), in.Token, httpx.ClientIP(r)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "If an account exists for that email, we've sent a new sign-in link.",
+	})
 }

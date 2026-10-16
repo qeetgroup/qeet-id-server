@@ -233,3 +233,32 @@ func TestLoad_RejectsUnsafeSignInLockout(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_SessionLifetimeDefaults(t *testing.T) {
+	setRequiredEnv(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("defaults should load: %v", err)
+	}
+	if c.SessionMaxAge != 720*time.Hour || c.SessionIdleTimeout != 24*time.Hour {
+		t.Errorf("session defaults = %v / %v, want 720h / 24h", c.SessionMaxAge, c.SessionIdleTimeout)
+	}
+}
+
+func TestLoad_RejectsUnusableSessionLifetime(t *testing.T) {
+	for name, env := range map[string][2]string{
+		"maximum age under an hour":           {"SESSION_MAX_AGE", "30m"},
+		"maximum age over a year":             {"SESSION_MAX_AGE", "9000h"},
+		"idle timeout under 15 minutes":       {"SESSION_IDLE_TIMEOUT", "10m"},
+		"idle timeout over the maximum age":   {"SESSION_IDLE_TIMEOUT", "721h"},
+		"access tokens outliving idle bounds": {"ACCESS_TOKEN_TTL", "15m"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv(env[0], env[1])
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), env[0]) {
+				t.Errorf("%s=%s: want a session lifetime error naming it, got %v", env[0], env[1], err)
+			}
+		})
+	}
+}
