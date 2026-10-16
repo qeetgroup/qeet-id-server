@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
@@ -67,7 +68,9 @@ func mustIssuer() *tokens.Issuer {
 func newAuth() (*auth.Service, *user.Repository) {
 	users := user.NewRepository(testPool)
 	issuer := mustIssuer()
-	return auth.NewService(testPool, users, issuer), users
+	svc := auth.NewService(testPool, users, issuer)
+	svc.SetRegistrationPolicy(authpolicy.NewService(testPool)) // the password check, as bootstrap wires it
+	return svc, users
 }
 
 func TestOrganizationSelectionEligibility(t *testing.T) {
@@ -225,6 +228,7 @@ func TestLoginMFAEnforcement(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	svc := auth.NewService(testPool, users, mustIssuer())
+	svc.SetRegistrationPolicy(authpolicy.NewService(testPool))
 	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	mfaSvc.SetCipher(testEnvelope(t))
 	svc.SetMFA(mfaSvc)
@@ -303,6 +307,7 @@ func TestMFALoginAttemptBudgetAndConcurrentConsumption(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	authService := auth.NewService(testPool, users, mustIssuer())
+	authService.SetRegistrationPolicy(authpolicy.NewService(testPool))
 	mfaService := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	mfaService.SetCipher(testEnvelope(t))
 	authService.SetMFA(mfaService)
@@ -418,6 +423,7 @@ func TestChangePasswordIsAtomicWithSessionRevocationAndEvidence(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	service := auth.NewService(testPool, users, mustIssuer())
+	service.SetRegistrationPolicy(authpolicy.NewService(testPool))
 
 	createAccount := func(prefix string) (*auth.TokenPair, *user.User) {
 		t.Helper()
@@ -672,6 +678,7 @@ func TestAdminResetMFA(t *testing.T) {
 	ctx := context.Background()
 	users := user.NewRepository(testPool)
 	svc := auth.NewService(testPool, users, mustIssuer())
+	svc.SetRegistrationPolicy(authpolicy.NewService(testPool))
 	mfaSvc := mfa.NewService(testPool, "qeet", notifier.LogSender{}, "")
 	mfaSvc.SetCipher(testEnvelope(t))
 

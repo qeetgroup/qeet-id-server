@@ -26,12 +26,27 @@ type mfaResetter interface {
 type Handler struct {
 	Repo     *Repository
 	Validate *validator.Validate
-	// PasswordPolicy enforces the tenant's password complexity rules on a
-	// password change. Optional; nil skips the check (e.g. tests). Kept as a
-	// function so the user package needn't depend on the authpolicy package.
-	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, password string) error
+	// PasswordPolicy is the password check every password this handler sets
+	// goes through (admin create, bulk import, admin set-password): the
+	// tenant's rules, the offline strength baseline and, when enabled, the
+	// breach check. Required to set a password — nil refuses (501) rather than
+	// store an unchecked one. A function so the user package needn't depend on
+	// the authpolicy package (authpolicy.Service.ValidateForTenant).
+	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, email, password string) error
 	// MFA resets a user's second factors (admin recovery). Optional.
 	MFA mfaResetter
+}
+
+// hashNewPassword checks a password for an account in tenantID with the given
+// email, then hashes it.
+func (h *Handler) hashNewPassword(ctx context.Context, tenantID uuid.UUID, email, plain string) (string, error) {
+	if h.PasswordPolicy == nil {
+		return "", errs.ErrNotImplemented
+	}
+	if err := h.PasswordPolicy(ctx, tenantID, email, plain); err != nil {
+		return "", err
+	}
+	return password.Hash(plain)
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -260,9 +275,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
+	// The password is checked before anything is written, so a refused one
+	// leaves no user row behind.
 	var hash string
 	if in.Password != "" {
-		ph, err := password.Hash(in.Password)
+		ph, err := h.hashNewPassword(r.Context(), tenantID, in.Email, in.Password)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
@@ -444,7 +461,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 type setPasswordInput struct {
-	Password string `json:"password" validate:"required,min=8,max=256"`
+	Password string `json:"password" validate:"required,max=256"` // length + rules: PasswordPolicy
 }
 
 func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
@@ -462,14 +479,12 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	// Enforce the tenant's password-complexity policy when set.
-	if h.PasswordPolicy != nil {
-		if perr := h.PasswordPolicy(r.Context(), tenantID, in.Password); perr != nil {
-			httpx.WriteError(w, r, perr)
-			return
-		}
+	target, err := h.Repo.Get(r.Context(), id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
 	}
-	hash, err := password.Hash(in.Password)
+	hash, err := h.hashNewPassword(r.Context(), tenantID, target.Email, in.Password)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

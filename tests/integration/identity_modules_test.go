@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/groups"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations"
 	"github.com/qeetgroup/qeet-id-server/internal/identity/tenant"
@@ -119,6 +120,7 @@ func TestInviteService_AcceptProvisionsUser_RevokeBlocks(t *testing.T) {
 	ctx := context.Background()
 	tid := createTenant(t, ctx, uniqueSlug("inv"))
 	svc := invite.NewService(testPool, &captureSender{}, time.Hour, "http://app.test")
+	svc.SetPasswordRules(authpolicy.NewService(testPool))
 
 	email := uniqueSlug("invitee") + "@example.com"
 	_, raw, err := svc.Create(ctx, invite.CreateInput{TenantID: tid, Email: email}, nil)

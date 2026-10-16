@@ -20,7 +20,6 @@ import (
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
@@ -32,15 +31,13 @@ type Service struct {
 	q      *dbgen.Queries
 	users  *user.Repository
 	tokens *tokens.Issuer
-	// breach is the optional breached-password checker (nil = feature off,
-	// a no-op). Set via SetBreachChecker; consulted on Signup.
-	breach *hibp.Checker
 	// mfa gates login on a second factor (nil = MFA-at-login off). Set via
 	// SetMFA; kept as an interface so package auth doesn't import package mfa.
 	mfa MFAEnroller
-	// regPolicy gates hosted self-registration and validates new passwords
-	// against the tenant policy (nil = self-registration off). Set via
-	// SetRegistrationPolicy; an interface so auth doesn't import authpolicy.
+	// regPolicy gates hosted self-registration and is the password check every
+	// password this service sets goes through (nil = self-registration off, and
+	// no password can be set). Set via SetRegistrationPolicy; an interface so
+	// auth doesn't import authpolicy.
 	regPolicy RegistrationPolicy
 	// anomaly receives security signals (nil = recording off). Set via
 	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
@@ -100,17 +97,29 @@ type MFAEnroller interface {
 func (s *Service) SetMFA(m MFAEnroller) { s.mfa = m }
 
 // RegistrationPolicy is the slice of the auth-policy service the auth package
-// needs to run hosted self-registration: the per-tenant on/off gate and the
-// per-tenant password validation (length/complexity + breach). Satisfied by
+// needs: the per-tenant self-registration gate, and the one password check
+// every path that sets a password runs — the rules of the organisation the
+// account belongs to (uuid.Nil = none: the platform baseline), the offline
+// strength baseline and, when enabled, the breach check. Satisfied by
 // *authpolicy.Service. Wired in internal/bootstrap/dependencies.go via SetRegistrationPolicy.
 type RegistrationPolicy interface {
 	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
-	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, pw string) error
+	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
 }
 
 // SetRegistrationPolicy wires the hosted self-registration gate + password
 // policy. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
+
+// checkNewPassword runs the password check for an account in tenantID
+// (uuid.Nil = no organisation). With no policy wired it refuses rather than
+// store a password nothing has checked.
+func (s *Service) checkNewPassword(ctx context.Context, tenantID uuid.UUID, email, plain string) error {
+	if s.regPolicy == nil {
+		return errs.ErrNotImplemented
+	}
+	return s.regPolicy.ValidateForTenant(ctx, tenantID, email, plain)
+}
 
 // SelfRegistrationEnabled reports whether tenantID allows hosted self-service
 // signup. Exposed so other access-domain services (e.g. the passkey-first
@@ -199,10 +208,6 @@ type LoginSessionResult struct {
 	Methods     []string
 }
 
-// SetBreachChecker wires the breached-password checker. Called from
-// internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
-func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
-
 type LoginInput struct {
 	Email     string
 	Password  string
@@ -250,16 +255,9 @@ type TokenPair struct {
 
 // Signup creates a tenant-less identity (user + password + session) and logs them in; no tenant or role is created.
 func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user.User, *TenantBrief, error) {
-	// Password strength gate. The offline baseline (common-password denylist,
-	// equals-email, uniform/sequential) always runs — no network, works in dev.
-	if reason := password.WeakReason(in.Password, in.Email); reason != "" {
-		return nil, nil, nil, errs.ErrAuthPasswordWeak.WithMessage(reason)
-	}
-	// Breached-password gate. Tenant-less, so there's no per-tenant policy to
-	// consult here — just the global HIBP signal. No-op when disabled (nil
-	// checker) and fail-open inside PwnedAllowOnError.
-	if s.breach.PwnedAllowOnError(ctx, in.Password) {
-		return nil, nil, nil, errs.ErrAuthPasswordBreached
+	// The account belongs to no organisation, so the platform baseline applies.
+	if err := s.checkNewPassword(ctx, uuid.Nil, in.Email, in.Password); err != nil {
+		return nil, nil, nil, err
 	}
 	hash, err := password.Hash(in.Password)
 	if err != nil {
@@ -442,8 +440,8 @@ func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID,
 
 // RegisterInTenant creates a new end-user in the given tenant from the hosted
 // signup flow and signs them in by minting the SSO session cookie value. It is
-// gated by the tenant's self_registration_enabled policy and validates the
-// password against that tenant's policy (length/complexity + breach). Returns
+// gated by the tenant's self_registration_enabled policy and checks the
+// password against that tenant's rules (see RegistrationPolicy). Returns
 // the created user and the raw cookie value to write via SetLoginSessionCookie.
 func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, string, error) {
 	if s.regPolicy == nil {
@@ -456,12 +454,7 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	if !enabled {
 		return nil, "", errs.ErrAuthSelfRegistrationDisabled
 	}
-	// Offline strength baseline (denylist, equals-email, sequential), then the
-	// tenant policy (length/complexity) and the breach gate inside ValidateForTenant.
-	if reason := password.WeakReason(plain, email); reason != "" {
-		return nil, "", errs.ErrAuthPasswordWeak.WithMessage(reason)
-	}
-	if err := s.regPolicy.ValidateForTenant(ctx, tenantID, plain); err != nil {
+	if err := s.checkNewPassword(ctx, tenantID, email, plain); err != nil {
 		return nil, "", err
 	}
 	hash, err := password.Hash(plain)
@@ -1162,9 +1155,19 @@ type ChangePasswordInput struct {
 // ChangePassword atomically updates the credential, revokes every other
 // session, and records durable audit/outbox evidence. The authenticated current
 // session remains active so the user is not signed out of the initiating flow.
+//
+// The new password is checked against the rules of the organisation the
+// account belongs to — not the session's tenant, which the user chooses — or
+// the platform baseline for a tenant-less account. The check runs before the
+// current password is verified and depends only on the new one, so a refusal
+// says nothing about the stored credential.
 func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) error {
-	if s.breach.PwnedAllowOnError(ctx, in.Next) {
-		return errs.ErrAuthPasswordBreached
+	account, err := s.users.Get(ctx, in.UserID)
+	if err != nil {
+		return err
+	}
+	if err := s.checkNewPassword(ctx, account.TenantID, account.Email, in.Next); err != nil {
+		return err
 	}
 	nh, err := password.Hash(in.Next)
 	if err != nil {

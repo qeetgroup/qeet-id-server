@@ -18,7 +18,6 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/invitations/dbgen"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -48,9 +47,9 @@ type Service struct {
 	sender     notifier.Sender
 	ttl        time.Duration
 	baseAppURL string
-	// breach is the optional breached-password checker (nil = feature off, a
-	// no-op). Set via SetBreachChecker; consulted on Accept.
-	breach *hibp.Checker
+	// rules checks the invitee's password on Accept (nil = Accept is refused
+	// rather than set an unchecked password). Set via SetPasswordRules.
+	rules PasswordRules
 	// limits gates invite creation by the plan seat limit (nil = off).
 	limits PlanLimiter
 }
@@ -62,9 +61,17 @@ func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, b
 	return &Service{pool: pool, q: dbgen.New(pool), sender: sender, ttl: ttl, baseAppURL: baseAppURL}
 }
 
-// SetBreachChecker wires the breached-password checker. Called from
-// internal/bootstrap/dependencies.go only when BREACHED_PASSWORD_CHECK is enabled.
-func (s *Service) SetBreachChecker(c *hibp.Checker) { s.breach = c }
+// PasswordRules is the one password check every path that sets a password
+// runs: the organisation's rules, the offline strength baseline and, when
+// enabled, the breach check. Satisfied by *authpolicy.Service; an interface so
+// this package doesn't import it.
+type PasswordRules interface {
+	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
+}
+
+// SetPasswordRules wires the password check run on Accept. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetPasswordRules(r PasswordRules) { s.rules = r }
 
 // PlanLimiter returns the numeric cap for a plan-gated resource (negative =
 // unlimited). Satisfied by operations/entitlements.Service, injected via
@@ -263,7 +270,7 @@ func (s *Service) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
 
 type AcceptInput struct {
 	Token       string `json:"token" validate:"required"`
-	Password    string `json:"password" validate:"required,min=8"`
+	Password    string `json:"password" validate:"required,max=256"` // length + rules: checked in Accept
 	DisplayName string `json:"display_name" validate:"omitempty,max=200"`
 }
 
@@ -273,10 +280,8 @@ type AcceptResult struct {
 }
 
 func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, error) {
-	// Breached-password gate before any DB work. No-op when disabled (nil
-	// checker) and fail-open inside PwnedAllowOnError.
-	if s.breach.PwnedAllowOnError(ctx, in.Password) {
-		return nil, errs.ErrAuthPasswordBreached
+	if s.rules == nil {
+		return nil, errs.ErrNotImplemented
 	}
 	hash := codes.Hash(in.Token)
 	tx, err := s.pool.Begin(ctx)
@@ -312,6 +317,11 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (*AcceptResult, er
 		return nil, err
 	}
 
+	// The new account will belong to the inviting organisation, so its rules
+	// apply. Checked once the invite is known to be good.
+	if err := s.rules.ValidateForTenant(ctx, inv.TenantID, inv.Email, in.Password); err != nil {
+		return nil, err
+	}
 	pwHash, err := password.Hash(in.Password)
 	if err != nil {
 		return nil, err

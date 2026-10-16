@@ -333,7 +333,7 @@ paths:
   /v1/auth/reset-password:
     post:
       operationId: post_v1_auth_reset_password
-      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. On success the password is updated and the user can sign in with the new credentials.'
+      description: 'Completes the password-reset flow started by the forgot-password call by consuming the emailed token and setting the new password. The token is single-use and time-limited, so an expired or already-redeemed token is rejected. The new password is checked against the rules of the organisation the account belongs to (the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed and leaves the password and the token unchanged. On success the password is updated and the user can sign in with the new credentials.'
       summary: Reset password
       tags:
         - Auth
@@ -475,8 +475,9 @@ paths:
       description: |
         Creates a new end-user in the client's tenant and sets the SSO cookie
         (qe_ls) so they continue into the OAuth authorize flow. Gated by the
-        tenant's self_registration_enabled policy (403 when disabled).
-        Enumeration-safe: an existing email returns a neutral 422.
+        tenant's self_registration_enabled policy (403 when disabled). The
+        password must meet that tenant's password rules (422 naming the rule
+        that failed). Enumeration-safe: an existing email returns a neutral 422.
       tags:
         - Auth
       security: []
@@ -545,7 +546,7 @@ paths:
     post:
       operationId: post_v1_auth_password
       summary: Change or set my password
-      description: Rotates (or sets) the signed-in user's password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password is checked against the breached-password list. Self-service and tenant-independent.
+      description: Rotates (or sets) the signed-in user's password. current_password is required only when one is already set; a social/passkey account may set one by omitting it. Other sessions are revoked. The new password must meet the rules of the organisation the account belongs to (not the session's tenant; the platform baseline of 8 characters for an account with no organisation), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed. Self-service.
       tags:
         - Auth
       security:
@@ -741,7 +742,7 @@ paths:
   /v1/auth/signup:
     post:
       operationId: post_v1_auth_signup
-      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. A duplicate email is rejected, and the endpoint is rate limited.'
+      description: 'Registers a new user from an email and password and returns a token pair alongside the created user record. The password must meet the platform baseline (8 characters), the offline strength baseline and, when enabled, the breached-password check (422 naming the rule that failed). The new user is tenant-less: no tenant is created here, so the returned token carries no tenant scope. Create a tenant through the Identity Management API before any tenant-scoped call, after which the creator becomes the tenant owner. A duplicate email is rejected, and the endpoint is rate limited.'
       summary: Sign up
       tags:
         - Auth

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
@@ -69,7 +70,9 @@ func createTenantUser(t *testing.T, ctx context.Context, tenantID uuid.UUID, ema
 }
 
 func newRecovery(sender notifier.Sender) *recovery.Service {
-	return recovery.NewService(testPool, sender, time.Hour, "http://app.test")
+	svc := recovery.NewService(testPool, sender, time.Hour, "http://app.test")
+	svc.SetPasswordRules(authpolicy.NewService(testPool)) // the password check, as bootstrap wires it
+	return svc
 }
 
 // Full password-reset round-trip: a reset email is emitted, the emailed token
@@ -115,8 +118,8 @@ func TestPasswordReset_RoundTripAndSingleUse(t *testing.T) {
 	}
 }
 
-// Weak passwords are rejected before any token lookup, and an unknown token is
-// rejected for a strong password.
+// A reset with an unknown token is rejected whatever the password: the
+// password is checked against the account's rules once the link resolves.
 func TestPasswordReset_RejectsWeakAndInvalid(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
