@@ -722,7 +722,7 @@ paths:
   /v1/oauth/userinfo:
     get:
       operationId: get_v1_oauth_userinfo
-      description: 'Returns OpenID Connect UserInfo claims for the subject identified by the presented bearer access token (or API key), with Qeet acting as the OpenID provider. The response includes at least the subject and tenant identifiers. Advertised as userinfo_endpoint in discovery.'
+      description: 'Returns OpenID Connect UserInfo claims for the subject identified by the presented bearer access token (or API key), with Qeet acting as the OpenID provider. The response includes at least the subject and tenant identifiers. Advertised as userinfo_endpoint in discovery. Accepts an access token issued to an application (one carrying client_id) — the one authenticated endpoint that does.'
       summary: UserInfo
       tags:
         - OIDC
@@ -3954,7 +3954,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Authenticated but not permitted
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
       content:
         application/json:
           schema:

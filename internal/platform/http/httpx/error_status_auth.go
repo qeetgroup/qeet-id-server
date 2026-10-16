@@ -17,6 +17,7 @@ func init() {
 		errs.CodeAuthNotTenantMember:          http.StatusForbidden,
 		errs.CodeAuthSelfRegistrationDisabled: http.StatusForbidden,
 		errs.CodeAuthMethodDisabled:           http.StatusForbidden,
+		errs.CodeAuthApplicationToken:         http.StatusForbidden,
 		errs.CodeAuthPasswordWeak:             http.StatusUnprocessableEntity,
 		errs.CodeAuthMFAChallengeExpired:      http.StatusUnauthorized,
 		errs.CodeAuthRefreshTokenInvalid:      http.StatusUnauthorized,

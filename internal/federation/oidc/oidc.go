@@ -654,16 +654,12 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		access string
 		exp    time.Time
 	)
-	switch {
-	case actorSubject != "" && resource != "":
-		access, exp, err = s.issuer.IssueAccessActorResource(userID, claims.TenantID, sid, scopeStr, actorSubject, resource)
-	case actorSubject != "":
-		access, exp, err = s.issuer.IssueAccessActor(userID, claims.TenantID, sid, scopeStr, actorSubject)
-	case resource != "":
-		access, exp, err = s.issuer.IssueAccessResource(userID, claims.TenantID, sid, scopeStr, resource)
-	default:
-		access, exp, err = s.issuer.IssueAccess(userID, claims.TenantID, sid, scopeStr)
-	}
+	// Issued to the requesting client, which it names: an exchange cannot turn
+	// an application token into one the management API accepts.
+	access, exp, err = s.issuer.IssueClientAccess(tokens.ClientAccess{
+		UserID: userID, TenantID: claims.TenantID, SessionID: sid, Scopes: scopeStr,
+		ActorSubject: actorSubject, Resource: resource, ClientID: clientID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -780,7 +776,9 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 
 	sessionID := uuid.New()
 	// RFC 8707: bind the token's audience to the requested resource (if any).
-	access, _, err := s.issuer.IssueAccessResource(userID, tenantID, sessionID, strings.Join(scopes, " "), resource)
+	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
+		UserID: userID, TenantID: tenantID, SessionID: sessionID, Scopes: strings.Join(scopes, " "), Resource: resource, ClientID: clientID,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +907,9 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	tenantID := rt.TenantID
 	scopes := rt.Scopes
 
-	access, _, err := s.issuer.IssueAccessResource(userID, tenantID, uuid.New(), strings.Join(scopes, " "), resource)
+	access, _, err := s.issuer.IssueClientAccess(tokens.ClientAccess{
+		UserID: userID, TenantID: tenantID, SessionID: uuid.New(), Scopes: strings.Join(scopes, " "), Resource: resource, ClientID: clientID,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -86,6 +86,7 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				sid := claims.SessionID
 				p.SessionID = &sid
 			}
+			p.ClientID = claims.ClientID
 			// AI-agent token: capture the agent id and enforce the agent's
 			// current lifecycle status, so a suspended/decommissioned agent's
 			// still-valid tokens are denied immediately (within one request).

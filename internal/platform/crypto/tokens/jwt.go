@@ -57,6 +57,11 @@ type Claims struct {
 	// exchange with an actor_token), naming the party acting on the subject's
 	// behalf — e.g. an AI agent exercising a user's authority. Absent otherwise.
 	Act *ActClaim `json:"act,omitempty"`
+	// ClientID names the application a token was issued to through the
+	// authorization server (RFC 9068 client_id): authorization code, refresh,
+	// device, back-channel and token exchange. Empty on the user's own
+	// (first-party) tokens. The management API refuses tokens that carry it.
+	ClientID string `json:"client_id,omitempty"`
 	// Custom carries tenant-supplied claims from a post-login Auth Hook
 	// (authhook.Service.Run), namespaced under "claims" rather than merged into
 	// the top level so a hook can never shadow a reserved/registered claim.
@@ -305,14 +310,14 @@ func (i *Issuer) replaceKeyring(activePrivatePEM string, verificationKeys []veri
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil)
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "")
 }
 
 // IssueAccessActor mints an access token like IssueAccess but with an RFC 8693
 // actor (act) claim, marking it a delegated token: the subject's authority is
 // being exercised by actorSubject (e.g. an AI agent acting for a user).
 func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil)
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "")
 }
 
 // IssueAccessResource mints an access token whose audience carries an RFC 8707
@@ -321,14 +326,14 @@ func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes,
 // appended, letting a downstream resource server (e.g. an MCP server) confirm
 // the token was minted for it. An empty resource behaves like IssueAccess.
 func (i *Issuer) IssueAccessResource(userID, tenantID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil)
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "")
 }
 
 // IssueAccessClaims mints an access token like IssueAccess but with additional
 // tenant-supplied custom claims (see Claims.Custom), sourced from a post-login
 // Auth Hook. A nil/empty map behaves like IssueAccess.
 func (i *Issuer) IssueAccessClaims(userID, tenantID, sessionID uuid.UUID, scopes string, custom map[string]any) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom)
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom, "")
 }
 
 // IssueAccessActorResource combines IssueAccessActor and IssueAccessResource:
@@ -336,10 +341,34 @@ func (i *Issuer) IssueAccessClaims(userID, tenantID, sessionID uuid.UUID, scopes
 // resource indicator. This is the token-exchange grant's MCP case — an agent
 // token scoped to one specific downstream resource server.
 func (i *Issuer) IssueAccessActorResource(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil)
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "")
 }
 
-func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any) (string, time.Time, error) {
+// ClientAccess describes an access token issued to an application on a
+// user's behalf (see IssueClientAccess).
+type ClientAccess struct {
+	UserID, TenantID, SessionID uuid.UUID
+	Scopes                      string
+	// ActorSubject, when set, adds an RFC 8693 act claim (delegated token).
+	ActorSubject string
+	// Resource, when set, binds the audience to an RFC 8707 resource.
+	Resource string
+	// ClientID is the application the token is issued to.
+	ClientID string
+}
+
+// IssueClientAccess mints the access token an application receives from the
+// authorization server. It carries client_id, so the management API can tell
+// it from the user's own tokens and refuse it.
+func (i *Issuer) IssueClientAccess(in ClientAccess) (string, time.Time, error) {
+	var act *ActClaim
+	if in.ActorSubject != "" {
+		act = &ActClaim{Subject: in.ActorSubject}
+	}
+	return i.issueAccess(in.UserID, in.TenantID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID)
+}
+
+func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string) (string, time.Time, error) {
 	now := time.Now().UTC()
 	exp := now.Add(i.accessTTL)
 	aud := jwt.ClaimStrings{i.audience}
@@ -353,6 +382,7 @@ func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 		Scope:     scopes,
 		Act:       act,
 		Custom:    custom,
+		ClientID:  clientID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    i.issuer,
 			Audience:  aud,

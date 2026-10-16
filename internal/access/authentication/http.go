@@ -587,10 +587,12 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	// it; a browser calling directly also drops its cookie.
 	ClearLoginSessionCookie(w, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"revoked":               ended.Total(),
-		"sessions":              ended.Sessions,
-		"hosted_login_sessions": ended.LoginSessions,
-		"app_grants":            ended.AppGrants,
+		"revoked":                ended.Total(),
+		"sessions":               ended.Sessions,
+		"hosted_login_sessions":  ended.LoginSessions,
+		"app_grants":             ended.AppGrants,
+		"trusted_devices":        ended.TrustedDevices,
+		"pending_authorizations": ended.PendingAuthorizations,
 	})
 }
 

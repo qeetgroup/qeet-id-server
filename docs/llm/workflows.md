@@ -59,6 +59,10 @@ path or body, and carry `WHERE tenant_id = $1` into every query.
 **The coverage gate will fail CI** if the route is not in an OpenAPI document —
 `tests/integration/coverage_test.go`.
 
+A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
+by default: they are for the application's own use, not account or organisation management. Only routes
+meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test).
+
 ---
 
 ## Add a database change

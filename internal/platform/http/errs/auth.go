@@ -15,6 +15,7 @@ const (
 	CodeAuthNotTenantMember          = "auth.not_tenant_member"
 	CodeAuthSelfRegistrationDisabled = "auth.self_registration_disabled"
 	CodeAuthMethodDisabled           = "auth.method_disabled"
+	CodeAuthApplicationToken         = "auth.application_token"
 	CodeAuthPasswordWeak             = "auth.password_weak"
 	CodeAuthMFAChallengeExpired      = "auth.mfa_challenge_expired"
 	CodeAuthRefreshTokenInvalid      = "auth.refresh_token_invalid"
@@ -35,6 +36,9 @@ var (
 	ErrAuthAccountLocked            = New(CodeAuthAccountLocked, "Too many failed attempts. Your account is temporarily locked — please try again later.").AsRetryable()
 	ErrAuthNotTenantMember          = New(CodeAuthNotTenantMember, "You're not a member of this organization.")
 	ErrAuthSelfRegistrationDisabled = New(CodeAuthSelfRegistrationDisabled, "Self-registration is not enabled for this application.")
+	// ErrAuthApplicationToken: the token was issued to an application, which
+	// may read who the user is but not manage their account or organisation.
+	ErrAuthApplicationToken = New(CodeAuthApplicationToken, "This token was issued to an application and can't be used here. Sign in to Qeet ID to manage your account.")
 	// ErrAuthMethodDisabled: the organisation has switched this sign-in method
 	// off. An access decision, not a wrong credential; it says nothing about
 	// whether an account exists.

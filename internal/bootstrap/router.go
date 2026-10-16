@@ -274,6 +274,10 @@ func NewRouter(d Deps) http.Handler {
 			r.Use(d.APIKeyService.Middleware)
 			r.Use(d.Auth.Service.LoginSessionAuth(LoginSessionRoutes()))
 			r.Use(httpx.RequireAuth(d.AuthVerifier))
+			// A token issued to an application reaches only the routes meant for
+			// applications (ApplicationTokenRoutes); everything else here is account
+			// and organisation management, which only the user's own tokens may do.
+			r.Use(httpx.RefuseApplicationTokens(ApplicationTokenRoutes()))
 			// Central cross-tenant guard: any route with a {tenantID} path param
 			// must match the caller's own tenant (QID-18). Belt to the individual
 			// handlers' suspenders. NOTE: this relies on the nested Route("/v1")
@@ -404,6 +408,17 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Qeetai.Mount(r)
 	d.Search.Mount(r)
 	d.Activity.Mount(r)
+}
+
+// ApplicationTokenRoutes lists the authenticated routes that accept a token
+// issued to an application (one carrying client_id). Every other authenticated
+// route refuses it (httpx.RefuseApplicationTokens): an application's token
+// lets it read who the user is, not manage their account or organisation.
+// Keep it to endpoints meant for applications (TestApplicationTokenRoutesStayNarrow).
+func ApplicationTokenRoutes() []string {
+	return []string{
+		"GET /v1/oauth/userinfo",
+	}
 }
 
 // LoginSessionRoutes lists the authenticated routes that also accept the hosted

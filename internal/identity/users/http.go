@@ -29,8 +29,31 @@ type mfaResetter interface {
 // and reports how many of each it ended (admin force sign-out). Kept as an
 // interface because the authentication package imports this one.
 type signInEnder interface {
-	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (sessions, loginSessions, appGrants int64, err error)
+	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (SignInsEnded, error)
 }
+
+// SignInsEnded counts what ending every way a person is signed in ended
+// (signInEnder.EndAllSignIns, the administrator's force sign-out and the
+// person's own sign out everywhere).
+type SignInsEnded struct {
+	// Sessions are API and console sessions; ending one is what makes its
+	// refresh tokens stop working.
+	Sessions int64
+	// LoginSessions are hosted-login browser sessions.
+	LoginSessions int64
+	// AppGrants are the refresh grants applications hold, counted once per
+	// grant.
+	AppGrants int64
+	// TrustedDevices are devices remembered so they skip the second factor.
+	TrustedDevices int64
+	// PendingAuthorizations are unredeemed authorisation codes and device or
+	// back-channel sign-in requests that were pending or approved but not yet
+	// collected.
+	PendingAuthorizations int64
+}
+
+// Total is the number of sign-ins ended, all places together.
+func (e SignInsEnded) Total() int64 { return e.Sessions + e.LoginSessions + e.AppGrants }
 
 type Handler struct {
 	Repo     *Repository

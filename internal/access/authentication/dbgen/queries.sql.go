@@ -77,6 +77,50 @@ func (q *Queries) DeleteMFALoginChallenge(ctx context.Context, id uuid.UUID) err
 	return err
 }
 
+const deleteTrustedDevicesForUser = `-- name: DeleteTrustedDevicesForUser :execrows
+DELETE FROM auth.trusted_devices WHERE user_id = $1
+`
+
+// DeleteTrustedDevicesForUser forgets every device remembered for the user, so
+// each is asked for the second factor again at its next sign-in.
+func (q *Queries) DeleteTrustedDevicesForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTrustedDevicesForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const denyBackchannelRequestsForUser = `-- name: DenyBackchannelRequestsForUser :execrows
+UPDATE auth.oidc_ciba_requests SET status = 'denied'
+WHERE user_id = $1 AND consumed_at IS NULL AND status IN ('pending', 'authorized')
+`
+
+// DenyBackchannelRequestsForUser denies every back-channel sign-in request for
+// the user that is pending, or approved but not yet collected.
+func (q *Queries) DenyBackchannelRequestsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, denyBackchannelRequestsForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const denyDeviceAuthorizationsForUser = `-- name: DenyDeviceAuthorizationsForUser :execrows
+UPDATE auth.oidc_device_codes SET status = 'denied'
+WHERE user_id = $1 AND consumed_at IS NULL AND status IN ('pending', 'authorized')
+`
+
+// DenyDeviceAuthorizationsForUser denies every device sign-in the user approved
+// that the device has not collected yet.
+func (q *Queries) DenyDeviceAuthorizationsForUser(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, denyDeviceAuthorizationsForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const endLoginSession = `-- name: EndLoginSession :one
 WITH ended AS (
     DELETE FROM auth.login_sessions WHERE token_hash = $1
@@ -783,6 +827,23 @@ func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionFor
 	var tenant_id pgtype.UUID
 	err := row.Scan(&tenant_id)
 	return tenant_id, err
+}
+
+const spendAuthorizationCodesForUser = `-- name: SpendAuthorizationCodesForUser :execrows
+UPDATE auth.oidc_authorization_codes SET used_at = NOW()
+WHERE user_id = $1 AND used_at IS NULL
+`
+
+// SpendAuthorizationCodesForUser spends every authorisation code issued to the
+// user that no application has redeemed. A redemption already under way holds
+// its code locked and writes its grant first; this waits for it, and the grant
+// passes that follow end that grant.
+func (q *Queries) SpendAuthorizationCodesForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, spendAuthorizationCodesForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const supersedeSession = `-- name: SupersedeSession :one
