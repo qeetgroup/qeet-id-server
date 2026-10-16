@@ -49,6 +49,10 @@ type Service struct {
 	// rules checks a new password on ConfirmPasswordReset (nil = resets are
 	// refused rather than set an unchecked password). Set via SetPasswordRules.
 	rules PasswordRules
+	// magicLinks decides whether an organisation allows magic links and how
+	// long they live (nil = allowed, the default lifetime). Set via
+	// SetMagicLinkPolicy.
+	magicLinks MagicLinkPolicy
 }
 
 // PasswordRules is the one password check every path that sets a password
@@ -58,6 +62,36 @@ type Service struct {
 // doesn't import it.
 type PasswordRules interface {
 	ValidateForTenant(ctx context.Context, tenantID uuid.UUID, email, pw string) error
+}
+
+// MagicLinkPolicy is the slice of the authentication policy that decides
+// whether an organisation allows magic-link sign-in and how long its links
+// live. Satisfied by *authpolicy.Service.
+type MagicLinkPolicy interface {
+	MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (enabled bool, ttl time.Duration, err error)
+}
+
+// SetMagicLinkPolicy wires the magic-link policy. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetMagicLinkPolicy(p MagicLinkPolicy) { s.magicLinks = p }
+
+// magicLinkTTL is how long a magic link for tenantID lives, or
+// ErrAuthMethodDisabled when the tenant has switched magic links off.
+func (s *Service) magicLinkTTL(ctx context.Context, tenantID uuid.UUID) (time.Duration, error) {
+	if s.magicLinks == nil {
+		return s.ttl, nil
+	}
+	enabled, ttl, err := s.magicLinks.MagicLinkPolicy(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	if !enabled {
+		return 0, errs.ErrAuthMethodDisabled
+	}
+	if ttl <= 0 {
+		return s.ttl, nil
+	}
+	return ttl, nil
 }
 
 func NewService(pool *pgxpool.Pool, sender notifier.Sender, ttl time.Duration, baseAppURL string) *Service {
@@ -238,6 +272,10 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 
 // StartMagicLink emits a one-time login link.
 func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email string) error {
+	ttl, err := s.magicLinkTTL(ctx, tenantID)
+	if err != nil {
+		return err
+	}
 	raw, hash, err := codes.URLToken()
 	if err != nil {
 		return err
@@ -246,7 +284,7 @@ func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email 
 		TenantID:  tenantID,
 		Email:     email,
 		TokenHash: hash,
-		ExpiresAt: time.Now().UTC().Add(s.ttl),
+		ExpiresAt: time.Now().UTC().Add(ttl),
 	}); err != nil {
 		return err
 	}
@@ -297,6 +335,11 @@ func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac Audi
 	}
 	if time.Now().After(mlRow.ExpiresAt) {
 		return nil, errs.ErrRecoveryLinkExpired
+	}
+	// A link issued before the organisation switched magic links off stops
+	// working too; it stays unused.
+	if _, err := s.magicLinkTTL(ctx, mlRow.TenantID); err != nil {
+		return nil, err
 	}
 	tenantID := mlRow.TenantID
 	email := mlRow.Email

@@ -239,8 +239,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// baseline; the breach check). Sign-up, hosted registration and
 	// self-service change reach it through SetRegistrationPolicy below; admin
 	// create / set-password / bulk import through user.Handler.PasswordPolicy.
-	recoveryService.SetPasswordRules(authPolicyService) // password reset
-	inviteService.SetPasswordRules(authPolicyService)   // invite accept
+	recoveryService.SetPasswordRules(authPolicyService)   // password reset
+	recoveryService.SetMagicLinkPolicy(authPolicyService) // magic links only where the tenant allows them, with its lifetime
+	inviteService.SetPasswordRules(authPolicyService)     // invite accept
 
 	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
 	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
@@ -260,6 +261,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	mfaService.SetCipher(sharedCipher)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
+	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
 
 	// Sign-in lockout (authentication/lockout.go): failures counted per account
@@ -594,7 +596,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
 		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},

@@ -71,7 +71,9 @@ func createTenantUser(t *testing.T, ctx context.Context, tenantID uuid.UUID, ema
 
 func newRecovery(sender notifier.Sender) *recovery.Service {
 	svc := recovery.NewService(testPool, sender, time.Hour, "http://app.test")
-	svc.SetPasswordRules(authpolicy.NewService(testPool)) // the password check, as bootstrap wires it
+	policy := authpolicy.NewService(testPool)
+	svc.SetPasswordRules(policy)   // the password check, as bootstrap wires it
+	svc.SetMagicLinkPolicy(policy) // which organisations allow magic links, and their lifetime
 	return svc
 }
 

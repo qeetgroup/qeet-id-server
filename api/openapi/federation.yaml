@@ -521,7 +521,7 @@ paths:
   /v1/oauth/login-context:
     get:
       operationId: get_v1_oauth_login_context
-      description: 'Returns the context the hosted-login application needs to render itself for a given OAuth client: the client''s display name and tenant, the tenant''s enabled social login providers, self-registration and remember-device flags, and optional per-tenant branding. Consumed by the hosted login UI during the authorize flow and gated by the SSO session cookie. It carries no tokens and performs no state change.'
+      description: 'Returns the context the hosted-login application needs to render itself for a given OAuth client: the client''s display name and tenant, the tenant''s enabled social login providers, self-registration and remember-device flags, and optional per-tenant branding. Consumed by the hosted login UI during the authorize flow and gated by the SSO session cookie. It carries no tokens and performs no state change. sign_in_methods ({password, passkey, magic_link}) says which first-factor methods the client''s organisation allows, so the hosted login offers only those.'
       summary: Login context
       tags:
         - OIDC

@@ -69,7 +69,9 @@ func newAuth() (*auth.Service, *user.Repository) {
 	users := user.NewRepository(testPool)
 	issuer := mustIssuer()
 	svc := auth.NewService(testPool, users, issuer)
-	svc.SetRegistrationPolicy(authpolicy.NewService(testPool)) // the password check, as bootstrap wires it
+	policy := authpolicy.NewService(testPool)
+	svc.SetRegistrationPolicy(policy) // the password check, as bootstrap wires it
+	svc.SetMethodPolicy(policy)       // which sign-in methods an organisation allows
 	return svc, users
 }
 

@@ -301,7 +301,9 @@ func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockou
 // are refused with a validation error naming each field, before anything is
 // written; the password length and magic-link lifetime are clamped as before.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
-	if fields := s.lockout.CheckLockout(p); len(fields) > 0 {
+	fields := s.lockout.CheckLockout(p)
+	fields = append(fields, checkSignInMethods(p)...)
+	if len(fields) > 0 {
 		return nil, errs.ErrValidationFailed.WithFields(fields)
 	}
 	if p.PasswordMinLength < 8 {
@@ -340,6 +342,27 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 	out := toDomain(row)
 	out.LockoutLimits = s.lockout.view()
 	return out, nil
+}
+
+// checkSignInMethods refuses a policy that leaves no first-factor sign-in
+// method (password, passkey or magic link) on, and one that switches on an
+// email or SMS one-time-code sign-in — no such sign-in exists, so saving it
+// would claim a method the organisation does not have.
+func checkSignInMethods(p Policy) []errs.FieldError {
+	var out []errs.FieldError
+	if !p.PasswordEnabled && !p.PasskeyEnabled && !p.MagicLinkEnabled {
+		out = append(out, errs.FieldError{Field: "password_enabled", Code: "no_sign_in_method",
+			Message: "Keep at least one of password, passkey or magic-link sign-in on."})
+	}
+	if p.OTPEmailEnabled {
+		out = append(out, errs.FieldError{Field: "otp_email_enabled", Code: "not_available",
+			Message: "Email one-time-code sign-in isn't available."})
+	}
+	if p.OTPSMSEnabled {
+		out = append(out, errs.FieldError{Field: "otp_sms_enabled", Code: "not_available",
+			Message: "SMS one-time-code sign-in isn't available."})
+	}
+	return out
 }
 
 // ValidateForTenant is the one check every path that sets or replaces a
@@ -389,6 +412,52 @@ func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUI
 		return false, err
 	}
 	return p.SelfRegistrationEnabled, nil
+}
+
+// SignInMethods are the first-factor sign-in methods an organisation allows.
+type SignInMethods struct {
+	Password  bool `json:"password"`
+	Passkey   bool `json:"passkey"`
+	MagicLink bool `json:"magic_link"`
+}
+
+// SignInMethodsFor returns the sign-in methods tenantID allows; uuid.Nil (no
+// organisation) allows all. Read on every call — a change applies to the next
+// sign-in.
+func (s *Service) SignInMethodsFor(ctx context.Context, tenantID uuid.UUID) (SignInMethods, error) {
+	if tenantID == uuid.Nil {
+		return SignInMethods{Password: true, Passkey: true, MagicLink: true}, nil
+	}
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return SignInMethods{}, err
+	}
+	return SignInMethods{Password: p.PasswordEnabled, Passkey: p.PasskeyEnabled, MagicLink: p.MagicLinkEnabled}, nil
+}
+
+// AllowedSignInMethods is SignInMethodsFor as plain values, for consumers in
+// other contexts (the hosted login's login-context) that take it through an
+// interface of their own.
+func (s *Service) AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error) {
+	m, err := s.SignInMethodsFor(ctx, tenantID)
+	return m.Password, m.Passkey, m.MagicLink, err
+}
+
+// PasswordEnabled reports whether the tenant permits password sign-in
+// (password_enabled); uuid.Nil is not restricted.
+func (s *Service) PasswordEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	m, err := s.SignInMethodsFor(ctx, tenantID)
+	return m.Password, err
+}
+
+// MagicLinkPolicy reports whether the tenant permits magic-link sign-in and how
+// long a link it issues lives (magic_link_ttl_minutes).
+func (s *Service) MagicLinkPolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error) {
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return false, 0, err
+	}
+	return p.MagicLinkEnabled, time.Duration(p.MagicLinkTTLMinutes) * time.Minute, nil
 }
 
 // PasskeyEnabled reports whether the tenant permits passkeys (passkey_enabled).

@@ -229,6 +229,16 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **auth:** an organisation's sign-in method switches are enforced. `password_enabled`, `passkey_enabled` and
+  `magic_link_enabled` used to change only the stored policy. Now a switched-off method is refused where the
+  credential is accepted — `auth.method_disabled` (403) for passwords and magic links, `passkey.disabled` for
+  passkeys — as an access decision, not a wrong credential: a hosted sign-in that names its application is
+  refused before the password is checked, the console's once it is verified, and a passkey before the assertion
+  is verified. Magic links are issued, and stay valid, only while allowed, for the organisation's
+  `magic_link_ttl_minutes` instead of a fixed hour. The hosted login reads `sign_in_methods` from the
+  login context and offers only those. A policy write that would switch every method off, or switch on the email
+  or SMS one-time-code sign-in (which does not exist), is refused with 422; the console no longer offers those
+  two switches. Changes apply to the next sign-in (the policy is not cached).
 * **social:** signing in with a social provider no longer creates an account in an organisation that does not
   allow self-registration. **Behaviour change:** the setting now governs social sign-up as it already did
   password and passkey sign-up, and it defaults to off — an organisation that wants social sign-up must turn

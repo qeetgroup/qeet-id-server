@@ -39,6 +39,8 @@ type Service struct {
 	// no password can be set). Set via SetRegistrationPolicy; an interface so
 	// auth doesn't import authpolicy.
 	regPolicy RegistrationPolicy
+	// methods decides which sign-in methods an organisation allows (nil = all).
+	methods MethodPolicy
 	// anomaly receives security signals (nil = recording off). Set via
 	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
 	anomaly AnomalyRecorder
@@ -115,6 +117,32 @@ type RegistrationPolicy interface {
 // SetRegistrationPolicy wires the hosted self-registration gate + password
 // policy. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
+
+// MethodPolicy is the slice of the authentication policy that decides whether
+// an organisation allows password sign-in. Satisfied by *authpolicy.Service.
+type MethodPolicy interface {
+	PasswordEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
+// SetMethodPolicy wires the sign-in method policy (nil = every method allowed).
+// Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetMethodPolicy(p MethodPolicy) { s.methods = p }
+
+// passwordAllowed refuses with ErrAuthMethodDisabled when tenantID has switched
+// password sign-in off. uuid.Nil (no organisation) is not restricted.
+func (s *Service) passwordAllowed(ctx context.Context, tenantID uuid.UUID) error {
+	if tenantID == uuid.Nil || s.methods == nil {
+		return nil
+	}
+	enabled, err := s.methods.PasswordEnabled(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return errs.ErrAuthMethodDisabled
+	}
+	return nil
+}
 
 // checkNewPassword runs the password check for an account in tenantID
 // (uuid.Nil = no organisation). With no policy wired it refuses rather than
@@ -814,6 +842,18 @@ func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, i
 // SSO session (which sets a cookie). It deliberately does not mint tokens or
 // sessions itself.
 func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.User, map[string]any, error) {
+	// Whether the organisation allows password sign-in. A hosted login names
+	// the application, so its organisation decides before the password is
+	// looked at — the same answer for any account or none. Without one, the
+	// account's own organisation decides once the password is verified, so
+	// only its owner sees that answer.
+	signInTenant, err := s.SignInTenant(ctx, in.ClientID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.passwordAllowed(ctx, signInTenant); err != nil {
+		return nil, nil, err
+	}
 	attempt, err := s.newSignInAttempt(ctx, in)
 	if err != nil {
 		return nil, nil, err
@@ -850,6 +890,11 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	}
 	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
 		return nil, nil, err
+	}
+	if signInTenant == uuid.Nil {
+		if err := s.passwordAllowed(ctx, u.TenantID); err != nil {
+			return nil, nil, err
+		}
 	}
 	// Transparently upgrade legacy bcrypt / weak-param hashes to current
 	// Argon2id on a successful login. Best-effort: never fail the login on it.
