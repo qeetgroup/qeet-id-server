@@ -8,6 +8,14 @@ FROM auth.passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC;
 -- name: DeletePasskeyCredential :execrows
 DELETE FROM auth.passkey_credentials WHERE id = $1 AND user_id = $2;
 
+-- RenamePasskeyCredential is scoped to the owner like the delete: another
+-- user's passkey matches no row.
+
+-- name: RenamePasskeyCredential :one
+UPDATE auth.passkey_credentials SET name = $1
+WHERE id = $2 AND user_id = $3
+RETURNING id, user_id, name, transports, last_used_at, created_at;
+
 -- name: GetUserForWebAuthn :one
 SELECT email, display_name, tenant_id FROM "user".users
 WHERE id = $1 AND deleted_at IS NULL;
