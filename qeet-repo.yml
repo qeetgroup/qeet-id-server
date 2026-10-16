@@ -30,8 +30,8 @@ repository:
 
 runtime:
   language: Go
-  version: "1.25.0"      # go.mod; toolchain go1.25.12
-  build_image: golang:1.26-alpine
+  version: "1.26.0"      # go.mod; toolchain go1.27.2
+  build_image: golang:1.27.2-alpine
   runtime_image: gcr.io/distroless/static-debian12:nonroot
   port: 4001
 

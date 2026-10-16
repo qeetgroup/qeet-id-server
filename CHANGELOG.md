@@ -33,6 +33,17 @@ The changes below are the work staged for that first release.
 
 ### Security
 
+**Dependencies and toolchain (2026-10-16)**
+
+* **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
+  library): Go toolchain 1.27.2 and `golang.org/x/net` v0.60.0. Go 1.25 has no fix, so the module
+  now requires Go 1.26 and CI uses the same Go 1.27.2 the Dockerfile builds with (CI had been testing
+  with 1.25.13 while the image was built with 1.27).
+* `golang.org/x/crypto` v0.58.0 fixes GO-2026-6354/6355 (`x/crypto/ssh`, reachable only from test
+  fixtures). `google.golang.org/grpc` v1.83.2 fixes GHSA-2v4p-qf9q-27wj (xDS servers, not used here).
+* CI: `govulncheck` v1.9.0 and `golangci-lint` v2.14.0, which support Go 1.27 (v1.7.0 and v2.12.2
+  could not run on it).
+
 Remediation of a 2026-09-06 security review. Migration `0107`.
 
 **Cross-tenant (P0)**

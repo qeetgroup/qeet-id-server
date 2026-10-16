@@ -257,7 +257,7 @@ If the change touched a route, also:
 make test-integration      # includes the OpenAPI route-coverage gate
 ```
 
-**`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.12.2 with `errcheck`,
+**`make lint` is `go vet` only.** CI additionally runs `golangci-lint` v2.14.0 with `errcheck`,
 `staticcheck` and `misspell` on new code. Passing locally does not guarantee CI passes.
 
 ### Ask before proceeding if the change would
