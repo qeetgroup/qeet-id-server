@@ -31,7 +31,7 @@ func postForgotPassword(t *testing.T, svc *recovery.Service, body string) int {
 // TestForgotPasswordAcceptsCallerFields: hosted login and the React SDK send
 // tenant_id with a forgot-password request, and hosted login says where the
 // reset came from (app, return_to). None of these may turn the request into an
-// error — the user must get the email (QTID-53).
+// error — the user must get the email.
 func TestForgotPasswordAcceptsCallerFields(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
@@ -57,7 +57,7 @@ func TestForgotPasswordAcceptsCallerFields(t *testing.T) {
 }
 
 // TestPasswordResetLinkTarget: the emailed link lands in the application the
-// reset was requested from (QTID-53). Hosted login gets its own reset page,
+// reset was requested from. Hosted login gets its own reset page,
 // carrying the return_to only when it is this service's authorize endpoint;
 // the console — and any request that does not say — keeps the console link.
 func TestPasswordResetLinkTarget(t *testing.T) {
