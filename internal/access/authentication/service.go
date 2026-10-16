@@ -1320,21 +1320,9 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSession
 	return revoked, nil
 }
 
-// SignInsEnded counts what signing someone out everywhere ended, per place a
-// person can be signed in.
-type SignInsEnded struct {
-	// Sessions are API and console sessions (auth.sessions); ending one is
-	// what makes its refresh tokens stop working.
-	Sessions int64
-	// LoginSessions are hosted-login browser sessions (the qe_ls cookie).
-	LoginSessions int64
-	// AppGrants are the refresh grants applications hold (OIDC refresh-token
-	// chains), counted once per grant.
-	AppGrants int64
-}
-
-// Total is the number of sign-ins ended, all places together.
-func (e SignInsEnded) Total() int64 { return e.Sessions + e.LoginSessions + e.AppGrants }
+// SignInsEnded counts what signing someone out everywhere ended (see
+// user.SignInsEnded).
+type SignInsEnded = user.SignInsEnded
 
 // RevokeAllSessionsInput names the caller. SessionID must come from the
 // caller's own access token, never from anything the client supplies.
@@ -1375,7 +1363,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInp
 		return SignInsEnded{}, errs.ErrUnauthorized
 	}
 	var ended SignInsEnded
-	ended.Sessions, ended.LoginSessions, ended.AppGrants, err = s.EndAllSignIns(ctx, tx, in.UserID, sessionsignal.ReasonAllSessionsRevoked)
+	ended, err = s.EndAllSignIns(ctx, tx, in.UserID, sessionsignal.ReasonAllSessionsRevoked)
 	if err != nil {
 		return SignInsEnded{}, err
 	}
@@ -1384,10 +1372,12 @@ func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInp
 		Action: "auth.all_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
 		Metadata: map[string]any{
-			"revoked_sessions":       ended.Sessions,
-			"revoked_login_sessions": ended.LoginSessions,
-			"revoked_app_grants":     ended.AppGrants,
-			"session_id":             in.SessionID,
+			"revoked_sessions":             ended.Sessions,
+			"revoked_login_sessions":       ended.LoginSessions,
+			"revoked_app_grants":           ended.AppGrants,
+			"revoked_trusted_devices":      ended.TrustedDevices,
+			"ended_pending_authorizations": ended.PendingAuthorizations,
+			"session_id":                   in.SessionID,
 		},
 	}); err != nil {
 		return SignInsEnded{}, err
@@ -1418,29 +1408,50 @@ const maxGrantPasses = 5
 //
 // reason is why, for the session.revoked signals of the sessions it ends
 // (self-service sign out everywhere, or an administrator's force sign-out).
-func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (sessions, loginSessions, appGrants int64, err error) {
+func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (SignInsEnded, error) {
+	var ended SignInsEnded
 	q := s.q.WithTx(tx)
 	if _, err := q.LockUserForSessionRevocation(ctx, userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, 0, 0, errs.ErrNotFound
+			return SignInsEnded{}, errs.ErrNotFound
 		}
-		return 0, 0, 0, err
+		return SignInsEnded{}, err
 	}
 	rows, err := q.RevokeAllSessionsForUser(ctx, userID)
 	if err != nil {
-		return 0, 0, 0, err
+		return SignInsEnded{}, err
 	}
-	sessions = int64(len(rows))
-	ended := make([]sessionsignal.Session, len(rows))
+	ended.Sessions = int64(len(rows))
+	signals := make([]sessionsignal.Session, len(rows))
 	for i, r := range rows {
-		ended[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
+		signals[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
 		if r.TenantID.Valid {
-			ended[i].TenantID = uuid.UUID(r.TenantID.Bytes)
+			signals[i].TenantID = uuid.UUID(r.TenantID.Bytes)
 		}
 	}
-	s.signals.Revoked(ctx, tx, reason, ended...)
-	if loginSessions, err = q.EndLoginSessionsForUser(ctx, userID); err != nil {
-		return 0, 0, 0, err
+	s.signals.Revoked(ctx, tx, reason, signals...)
+	if ended.LoginSessions, err = q.EndLoginSessionsForUser(ctx, userID); err != nil {
+		return SignInsEnded{}, err
+	}
+	// The ways back in that are not sessions: a remembered device would skip
+	// the second factor at the next password sign-in, and an unredeemed code
+	// or an approved device or back-channel request would still turn into a
+	// grant. Codes are spent before the grant passes below, so a grant a
+	// redemption under way writes is ended by them.
+	if ended.TrustedDevices, err = q.DeleteTrustedDevicesForUser(ctx, userID); err != nil {
+		return SignInsEnded{}, err
+	}
+	denyDevices := func(ctx context.Context, id uuid.UUID) (int64, error) {
+		return q.DenyDeviceAuthorizationsForUser(ctx, pgtype.UUID{Bytes: id, Valid: true})
+	}
+	for _, deny := range []func(context.Context, uuid.UUID) (int64, error){
+		q.SpendAuthorizationCodesForUser, denyDevices, q.DenyBackchannelRequestsForUser,
+	} {
+		n, err := deny(ctx, userID)
+		if err != nil {
+			return SignInsEnded{}, err
+		}
+		ended.PendingAuthorizations += n
 	}
 	// An application renewing a grant at this moment locks the token it
 	// presented, writes the successor and commits — possibly after a pass has
@@ -1451,14 +1462,14 @@ func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	for pass := 0; pass < maxGrantPasses; pass++ {
 		row, err := q.RevokeAppGrantsForUser(ctx, userID)
 		if err != nil {
-			return 0, 0, 0, err
+			return SignInsEnded{}, err
 		}
-		appGrants += row.Live
+		ended.AppGrants += row.Live
 		if row.Touched == 0 {
 			break
 		}
 	}
-	return sessions, loginSessions, appGrants, nil
+	return ended, nil
 }
 
 type ChangePasswordInput struct {

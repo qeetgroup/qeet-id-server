@@ -333,3 +333,28 @@ RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expir
 -- the cutoff. Their cookie stopped being sent when they expired.
 -- name: PurgeExpiredLoginSessions :execrows
 DELETE FROM auth.login_sessions WHERE expires_at < @cutoff;
+
+-- DeleteTrustedDevicesForUser forgets every device remembered for the user, so
+-- each is asked for the second factor again at its next sign-in.
+-- name: DeleteTrustedDevicesForUser :execrows
+DELETE FROM auth.trusted_devices WHERE user_id = @user_id;
+
+-- SpendAuthorizationCodesForUser spends every authorisation code issued to the
+-- user that no application has redeemed. A redemption already under way holds
+-- its code locked and writes its grant first; this waits for it, and the grant
+-- passes that follow end that grant.
+-- name: SpendAuthorizationCodesForUser :execrows
+UPDATE auth.oidc_authorization_codes SET used_at = NOW()
+WHERE user_id = @user_id AND used_at IS NULL;
+
+-- DenyDeviceAuthorizationsForUser denies every device sign-in the user approved
+-- that the device has not collected yet.
+-- name: DenyDeviceAuthorizationsForUser :execrows
+UPDATE auth.oidc_device_codes SET status = 'denied'
+WHERE user_id = @user_id AND consumed_at IS NULL AND status IN ('pending', 'authorized');
+
+-- DenyBackchannelRequestsForUser denies every back-channel sign-in request for
+-- the user that is pending, or approved but not yet collected.
+-- name: DenyBackchannelRequestsForUser :execrows
+UPDATE auth.oidc_ciba_requests SET status = 'denied'
+WHERE user_id = @user_id AND consumed_at IS NULL AND status IN ('pending', 'authorized');

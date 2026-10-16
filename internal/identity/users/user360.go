@@ -395,7 +395,7 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sessions, loginSessions, appGrants, err := h.SignIns.EndAllSignIns(ctx, tx, id, sessionsignal.ReasonAdminRevokedAll)
+	ended, err := h.SignIns.EndAllSignIns(ctx, tx, id, sessionsignal.ReasonAdminRevokedAll)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -414,9 +414,11 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
 		Metadata: map[string]any{
-			"revoked_sessions":       sessions,
-			"revoked_login_sessions": loginSessions,
-			"revoked_app_grants":     appGrants,
+			"revoked_sessions":             ended.Sessions,
+			"revoked_login_sessions":       ended.LoginSessions,
+			"revoked_app_grants":           ended.AppGrants,
+			"revoked_trusted_devices":      ended.TrustedDevices,
+			"ended_pending_authorizations": ended.PendingAuthorizations,
 		},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
@@ -427,10 +429,12 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"revoked":               sessions + loginSessions + appGrants,
-		"sessions":              sessions,
-		"hosted_login_sessions": loginSessions,
-		"app_grants":            appGrants,
+		"revoked":                ended.Total(),
+		"sessions":               ended.Sessions,
+		"hosted_login_sessions":  ended.LoginSessions,
+		"app_grants":             ended.AppGrants,
+		"trusted_devices":        ended.TrustedDevices,
+		"pending_authorizations": ended.PendingAuthorizations,
 	})
 }
 

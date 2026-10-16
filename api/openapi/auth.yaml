@@ -758,7 +758,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [revoked, sessions, hosted_login_sessions, app_grants]
+                required: [revoked, sessions, hosted_login_sessions, app_grants, trusted_devices, pending_authorizations]
                 properties:
                   revoked:
                     type: integer
@@ -776,6 +776,14 @@ paths:
                     type: integer
                     minimum: 0
                     description: Application refresh grants ended.
+                  trusted_devices:
+                    type: integer
+                    minimum: 0
+                    description: Devices remembered to skip the second factor that were forgotten; each is asked for the second factor at its next sign-in.
+                  pending_authorizations:
+                    type: integer
+                    minimum: 0
+                    description: Unredeemed authorisation codes spent, and device or back-channel sign-in requests (pending, or approved but not collected) denied.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

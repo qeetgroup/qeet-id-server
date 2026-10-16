@@ -229,6 +229,10 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **auth:** signing out everywhere — and an administrator's force sign-out — also closes the other ways back in:
+  the person's remembered devices are forgotten (the second factor is asked again), their unredeemed authorisation
+  codes are spent, and their device and back-channel sign-in requests that are pending or approved but not yet
+  collected are denied. The responses and audit records add `trusted_devices` and `pending_authorizations`.
 * **auth:** every way a session ends is announced to subscribed applications. `session.revoked` used to fire
   only for sign-out and refresh-token reuse, and never for a session with no organisation. Now sign-out,
   reuse detection, signing out other sessions or everywhere, an administrator's force sign-out or password
