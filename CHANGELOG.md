@@ -229,6 +229,30 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **scheduler:** the `session-expiry-cleanup` job works. It deleted by a session expiry column that
+  does not exist, so every run failed with an undefined-column error and no session was ever removed.
+  It now deletes API and console sessions ended — or whose refresh tokens all expired — more than seven
+  days ago (their refresh tokens go with them) and hosted-login sessions expired more than seven days
+  ago, keeps every live session and anything ended inside the window, and logs how many it removed
+  (zero when there is nothing to remove). The scheduler process itself is still not part of the
+  deployed image; shipping and starting it is tracked separately.
+* **auth:** switching organisation (`POST /v1/auth/switch-tenant`) replaces the session instead of
+  adding one. **Behaviour change:** the session switched from now ends — its refresh token is refused
+  and `session.revoked` subscribers are told, with reason `tenant_switch` — where before it stayed
+  renewable for 30 days and every switch left another live session behind. The new token carries the
+  claims the target organisation's authentication hook adds (the hook may also refuse the switch),
+  and renewals keep a session's hook claims instead of dropping them after the first access token
+  expires. An access token whose session has already ended can no longer switch (it used to open a
+  fresh session). The person's own session list shows one entry per sign-in. Migration `0120`.
+* **auth:** signing out of the hosted login now signs the browser out of the applications it signed
+  in to. Both ways of signing out — the hosted login's own (`DELETE /v1/auth/session`) and an
+  application's (`/v1/oauth/logout`) — used to delete only the browser's SSO session, so every
+  application kept renewing its refresh grant for up to 30 days. Now the grants started through that
+  session are revoked (renewals included), codes it minted that no application has redeemed can no
+  longer be redeemed, and the sign-out is audited (`auth.signed_out`: the session, the registered
+  application that asked, what was ended). Other browsers and API sessions stay signed in; without a
+  session cookie nothing is ended. Migration `0119` records which hosted-login session started each
+  code and grant; grants issued before it are not tied to a session and are not ended this way.
 * **recovery:** "Forgot password" works from hosted login and the React SDK, and the emailed link
   lands where the reset was requested. The request carried `tenant_id`, which the endpoint rejected
   (400, no email). It is now accepted and ignored (email is unique platform-wide). A request with

@@ -222,6 +222,9 @@ func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 type sessionInput struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required,min=1"`
+	// ClientID is the OAuth client the hosted login is serving; its tenant's
+	// sign-in lockout settings apply. Optional (none = the platform defaults).
+	ClientID string `json:"client_id" validate:"omitempty,max=255"`
 }
 
 // createSession is the hosted-login credential endpoint. On success it sets the
@@ -248,7 +251,12 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if c, cerr := r.Cookie(TrustedDeviceCookie); cerr == nil {
 		trusted = c.Value
 	}
-	res, err := h.Service.BeginLoginSession(r.Context(), in.Email, in.Password, httpx.ClientIP(r), r.UserAgent(), trusted, h.geoCountry(r))
+	res, err := h.Service.BeginLoginSession(r.Context(), SignInAttempt{
+		Email:    in.Email,
+		Password: in.Password,
+		IP:       httpx.ClientIP(r),
+		ClientID: in.ClientID,
+	}, r.UserAgent(), trusted, h.geoCountry(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -338,10 +346,20 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
-// destroySession is hosted logout: revoke the SSO session and clear the cookie.
+// destroySession is the hosted login signing itself out: it ends the browser's
+// SSO session and what it started (EndLoginSession) and clears the cookie. A
+// request without a session cookie ends nothing and still answers 204. If the
+// sign-out cannot be completed the cookie is kept, so the browser can retry
+// instead of believing it is signed out.
 func (h *Handler) destroySession(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(LoginSessionCookie); err == nil {
-		_ = h.Service.RevokeLoginSession(r.Context(), c.Value)
+		if _, err := h.Service.EndLoginSession(r.Context(), EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: SignOutByHostedLogin,
+			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		}); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	ClearLoginSessionCookie(w, h.CookieSecure)
 	w.WriteHeader(http.StatusNoContent)
@@ -446,10 +464,12 @@ type switchTenantInput struct {
 	TenantID string `json:"tenant_id" validate:"required,uuid"`
 }
 
-// switchTenant returns a token pair scoped to a tenant the caller belongs to (403 otherwise).
+// switchTenant → POST /v1/auth/switch-tenant. Replaces the caller's session
+// with one in another organization they belong to (Service.SwitchTenant); the
+// session in the presented access token is the one that ends.
 func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil {
+	if p == nil || p.UserID == nil || p.SessionID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
@@ -467,7 +487,10 @@ func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	pair, err := h.Service.SwitchTenant(r.Context(), *p.UserID, tid, httpx.ClientIP(r), r.UserAgent())
+	pair, err := h.Service.SwitchTenant(r.Context(), SwitchTenantInput{
+		UserID: *p.UserID, FromSessionID: *p.SessionID, TenantID: tid,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

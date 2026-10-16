@@ -55,7 +55,7 @@ func (q *Queries) CheckUserInDeviceTenant(ctx context.Context, arg CheckUserInDe
 
 const consumeAuthorizationCode = `-- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id
 FROM auth.oidc_authorization_codes
 WHERE code_hash = $1 AND client_id = $2
 FOR UPDATE
@@ -76,6 +76,7 @@ type ConsumeAuthorizationCodeRow struct {
 	CodeChallengeMethod *string
 	ExpiresAt           time.Time
 	UsedAt              pgtype.Timestamptz
+	LoginSessionID      pgtype.UUID
 }
 
 func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAuthorizationCodeParams) (ConsumeAuthorizationCodeRow, error) {
@@ -91,6 +92,7 @@ func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAutho
 		&i.CodeChallengeMethod,
 		&i.ExpiresAt,
 		&i.UsedAt,
+		&i.LoginSessionID,
 	)
 	return i, err
 }
@@ -230,7 +232,12 @@ type GetClientRedirectInfoRow struct {
 func (q *Queries) GetClientRedirectInfo(ctx context.Context, clientID string) (GetClientRedirectInfoRow, error) {
 	row := q.db.QueryRow(ctx, getClientRedirectInfo, clientID)
 	var i GetClientRedirectInfoRow
-	err := row.Scan(&i.TenantID, &i.Type, &i.Scopes, &i.RedirectUris)
+	err := row.Scan(
+		&i.TenantID,
+		&i.Type,
+		&i.Scopes,
+		&i.RedirectUris,
+	)
 	return i, err
 }
 
@@ -415,10 +422,10 @@ const insertAuthorizationCode = `-- name: InsertAuthorizationCode :exec
 
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id
 ) VALUES ($1, $2, $3, $4, $5,
           $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
-          NOW() + INTERVAL '10 minutes')
+          NOW() + INTERVAL '10 minutes', $10)
 `
 
 type InsertAuthorizationCodeParams struct {
@@ -431,11 +438,14 @@ type InsertAuthorizationCodeParams struct {
 	Nonce               interface{}
 	CodeChallenge       interface{}
 	CodeChallengeMethod interface{}
+	LoginSessionID      pgtype.UUID
 }
 
 // ==========================================================================
 // Authorization codes
 // ==========================================================================
+// login_session_id is the hosted-login session the code was minted through
+// (NULL when there was none), so signing out of it can spend the code.
 func (q *Queries) InsertAuthorizationCode(ctx context.Context, arg InsertAuthorizationCodeParams) error {
 	_, err := q.db.Exec(ctx, insertAuthorizationCode,
 		arg.CodeHash,
@@ -447,6 +457,7 @@ func (q *Queries) InsertAuthorizationCode(ctx context.Context, arg InsertAuthori
 		arg.Nonce,
 		arg.CodeChallenge,
 		arg.CodeChallengeMethod,
+		arg.LoginSessionID,
 	)
 	return err
 }
@@ -588,23 +599,26 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 const insertRefreshToken = `-- name: InsertRefreshToken :exec
 
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertRefreshTokenParams struct {
-	TokenHash string
-	ClientID  string
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
-	Scopes    []string
-	ExpiresAt time.Time
-	Resource  *string
+	TokenHash      string
+	ClientID       string
+	UserID         uuid.UUID
+	TenantID       uuid.UUID
+	Scopes         []string
+	ExpiresAt      time.Time
+	Resource       *string
+	LoginSessionID pgtype.UUID
 }
 
 // ==========================================================================
 // Refresh tokens
 // ==========================================================================
+// login_session_id is the hosted-login session the grant was started through
+// (NULL when there was none); renewals carry it forward.
 func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
 	_, err := q.db.Exec(ctx, insertRefreshToken,
 		arg.TokenHash,
@@ -614,25 +628,27 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.Scopes,
 		arg.ExpiresAt,
 		arg.Resource,
+		arg.LoginSessionID,
 	)
 	return err
 }
 
 const insertRotatedRefreshToken = `-- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id
 `
 
 type InsertRotatedRefreshTokenParams struct {
-	TokenHash string
-	ClientID  string
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
-	Scopes    []string
-	ExpiresAt time.Time
-	Resource  *string
+	TokenHash      string
+	ClientID       string
+	UserID         uuid.UUID
+	TenantID       uuid.UUID
+	Scopes         []string
+	ExpiresAt      time.Time
+	Resource       *string
+	LoginSessionID pgtype.UUID
 }
 
 func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotatedRefreshTokenParams) (uuid.UUID, error) {
@@ -644,6 +660,7 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 		arg.Scopes,
 		arg.ExpiresAt,
 		arg.Resource,
+		arg.LoginSessionID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1066,20 +1083,21 @@ func (q *Queries) LockOIDCClientForUpdate(ctx context.Context, arg LockOIDCClien
 
 const lockRefreshToken = `-- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource
+       used_at, revoked_at, resource, login_session_id
 FROM auth.oidc_refresh_tokens WHERE token_hash = $1 FOR UPDATE
 `
 
 type LockRefreshTokenRow struct {
-	ID        uuid.UUID
-	ClientID  string
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
-	Scopes    []string
-	ExpiresAt time.Time
-	UsedAt    pgtype.Timestamptz
-	RevokedAt pgtype.Timestamptz
-	Resource  *string
+	ID             uuid.UUID
+	ClientID       string
+	UserID         uuid.UUID
+	TenantID       uuid.UUID
+	Scopes         []string
+	ExpiresAt      time.Time
+	UsedAt         pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+	Resource       *string
+	LoginSessionID pgtype.UUID
 }
 
 func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
@@ -1095,6 +1113,7 @@ func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockR
 		&i.UsedAt,
 		&i.RevokedAt,
 		&i.Resource,
+		&i.LoginSessionID,
 	)
 	return i, err
 }

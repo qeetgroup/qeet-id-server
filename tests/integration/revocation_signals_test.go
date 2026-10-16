@@ -74,12 +74,14 @@ func queuedDeliveries(t *testing.T, ctx context.Context, tenantID uuid.UUID, eve
 func tenantScopedSession(t *testing.T, ctx context.Context, svc *auth.Service, tenantID uuid.UUID) (*auth.TokenPair, uuid.UUID) {
 	t.Helper()
 	email := uniqueSlug("revoc") + "@example.com"
-	_, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
+	signedUp, u, _, err := svc.Signup(ctx, auth.SignupInput{Email: email, Password: "Kx7mQ2vLp9Wz"})
 	if err != nil {
 		t.Fatalf("signup: %v", err)
 	}
 	addTenantMember(t, ctx, tenantID, u.ID)
-	pair, err := svc.SwitchTenant(ctx, u.ID, tenantID, "203.0.113.9", "test-agent")
+	pair, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{
+		UserID: u.ID, FromSessionID: signedUp.SessionID, TenantID: tenantID, IP: "203.0.113.9", UserAgent: "test-agent",
+	})
 	if err != nil {
 		t.Fatalf("switch tenant: %v", err)
 	}

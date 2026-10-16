@@ -19,6 +19,7 @@ const (
 	CodeAuthRefreshTokenInvalid      = "auth.refresh_token_invalid"
 	CodeAuthSessionRevoked           = "auth.session_revoked"
 	CodeAuthAccountSuspended         = "auth.account_suspended"
+	CodeAuthSignInUnavailable        = "auth.sign_in_unavailable"
 )
 
 var (
@@ -38,4 +39,8 @@ var (
 	ErrAuthRefreshTokenInvalid      = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
 	ErrAuthSessionRevoked           = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
 	ErrAuthAccountSuspended         = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	// ErrAuthSignInUnavailable refuses a password sign-in whose failed-attempt
+	// counters could not be read or written: the lockout fails closed. The same
+	// answer whatever the password and whether the address has an account.
+	ErrAuthSignInUnavailable = New(CodeAuthSignInUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
 )

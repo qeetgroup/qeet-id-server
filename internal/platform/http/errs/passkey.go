@@ -15,6 +15,7 @@ const (
 	CodePasskeyMFAFailed          = "passkey.mfa_failed"
 	CodePasskeyCeremonyFailed     = "passkey.ceremony_failed"
 	CodePasskeyCloneDetected      = "passkey.clone_detected"
+	CodePasskeyDisabled           = "passkey.disabled"
 )
 
 var (
@@ -35,4 +36,7 @@ var (
 	// the end user; the detail is in the server log.
 	ErrPasskeyCloneDetected = New(CodePasskeyCloneDetected,
 		"We couldn't verify that passkey. Please contact your administrator.")
+	// ErrPasskeyDisabled is returned when the user's organization has passkeys
+	// switched off (auth policy passkey_enabled), so no passkey can be added.
+	ErrPasskeyDisabled = New(CodePasskeyDisabled, "Your organization has turned off passkeys.")
 )

@@ -64,7 +64,7 @@ with ES256 (asymmetric) and verifiable via the public JWKS."*
 ```text
 service.go          login, refresh, logout, session storage
 http.go             HTTP handlers
-loginsession.go     hosted SSO session cookie  qe_ls
+loginsession.go     hosted SSO session cookie  qe_ls; sign-out ends the app grants it started
 trusteddevice.go    MFA-skip cookie            qe_td
 lockout.go          per-account lockout
 service_test.go     unit

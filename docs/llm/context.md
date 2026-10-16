@@ -100,6 +100,7 @@ HTTP request
         ├─ public group         rate-limited; no session required
         └─ authenticated group
                ↓  API-key middleware
+               ↓  LoginSessionAuth       qe_ls cookie, on LoginSessionRoutes() only (no Authorization header)
                ↓  RequireAuth            verify JWT: kid, signature, expiry → principal
                ↓  EnforceTenantScope     {tenantID} must equal the caller's tenant
                ↓  rate limiters          per tenant · per user · per API key
@@ -129,7 +130,7 @@ a caller can never reach a permission check for another tenant's resource.
 | Root routes | `/healthz` · `/readyz` · `/metrics` |
 | Protocol mounts | `MountPublic` for OIDC, SCIM, SAML, LDAP — fixed spec locations at the root |
 | `/v1` public group | rate-limited, no session — invites, social, billing webhooks, agent token, passkey login, admin portal, OAuth authorize/token-code |
-| `/v1` authenticated group | API key → `RequireAuth` → `EnforceTenantScope` → rate limits → `rbac.Enforce` |
+| `/v1` authenticated group | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceTenantScope` → rate limits → `rbac.Enforce` |
 | Error taxonomy | `internal/platform/http/errs/` — ~50 domain files, stable machine codes |
 | Status mapping | `internal/platform/http/httpx/error_status_*.go` — 1:1 mirror of `errs/` |
 | Cursor pagination | `internal/platform/http/paging/` |
@@ -359,8 +360,18 @@ successful login. bcrypt remains in use for MFA recovery codes and API-key secre
 requirement, and correct for those.
 
 Implemented mechanisms: password · passkeys (WebAuthn) · magic link · email and SMS OTP · TOTP ·
-push approval · social login · adaptive risk (**off by default**) · per-account lockout ·
+push approval · social login · adaptive risk (**off by default**) · sign-in lockout ·
 breached-password check (env-gated).
+
+Password sign-in lockout (`authentication/lockout.go`) counts failures per account + source network
+(the client IP from `httpx.ClientIP`; IPv4 address or IPv6 /64) — the lock a tenant configures in its
+authentication policy within the `LOGIN_LOCKOUT_*` bounds — plus a looser per-account cap and a
+per-source counter across accounts (spraying). Unknown addresses are counted and timed like real
+ones. Whose settings apply: the tenant of the OAuth client a hosted sign-in names
+(`auth.Service.SignInTenant`), else the platform defaults — never the account's own tenant before the
+password is verified. If its counters cannot be read or written the sign-in **fails closed** (503
+`auth.sign_in_unavailable`, counted in `sign_in_lockout_unavailable_total`). Locks and throttled
+sources reach the Threats → Anomalies store (`credential_stuffing`, `password_spraying`).
 
 Every path that sets or replaces a password (sign-up, hosted registration, self-service change,
 reset, invite accept, admin create / set-password, bulk import) runs one check,
