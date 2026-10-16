@@ -18,7 +18,7 @@ const (
 	// EnvDev is a developer workstation. Validate's gates are off, missing keys
 	// are generated ephemerally, and cookies are not marked Secure.
 	EnvDev = "dev"
-	// EnvLocal is a Local-tier runtime of the qeet-id-deploy test kit (the DEV,
+	// EnvLocal is a Local-tier runtime of the Qeet ID Kit (qeet-id-kit; the DEV,
 	// TEST and STAGING environments, selected by SERVICE_PROFILE).
 	// Every production gate applies; the only difference from prod is that its
 	// browser-facing hosts must be loopback names (localhost / *.localhost), so

@@ -114,7 +114,7 @@ ci:
   workflows: [.github/workflows/ci.yml, .github/workflows/deploy.yml]
   jobs: [test, lint, integration, vuln, sast, image, deploy]
   deploy_trigger: push to main
-  release_image: "ci.yml job `image` — push to release/** after all gates: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by qeet-id-deploy test kit)"
+  release_image: "ci.yml job `image` — push to release/** after all gates: ghcr.io/qeetgroup/qeet-id-server:sha-<commit>, linux/amd64+arm64, OCI + in.qeet.* labels (consumed by the Qeet ID Kit, qeet-id-kit)"
 
 llm_context:
   canonical: docs/llm/context.md

@@ -40,7 +40,7 @@ jobs:
           latest=${latest:-v0.0.0}
           # A merged release/x.y.z pull request releases exactly x.y.z, so every
           # Qeet ID repository tags the same product version
-          # (qeet-id-deploy: docs/test-kit/release-process.md).
+          # (qeet-id-kit: docs/release-process.md).
           head=""
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \

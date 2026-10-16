@@ -269,7 +269,7 @@ locally, are gitignored, and must never be read into a committed file.
 
 `SERVICE_ENV` is an explicit enum — `dev`, `local`, `prod` — and `config.Load()` rejects any other
 value, so the gate below is switched on deliberately rather than by "anything that is not `dev`".
-`local` is a Local-tier runtime of the `qeet-id-deploy` test kit — the DEV, TEST (QA testing) and
+`local` is a Local-tier runtime of the Qeet ID Kit (`qeet-id-kit`) — the DEV, TEST (QA testing) and
 STAGING (UAT testing) environments, selected by `SERVICE_PROFILE=dev|test|staging`: every production gate applies, and `APP_BASE_URL`/`LOGIN_BASE_URL` must be
 `localhost` or `*.localhost`. `prod` additionally rejects `*.localhost`. Code asks `cfg.IsDev()`
 instead of comparing strings.
