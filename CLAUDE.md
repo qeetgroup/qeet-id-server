@@ -28,7 +28,7 @@ organization or product understanding; this repository does not restate them.
 
 1. **Tenant scope comes from `httpx.RequireTenant(r)`** — never from a path, body or header. There
    is **no PostgreSQL RLS**; a missing `WHERE tenant_id = $1` is a cross-tenant data exposure.
-2. **`make lint` is `go vet` only.** CI also runs `golangci-lint` v2.12.2. Passing locally proves
+2. **`make lint` is `go vet` only.** CI also runs `golangci-lint` v2.14.0. Passing locally proves
    less than it looks.
 3. **A new route without an OpenAPI entry fails CI** — `tests/integration/coverage_test.go`.
 4. **Wiring goes in `internal/bootstrap`.** `internal/platform` importing a bounded context fails

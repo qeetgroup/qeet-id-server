@@ -51,7 +51,7 @@ jobs:
       # toolchain — a prebuilt binary built with an older Go refuses go.mod's
       # newer target ("go language version ... lower than the targeted version").
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
 
       # Lint only the code this PR/push changes. This repo had no lint gate
       # before, so its existing tree carries pre-existing findings; grandfather
@@ -95,20 +95,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Pinned, not @latest: x/vuln v1.8.0 requires go1.26, so `go install
-      # ...@latest` fails outright on the go1.25.13 toolchain this repo targets
-      # (see the note below on why go1.26 isn't taken yet). v1.7.0 is the last
-      # release that builds under go1.25. Bump this together with go.mod.
+      # Pinned, not @latest; it needs go1.26 or newer. setup-go runs go.mod's
+      # toolchain (the same Go the Dockerfile ships), so the scan covers the
+      # standard library that is actually built in. Bump with go.mod.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
-      # Gate on what actually ships. The two findings this excludes are
-      # x/crypto/ssh DoS issues (GO-2026-6354/6355) reachable only from
-      # tests/fixtures/db.go via testcontainers; no production binary links
-      # x/crypto/ssh. They are fixed in x/crypto v0.56.0, which requires
-      # go1.26 — and the go1.26 line currently carries more open stdlib
-      # advisories than go1.25.13 does, so taking it would be a net regression.
-      # Revisit once go1.26 has matured.
+      # Gate on what actually ships (cmd/ and internal/). The full tree also
+      # covers test fixtures and is reported as advice only.
       - name: govulncheck (shipped code)
         run: govulncheck ./cmd/... ./internal/...
 
