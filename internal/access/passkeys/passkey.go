@@ -301,11 +301,13 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 //
 // BeginSignup/FinishSignup and BeginTenantSignup/FinishTenantSignup let a
 // brand-new account be founded on a passkey instead of a password. Since no
-// user row exists yet at Begin time, the ceremony carries an ephemeral
+// user row exists yet at Begin time, the ceremony carries a pre-generated
 // "subject" WebAuthn ID plus the pending account details in
-// auth.webauthn_sessions (subject_id/pending_*) rather than a real user_id —
-// the real user row (and its passkey credential) is only created once
-// FinishSignup verifies the attestation.
+// auth.webauthn_sessions (subject_id/pending_*) rather than a real user_id.
+// The user row (and its passkey credential) is only created once FinishSignup
+// verifies the attestation — and it is created WITH the subject ID as its id:
+// the authenticator stores that ID and returns it as the user handle on every
+// sign-in, so the account must answer to it.
 
 // signupSession is a decoded pending-signup ceremony.
 type signupSession struct {
@@ -423,9 +425,8 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 		return uuid.Nil, nil, errs.ErrAuthEmailExists
 	}
 
-	// subjectID only correlates this ceremony's challenge with its attestation
-	// response — it is never written to user_id (no row exists yet) and is
-	// discarded once the real user is created in finishSignup.
+	// subjectID is the WebAuthn user ID the passkey is registered under, and
+	// becomes the new user's id in createUserFromSignup (no row exists yet).
 	subjectID := uuid.New()
 	dn := displayName
 	if dn == "" {
@@ -533,6 +534,7 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 		dnPtr = &sess.displayName
 	}
 	userID, err := qtx.InsertUserFromSignup(ctx, dbgen.InsertUserFromSignupParams{
+		ID:          sess.subjectID,
 		TenantID:    tenantPG,
 		Email:       sess.email,
 		DisplayName: dnPtr,

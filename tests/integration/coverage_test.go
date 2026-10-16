@@ -19,6 +19,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery"
@@ -432,6 +433,13 @@ func TestOIDCRevokeAccessTokenHintNoop(t *testing.T) {
 func newPasskeySvc(t *testing.T) *passkey.Service {
 	t.Helper()
 	authSvc, _ := newAuth()
+	return newPasskeySvcWithAuth(t, authSvc)
+}
+
+// newPasskeySvcWithAuth builds the passkey service on a given auth service, for
+// tests that need extra auth wiring (for example a registration policy).
+func newPasskeySvcWithAuth(t *testing.T, authSvc *auth.Service) *passkey.Service {
+	t.Helper()
 	// Mirror the production config in internal/bootstrap/dependencies.go —
 	// crucially AuthenticatorSelection.UserVerification, which is what gates
 	// go-webauthn's UV check. A test config that omits it silently verifies
