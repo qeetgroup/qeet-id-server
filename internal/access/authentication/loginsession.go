@@ -4,14 +4,17 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // LoginSessionCookie is the browser SSO cookie for the hosted login/consent
@@ -58,6 +61,82 @@ func (s *Service) ResolveLoginSession(ctx context.Context, raw string) (uuid.UUI
 		return uuid.Nil, errs.ErrUnauthorized
 	}
 	return row.UserID, nil
+}
+
+// ResolveLoginSessionUser returns the user behind a live SSO session cookie
+// value and their own organization (uuid.Nil when they have none), or
+// ErrUnauthorized when the session is unknown, expired or ended, or the user or
+// their organization is no longer active.
+func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (userID, tenantID uuid.UUID, err error) {
+	if raw == "" {
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+	}
+	row, err := s.q.GetLoginSessionUser(ctx, tokens.HashRefresh(raw))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+	}
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if row.TenantID.Valid {
+		tenantID = uuid.UUID(row.TenantID.Bytes)
+	}
+	return row.UserID, tenantID, nil
+}
+
+// LoginSessionAuth lets the hosted login's own pages call a short list of
+// signed-in routes with the browser's SSO session (the qe_ls cookie) instead of
+// a bearer token, which the hosted login never holds. Mount it on the
+// authenticated route group, ahead of httpx.RequireAuth.
+//
+// routes are "METHOD /path" entries in chi pattern syntax ("{id}" matches one
+// path segment). The cookie is read only for a listed route, and only when the
+// request carries no Authorization header and nothing earlier authenticated it;
+// every other request passes through untouched for RequireAuth to decide. So
+// the session reaches no other route, and a request presenting a token is
+// judged on that token alone.
+//
+// Cross-site requests: the router's CSRF middleware runs first and skips only
+// requests carrying "Authorization: Bearer", so a cookie-authenticated mutation
+// here has already passed its Origin and qe_csrf double-submit checks.
+//
+// The principal is the session's user in their own organization, both read
+// from the database, never from the request. An unknown, expired or ended
+// session, or a user or organization that is no longer active, is refused
+// with 401.
+func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Handler {
+	listed := chi.NewRouter()
+	for _, route := range routes {
+		method, pattern, ok := strings.Cut(route, " ")
+		if !ok {
+			panic("auth: hosted-login session route without a method: " + route)
+		}
+		listed.MethodFunc(method, pattern, func(http.ResponseWriter, *http.Request) {})
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if httpx.PrincipalFromCtx(r.Context()) != nil || r.Header.Get("Authorization") != "" ||
+				!listed.Match(chi.NewRouteContext(), r.Method, r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			c, err := r.Cookie(LoginSessionCookie)
+			if err != nil || c.Value == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			userID, tenantID, err := s.ResolveLoginSessionUser(r.Context(), c.Value)
+			if err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID}
+			if tenantID != uuid.Nil {
+				p.TenantID = &tenantID
+			}
+			next.ServeHTTP(w, r.WithContext(httpx.WithPrincipal(r.Context(), p)))
+		})
+	}
 }
 
 // RevokeLoginSession deletes a hosted SSO session (hosted logout).

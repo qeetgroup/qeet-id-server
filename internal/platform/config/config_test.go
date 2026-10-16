@@ -77,6 +77,21 @@ func TestWebAuthnRPDefaults(t *testing.T) {
 	}
 }
 
+// The hosted login runs passkey sign-in, sign-up and enrolment ceremonies from
+// its own origin, so the default origins include it beside the app's.
+func TestWebAuthnRPDefaultOriginsIncludeHostedLogin(t *testing.T) {
+	c := &Config{ServiceName: "qeet-id", AppBaseURL: "http://localhost:3002", LoginBaseURL: "http://localhost:3003"}
+	_, _, origins := c.WebAuthnRP()
+	if len(origins) != 2 || origins[0] != "http://localhost:3002" || origins[1] != "http://localhost:3003" {
+		t.Errorf("origins = %v, want [http://localhost:3002 http://localhost:3003]", origins)
+	}
+	// Both on one origin: listed once.
+	c.LoginBaseURL = c.AppBaseURL + "/"
+	if _, _, origins := c.WebAuthnRP(); len(origins) != 1 {
+		t.Errorf("origins = %v, want only http://localhost:3002", origins)
+	}
+}
+
 func TestWebAuthnRPExplicit(t *testing.T) {
 	c := &Config{
 		ServiceName:           "qeet-id",

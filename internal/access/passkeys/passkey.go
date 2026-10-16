@@ -46,10 +46,63 @@ type Service struct {
 	q    *dbgen.Queries
 	wa   *webauthn.WebAuthn
 	auth *auth.Service
+	// policy says whether an organization permits passkeys (nil = no
+	// restriction). Set via SetMethodPolicy.
+	policy MethodPolicy
 }
 
 func NewService(pool *pgxpool.Pool, wa *webauthn.WebAuthn, authSvc *auth.Service) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), wa: wa, auth: authSvc}
+}
+
+// MethodPolicy is the slice of the tenant authentication policy the passkey
+// service needs. Satisfied by *authpolicy.Service; an interface so this package
+// doesn't import authpolicy. Wired in internal/bootstrap/dependencies.go.
+type MethodPolicy interface {
+	PasskeyEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
+// SetMethodPolicy wires the tenant's passkey on/off setting.
+func (s *Service) SetMethodPolicy(p MethodPolicy) { s.policy = p }
+
+// passkeysAllowed is the one place the tenant's passkey_enabled setting is
+// read: adding a passkey is offered (EnrolmentAllowed) and accepted
+// (BeginRegister, FinishRegister) only when it allows them. tenantID is the
+// user's own organization, read from the database; uuid.Nil (a user without
+// an organization) has no policy and is not restricted.
+func (s *Service) passkeysAllowed(ctx context.Context, tenantID uuid.UUID) error {
+	if tenantID == uuid.Nil || s.policy == nil {
+		return nil
+	}
+	enabled, err := s.policy.PasskeyEnabled(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return errs.ErrPasskeyDisabled
+	}
+	return nil
+}
+
+// EnrolmentAllowed reports whether the user may add a passkey: false when
+// their organization has passkeys switched off.
+func (s *Service) EnrolmentAllowed(ctx context.Context, userID uuid.UUID) (bool, error) {
+	row, err := s.q.GetUserForWebAuthn(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, errs.ErrPasskeyUserNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	var tenantID uuid.UUID
+	if row.TenantID.Valid {
+		tenantID = uuid.UUID(row.TenantID.Bytes)
+	}
+	err = s.passkeysAllowed(ctx, tenantID)
+	if errors.Is(err, errs.ErrPasskeyDisabled) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Credential, error) {
@@ -238,10 +291,14 @@ func (s *Service) takeSession(ctx context.Context, id uuid.UUID) (kind string, u
 	return row.Kind, uid, &sd, nil
 }
 
-// BeginRegister starts a registration ceremony for an authenticated user.
+// BeginRegister starts a registration ceremony for an authenticated user,
+// unless their organization has passkeys switched off.
 func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUID, *protocol.CredentialCreation, error) {
-	u, _, err := s.loadUser(ctx, userID)
+	u, tenantID, err := s.loadUser(ctx, userID)
 	if err != nil {
+		return uuid.Nil, nil, err
+	}
+	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
 		return uuid.Nil, nil, err
 	}
 	// Require a discoverable (resident) credential so the passwordless,
@@ -275,10 +332,19 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 // FinishRegister verifies the attestation and persists the new credential,
 // named name or, when that is empty, after the browser in userAgent. The name
 // is checked before the ceremony session is used, so a refused name can be
-// corrected and the same ceremony finished.
+// corrected and the same ceremony finished. The organization's passkey setting
+// is checked again, so a ceremony begun before passkeys were switched off
+// cannot be finished.
 func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage, name, userAgent string) error {
 	name, err := enrolmentName(name, userAgent)
 	if err != nil {
+		return err
+	}
+	u, tenantID, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := s.passkeysAllowed(ctx, tenantID); err != nil {
 		return err
 	}
 	kind, sessUser, sessionData, err := s.takeSession(ctx, sessionID)
@@ -287,10 +353,6 @@ func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUI
 	}
 	if kind != "register" || sessUser == nil || *sessUser != userID {
 		return errs.ErrPasskeySessionMismatch
-	}
-	u, _, err := s.loadUser(ctx, userID)
-	if err != nil {
-		return err
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(credential))
 	if err != nil {
@@ -826,6 +888,10 @@ type Handler struct {
 	CookieSecure bool
 }
 
+// Mount mounts the signed-in passkey routes. The hosted login calls list,
+// rename and the two enrolment steps with its session cookie rather than a
+// bearer token (see the router's hosted-login session routes); removal stays
+// bearer-only.
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/passkeys", h.list)
 	r.Patch("/passkeys/{id}", h.rename)
@@ -856,7 +922,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+	// enrollment_allowed tells a UI whether to offer adding a passkey.
+	allowed, err := h.Service.EnrolmentAllowed(r.Context(), *p.UserID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out, "enrollment_allowed": allowed})
 }
 
 type renameInput struct {

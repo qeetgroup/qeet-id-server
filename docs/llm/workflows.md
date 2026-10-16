@@ -49,7 +49,8 @@ staging or production.
 
 **Decide first: public or authenticated?** `internal/bootstrap/router.go` has two `/v1` groups. The
 authenticated group applies API-key resolution → `RequireAuth` → `EnforceTenantScope` → rate limits →
-`rbac.Enforce`. **Putting a route in the public group opts out of all of it** — do that only for
+`rbac.Enforce`. Authenticated routes take a bearer token or API key only; the hosted login's session
+cookie is accepted just on the short `LoginSessionRoutes()` list in the same file. **Putting a route in the public group opts out of all of it** — do that only for
 genuinely unauthenticated endpoints, and say why in the code.
 
 **If the route is tenant-scoped:** take the tenant from `httpx.RequireTenant(r)`, never from the

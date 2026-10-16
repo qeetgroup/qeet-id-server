@@ -100,6 +100,7 @@ HTTP request
         ├─ public group         rate-limited; no session required
         └─ authenticated group
                ↓  API-key middleware
+               ↓  LoginSessionAuth       qe_ls cookie, on LoginSessionRoutes() only (no Authorization header)
                ↓  RequireAuth            verify JWT: kid, signature, expiry → principal
                ↓  EnforceTenantScope     {tenantID} must equal the caller's tenant
                ↓  rate limiters          per tenant · per user · per API key
@@ -129,7 +130,7 @@ a caller can never reach a permission check for another tenant's resource.
 | Root routes | `/healthz` · `/readyz` · `/metrics` |
 | Protocol mounts | `MountPublic` for OIDC, SCIM, SAML, LDAP — fixed spec locations at the root |
 | `/v1` public group | rate-limited, no session — invites, social, billing webhooks, agent token, passkey login, admin portal, OAuth authorize/token-code |
-| `/v1` authenticated group | API key → `RequireAuth` → `EnforceTenantScope` → rate limits → `rbac.Enforce` |
+| `/v1` authenticated group | API key → hosted-login session (only the few `LoginSessionRoutes()` the hosted login calls) → `RequireAuth` → `EnforceTenantScope` → rate limits → `rbac.Enforce` |
 | Error taxonomy | `internal/platform/http/errs/` — ~50 domain files, stable machine codes |
 | Status mapping | `internal/platform/http/httpx/error_status_*.go` — 1:1 mirror of `errs/` |
 | Cursor pagination | `internal/platform/http/paging/` |

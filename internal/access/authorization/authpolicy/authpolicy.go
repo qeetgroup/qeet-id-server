@@ -225,6 +225,17 @@ func (s *Service) SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUI
 	return p.SelfRegistrationEnabled, nil
 }
 
+// PasskeyEnabled reports whether the tenant permits passkeys (passkey_enabled).
+// Gates adding a passkey: the passkey service consults it when offering
+// enrolment and when beginning and finishing the ceremony.
+func (s *Service) PasskeyEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error) {
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return p.PasskeyEnabled, nil
+}
+
 // RememberDeviceEnabled reports whether the tenant allows adaptive MFA (skipping
 // the second factor on a previously-trusted device). Gates the trusted-device
 // skip and the "remember this device" option on the hosted MFA step.

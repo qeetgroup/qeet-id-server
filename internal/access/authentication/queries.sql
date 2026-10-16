@@ -42,6 +42,19 @@ VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_a
 -- name: GetLoginSession :one
 SELECT user_id, expires_at FROM auth.login_sessions WHERE token_hash = @token_hash;
 
+-- name: GetLoginSessionUser :one
+-- The user behind a live hosted-login session, and their own organization (NULL
+-- for a user without one). No row when the session is unknown or expired, or
+-- the user or their organization is no longer active.
+SELECT s.user_id, u.tenant_id
+FROM auth.login_sessions s
+JOIN "user".users u ON u.id = s.user_id
+LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
+WHERE s.token_hash = @token_hash
+  AND s.expires_at > NOW()
+  AND u.status = 'active' AND u.deleted_at IS NULL
+  AND (u.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL));
+
 -- name: DeleteLoginSession :exec
 DELETE FROM auth.login_sessions WHERE token_hash = @token_hash;
 

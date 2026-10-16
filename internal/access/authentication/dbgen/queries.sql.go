@@ -120,6 +120,32 @@ func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLog
 	return i, err
 }
 
+const getLoginSessionUser = `-- name: GetLoginSessionUser :one
+SELECT s.user_id, u.tenant_id
+FROM auth.login_sessions s
+JOIN "user".users u ON u.id = s.user_id
+LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
+WHERE s.token_hash = $1
+  AND s.expires_at > NOW()
+  AND u.status = 'active' AND u.deleted_at IS NULL
+  AND (u.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL))
+`
+
+type GetLoginSessionUserRow struct {
+	UserID   uuid.UUID
+	TenantID pgtype.UUID
+}
+
+// The user behind a live hosted-login session, and their own organization (NULL
+// for a user without one). No row when the session is unknown or expired, or
+// the user or their organization is no longer active.
+func (q *Queries) GetLoginSessionUser(ctx context.Context, tokenHash string) (GetLoginSessionUserRow, error) {
+	row := q.db.QueryRow(ctx, getLoginSessionUser, tokenHash)
+	var i GetLoginSessionUserRow
+	err := row.Scan(&i.UserID, &i.TenantID)
+	return i, err
+}
+
 const insertLoginSession = `-- name: InsertLoginSession :exec
 INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent)
 VALUES ($1, $2, $3, NULLIF($4::text, '')::inet, $5)

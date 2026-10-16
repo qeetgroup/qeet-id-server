@@ -883,7 +883,12 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: The signed-in user's passkeys, newest first.
+        - ssoCookie: []
+      description: >-
+        The signed-in user's passkeys, newest first, and whether they may add
+        one. Also accepts the hosted-login session cookie (qe_ls) in place of a
+        bearer token, so the hosted login can show a signed-in user their
+        passkeys.
       responses:
         '200':
           description: OK
@@ -893,11 +898,20 @@ paths:
                 type: object
                 required:
                   - items
+                  - enrollment_allowed
                 properties:
                   items:
                     type: array
                     items:
                       $ref: '#/components/schemas/Passkey'
+                  enrollment_allowed:
+                    type: boolean
+                    description: >-
+                      False when the user's organization has passkeys switched
+                      off (auth policy passkey_enabled): do not offer adding a
+                      passkey, which register begin and finish then refuse
+                      (403 passkey.disabled). Always true for a user without an
+                      organization.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -977,6 +991,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       requestBody:
         required: false
         content:
@@ -985,7 +1000,14 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Starts adding a passkey for the signed-in user and returns the WebAuthn
+        creation options with a single-use ceremony id (valid five minutes,
+        bound to this user). Also accepts the hosted-login session cookie (qe_ls)
+        in place of a bearer token; that call, being a cookie session, needs the
+        CSRF token (X-CSRF-Token echoing the qe_csrf cookie) and an allowed
+        Origin. Refused with 403 passkey.disabled when the user's organization
+        has passkeys switched off.
       responses:
         '201':
           description: Created
@@ -1013,6 +1035,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       requestBody:
         required: false
         content:
@@ -1027,7 +1050,14 @@ paths:
         ceremony is used, so it can be finished again with a corrected name);
         without one the passkey is named after the enrolling browser, for example
         "Chrome on macOS", or "Passkey". The passkey sign-up finish calls name the
-        passkey the same way.
+        passkey the same way. The passkey belongs to the signed-in user (and so
+        to their organization); the body cannot name another. The ceremony id is
+        single-use and only the user it was issued to can finish it: an expired
+        or already-used one is refused (400 auth.session_expired), another
+        user's with 400 passkey.session_mismatch. Refused with 403
+        passkey.disabled when the user's organization has switched passkeys off
+        since the ceremony began. Accepts the hosted-login session cookie like
+        Register begin, with the same CSRF requirement.
       responses:
         '201':
           description: Created
@@ -1205,6 +1235,9 @@ paths:
         characters are removed, runs of spaces collapse into one and the ends are
         trimmed. Markup is stored as typed and must be shown as text. Another
         user's passkey, like an unknown id, is not found and is left unchanged.
+        Also accepts the hosted-login session cookie (qe_ls), with the CSRF
+        token, in place of a bearer token. Delete passkey does not: it takes a
+        bearer token only.
       tags:
         - Passkeys
       parameters:
@@ -1217,6 +1250,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       requestBody:
         required: true
         content:
@@ -3618,7 +3652,7 @@ components:
       type: apiKey
       in: cookie
       name: qe_ls
-      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow.
+      description: Hosted-login SSO session cookie (HttpOnly). Set by POST /v1/auth/session and consumed by the OAuth authorize/consent flow, and by the few signed-in routes the hosted login calls itself (listing, renaming and adding passkeys). State-changing calls made with it need the CSRF token.
   responses:
     BadRequest:
       description: Malformed request

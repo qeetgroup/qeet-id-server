@@ -460,7 +460,8 @@ func (c *Config) AllowedOrigins() []string {
 
 // WebAuthnRP returns the effective Relying Party config, defaulting the ID to
 // the AppBaseURL host, the display name to ServiceName, and the origins to
-// AppBaseURL when the explicit env vars are unset.
+// AppBaseURL and LoginBaseURL when the explicit env vars are unset. The hosted
+// login runs passkey sign-in, sign-up and enrolment from its own origin.
 func (c *Config) WebAuthnRP() (id, displayName string, origins []string) {
 	id = c.WebAuthnRPID
 	if id == "" {
@@ -480,6 +481,10 @@ func (c *Config) WebAuthnRP() (id, displayName string, origins []string) {
 		}
 	} else {
 		origins = []string{c.AppBaseURL}
+		login := strings.TrimSuffix(c.LoginBaseURL, "/")
+		if login != "" && login != strings.TrimSuffix(c.AppBaseURL, "/") {
+			origins = append(origins, login)
+		}
 	}
 	return id, displayName, origins
 }
