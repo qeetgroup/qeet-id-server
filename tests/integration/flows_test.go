@@ -69,7 +69,9 @@ func newAuth() (*auth.Service, *user.Repository) {
 	users := user.NewRepository(testPool)
 	issuer := mustIssuer()
 	svc := auth.NewService(testPool, users, issuer)
-	svc.SetRegistrationPolicy(authpolicy.NewService(testPool)) // the password check, as bootstrap wires it
+	policy := authpolicy.NewService(testPool)
+	svc.SetRegistrationPolicy(policy) // the password check, as bootstrap wires it
+	svc.SetMethodPolicy(policy)       // which sign-in methods an organisation allows
 	return svc, users
 }
 
@@ -1584,6 +1586,7 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 	defer idp.Close()
 
 	tenantID := createTenant(t, ctx, uniqueSlug("soc"))
+	setSelfRegistration(t, ctx, tenantID, true) // this flow provisions a new account
 	provider := "testidp"
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO tenant.social_providers (tenant_id, provider, client_id, client_secret, discovery_url)
@@ -2568,6 +2571,7 @@ func TestSocialEmailVerifiedStatesOnProvisioning(t *testing.T) {
 			defer idp.Close()
 
 			tenantID := createTenant(t, ctx, uniqueSlug("social-state"))
+			setSelfRegistration(t, ctx, tenantID, true) // provisioning needs open registration
 			authService, _ := newAuth()
 			service := social.NewService(testPool, authService, "http://app.local", egress.DevelopmentPolicy())
 			service.SetCipher(testEnvelope(t))

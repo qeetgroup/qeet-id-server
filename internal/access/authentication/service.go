@@ -23,6 +23,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -39,6 +40,8 @@ type Service struct {
 	// no password can be set). Set via SetRegistrationPolicy; an interface so
 	// auth doesn't import authpolicy.
 	regPolicy RegistrationPolicy
+	// methods decides which sign-in methods an organisation allows (nil = all).
+	methods MethodPolicy
 	// anomaly receives security signals (nil = recording off). Set via
 	// SetAnomalyRecorder; an interface so auth doesn't import the threat package.
 	anomaly AnomalyRecorder
@@ -50,9 +53,9 @@ type Service struct {
 	// loginHook is an optional synchronous policy gate run after credentials
 	// verify (nil = no gate). Set via SetLoginHook.
 	loginHook LoginHook
-	// emitter delivers session.revoked signals to a tenant's webhook
-	// subscriptions (nil = emission off). Set via SetEmitter.
-	emitter EventEmitter
+	// signals announces ended sessions to subscribed applications (nil =
+	// announces nothing). Set via SetSessionSignals.
+	signals *sessionsignal.Signaller
 	// lockout is the platform-wide sign-in lockout configuration, and
 	// lockoutSource the per-tenant settings (nil = the platform defaults for
 	// every sign-in). See lockout.go.
@@ -64,27 +67,29 @@ func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *S
 	return &Service{pool: pool, q: dbgen.New(pool), users: users, tokens: t, lockout: DefaultLockoutConfig()}
 }
 
-// EventEmitter delivers a webhook-shaped event to a tenant's subscriptions.
-// Satisfied by *webhook.Service.Enqueue; kept as a func type (matching the
-// same pattern used by domains/developer/agents) so auth doesn't import the
-// webhooks package. Wired via SetEmitter.
-type EventEmitter func(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) error
+// SetSessionSignals wires the announcement of ended sessions (session.revoked
+// webhooks). Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
-// SetEmitter wires webhook delivery for session-revocation signals. Called
-// from internal/bootstrap/dependencies.go.
-func (s *Service) SetEmitter(e EventEmitter) { s.emitter = e }
+// otherSessionsEnded turns RevokeOtherSessionsForUser's rows into signals.
+func otherSessionsEnded(userID uuid.UUID, rows []dbgen.RevokeOtherSessionsForUserRow) []sessionsignal.Session {
+	ids, tenants := make([]uuid.UUID, len(rows)), make([]pgtype.UUID, len(rows))
+	for i, r := range rows {
+		ids[i], tenants[i] = r.ID, r.TenantID
+	}
+	return endedSessions(userID, ids, tenants)
+}
 
-// emit is a best-effort webhook delivery: a failure here must never fail the
-// revocation it's describing (the session is already dead either way), so
-// errors are logged, not returned. tenantID == uuid.Nil (a tenant-less
-// session) is skipped — there's no tenant to hold a webhook subscription.
-func (s *Service) emit(ctx context.Context, tenantID uuid.UUID, eventType string, payload any) {
-	if s.emitter == nil || tenantID == uuid.Nil {
-		return
+// endedSessions turns the sessions a revocation query returned into signals.
+func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []sessionsignal.Session {
+	out := make([]sessionsignal.Session, len(ids))
+	for i, id := range ids {
+		out[i] = sessionsignal.Session{ID: id, UserID: userID}
+		if tenants[i].Valid {
+			out[i].TenantID = uuid.UUID(tenants[i].Bytes)
+		}
 	}
-	if err := s.emitter(ctx, tenantID, eventType, payload); err != nil {
-		slog.Warn("auth: emit webhook event", "event_type", eventType, "err", err)
-	}
+	return out
 }
 
 // MFAEnroller is the slice of the MFA service the auth package needs to enforce
@@ -115,6 +120,32 @@ type RegistrationPolicy interface {
 // SetRegistrationPolicy wires the hosted self-registration gate + password
 // policy. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRegistrationPolicy(p RegistrationPolicy) { s.regPolicy = p }
+
+// MethodPolicy is the slice of the authentication policy that decides whether
+// an organisation allows password sign-in. Satisfied by *authpolicy.Service.
+type MethodPolicy interface {
+	PasswordEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+}
+
+// SetMethodPolicy wires the sign-in method policy (nil = every method allowed).
+// Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetMethodPolicy(p MethodPolicy) { s.methods = p }
+
+// passwordAllowed refuses with ErrAuthMethodDisabled when tenantID has switched
+// password sign-in off. uuid.Nil (no organisation) is not restricted.
+func (s *Service) passwordAllowed(ctx context.Context, tenantID uuid.UUID) error {
+	if tenantID == uuid.Nil || s.methods == nil {
+		return nil
+	}
+	enabled, err := s.methods.PasswordEnabled(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return errs.ErrAuthMethodDisabled
+	}
+	return nil
+}
 
 // checkNewPassword runs the password check for an account in tenantID
 // (uuid.Nil = no organisation). With no policy wired it refuses rather than
@@ -440,17 +471,10 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	if err != nil {
 		return nil, err
 	}
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonTenantSwitch,
+		endedSessions(in.UserID, []uuid.UUID{in.FromSessionID}, []pgtype.UUID{left})...)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
-	}
-	if left.Valid {
-		s.emit(ctx, uuid.UUID(left.Bytes), "session.revoked", map[string]any{
-			"user_id":       in.UserID,
-			"session_id":    in.FromSessionID,
-			"reason":        "tenant_switch",
-			"superseded_by": pair.SessionID,
-			"revoked_at":    time.Now().UTC(),
-		})
 	}
 	return pair, nil
 }
@@ -814,6 +838,18 @@ func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, i
 // SSO session (which sets a cookie). It deliberately does not mint tokens or
 // sessions itself.
 func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.User, map[string]any, error) {
+	// Whether the organisation allows password sign-in. A hosted login names
+	// the application, so its organisation decides before the password is
+	// looked at — the same answer for any account or none. Without one, the
+	// account's own organisation decides once the password is verified, so
+	// only its owner sees that answer.
+	signInTenant, err := s.SignInTenant(ctx, in.ClientID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.passwordAllowed(ctx, signInTenant); err != nil {
+		return nil, nil, err
+	}
 	attempt, err := s.newSignInAttempt(ctx, in)
 	if err != nil {
 		return nil, nil, err
@@ -850,6 +886,11 @@ func (s *Service) CheckPassword(ctx context.Context, in SignInAttempt) (*user.Us
 	}
 	if err := s.clearFailedSignIns(ctx, attempt); err != nil {
 		return nil, nil, err
+	}
+	if signInTenant == uuid.Nil {
+		if err := s.passwordAllowed(ctx, u.TenantID); err != nil {
+			return nil, nil, err
+		}
 	}
 	// Transparently upgrade legacy bcrypt / weak-param hashes to current
 	// Argon2id on a successful login. Best-effort: never fail the login on it.
@@ -1057,15 +1098,6 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		if err := tx.Commit(ctx); err != nil {
 			return nil, err
 		}
-		// Best-effort, outside the transaction: the revocation is already
-		// durable at this point, and webhook.Service.Enqueue does its own
-		// pool calls — it can't join the tx above.
-		s.emit(ctx, tenantID, "session.revoked", map[string]any{
-			"user_id":    userID,
-			"session_id": sessionID,
-			"reason":     "reuse_detected",
-			"revoked_at": time.Now().UTC(),
-		})
 		return nil, errs.ErrAuthSessionRevoked
 	}
 
@@ -1172,6 +1204,8 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
 	if err := s.q.WithTx(tx).RevokeSessionById(ctx, sessionID); err != nil {
 		return err
 	}
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonReuseDetected,
+		sessionsignal.Session{ID: sessionID, UserID: userID, TenantID: tenantID})
 
 	auditEvent, outboxEvent := buildReuseEvents(userID, tenantID, sessionID, refreshID, in)
 	if err := audit.Record(ctx, tx, auditEvent); err != nil {
@@ -1198,7 +1232,12 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx,
 // session that belongs to them (userID), so passing another user's session id
 // is a no-op rather than a cross-user takedown.
 func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error {
-	tenantID, err := s.q.RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tenantID, err := s.q.WithTx(tx).RevokeSessionForUser(ctx, dbgen.RevokeSessionForUserParams{
 		SessionID: sessionID,
 		UserID:    userID,
 	})
@@ -1208,15 +1247,9 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 	if err != nil {
 		return err
 	}
-	if tenantID.Valid {
-		s.emit(ctx, tenantID.Bytes, "session.revoked", map[string]any{
-			"user_id":    userID,
-			"session_id": sessionID,
-			"reason":     "logout",
-			"revoked_at": time.Now().UTC(),
-		})
-	}
-	return nil
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonLogout,
+		endedSessions(userID, []uuid.UUID{sessionID}, []pgtype.UUID{tenantID})...)
+	return tx.Commit(ctx)
 }
 
 // RevokeOtherSessionsInput names the caller and the session they keep.
@@ -1264,13 +1297,15 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSession
 	if !live {
 		return 0, errs.ErrAuthSessionRevoked
 	}
-	revoked, err := q.RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
+	rows, err := q.RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
 		UserID:        in.UserID,
 		KeepSessionID: in.CurrentSessionID,
 	})
 	if err != nil {
 		return 0, err
 	}
+	revoked := int64(len(rows))
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonOtherSessionsRevoked, otherSessionsEnded(in.UserID, rows)...)
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
 		Action: "auth.other_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
@@ -1340,7 +1375,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInp
 		return SignInsEnded{}, errs.ErrUnauthorized
 	}
 	var ended SignInsEnded
-	ended.Sessions, ended.LoginSessions, ended.AppGrants, err = s.EndAllSignIns(ctx, tx, in.UserID)
+	ended.Sessions, ended.LoginSessions, ended.AppGrants, err = s.EndAllSignIns(ctx, tx, in.UserID, sessionsignal.ReasonAllSessionsRevoked)
 	if err != nil {
 		return SignInsEnded{}, err
 	}
@@ -1380,7 +1415,10 @@ const maxGrantPasses = 5
 // same user. Nothing is committed here: the caller records its audit event in
 // the same tx and commits. Used by self-service sign-out everywhere and by the
 // administrator's force sign-out. errs.ErrNotFound for an unknown user.
-func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (sessions, loginSessions, appGrants int64, err error) {
+//
+// reason is why, for the session.revoked signals of the sessions it ends
+// (self-service sign out everywhere, or an administrator's force sign-out).
+func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (sessions, loginSessions, appGrants int64, err error) {
 	q := s.q.WithTx(tx)
 	if _, err := q.LockUserForSessionRevocation(ctx, userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1388,9 +1426,19 @@ func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 		}
 		return 0, 0, 0, err
 	}
-	if sessions, err = q.RevokeAllSessionsForUser(ctx, userID); err != nil {
+	rows, err := q.RevokeAllSessionsForUser(ctx, userID)
+	if err != nil {
 		return 0, 0, 0, err
 	}
+	sessions = int64(len(rows))
+	ended := make([]sessionsignal.Session, len(rows))
+	for i, r := range rows {
+		ended[i] = sessionsignal.Session{ID: r.ID, UserID: userID}
+		if r.TenantID.Valid {
+			ended[i].TenantID = uuid.UUID(r.TenantID.Bytes)
+		}
+	}
+	s.signals.Revoked(ctx, tx, reason, ended...)
 	if loginSessions, err = q.EndLoginSessionsForUser(ctx, userID); err != nil {
 		return 0, 0, 0, err
 	}
@@ -1469,13 +1517,15 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	`, in.UserID, nh); err != nil {
 		return err
 	}
-	revoked, err := s.q.WithTx(tx).RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
+	rows, err := s.q.WithTx(tx).RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
 		UserID:        in.UserID,
 		KeepSessionID: in.KeepSessionID,
 	})
 	if err != nil {
 		return err
 	}
+	revoked := int64(len(rows))
+	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordChanged, otherSessionsEnded(in.UserID, rows)...)
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
 		Action: "auth.password_changed", ResourceType: "user", ResourceID: &in.UserID,

@@ -22,6 +22,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/identity/users/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -394,7 +395,7 @@ func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	sessions, loginSessions, appGrants, err := h.SignIns.EndAllSignIns(ctx, tx, id)
+	sessions, loginSessions, appGrants, err := h.SignIns.EndAllSignIns(ctx, tx, id, sessionsignal.ReasonAdminRevokedAll)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

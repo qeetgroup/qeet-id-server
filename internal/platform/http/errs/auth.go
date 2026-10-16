@@ -14,6 +14,7 @@ const (
 	CodeAuthAccountLocked            = "auth.account_locked"
 	CodeAuthNotTenantMember          = "auth.not_tenant_member"
 	CodeAuthSelfRegistrationDisabled = "auth.self_registration_disabled"
+	CodeAuthMethodDisabled           = "auth.method_disabled"
 	CodeAuthPasswordWeak             = "auth.password_weak"
 	CodeAuthMFAChallengeExpired      = "auth.mfa_challenge_expired"
 	CodeAuthRefreshTokenInvalid      = "auth.refresh_token_invalid"
@@ -34,11 +35,15 @@ var (
 	ErrAuthAccountLocked            = New(CodeAuthAccountLocked, "Too many failed attempts. Your account is temporarily locked — please try again later.").AsRetryable()
 	ErrAuthNotTenantMember          = New(CodeAuthNotTenantMember, "You're not a member of this organization.")
 	ErrAuthSelfRegistrationDisabled = New(CodeAuthSelfRegistrationDisabled, "Self-registration is not enabled for this application.")
-	ErrAuthPasswordWeak             = New(CodeAuthPasswordWeak, "Choose a stronger password.")
-	ErrAuthMFAChallengeExpired      = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
-	ErrAuthRefreshTokenInvalid      = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
-	ErrAuthSessionRevoked           = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
-	ErrAuthAccountSuspended         = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	// ErrAuthMethodDisabled: the organisation has switched this sign-in method
+	// off. An access decision, not a wrong credential; it says nothing about
+	// whether an account exists.
+	ErrAuthMethodDisabled      = New(CodeAuthMethodDisabled, "This sign-in method isn't available for this organisation. Use another way to sign in.")
+	ErrAuthPasswordWeak        = New(CodeAuthPasswordWeak, "Choose a stronger password.")
+	ErrAuthMFAChallengeExpired = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
+	ErrAuthRefreshTokenInvalid = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
+	ErrAuthSessionRevoked      = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
+	ErrAuthAccountSuspended    = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
 	// ErrAuthSignInUnavailable refuses a password sign-in whose failed-attempt
 	// counters could not be read or written: the lockout fails closed. The same
 	// answer whatever the password and whether the address has an account.

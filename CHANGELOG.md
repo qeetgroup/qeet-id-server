@@ -229,6 +229,33 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **auth:** every way a session ends is announced to subscribed applications. `session.revoked` used to fire
+  only for sign-out and refresh-token reuse, and never for a session with no organisation. Now sign-out,
+  reuse detection, signing out other sessions or everywhere, an administrator's force sign-out or password
+  set, password change (not for the session kept) and reset, organisation switch, suspension and
+  reactivation, SCIM deprovisioning, erasure (before the account is redacted) and expiry (when the cleanup
+  removes the session) each queue one signal per ended session, naming `user_id`, `session_id`, `reason`,
+  `revoked_at` and a per-signal `event_id`. A session with no organisation is announced to every organisation
+  the user belongs to (`tenant_id` null). Signals are queued in the transaction that ends the session
+  (`EnqueueTx`) under a savepoint: if queueing fails the session still ends and
+  `session_revocation_signal_failures_total` counts it. Delivery, signing and retries are unchanged.
+* **auth:** an organisation's sign-in method switches are enforced. `password_enabled`, `passkey_enabled` and
+  `magic_link_enabled` used to change only the stored policy. Now a switched-off method is refused where the
+  credential is accepted — `auth.method_disabled` (403) for passwords and magic links, `passkey.disabled` for
+  passkeys — as an access decision, not a wrong credential: a hosted sign-in that names its application is
+  refused before the password is checked, the console's once it is verified, and a passkey before the assertion
+  is verified. Magic links are issued, and stay valid, only while allowed, for the organisation's
+  `magic_link_ttl_minutes` instead of a fixed hour. The hosted login reads `sign_in_methods` from the
+  login context and offers only those. A policy write that would switch every method off, or switch on the email
+  or SMS one-time-code sign-in (which does not exist), is refused with 422; the console no longer offers those
+  two switches. Changes apply to the next sign-in (the policy is not cached).
+* **social:** signing in with a social provider no longer creates an account in an organisation that does not
+  allow self-registration. **Behaviour change:** the setting now governs social sign-up as it already did
+  password and passkey sign-up, and it defaults to off — an organisation that wants social sign-up must turn
+  self-registration on. A refused attempt writes nothing but an audit entry (`social.signup_refused`: the
+  provider and the asserted address), and the hosted login tells the person registration is closed
+  (`error=registration_closed`) instead of reporting a provider failure. Accounts already linked to the
+  provider, and existing accounts matched by a verified address, sign in as before.
 * **scheduler:** the `session-expiry-cleanup` job works. It deleted by a session expiry column that
   does not exist, so every run failed with an undefined-column error and no session was ever removed.
   It now deletes API and console sessions ended — or whose refresh tokens all expired — more than seven

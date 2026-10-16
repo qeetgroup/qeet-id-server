@@ -13,6 +13,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -28,7 +29,7 @@ type mfaResetter interface {
 // and reports how many of each it ended (admin force sign-out). Kept as an
 // interface because the authentication package imports this one.
 type signInEnder interface {
-	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (sessions, loginSessions, appGrants int64, err error)
+	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) (sessions, loginSessions, appGrants int64, err error)
 }
 
 type Handler struct {
@@ -43,6 +44,9 @@ type Handler struct {
 	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, email, password string) error
 	// MFA resets a user's second factors (admin recovery). Optional.
 	MFA mfaResetter
+	// Signals announces the sessions an account change ends (nil = announces
+	// nothing).
+	Signals *sessionsignal.Signaller
 	// SignIns ends every way a user is signed in (admin force sign-out).
 	// Without it that route answers 501.
 	SignIns signInEnder
@@ -533,12 +537,11 @@ func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid
 	// Every session, including any the admin is not aware of. Unlike the
 	// self-service change there is no session to preserve here: the caller is a
 	// different person from the account holder.
-	if _, err := tx.Exec(ctx, `
-		UPDATE auth.sessions SET revoked_at = NOW()
-		WHERE user_id = $1 AND revoked_at IS NULL
-	`, userID); err != nil {
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
 		return err
 	}
+	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonAdminPasswordSet, ended...)
 
 	actor := httpx.PrincipalFromCtx(ctx)
 	var actorID *uuid.UUID

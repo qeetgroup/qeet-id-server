@@ -15,10 +15,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -81,7 +83,7 @@ func newTenantSwitchFixture(t *testing.T, ctx context.Context) *tenantSwitchFixt
 		deny: map[uuid.UUID]bool{},
 	}
 	f.svc.SetLoginHook(f.hook)
-	f.svc.SetEmitter(func(_ context.Context, tenantID uuid.UUID, event string, payload any) error {
+	f.svc.SetSessionSignals(sessionsignal.New(func(_ context.Context, _ pgx.Tx, tenantID uuid.UUID, event string, payload any) error {
 		raw, _ := json.Marshal(payload)
 		var m map[string]any
 		_ = json.Unmarshal(raw, &m)
@@ -89,7 +91,7 @@ func newTenantSwitchFixture(t *testing.T, ctx context.Context) *tenantSwitchFixt
 		defer f.mu.Unlock()
 		f.signals = append(f.signals, sentSignal{tenantID: tenantID, event: event, payload: m})
 		return nil
-	})
+	}))
 	h := &auth.Handler{Service: f.svc, Validate: validator.New()}
 	r := chi.NewRouter()
 	r.Route("/v1", func(r chi.Router) {

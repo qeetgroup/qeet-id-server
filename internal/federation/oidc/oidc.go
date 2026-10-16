@@ -1009,6 +1009,13 @@ type RegistrationChecker interface {
 	SelfRegistrationEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
 }
 
+// SignInMethodsChecker reports which sign-in methods a tenant allows, so the
+// login-context tells the hosted login which to offer. Satisfied by
+// *authpolicy.Service (optional).
+type SignInMethodsChecker interface {
+	AllowedSignInMethods(ctx context.Context, tenantID uuid.UUID) (password, passkey, magicLink bool, err error)
+}
+
 // DeviceTrustChecker reports whether a tenant has opted into adaptive MFA, so
 // the login-context tells the hosted app whether to offer "remember this
 // device" on the MFA step. Satisfied by *authpolicy.Service (optional).
@@ -1033,6 +1040,7 @@ type Handler struct {
 	Providers    ProviderLister
 	Registration RegistrationChecker
 	DeviceTrust  DeviceTrustChecker
+	Methods      SignInMethodsChecker
 	Branding     BrandingLister
 	LoginBaseURL string
 	// CookieSecure marks the hosted-login SSO cookie Secure (HTTPS-only) when
@@ -1129,6 +1137,15 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 			rememberDevice = enabled
 		}
 	}
+	// Which sign-in methods the tenant allows, so the hosted login offers only
+	// those (each is also refused where the credential is accepted). All on when
+	// no checker is wired or it cannot be read.
+	methods := map[string]bool{"password": true, "passkey": true, "magic_link": true}
+	if h.Methods != nil {
+		if password, passkey, magic, merr := h.Methods.AllowedSignInMethods(r.Context(), tenantID); merr == nil {
+			methods = map[string]bool{"password": password, "passkey": passkey, "magic_link": magic}
+		}
+	}
 	// Per-tenant branding (logo + brand colors) so the hosted login can render
 	// the tenant's brand on first paint. Omitted entirely when nothing is set.
 	var brand map[string]any
@@ -1155,6 +1172,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 		"providers":                 providers,
 		"self_registration_enabled": selfRegistration,
 		"remember_device_enabled":   rememberDevice,
+		"sign_in_methods":           methods,
 		"branding":                  brand,
 	})
 }

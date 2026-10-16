@@ -113,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled.'
       summary: Sign in
       tags:
         - Auth
@@ -225,7 +225,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: post_v1_auth_magic_link_consume
-      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call.'
+      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused.'
       summary: Magic link consume
       tags:
         - Auth
@@ -257,7 +257,7 @@ paths:
   /v1/auth/magic-link/start:
     post:
       operationId: post_v1_auth_magic_link_start
-      description: 'Begins passwordless email sign-in by emailing a single-use link to the supplied address. It always returns a neutral confirmation whether or not the address maps to an account, preventing enumeration, and it is rate limited. Finish the flow by redeeming the emailed token at the magic-link consume call.'
+      description: 'Begins passwordless email sign-in by emailing a single-use link to the supplied address. It always returns a neutral confirmation whether or not the address maps to an account, preventing enumeration, and it is rate limited. Finish the flow by redeeming the emailed token at the magic-link consume call. Refused with 403 auth.method_disabled, issuing and sending nothing, when the organisation has switched magic links off; a link it issues lives for the organisation''s magic_link_ttl_minutes.'
       summary: Magic link start
       tags:
         - Auth
@@ -388,7 +388,7 @@ paths:
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed).'
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified.'
       summary: Create SSO session
       tags:
         - Auth
@@ -980,7 +980,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
       responses:
         '201':
           description: Created
@@ -3097,7 +3097,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AuthPolicy'
         description: The whole policy (a full replace). `lockout_limits` is read-only and ignored.
-      description: 'Replaces the tenant''s authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped.'
+      description: 'Replaces the tenant''s authentication policy. The sign-in lockout settings apply to the next sign-in attempt with no deployment. A lockout setting outside the documented bounds (`lockout_limits.min`..`lockout_limits.max`) is refused with 422 validation_failed, naming each field (code out_of_range), and nothing is stored. The password minimum length (8..128) and magic-link lifetime (5..1440 minutes) are clamped. Refused with 422 validation_failed, storing nothing, when the change would switch off every sign-in method (password, passkey and magic link; field password_enabled, code no_sign_in_method) or switch on otp_email_enabled / otp_sms_enabled (code not_available — no one-time-code sign-in exists). Changes apply to the next sign-in; the policy is not cached.'
       responses:
         '200':
           description: The stored policy

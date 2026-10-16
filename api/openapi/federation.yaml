@@ -521,7 +521,7 @@ paths:
   /v1/oauth/login-context:
     get:
       operationId: get_v1_oauth_login_context
-      description: 'Returns the context the hosted-login application needs to render itself for a given OAuth client: the client''s display name and tenant, the tenant''s enabled social login providers, self-registration and remember-device flags, and optional per-tenant branding. Consumed by the hosted login UI during the authorize flow and gated by the SSO session cookie. It carries no tokens and performs no state change.'
+      description: 'Returns the context the hosted-login application needs to render itself for a given OAuth client: the client''s display name and tenant, the tenant''s enabled social login providers, self-registration and remember-device flags, and optional per-tenant branding. Consumed by the hosted login UI during the authorize flow and gated by the SSO session cookie. It carries no tokens and performs no state change. sign_in_methods ({password, passkey, magic_link}) says which first-factor methods the client''s organisation allows, so the hosted login offers only those.'
       summary: Login context
       tags:
         - OIDC
@@ -1544,6 +1544,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
+      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. Other failures send it there with error=social.'
       summary: Social login callback
       tags:
         - Social
@@ -1554,7 +1555,6 @@ paths:
           schema:
             type: string
       security: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
           description: OK

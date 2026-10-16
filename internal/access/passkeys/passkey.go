@@ -67,7 +67,8 @@ func (s *Service) SetMethodPolicy(p MethodPolicy) { s.policy = p }
 
 // passkeysAllowed is the one place the tenant's passkey_enabled setting is
 // read: adding a passkey is offered (EnrolmentAllowed) and accepted
-// (BeginRegister, FinishRegister) only when it allows them. tenantID is the
+// (BeginRegister, FinishRegister), and signing in with one is accepted
+// (FinishLogin, before the assertion is verified), only when it allows them. tenantID is the
 // user's own organization, read from the database; uuid.Nil (a user without
 // an organization) has no policy and is not restricted.
 func (s *Service) passkeysAllowed(ctx context.Context, tenantID uuid.UUID) error {
@@ -743,6 +744,11 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		if err != nil {
 			return nil, err
 		}
+		// The organisation's passkey setting is checked before the assertion
+		// is verified.
+		if err := s.passkeysAllowed(ctx, tid); err != nil {
+			return nil, err
+		}
 		cred, err = s.wa.ValidateLogin(u, *sessionData, parsed)
 		if err != nil {
 			return nil, errs.ErrPasskeyLoginFailed
@@ -751,6 +757,9 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	case "login_discoverable":
 		var resolved *webauthnUser
 		var resolvedTenant uuid.UUID
+		var refused error
+		// go-webauthn resolves the user before it checks the signature, so a
+		// refusal here means the assertion is never verified.
 		handler := func(rawID, userHandle []byte) (webauthn.User, error) {
 			uid, err := uuid.FromBytes(userHandle)
 			if err != nil {
@@ -760,10 +769,16 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 			if err != nil {
 				return nil, err
 			}
+			if refused = s.passkeysAllowed(ctx, tid); refused != nil {
+				return nil, refused
+			}
 			resolved, resolvedTenant = u, tid
 			return u, nil
 		}
 		cred, err = s.wa.ValidateDiscoverableLogin(handler, *sessionData, parsed)
+		if refused != nil {
+			return nil, refused
+		}
 		if err != nil || resolved == nil {
 			return nil, errs.ErrPasskeyLoginFailed
 		}

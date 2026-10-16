@@ -27,6 +27,7 @@ import (
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -44,6 +45,9 @@ const (
 )
 
 type Service struct {
+	// signals announces the sessions a deprovisioning ends (nil = announces
+	// nothing). Set via SetSessionSignals.
+	signals  *sessionsignal.Signaller
 	pool     *pgxpool.Pool
 	q        *dbgen.Queries
 	users    *user.Repository
@@ -52,6 +56,10 @@ type Service struct {
 	// gate enforces the plan SCIM feature on token provisioning (nil = off).
 	gate PlanGate
 }
+
+// SetSessionSignals wires the announcement of ended sessions. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = sig }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository) *Service {
 	return &Service{pool: pool, q: dbgen.New(pool), users: users}
@@ -1088,10 +1096,12 @@ func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, tenant
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
-		if _, err := tx.Exec(ctx, `UPDATE auth.sessions SET revoked_at=NOW() WHERE user_id=$1 AND revoked_at IS NULL`, userID); err != nil {
+		ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+		if err != nil {
 			writeSCIMErr(w, http.StatusInternalServerError, "update failed")
 			return false
 		}
+		h.Service.signals.Revoked(ctx, tx, sessionsignal.ReasonDeprovisioned, ended...)
 	}
 	if h.Service.mapper != nil && len(profiles) > 0 {
 		if err := h.Service.mapper.StoreProfile(ctx, tx, tenantID, userID, "scim:"+tenantID.String(), profiles[0]); err != nil {

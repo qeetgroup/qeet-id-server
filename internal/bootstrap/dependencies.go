@@ -78,6 +78,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/hibp"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
@@ -239,8 +240,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// baseline; the breach check). Sign-up, hosted registration and
 	// self-service change reach it through SetRegistrationPolicy below; admin
 	// create / set-password / bulk import through user.Handler.PasswordPolicy.
-	recoveryService.SetPasswordRules(authPolicyService) // password reset
-	inviteService.SetPasswordRules(authPolicyService)   // invite accept
+	recoveryService.SetPasswordRules(authPolicyService)   // password reset
+	recoveryService.SetMagicLinkPolicy(authPolicyService) // magic links only where the tenant allows them, with its lifetime
+	inviteService.SetPasswordRules(authPolicyService)     // invite accept
 
 	// Breached-password detection (Have I Been Pwned k-anonymity). OFF by
 	// default (BREACHED_PASSWORD_CHECK unset) so dev/CI/offline deploys are
@@ -260,6 +262,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	mfaService.SetCipher(sharedCipher)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
+	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it
 	authService.SetDevicePolicy(authPolicyService)       // gate adaptive MFA (trusted-device skip)
 
 	// Sign-in lockout (authentication/lockout.go): failures counted per account
@@ -343,9 +346,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// CAEP/SSF-shaped signals over the existing webhook dispatcher: a tenant
 	// that subscribes to these can react to a revoked session or a changed
 	// role grant immediately, instead of waiting out the access-token TTL.
-	authService.SetEmitter(webhookService.Enqueue)
+	// Every path that ends a session announces it (session.revoked) in the
+	// transaction that ends it; see sessionsignal for reasons and destinations.
+	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
+	authService.SetSessionSignals(sessionSignals)
+	recoveryService.SetSessionSignals(sessionSignals)
 	rbacService.SetEmitter(webhookService.Enqueue)
 	gdprService := gdpr.NewService(pool, 30*24*time.Hour)
+	gdprService.SetSessionSignals(sessionSignals)
 	auditReader := audit.NewReader(pool)
 	auditVerifier := audit.NewVerifier(pool)
 	evidenceService := gdpr.NewEvidenceService(pool, auditVerifier, cfg.BreachedPasswordCheck)
@@ -415,6 +423,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	}
 	groupService := group.NewService(pool)
 	scimService := scim.NewService(pool, userRepo)
+	scimService.SetSessionSignals(sessionSignals)
 	secretService, err := secret.NewService(rootCtx, pool, keyProvider)
 	if err != nil {
 		slog.Error("init secrets vault", "err", err)
@@ -569,7 +578,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	})
 	deps := Deps{
 		Tenant:        &tenant.Handler{Repo: tenantRepo, Validate: v, AuthService: authService},
-		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService},
+		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
 		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
@@ -594,7 +603,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Sales:         &sales.Handler{Service: salesService},
 		Analytics:     &analytics.Handler{Reader: analyticsReader},
 		Outbox:        &outbox.Handler{Reader: outboxReader},
-		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
+		OIDC:          &oidc.Handler{Service: oidcService, Sessions: authService, Providers: socialService, Registration: authPolicyService, DeviceTrust: authPolicyService, Methods: authPolicyService, Branding: brandingRepo, LoginBaseURL: cfg.LoginBaseURL, CookieSecure: !cfg.IsDev()},
 		Passkey:       &passkey.Handler{Service: passkeyService, CookieSecure: !cfg.IsDev()},
 		Social:        &social.Handler{Service: socialService, CookieSecure: !cfg.IsDev(), LoginBaseURL: cfg.LoginBaseURL},
 		Group:         &group.Handler{Service: groupService},
