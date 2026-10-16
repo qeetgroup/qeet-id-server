@@ -210,6 +210,43 @@ func (q *Queries) InsertTenantlessUser(ctx context.Context, arg InsertTenantless
 	return i, err
 }
 
+const isSessionLiveForUser = `-- name: IsSessionLiveForUser :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.sessions
+    WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+) AS live
+`
+
+type IsSessionLiveForUserParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// IsSessionLiveForUser reports whether the session exists, belongs to the
+// user and has not been revoked.
+func (q *Queries) IsSessionLiveForUser(ctx context.Context, arg IsSessionLiveForUserParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isSessionLiveForUser, arg.SessionID, arg.UserID)
+	var live bool
+	err := row.Scan(&live)
+	return live, err
+}
+
+const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
+SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
+`
+
+// LockUserForSessionRevocation row-locks the account so bulk session
+// revocations for one user (and password changes, which lock the same row FOR
+// UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
+// session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
+// are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
+func (q *Queries) LockUserForSessionRevocation(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockUserForSessionRevocation, userID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const markRefreshTokenUsed = `-- name: MarkRefreshTokenUsed :exec
 UPDATE auth.refresh_tokens SET used_at = NOW(), replaced_by = $1 WHERE id = $2
 `

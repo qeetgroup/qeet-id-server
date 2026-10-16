@@ -1082,6 +1082,72 @@ func (s *Service) Logout(ctx context.Context, sessionID, userID uuid.UUID) error
 	return nil
 }
 
+// RevokeOtherSessionsInput names the caller and the session they keep.
+// CurrentSessionID must come from the caller's own access token, never from
+// anything the client supplies.
+type RevokeOtherSessionsInput struct {
+	UserID           uuid.UUID
+	CurrentSessionID uuid.UUID
+	TenantID         *uuid.UUID
+	IP               string
+	UserAgent        string
+	RequestID        string
+}
+
+// RevokeOtherSessions ends every live session the user holds except the current
+// one and returns how many it ended. Ending a session is what invalidates its
+// refresh tokens: Refresh rejects any token whose session is revoked.
+//
+// It is all-or-nothing: the revocation and its audit record commit together, so
+// a failure ends nothing and is never reported as success. The user row is
+// locked first, so two of the user's sessions asking at once run one after the
+// other; the second then finds its own session ended and gets
+// ErrAuthSessionRevoked. That check also stops a still-unexpired access token
+// from an ended session from ending the sessions that remain.
+func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSessionsInput) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	if _, err := q.LockUserForSessionRevocation(ctx, in.UserID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, errs.ErrUnauthorized
+		}
+		return 0, err
+	}
+	live, err := q.IsSessionLiveForUser(ctx, dbgen.IsSessionLiveForUserParams{
+		SessionID: in.CurrentSessionID,
+		UserID:    in.UserID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if !live {
+		return 0, errs.ErrAuthSessionRevoked
+	}
+	revoked, err := q.RevokeOtherSessionsForUser(ctx, dbgen.RevokeOtherSessionsForUserParams{
+		UserID:        in.UserID,
+		KeepSessionID: in.CurrentSessionID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
+		Action: "auth.other_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
+		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
+		Metadata: map[string]any{"revoked_sessions": revoked, "kept_session_id": in.CurrentSessionID},
+	}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return revoked, nil
+}
+
 type ChangePasswordInput struct {
 	UserID        uuid.UUID
 	KeepSessionID uuid.UUID

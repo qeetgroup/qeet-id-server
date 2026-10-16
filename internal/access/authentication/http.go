@@ -76,6 +76,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/auth/switch-tenant", h.switchTenant)
 	r.Get("/auth/sessions", h.listSessions)
 	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
+	r.Post("/auth/sessions/revoke-others", h.revokeOtherSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
@@ -513,6 +514,28 @@ func (h *Handler) revokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": "Session revoked."})
+}
+
+// revokeOtherSessions → POST /v1/auth/sessions/revoke-others. Ends all of the
+// caller's sessions except the one behind the presented access token, in one
+// step, and reports how many ended ({"revoked": n}, the same shape as the admin
+// revoke-all). Access tokens already issued to the ended sessions stay valid
+// until they expire; their refresh tokens stop working at once.
+func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || p.SessionID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	n, err := h.Service.RevokeOtherSessions(r.Context(), RevokeOtherSessionsInput{
+		UserID: *p.UserID, CurrentSessionID: *p.SessionID, TenantID: p.TenantID,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
