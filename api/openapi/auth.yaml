@@ -683,7 +683,8 @@ paths:
         there is no other session. If any session cannot be ended the call fails
         and none are ended. Returns 401 `auth.session_revoked` when the caller's
         own session has already ended. Sessions in hosted login and tokens held
-        by applications are not affected.
+        by applications are not affected; the sign-out-everywhere call ends
+        those too.
       tags:
         - Auth
       security:
@@ -702,6 +703,65 @@ paths:
                     type: integer
                     minimum: 0
                     description: Number of sessions ended by this call; 0 when there were none.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /v1/auth/sessions/revoke-all:
+    post:
+      operationId: post_v1_auth_sessions_revokeAll
+      summary: Sign out everywhere
+      description: >-
+        Signs the caller out everywhere in a single all-or-nothing step and
+        reports how many sign-ins ended. It ends every one of the caller's
+        sessions, including the one behind the presented access token; every
+        hosted-login (browser) session, so the next authorization asks the
+        person to sign in again; and every refresh grant held by applications
+        the person signed in to. The response also clears the hosted-login
+        cookie for a browser that calls directly. The request takes no body.
+        Refresh tokens and application grants stop working as soon as this
+        returns, but access tokens already issued stay valid until they expire
+        (minutes), so do not present this as an instant cut-off everywhere. The
+        presented access token must belong to one of the caller's own sessions
+        (an application's access token is refused with 401). Repeating the call
+        succeeds with every count at 0 and changes nothing. If anything cannot
+        be ended the call fails and nothing is ended. To keep the current
+        session, use the revoke-other-sessions call instead.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The caller was signed out everywhere
+          headers:
+            Set-Cookie:
+              description: Clears the hosted-login cookie (`qe_ls`).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked, sessions, hosted_login_sessions, app_grants]
+                properties:
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Number of sign-ins ended by this call, all places together; 0 when there were none.
+                  sessions:
+                    type: integer
+                    minimum: 0
+                    description: Sessions ended, the current one included.
+                  hosted_login_sessions:
+                    type: integer
+                    minimum: 0
+                    description: Hosted-login browser sessions ended.
+                  app_grants:
+                    type: integer
+                    minimum: 0
+                    description: Application refresh grants ended.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

@@ -23,6 +23,14 @@ type mfaResetter interface {
 	ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
 }
 
+// signInEnder ends, inside tx, every way a user is signed in — API and console
+// sessions, hosted-login browser sessions and applications' refresh grants —
+// and reports how many of each it ended (admin force sign-out). Kept as an
+// interface because the authentication package imports this one.
+type signInEnder interface {
+	EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (sessions, loginSessions, appGrants int64, err error)
+}
+
 type Handler struct {
 	Repo     *Repository
 	Validate *validator.Validate
@@ -32,6 +40,9 @@ type Handler struct {
 	PasswordPolicy func(ctx context.Context, tenantID uuid.UUID, password string) error
 	// MFA resets a user's second factors (admin recovery). Optional.
 	MFA mfaResetter
+	// SignIns ends every way a user is signed in (admin force sign-out).
+	// Without it that route answers 501.
+	SignIns signInEnder
 }
 
 func (h *Handler) Mount(r chi.Router) {

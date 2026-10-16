@@ -337,6 +337,7 @@ func routePolicyMap() map[string]rbac.RoutePolicy {
 		"POST /v1/auth/switch-tenant",
 		"GET /v1/auth/sessions",
 		"POST /v1/auth/sessions/revoke-others",
+		"POST /v1/auth/sessions/revoke-all",
 		"DELETE /v1/auth/sessions/{id}",
 		"GET /v1/auth/me",
 		"GET /v1/auth/password",

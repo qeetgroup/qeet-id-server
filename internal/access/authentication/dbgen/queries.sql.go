@@ -64,6 +64,25 @@ func (q *Queries) DeleteMFALoginChallenge(ctx context.Context, id uuid.UUID) err
 	return err
 }
 
+const endLoginSessionsForUser = `-- name: EndLoginSessionsForUser :one
+WITH ended AS (
+    DELETE FROM auth.login_sessions WHERE user_id = $1
+    RETURNING expires_at
+)
+SELECT COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS live
+FROM ended
+`
+
+// EndLoginSessionsForUser ends every hosted-login (browser) session of the
+// user — the way hosted sign-out ends one, by deleting it — and returns how
+// many of them had not yet expired.
+func (q *Queries) EndLoginSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, endLoginSessionsForUser, userID)
+	var live int64
+	err := row.Scan(&live)
+	return live, err
+}
+
 const getLoginAttempt = `-- name: GetLoginAttempt :one
 
 SELECT locked_until FROM auth.login_attempts WHERE email = $1
@@ -231,6 +250,27 @@ func (q *Queries) IsSessionLiveForUser(ctx context.Context, arg IsSessionLiveFor
 	return live, err
 }
 
+const isSessionOfUser = `-- name: IsSessionOfUser :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.sessions
+    WHERE id = $1 AND user_id = $2
+) AS owned
+`
+
+type IsSessionOfUserParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// IsSessionOfUser reports whether the session is (or was) one of the user's
+// own sessions, whether or not it has ended since.
+func (q *Queries) IsSessionOfUser(ctx context.Context, arg IsSessionOfUserParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isSessionOfUser, arg.SessionID, arg.UserID)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
+}
+
 const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
 SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
 `
@@ -259,6 +299,50 @@ type MarkRefreshTokenUsedParams struct {
 func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) error {
 	_, err := q.db.Exec(ctx, markRefreshTokenUsed, arg.ReplacedBy, arg.ID)
 	return err
+}
+
+const revokeAllSessionsForUser = `-- name: RevokeAllSessionsForUser :execrows
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE user_id = $1 AND revoked_at IS NULL
+`
+
+// RevokeAllSessionsForUser ends every live session of the user, the caller's
+// own included. Ending a session is what kills its refresh tokens.
+func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeAllSessionsForUser, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeAppGrantsForUser = `-- name: RevokeAppGrantsForUser :one
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE user_id = $1 AND revoked_at IS NULL
+    RETURNING used_at, expires_at
+)
+SELECT COUNT(*)::bigint AS touched,
+       COUNT(*) FILTER (WHERE used_at IS NULL AND expires_at > NOW())::bigint AS live
+FROM ended
+`
+
+type RevokeAppGrantsForUserRow struct {
+	Touched int64
+	Live    int64
+}
+
+// RevokeAppGrantsForUser ends every application grant (OIDC refresh-token
+// chain) the user holds, for every application. It marks every not-yet-revoked
+// token of the user revoked — rotated-away ones too, so presenting an old one
+// later reads as revoked rather than as theft — and returns how many rows it
+// touched (touched) and how many were the live head of a grant (live: unused
+// and unexpired), which is the number of grants it ended.
+func (q *Queries) RevokeAppGrantsForUser(ctx context.Context, userID uuid.UUID) (RevokeAppGrantsForUserRow, error) {
+	row := q.db.QueryRow(ctx, revokeAppGrantsForUser, userID)
+	var i RevokeAppGrantsForUserRow
+	err := row.Scan(&i.Touched, &i.Live)
+	return i, err
 }
 
 const revokeOtherSessionsForUser = `-- name: RevokeOtherSessionsForUser :execrows
