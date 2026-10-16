@@ -229,6 +229,13 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **scheduler:** the `session-expiry-cleanup` job works. It deleted by a session expiry column that
+  does not exist, so every run failed with an undefined-column error and no session was ever removed.
+  It now deletes API and console sessions ended — or whose refresh tokens all expired — more than seven
+  days ago (their refresh tokens go with them) and hosted-login sessions expired more than seven days
+  ago, keeps every live session and anything ended inside the window, and logs how many it removed
+  (zero when there is nothing to remove). The scheduler process itself is still not part of the
+  deployed image; shipping and starting it is tracked separately.
 * **auth:** switching organisation (`POST /v1/auth/switch-tenant`) replaces the session instead of
   adding one. **Behaviour change:** the session switched from now ends — its refresh token is refused
   and `session.revoked` subscribers are told, with reason `tenant_switch` — where before it stayed

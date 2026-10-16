@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
@@ -82,12 +83,11 @@ func main() {
 			name:     "session-expiry-cleanup",
 			interval: 15 * time.Minute,
 			run: func(ctx context.Context) error {
-				tag, err := pool.Exec(ctx,
-					`DELETE FROM auth.sessions WHERE expires_at < now() - interval '7 days'`)
+				purged, err := auth.PurgeEndedSessions(ctx, pool, auth.SessionRetention)
 				if err != nil {
 					return err
 				}
-				slog.Info("sessions cleaned", "deleted", tag.RowsAffected())
+				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions)
 				return nil
 			},
 		},

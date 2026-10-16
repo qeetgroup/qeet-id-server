@@ -309,3 +309,22 @@ VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent);
 
 -- name: DeleteMFALoginChallenge :exec
 DELETE FROM auth.mfa_login_challenges WHERE id = @id;
+
+-- PurgeEndedSessions deletes API and console sessions past retention: ended
+-- (revoked) before the cutoff, or never ended but with every refresh token
+-- expired before the cutoff (none was usable after it). A session opened after
+-- the cutoff is always kept. Their refresh tokens go with them (cascade).
+-- name: PurgeEndedSessions :execrows
+DELETE FROM auth.sessions s
+WHERE s.created_at < @cutoff
+  AND (
+      (s.revoked_at IS NOT NULL AND s.revoked_at < @cutoff)
+      OR (s.revoked_at IS NULL AND NOT EXISTS (
+          SELECT 1 FROM auth.refresh_tokens rt
+          WHERE rt.session_id = s.id AND rt.expires_at >= @cutoff))
+  );
+
+-- PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
+-- the cutoff. Their cookie stopped being sent when they expired.
+-- name: PurgeExpiredLoginSessions :execrows
+DELETE FROM auth.login_sessions WHERE expires_at < @cutoff;
