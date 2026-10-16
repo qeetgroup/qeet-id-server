@@ -210,19 +210,27 @@ func (q *Queries) InsertSignupWebAuthnSession(ctx context.Context, arg InsertSig
 }
 
 const insertUserFromSignup = `-- name: InsertUserFromSignup :one
-INSERT INTO "user".users (tenant_id, email, display_name)
-VALUES ($1, $2, $3)
+INSERT INTO "user".users (id, tenant_id, email, display_name)
+VALUES ($1, $2, $3, $4)
 RETURNING id
 `
 
 type InsertUserFromSignupParams struct {
+	ID          uuid.UUID
 	TenantID    pgtype.UUID
 	Email       string
 	DisplayName *string
 }
 
+// The id is the WebAuthn user ID the signup passkey was registered under: the
+// authenticator returns it as the user handle on every sign-in.
 func (q *Queries) InsertUserFromSignup(ctx context.Context, arg InsertUserFromSignupParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, insertUserFromSignup, arg.TenantID, arg.Email, arg.DisplayName)
+	row := q.db.QueryRow(ctx, insertUserFromSignup,
+		arg.ID,
+		arg.TenantID,
+		arg.Email,
+		arg.DisplayName,
+	)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err

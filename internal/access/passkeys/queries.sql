@@ -66,8 +66,10 @@ SELECT EXISTS (
 ) AS exists;
 
 -- name: InsertUserFromSignup :one
-INSERT INTO "user".users (tenant_id, email, display_name)
-VALUES ($1, $2, $3)
+-- The id is the WebAuthn user ID the signup passkey was registered under: the
+-- authenticator returns it as the user handle on every sign-in.
+INSERT INTO "user".users (id, tenant_id, email, display_name)
+VALUES ($1, $2, $3, $4)
 RETURNING id;
 
 -- name: InsertPasskeyCredential :exec

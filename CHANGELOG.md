@@ -234,6 +234,10 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
   and go-webauthn rejects a login whose backup-eligible flag differs from the one at registration.
   Migration `0116` adds the columns; passkeys registered before it must be registered again.
 * **api:** align Postman baseUrl to port 4000 (matches standardized backend port) ([202aa84](https://github.com/qeetgroup/qeet-id-server/commit/202aa845ad0d527367d32c0e1a454b9cfd2b12f3))
+* **passkeys:** an account created by passkey signup (console or hosted login) can sign in with
+  that passkey. The account was created with a database-generated id instead of the WebAuthn user ID
+  the passkey was registered under, so the user handle the browser returns matched no user.
+  Accounts created this way before the fix must add their passkey again (or reset their password).
 * **deploy:** assemble DB_URL via interpolation; drop distroless-incompatible healthcheck ([94da569](https://github.com/qeetgroup/qeet-id-server/commit/94da5697a3c1f8f0fc48a3418965d8b2c7c5b9b9))
 * **oidc:** derive issuer/discovery scheme from X-Forwarded-Proto ([f03b6dd](https://github.com/qeetgroup/qeet-id-server/commit/f03b6dd193fd94b1e162e0f8364575385d6937bd))
 * **repo:** correct doc drift, dead docs targets, eslint login wiring, image license ([c250c60](https://github.com/qeetgroup/qeet-id-server/commit/c250c603d4fdf9dc8af5ddb91b6a381992436e4a))
