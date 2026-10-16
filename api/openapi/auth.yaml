@@ -375,14 +375,14 @@ paths:
   /v1/auth/session:
     delete:
       operationId: delete_v1_auth_session
-      description: 'Revokes the hosted-login SSO session and clears the qe_ls cookie, ending the browser''s single sign-on state. This is the counterpart to the create-SSO-session call and returns no content. Bearer-token API sessions are unaffected; sign those out with the logout call.'
+      description: 'Signs the browser out of the hosted login: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — then clears the cookie. The sign-out is recorded in the audit log (auth.signed_out). Other browsers, bearer-token API sessions and grants started elsewhere are unaffected; sign API sessions out with the logout call, or everything with sign out everywhere. Without a session cookie nothing is ended and the response is the same. If the sign-out cannot be completed an error is returned and the cookie kept, so it can be retried. Access tokens already issued stay valid until they expire.'
       summary: Destroy SSO session (logout)
       tags:
         - Auth
       security: []
       responses:
         '204':
-          description: Session revoked, cookie cleared
+          description: Signed out (or there was no session to end), cookie cleared
     post:
       operationId: post_v1_auth_session
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.

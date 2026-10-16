@@ -121,7 +121,7 @@ INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent
 VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_agent);
 
 -- name: GetLoginSession :one
-SELECT user_id, expires_at FROM auth.login_sessions WHERE token_hash = @token_hash;
+SELECT id, user_id, expires_at FROM auth.login_sessions WHERE token_hash = @token_hash;
 
 -- name: GetLoginSessionUser :one
 -- The user behind a live hosted-login session, and their own organization (NULL
@@ -136,8 +136,41 @@ WHERE s.token_hash = @token_hash
   AND u.status = 'active' AND u.deleted_at IS NULL
   AND (u.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL));
 
--- name: DeleteLoginSession :exec
-DELETE FROM auth.login_sessions WHERE token_hash = @token_hash;
+-- EndLoginSession ends the hosted-login (browser) session behind a cookie —
+-- expired or not, since what it started can outlive it — and returns its id,
+-- its user and that user's own organization (NULL for none), so the sign-out
+-- can end what the session started and record it. No row: nothing to end.
+-- name: EndLoginSession :one
+WITH ended AS (
+    DELETE FROM auth.login_sessions WHERE token_hash = @token_hash
+    RETURNING id, user_id
+)
+SELECT ended.id, ended.user_id, u.tenant_id
+FROM ended LEFT JOIN "user".users u ON u.id = ended.user_id;
+
+-- ExpireAuthorizationCodesForLoginSession spends every code minted through
+-- the session that no application has redeemed yet, so none can be traded
+-- for a grant after sign-out. A redemption already under way holds its code
+-- locked and writes its grant before releasing it; this waits for it, skips
+-- the code it spent, and the grant is ended by RevokeAppGrantsForLoginSession,
+-- which runs after.
+-- name: ExpireAuthorizationCodesForLoginSession :execrows
+UPDATE auth.oidc_authorization_codes SET used_at = NOW()
+WHERE login_session_id = @login_session_id AND used_at IS NULL;
+
+-- RevokeAppGrantsForLoginSession ends the application grants the session
+-- started — every not-yet-revoked token in their chains, renewals included —
+-- and returns how many rows it touched and how many were the live head of a
+-- grant (the number of grants it ended), like RevokeAppGrantsForUser.
+-- name: RevokeAppGrantsForLoginSession :one
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE login_session_id = @login_session_id AND revoked_at IS NULL
+    RETURNING used_at, expires_at
+)
+SELECT COUNT(*)::bigint AS touched,
+       COUNT(*) FILTER (WHERE used_at IS NULL AND expires_at > NOW())::bigint AS live
+FROM ended;
 
 -- name: TouchTrustedDevice :execrows
 -- Refreshes last_used_at and returns 1 when a live token was found, 0 otherwise.

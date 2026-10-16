@@ -229,6 +229,15 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **auth:** signing out of the hosted login now signs the browser out of the applications it signed
+  in to. Both ways of signing out — the hosted login's own (`DELETE /v1/auth/session`) and an
+  application's (`/v1/oauth/logout`) — used to delete only the browser's SSO session, so every
+  application kept renewing its refresh grant for up to 30 days. Now the grants started through that
+  session are revoked (renewals included), codes it minted that no application has redeemed can no
+  longer be redeemed, and the sign-out is audited (`auth.signed_out`: the session, the registered
+  application that asked, what was ended). Other browsers and API sessions stay signed in; without a
+  session cookie nothing is ended. Migration `0119` records which hosted-login session started each
+  code and grant; grants issued before it are not tied to a session and are not ended this way.
 * **recovery:** "Forgot password" works from hosted login and the React SDK, and the emailed link
   lands where the reset was requested. The request carried `tenant_id`, which the endpoint rejected
   (400, no email). It is now accepted and ignored (email is unique platform-wide). A request with

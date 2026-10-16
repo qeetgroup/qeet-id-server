@@ -68,15 +68,6 @@ func (q *Queries) CountSourceAccounts(ctx context.Context, network string) (int6
 	return count, err
 }
 
-const deleteLoginSession = `-- name: DeleteLoginSession :exec
-DELETE FROM auth.login_sessions WHERE token_hash = $1
-`
-
-func (q *Queries) DeleteLoginSession(ctx context.Context, tokenHash string) error {
-	_, err := q.db.Exec(ctx, deleteLoginSession, tokenHash)
-	return err
-}
-
 const deleteMFALoginChallenge = `-- name: DeleteMFALoginChallenge :exec
 DELETE FROM auth.mfa_login_challenges WHERE id = $1
 `
@@ -84,6 +75,32 @@ DELETE FROM auth.mfa_login_challenges WHERE id = $1
 func (q *Queries) DeleteMFALoginChallenge(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteMFALoginChallenge, id)
 	return err
+}
+
+const endLoginSession = `-- name: EndLoginSession :one
+WITH ended AS (
+    DELETE FROM auth.login_sessions WHERE token_hash = $1
+    RETURNING id, user_id
+)
+SELECT ended.id, ended.user_id, u.tenant_id
+FROM ended LEFT JOIN "user".users u ON u.id = ended.user_id
+`
+
+type EndLoginSessionRow struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID pgtype.UUID
+}
+
+// EndLoginSession ends the hosted-login (browser) session behind a cookie —
+// expired or not, since what it started can outlive it — and returns its id,
+// its user and that user's own organization (NULL for none), so the sign-out
+// can end what the session started and record it. No row: nothing to end.
+func (q *Queries) EndLoginSession(ctx context.Context, tokenHash string) (EndLoginSessionRow, error) {
+	row := q.db.QueryRow(ctx, endLoginSession, tokenHash)
+	var i EndLoginSessionRow
+	err := row.Scan(&i.ID, &i.UserID, &i.TenantID)
+	return i, err
 }
 
 const endLoginSessionsForUser = `-- name: EndLoginSessionsForUser :one
@@ -103,6 +120,25 @@ func (q *Queries) EndLoginSessionsForUser(ctx context.Context, userID uuid.UUID)
 	var live int64
 	err := row.Scan(&live)
 	return live, err
+}
+
+const expireAuthorizationCodesForLoginSession = `-- name: ExpireAuthorizationCodesForLoginSession :execrows
+UPDATE auth.oidc_authorization_codes SET used_at = NOW()
+WHERE login_session_id = $1 AND used_at IS NULL
+`
+
+// ExpireAuthorizationCodesForLoginSession spends every code minted through
+// the session that no application has redeemed yet, so none can be traded
+// for a grant after sign-out. A redemption already under way holds its code
+// locked and writes its grant before releasing it; this waits for it, skips
+// the code it spent, and the grant is ended by RevokeAppGrantsForLoginSession,
+// which runs after.
+func (q *Queries) ExpireAuthorizationCodesForLoginSession(ctx context.Context, loginSessionID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, expireAuthorizationCodesForLoginSession, loginSessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const forgetSourceFailuresBefore = `-- name: ForgetSourceFailuresBefore :exec
@@ -134,10 +170,11 @@ func (q *Queries) GetClientTenant(ctx context.Context, clientID string) (uuid.UU
 }
 
 const getLoginSession = `-- name: GetLoginSession :one
-SELECT user_id, expires_at FROM auth.login_sessions WHERE token_hash = $1
+SELECT id, user_id, expires_at FROM auth.login_sessions WHERE token_hash = $1
 `
 
 type GetLoginSessionRow struct {
+	ID        uuid.UUID
 	UserID    uuid.UUID
 	ExpiresAt time.Time
 }
@@ -145,7 +182,7 @@ type GetLoginSessionRow struct {
 func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLoginSessionRow, error) {
 	row := q.db.QueryRow(ctx, getLoginSession, tokenHash)
 	var i GetLoginSessionRow
-	err := row.Scan(&i.UserID, &i.ExpiresAt)
+	err := row.Scan(&i.ID, &i.UserID, &i.ExpiresAt)
 	return i, err
 }
 
@@ -537,6 +574,33 @@ func (q *Queries) RevokeAllSessionsForUser(ctx context.Context, userID uuid.UUID
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeAppGrantsForLoginSession = `-- name: RevokeAppGrantsForLoginSession :one
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE login_session_id = $1 AND revoked_at IS NULL
+    RETURNING used_at, expires_at
+)
+SELECT COUNT(*)::bigint AS touched,
+       COUNT(*) FILTER (WHERE used_at IS NULL AND expires_at > NOW())::bigint AS live
+FROM ended
+`
+
+type RevokeAppGrantsForLoginSessionRow struct {
+	Touched int64
+	Live    int64
+}
+
+// RevokeAppGrantsForLoginSession ends the application grants the session
+// started — every not-yet-revoked token in their chains, renewals included —
+// and returns how many rows it touched and how many were the live head of a
+// grant (the number of grants it ended), like RevokeAppGrantsForUser.
+func (q *Queries) RevokeAppGrantsForLoginSession(ctx context.Context, loginSessionID pgtype.UUID) (RevokeAppGrantsForLoginSessionRow, error) {
+	row := q.db.QueryRow(ctx, revokeAppGrantsForLoginSession, loginSessionID)
+	var i RevokeAppGrantsForLoginSessionRow
+	err := row.Scan(&i.Touched, &i.Live)
+	return i, err
 }
 
 const revokeAppGrantsForUser = `-- name: RevokeAppGrantsForUser :one

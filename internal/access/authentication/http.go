@@ -346,10 +346,20 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
-// destroySession is hosted logout: revoke the SSO session and clear the cookie.
+// destroySession is the hosted login signing itself out: it ends the browser's
+// SSO session and what it started (EndLoginSession) and clears the cookie. A
+// request without a session cookie ends nothing and still answers 204. If the
+// sign-out cannot be completed the cookie is kept, so the browser can retry
+// instead of believing it is signed out.
 func (h *Handler) destroySession(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(LoginSessionCookie); err == nil {
-		_ = h.Service.RevokeLoginSession(r.Context(), c.Value)
+		if _, err := h.Service.EndLoginSession(r.Context(), EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: SignOutByHostedLogin,
+			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		}); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	ClearLoginSessionCookie(w, h.CookieSecure)
 	w.WriteHeader(http.StatusNoContent)

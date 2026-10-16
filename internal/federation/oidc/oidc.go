@@ -318,8 +318,16 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 // Authorize validates an authorization request for an already-authenticated
 // user and mints a one-time authorization code. The client's tenant is derived
 // from the client itself (the browser-facing flow has no user JWT to carry it).
-// Returns the raw code and the resolved tenant id.
+// Returns the raw code and the resolved tenant id. The code is tied to no
+// hosted-login session; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
+	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod)
+}
+
+// AuthorizeInLoginSession is Authorize for a user signed in to the hosted
+// login: the code records loginSessionID (uuid.Nil for none), and so does the
+// grant redeemed from it, so that signing out of that session ends both.
+func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrOIDCClientUnknown
@@ -359,6 +367,7 @@ func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, red
 		Nonce:               nonce,
 		CodeChallenge:       challenge,
 		CodeChallengeMethod: challengeMethod,
+		LoginSessionID:      optionalUUID(loginSessionID),
 	})
 	if err != nil {
 		return "", uuid.Nil, err
@@ -478,6 +487,17 @@ func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri 
 		return false, err
 	}
 	return contains(uris, uri), nil
+}
+
+// RegisteredClient reports whether clientID names a registered application.
+func (s *Service) RegisteredClient(ctx context.Context, clientID string) bool {
+	_, err := s.q.GetClientRedirectInfo(ctx, clientID)
+	return err == nil
+}
+
+// optionalUUID stores uuid.Nil as SQL NULL.
+func optionalUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: id != uuid.Nil}
 }
 
 // HasConsent reports whether the user has already granted the client every
@@ -744,6 +764,16 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	if err := q.MarkAuthorizationCodeUsed(ctx, hash); err != nil {
 		return nil, err
 	}
+	// The grant is written while the code is still locked, so a sign-out of
+	// the hosted-login session the code came from either spends the code first
+	// (and this redemption fails) or waits and then ends the grant.
+	refresh := ""
+	if contains(grantTypes, "refresh_token") {
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -762,13 +792,6 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 		}
 		idTok = t
 	}
-	refresh := ""
-	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, clientID, userID, tenantID, scopes, resource)
-		if err != nil {
-			return nil, err
-		}
-	}
 	return &TokenResponse{
 		AccessToken:  access,
 		IDToken:      idTok,
@@ -783,7 +806,9 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 // returns the raw value. resource (may be empty) is the RFC 8707 resource
 // indicator, if any, bound to the access token this refresh token accompanies
 // — persisted so a later rotation can re-bind the same resource.
-func (s *Service) issueRefreshToken(ctx context.Context, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string) (string, error) {
+// loginSessionID is the hosted-login session the grant was started through
+// (NULL for none). q is the caller's querier, so it can run in its transaction.
+func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -793,9 +818,9 @@ func (s *Service) issueRefreshToken(ctx context.Context, clientID string, userID
 		res = &resource
 	}
 	exp := time.Now().UTC().Add(s.issuer.RefreshTTL())
-	if err := s.q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+	if err := q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
-		Scopes: scopes, ExpiresAt: exp, Resource: res,
+		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
 	}); err != nil {
 		return "", err
 	}
@@ -866,7 +891,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	newExp := time.Now().UTC().Add(s.issuer.RefreshTTL())
 	newID, err := q.InsertRotatedRefreshToken(ctx, dbgen.InsertRotatedRefreshTokenParams{
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
-		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes,
+		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
 	})
 	if err != nil {
 		return nil, err
@@ -963,11 +988,12 @@ func derefStr(s *string) string {
 	return *s
 }
 
-// SessionManager resolves and revokes the hosted-login SSO cookie. Satisfied by
+// SessionManager resolves and ends the hosted-login SSO cookie. Satisfied by
 // *auth.Service; an interface keeps the dependency one-way.
 type SessionManager interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
-	RevokeLoginSession(ctx context.Context, raw string) error
+	ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error)
+	EndLoginSession(ctx context.Context, in auth.EndLoginSessionInput) (auth.LoginSessionEnded, error)
 }
 
 // ProviderLister lists a tenant's enabled social providers, so the hosted login
@@ -1222,7 +1248,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	redirect := q.Get("redirect_uri")
 	scopes := strings.Fields(q.Get("scope"))
 
-	userID, ok := h.sessionUser(r)
+	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
 		ret := url.QueryEscape(currentURL(r))
 		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+ret, http.StatusFound)
@@ -1241,7 +1267,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	code, _, err := h.Service.Authorize(r.Context(), userID, clientID, redirect,
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, clientID, redirect,
 		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"))
 	if err != nil {
 		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
@@ -1297,7 +1323,7 @@ type decisionInput struct {
 // consent SPA should navigate to: a code on approval, or error=access_denied on
 // deny.
 func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.sessionUser(r)
+	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
@@ -1318,7 +1344,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	code, _, err := h.Service.Authorize(r.Context(), userID, in.ClientID, in.RedirectURI,
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, in.ClientID, in.RedirectURI,
 		scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -1329,19 +1355,34 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// endSession is the OIDC RP-Initiated Logout endpoint. It clears the hosted SSO
-// session + cookie, then — if the client supplied a registered
-// post_logout_redirect_uri — redirects there (carrying state); otherwise it
-// shows the hosted logged-out page.
+// endSession is the OIDC RP-Initiated Logout endpoint. It ends the browser's
+// hosted SSO session and what it started — the application grants and unspent
+// codes minted through it (auth.Service.EndLoginSession) — and clears the
+// cookie, then — if the client supplied a registered post_logout_redirect_uri —
+// redirects there (carrying state); otherwise it shows the hosted logged-out
+// page. Only the cookie says which session to end: without it nothing is
+// ended. The sign-out record names client_id only when it is a registered
+// application. If the sign-out cannot be completed the error is shown and the
+// cookie kept, rather than telling the application the person signed out.
 func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
-		_ = h.Sessions.RevokeLoginSession(r.Context(), c.Value)
-	}
-	auth.ClearLoginSessionCookie(w, h.CookieSecure)
-
 	q := r.URL.Query()
 	redirect := q.Get("post_logout_redirect_uri")
 	clientID := q.Get("client_id")
+	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
+		in := auth.EndLoginSessionInput{
+			Cookie: c.Value, InitiatedBy: auth.SignOutByApplication,
+			IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		}
+		if clientID != "" && h.Service.RegisteredClient(r.Context(), clientID) {
+			in.ClientID = clientID
+		}
+		if _, err := h.Sessions.EndLoginSession(r.Context(), in); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
+	auth.ClearLoginSessionCookie(w, h.CookieSecure)
+
 	if redirect != "" && clientID != "" {
 		if ok, err := h.Service.ValidatePostLogoutRedirect(r.Context(), clientID, redirect); err == nil && ok {
 			http.Redirect(w, r, appendQuery(redirect, "state", q.Get("state")), http.StatusFound)
@@ -1353,15 +1394,22 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 
 // sessionUser resolves the hosted-login SSO cookie to a user id.
 func (h *Handler) sessionUser(r *http.Request) (uuid.UUID, bool) {
+	_, uid, ok := h.loginSession(r)
+	return uid, ok
+}
+
+// loginSession resolves the hosted-login SSO cookie to the session's id and its
+// user.
+func (h *Handler) loginSession(r *http.Request) (sessionID, userID uuid.UUID, ok bool) {
 	c, err := r.Cookie(auth.LoginSessionCookie)
 	if err != nil {
-		return uuid.Nil, false
+		return uuid.Nil, uuid.Nil, false
 	}
-	uid, err := h.Sessions.ResolveLoginSession(r.Context(), c.Value)
+	sessionID, userID, err = h.Sessions.ResolveLoginSessionWithID(r.Context(), c.Value)
 	if err != nil {
-		return uuid.Nil, false
+		return uuid.Nil, uuid.Nil, false
 	}
-	return uid, true
+	return sessionID, userID, true
 }
 
 // externalScheme returns the request's public scheme, honoring X-Forwarded-Proto

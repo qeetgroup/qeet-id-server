@@ -10,8 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authentication/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -47,20 +49,28 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 // ResolveLoginSession returns the user id behind a valid, unexpired SSO session
 // cookie value, or ErrUnauthorized.
 func (s *Service) ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error) {
+	_, userID, err := s.ResolveLoginSessionWithID(ctx, raw)
+	return userID, err
+}
+
+// ResolveLoginSessionWithID is ResolveLoginSession that also returns the
+// session's own id, which the authorization codes minted through it record so
+// that signing out of it can end what it started.
+func (s *Service) ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error) {
 	if raw == "" {
-		return uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
 	}
 	row, err := s.q.GetLoginSession(ctx, tokens.HashRefresh(raw))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
 	}
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
 	}
-	return row.UserID, nil
+	return row.ID, row.UserID, nil
 }
 
 // ResolveLoginSessionUser returns the user behind a live SSO session cookie
@@ -139,12 +149,116 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 	}
 }
 
-// RevokeLoginSession deletes a hosted SSO session (hosted logout).
+// RevokeLoginSession signs a browser out of the hosted login: EndLoginSession
+// as the hosted login's own sign-out.
 func (s *Service) RevokeLoginSession(ctx context.Context, raw string) error {
-	if raw == "" {
-		return nil
+	_, err := s.EndLoginSession(ctx, EndLoginSessionInput{Cookie: raw, InitiatedBy: SignOutByHostedLogin})
+	return err
+}
+
+// Who asked for a sign-out, as recorded.
+const (
+	// SignOutByHostedLogin: the hosted login signed itself out.
+	SignOutByHostedLogin = "hosted_login"
+	// SignOutByApplication: an application's sign-out request (OIDC
+	// RP-initiated logout).
+	SignOutByApplication = "application"
+)
+
+// EndLoginSessionInput describes a sign-out. Cookie is the browser's
+// hosted-login cookie value — the only thing that says which session to end.
+// InitiatedBy is SignOutByHostedLogin or SignOutByApplication. ClientID names
+// the application that asked, and only when it is a registered one.
+type EndLoginSessionInput struct {
+	Cookie      string
+	InitiatedBy string
+	ClientID    string
+	IP          string
+	UserAgent   string
+	RequestID   string
+}
+
+// LoginSessionEnded reports what a sign-out ended. Ended is false when the
+// cookie named no session (nothing was ended or recorded).
+type LoginSessionEnded struct {
+	Ended                     bool
+	SessionID                 uuid.UUID
+	AppGrants                 int64
+	ExpiredAuthorizationCodes int64
+}
+
+// EndLoginSession signs a browser out of the hosted login. In one transaction
+// it deletes the session behind the cookie, spends the authorization codes
+// minted through it that no application has redeemed, revokes the application
+// grants it started (renewals included), and records the sign-out. Other
+// browsers, API sessions and grants started elsewhere are untouched — signing
+// out everywhere is a separate action.
+//
+// Only the cookie identifies the session: with no cookie, or one that names no
+// session, nothing is ended and nothing is recorded. A session that has
+// expired is still ended, with what it started, because its grants outlive it.
+func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) (LoginSessionEnded, error) {
+	if in.Cookie == "" {
+		return LoginSessionEnded{}, nil
 	}
-	return s.q.DeleteLoginSession(ctx, tokens.HashRefresh(raw))
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return LoginSessionEnded{}, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	row, err := q.EndLoginSession(ctx, tokens.HashRefresh(in.Cookie))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LoginSessionEnded{}, nil
+	}
+	if err != nil {
+		return LoginSessionEnded{}, err
+	}
+	ended := LoginSessionEnded{Ended: true, SessionID: row.ID}
+	// Codes first: a redemption under way holds its code until its grant is
+	// written, so waiting here means the grant pass below sees that grant.
+	if ended.ExpiredAuthorizationCodes, err = q.ExpireAuthorizationCodesForLoginSession(ctx, pgtype.UUID{Bytes: row.ID, Valid: true}); err != nil {
+		return LoginSessionEnded{}, err
+	}
+	// An application renewing a grant at this moment writes the next token
+	// after a pass may have taken its snapshot; pass again until one finds
+	// nothing left, as EndAllSignIns does.
+	for pass := 0; pass < maxGrantPasses; pass++ {
+		grants, err := q.RevokeAppGrantsForLoginSession(ctx, pgtype.UUID{Bytes: row.ID, Valid: true})
+		if err != nil {
+			return LoginSessionEnded{}, err
+		}
+		ended.AppGrants += grants.Live
+		if grants.Touched == 0 {
+			break
+		}
+	}
+	metadata := map[string]any{
+		"initiated_by":                in.InitiatedBy,
+		"revoked_app_grants":          ended.AppGrants,
+		"expired_authorization_codes": ended.ExpiredAuthorizationCodes,
+	}
+	if in.ClientID != "" {
+		metadata["client_id"] = in.ClientID
+	}
+	var tenantID *uuid.UUID
+	if row.TenantID.Valid {
+		t := uuid.UUID(row.TenantID.Bytes)
+		tenantID = &t
+	}
+	userID, sessionID := row.UserID, row.ID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: tenantID, ActorUserID: &userID, ActorType: "user",
+		Action: "auth.signed_out", ResourceType: "login_session", ResourceID: &sessionID,
+		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
+		Metadata: metadata,
+	}); err != nil {
+		return LoginSessionEnded{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LoginSessionEnded{}, err
+	}
+	return ended, nil
 }
 
 // SetLoginSessionCookie writes the HttpOnly SSO cookie. secure should be true
