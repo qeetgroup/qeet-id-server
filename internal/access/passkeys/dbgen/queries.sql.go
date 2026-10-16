@@ -304,6 +304,44 @@ func (q *Queries) ListPasskeyCredentials(ctx context.Context, userID uuid.UUID) 
 	return items, nil
 }
 
+const renamePasskeyCredential = `-- name: RenamePasskeyCredential :one
+
+UPDATE auth.passkey_credentials SET name = $1
+WHERE id = $2 AND user_id = $3
+RETURNING id, user_id, name, transports, last_used_at, created_at
+`
+
+type RenamePasskeyCredentialParams struct {
+	Name   *string
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+type RenamePasskeyCredentialRow struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Name       *string
+	Transports []string
+	LastUsedAt pgtype.Timestamptz
+	CreatedAt  time.Time
+}
+
+// RenamePasskeyCredential is scoped to the owner like the delete: another
+// user's passkey matches no row.
+func (q *Queries) RenamePasskeyCredential(ctx context.Context, arg RenamePasskeyCredentialParams) (RenamePasskeyCredentialRow, error) {
+	row := q.db.QueryRow(ctx, renamePasskeyCredential, arg.Name, arg.ID, arg.UserID)
+	var i RenamePasskeyCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Transports,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const takeSignupWebAuthnSession = `-- name: TakeSignupWebAuthnSession :one
 
 DELETE FROM auth.webauthn_sessions WHERE id = $1

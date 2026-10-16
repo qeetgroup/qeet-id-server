@@ -1,6 +1,7 @@
 // Package passkey implements WebAuthn passkey registration and login on top of
-// go-webauthn. The credential store (auth.passkey_credentials) backs list/delete
-// and the ceremony; in-flight challenges live in auth.webauthn_sessions.
+// go-webauthn. The credential store (auth.passkey_credentials) backs
+// list/rename/delete and the ceremony; in-flight challenges live in
+// auth.webauthn_sessions.
 package passkey
 
 import (
@@ -58,21 +59,48 @@ func (s *Service) List(ctx context.Context, userID uuid.UUID) ([]Credential, err
 	}
 	out := make([]Credential, 0, len(rows))
 	for _, m := range rows {
-		var lastUsedAt *time.Time
-		if m.LastUsedAt.Valid {
-			t := m.LastUsedAt.Time
-			lastUsedAt = &t
-		}
-		out = append(out, Credential{
-			ID:         m.ID,
-			UserID:     m.UserID,
-			Name:       m.Name,
-			Transports: m.Transports,
-			LastUsedAt: lastUsedAt,
-			CreatedAt:  m.CreatedAt,
-		})
+		out = append(out, credentialFromRow(m))
 	}
 	return out, nil
+}
+
+func credentialFromRow(m dbgen.ListPasskeyCredentialsRow) Credential {
+	var lastUsedAt *time.Time
+	if m.LastUsedAt.Valid {
+		t := m.LastUsedAt.Time
+		lastUsedAt = &t
+	}
+	return Credential{
+		ID:         m.ID,
+		UserID:     m.UserID,
+		Name:       m.Name,
+		Transports: m.Transports,
+		LastUsedAt: lastUsedAt,
+		CreatedAt:  m.CreatedAt,
+	}
+}
+
+// Rename sets the name of one of the user's passkeys. The name is cleaned and
+// checked (see validName). Like Delete it is scoped to the owner: another
+// user's passkey is not found, and is left unchanged.
+func (s *Service) Rename(ctx context.Context, id, userID uuid.UUID, name string) (*Credential, error) {
+	name, err := validName(name)
+	if err != nil {
+		return nil, err
+	}
+	row, err := s.q.RenamePasskeyCredential(ctx, dbgen.RenamePasskeyCredentialParams{
+		Name:   &name,
+		ID:     id,
+		UserID: userID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	c := credentialFromRow(dbgen.ListPasskeyCredentialsRow(row))
+	return &c, nil
 }
 
 // Delete is scoped to the owner so one user can't delete another's passkey.
@@ -244,8 +272,15 @@ func (s *Service) BeginRegister(ctx context.Context, userID uuid.UUID) (uuid.UUI
 	return id, options, nil
 }
 
-// FinishRegister verifies the attestation and persists the new credential.
-func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage, name string) error {
+// FinishRegister verifies the attestation and persists the new credential,
+// named name or, when that is empty, after the browser in userAgent. The name
+// is checked before the ceremony session is used, so a refused name can be
+// corrected and the same ceremony finished.
+func (s *Service) FinishRegister(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage, name, userAgent string) error {
+	name, err := enrolmentName(name, userAgent)
+	if err != nil {
+		return err
+	}
 	kind, sessUser, sessionData, err := s.takeSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -279,10 +314,6 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	var namePtr *string
-	if name != "" {
-		namePtr = &name
-	}
 	err := s.q.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
 		UserID:         userID,
 		CredentialID:   cred.ID,
@@ -290,7 +321,7 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 		SignCount:      int64(cred.Authenticator.SignCount),
 		Aaguid:         aaguidPG,
 		Transports:     transports,
-		Name:           namePtr,
+		Name:           &name,
 		BackupEligible: cred.Flags.BackupEligible,
 		BackupState:    cred.Flags.BackupState,
 	})
@@ -457,8 +488,13 @@ func (s *Service) beginSignup(ctx context.Context, tenantID uuid.UUID, email, di
 }
 
 // FinishSignup verifies the attestation, creates the tenant-less user with the
-// passkey as its founding credential (no password), and signs them in.
+// passkey as its founding credential (no password), and signs them in. The
+// passkey is named as in FinishRegister.
 func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (*auth.TokenPair, uuid.UUID, error) {
+	name, err := enrolmentName(name, ua)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
 	sess, cred, err := s.verifySignupAttestation(ctx, sessionID, credential)
 	if err != nil {
 		return nil, uuid.Nil, err
@@ -479,6 +515,10 @@ func (s *Service) FinishSignup(ctx context.Context, sessionID uuid.UUID, credent
 // (via auth.Service.CreateLoginSession) instead of a bearer token pair,
 // mirroring auth.Service.RegisterInTenant.
 func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, name, ip, ua string) (uuid.UUID, string, error) {
+	name, err := enrolmentName(name, ua)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
 	sess, cred, err := s.verifySignupAttestation(ctx, sessionID, credential)
 	if err != nil {
 		return uuid.Nil, "", err
@@ -562,10 +602,6 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 	for _, t := range cred.Transport {
 		transports = append(transports, string(t))
 	}
-	var namePtr *string
-	if name != "" {
-		namePtr = &name
-	}
 	if err := qtx.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
 		UserID:         userID,
 		CredentialID:   cred.ID,
@@ -573,7 +609,7 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 		SignCount:      int64(cred.Authenticator.SignCount),
 		Aaguid:         aaguidPG,
 		Transports:     transports,
-		Name:           namePtr,
+		Name:           &name,
 		BackupEligible: cred.Flags.BackupEligible,
 		BackupState:    cred.Flags.BackupState,
 	}); err != nil {
@@ -792,6 +828,7 @@ type Handler struct {
 
 func (h *Handler) Mount(r chi.Router) {
 	r.Get("/passkeys", h.list)
+	r.Patch("/passkeys/{id}", h.rename)
 	r.Delete("/passkeys/{id}", h.delete)
 	r.Post("/passkeys/register/begin", h.registerBegin)
 	r.Post("/passkeys/register/finish", h.registerFinish)
@@ -820,6 +857,35 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+type renameInput struct {
+	Name string `json:"name"`
+}
+
+// rename sets the name of one of the caller's own passkeys and returns it.
+func (h *Handler) rename(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	userID, err := httpx.RequireUser(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	var in renameInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	cred, err := h.Service.Rename(r.Context(), id, userID, in.Name)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, cred)
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -874,7 +940,7 @@ func (h *Handler) registerFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.FinishRegister(r.Context(), userID, in.SessionID, in.Credential, in.Name); err != nil {
+	if err := h.Service.FinishRegister(r.Context(), userID, in.SessionID, in.Credential, in.Name, r.UserAgent()); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

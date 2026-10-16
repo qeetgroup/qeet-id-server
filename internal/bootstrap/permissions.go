@@ -356,6 +356,7 @@ func routePolicyMap() map[string]rbac.RoutePolicy {
 		"POST /v1/me/email/change/start",
 		"POST /v1/me/email/change/confirm",
 		"GET /v1/passkeys",
+		"PATCH /v1/passkeys/{id}",
 		"DELETE /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",
 		"POST /v1/passkeys/register/finish",

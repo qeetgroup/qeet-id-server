@@ -471,7 +471,7 @@ func TestPasskeyFinishRegisterSessionMismatch(t *testing.T) {
 		t.Fatalf("begin register: %v", err)
 	}
 	// A different user presenting the owner's session id is rejected.
-	err = svc.FinishRegister(ctx, attacker, sid, []byte(`{}`), "")
+	err = svc.FinishRegister(ctx, attacker, sid, []byte(`{}`), "", "")
 	if err == nil {
 		t.Fatal("finishing another user's registration session must fail")
 	}
@@ -497,7 +497,7 @@ func TestPasskeyFinishRegisterExpiredSession(t *testing.T) {
 		`UPDATE auth.webauthn_sessions SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, sid); err != nil {
 		t.Fatalf("expire session: %v", err)
 	}
-	err = svc.FinishRegister(ctx, userID, sid, []byte(`{}`), "")
+	err = svc.FinishRegister(ctx, userID, sid, []byte(`{}`), "", "")
 	if err == nil {
 		t.Fatal("an expired ceremony session must be refused")
 	}

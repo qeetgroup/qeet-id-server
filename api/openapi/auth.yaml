@@ -770,7 +770,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: The signed-in user's passkeys, newest first.
       responses:
         '200':
           description: OK
@@ -778,7 +778,13 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Passkey'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -902,7 +908,13 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Verifies the attestation and stores the passkey. An optional `name` is
+        cleaned and checked as in Rename passkey (422 when too long, before the
+        ceremony is used, so it can be finished again with a corrected name);
+        without one the passkey is named after the enrolling browser, for example
+        "Chrome on macOS", or "Passkey". The passkey sign-up finish calls name the
+        passkey the same way.
       responses:
         '201':
           description: Created
@@ -1071,6 +1083,60 @@ paths:
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/passkeys/{id}:
+    patch:
+      operationId: patch_v1_passkeys_ById
+      summary: Rename passkey
+      description: >-
+        Renames one of the signed-in user's own passkeys. The name is cleaned
+        first: control characters count as spaces, bidirectional control
+        characters are removed, runs of spaces collapse into one and the ends are
+        trimmed. Markup is stored as typed and must be shown as text. Another
+        user's passkey, like an unknown id, is not found and is left unchanged.
+      tags:
+        - Passkeys
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                  description: 1 to 64 characters after cleaning; empty or whitespace-only is refused.
+                  maxLength: 64
+      responses:
+        '200':
+          description: The renamed passkey
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Passkey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
     delete:
       operationId: delete_v1_passkeys_ById
       summary: Delete passkey
@@ -3598,6 +3664,38 @@ components:
     Session:
       type: object
       additionalProperties: true
+    Passkey:
+      type: object
+      required:
+        - id
+        - user_id
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            User-supplied text: show it as text, never as markup. Null for a
+            passkey enrolled before passkeys were named by default.
+        transports:
+          type: array
+          nullable: true
+          items:
+            type: string
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
       description: An active session (id, ip, user agent, timestamps).
     SignupRequest:
       type: object
