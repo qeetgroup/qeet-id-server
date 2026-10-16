@@ -1544,6 +1544,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
+      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. Other failures send it there with error=social.'
       summary: Social login callback
       tags:
         - Social
@@ -1554,7 +1555,6 @@ paths:
           schema:
             type: string
       security: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
       responses:
         '200':
           description: OK

@@ -229,6 +229,13 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **social:** signing in with a social provider no longer creates an account in an organisation that does not
+  allow self-registration. **Behaviour change:** the setting now governs social sign-up as it already did
+  password and passkey sign-up, and it defaults to off — an organisation that wants social sign-up must turn
+  self-registration on. A refused attempt writes nothing but an audit entry (`social.signup_refused`: the
+  provider and the asserted address), and the hosted login tells the person registration is closed
+  (`error=registration_closed`) instead of reporting a provider failure. Accounts already linked to the
+  provider, and existing accounts matched by a verified address, sign in as before.
 * **scheduler:** the `session-expiry-cleanup` job works. It deleted by a session expiry column that
   does not exist, so every run failed with an undefined-column error and no session was ever removed.
   It now deletes API and console sessions ended — or whose refresh tokens all expired — more than seven

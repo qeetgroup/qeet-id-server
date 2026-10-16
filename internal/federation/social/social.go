@@ -19,6 +19,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/social/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -495,6 +496,14 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, errs.ErrSocialUserinfoFailed.Wrap(err)
 	}
 	userID, err := s.findOrCreateUser(ctx, st.TenantID, provider, ui)
+	if errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) {
+		// The return_to comes back with the refusal so the person lands on the
+		// application's sign-in page, told why, rather than losing their way.
+		if aerr := s.recordSignUpRefused(ctx, st.TenantID, provider, ui); aerr != nil {
+			return nil, aerr
+		}
+		return &CallbackResult{ReturnTo: st.ReturnTo, TenantID: st.TenantID}, err
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -559,6 +568,13 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 	userID, err = q.GetUserByEmail(ctx, ui.Email)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
+		// Nobody the organisation knows: creating an account is
+		// self-registration, so it follows the organisation's setting exactly
+		// as password and passkey sign-up do. Refused before any write; the
+		// caller records the attempt.
+		if err := s.requireSelfRegistration(ctx, tenantID); err != nil {
+			return uuid.Nil, err
+		}
 		// Provisioning a fresh account. An unverified assertion may *name* the
 		// account — refusing would lock out every provider that omits the claim
 		// — but it must not mark the address verified. Other flows treat a
@@ -630,6 +646,48 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		return uuid.Nil, err
 	}
 	return userID, nil
+}
+
+// requireSelfRegistration refuses with ErrAuthSelfRegistrationDisabled unless
+// the tenant allows self-registration. No wired policy counts as closed.
+func (s *Service) requireSelfRegistration(ctx context.Context, tenantID uuid.UUID) error {
+	if s.auth == nil {
+		return errs.ErrAuthSelfRegistrationDisabled
+	}
+	open, err := s.auth.SelfRegistrationEnabled(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if !open {
+		return errs.ErrAuthSelfRegistrationDisabled
+	}
+	return nil
+}
+
+// recordSignUpRefused audits a social sign-up refused because the tenant does
+// not allow self-registration, naming the provider and the asserted address so
+// an administrator can see who tried to join. Written on its own: the
+// provisioning transaction it describes was rolled back.
+func (s *Service) recordSignUpRefused(ctx context.Context, tenantID uuid.UUID, provider string, ui userInfo) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tid := tenantID
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tid, ActorType: "system",
+		Action: "social.signup_refused", ResourceType: "tenant", ResourceID: &tid,
+		Metadata: map[string]any{
+			"provider":       provider,
+			"email":          ui.Email,
+			"email_verified": ui.EmailVerified,
+			"reason":         "self_registration_disabled",
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // ExchangeLogin trades a one-time social login code for a Qeet token pair.
@@ -957,6 +1015,16 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.Service.CompleteCallback(r.Context(), provider, state, code)
+	if errors.Is(err, errs.ErrAuthSelfRegistrationDisabled) && h.LoginBaseURL != "" {
+		// A closed organisation, not a provider failure: say so, and keep the
+		// way back to the application (validated when the sign-in began).
+		q := url.Values{"error": {"registration_closed"}}
+		if res != nil && res.ReturnTo != "" {
+			q.Set("return_to", res.ReturnTo)
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
+		return
+	}
 	if err != nil {
 		h.redirectSocialError(w, r, err)
 		return
