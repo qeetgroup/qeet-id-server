@@ -88,6 +88,47 @@ SELECT EXISTS (
     WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
 ) AS live;
 
+-- IsSessionOfUser reports whether the session is (or was) one of the user's
+-- own sessions, whether or not it has ended since.
+-- name: IsSessionOfUser :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.sessions
+    WHERE id = @session_id AND user_id = @user_id
+) AS owned;
+
+-- RevokeAllSessionsForUser ends every live session of the user, the caller's
+-- own included. Ending a session is what kills its refresh tokens.
+-- name: RevokeAllSessionsForUser :execrows
+UPDATE auth.sessions SET revoked_at = NOW()
+WHERE user_id = @user_id AND revoked_at IS NULL;
+
+-- EndLoginSessionsForUser ends every hosted-login (browser) session of the
+-- user — the way hosted sign-out ends one, by deleting it — and returns how
+-- many of them had not yet expired.
+-- name: EndLoginSessionsForUser :one
+WITH ended AS (
+    DELETE FROM auth.login_sessions WHERE user_id = @user_id
+    RETURNING expires_at
+)
+SELECT COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS live
+FROM ended;
+
+-- RevokeAppGrantsForUser ends every application grant (OIDC refresh-token
+-- chain) the user holds, for every application. It marks every not-yet-revoked
+-- token of the user revoked — rotated-away ones too, so presenting an old one
+-- later reads as revoked rather than as theft — and returns how many rows it
+-- touched (touched) and how many were the live head of a grant (live: unused
+-- and unexpired), which is the number of grants it ended.
+-- name: RevokeAppGrantsForUser :one
+WITH ended AS (
+    UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+    WHERE user_id = @user_id AND revoked_at IS NULL
+    RETURNING used_at, expires_at
+)
+SELECT COUNT(*)::bigint AS touched,
+       COUNT(*) FILTER (WHERE used_at IS NULL AND expires_at > NOW())::bigint AS live
+FROM ended;
+
 -- name: InsertRefreshToken :one
 INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
 VALUES (@session_id, @token_hash, @expires_at)

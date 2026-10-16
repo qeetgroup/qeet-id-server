@@ -1060,7 +1060,12 @@ paths:
     post:
       operationId: post_v1_users_ById_sessions_revokeAll
       summary: Revoke all of a user's sessions
-      description: Admin force sign-out — revokes every live session for the user. Requires `user.write`.
+      description: >-
+        Admin force sign-out — ends every way the user is signed in, in one
+        all-or-nothing step: every live session, every hosted-login (browser)
+        session and every refresh grant held by applications, and records it as
+        an administrative force sign-out. Access tokens already issued stay
+        valid until they expire (minutes). Requires `user.write`.
       tags:
         - Users
       parameters:
@@ -1079,8 +1084,24 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [revoked, sessions, hosted_login_sessions, app_grants]
                 properties:
-                  revoked: { type: integer }
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Number of sign-ins ended, all places together.
+                  sessions:
+                    type: integer
+                    minimum: 0
+                    description: Sessions ended.
+                  hosted_login_sessions:
+                    type: integer
+                    minimum: 0
+                    description: Hosted-login browser sessions ended.
+                  app_grants:
+                    type: integer
+                    minimum: 0
+                    description: Application refresh grants ended.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

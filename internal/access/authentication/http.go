@@ -77,6 +77,7 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Get("/auth/sessions", h.listSessions)
 	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
 	r.Post("/auth/sessions/revoke-others", h.revokeOtherSessions)
+	r.Post("/auth/sessions/revoke-all", h.revokeAllSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
@@ -536,6 +537,38 @@ func (h *Handler) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"revoked": n})
+}
+
+// revokeAllSessions → POST /v1/auth/sessions/revoke-all. Signs the caller out
+// everywhere — every API and console session including the one behind the
+// presented access token, every hosted-login session, every application grant
+// — in one step, and reports how many ended: {"revoked": total} (the shape of
+// the other bulk revocations) plus the count per place. Access tokens already
+// issued stay valid until they expire; renewal stops at once. A repeat
+// succeeds with zeros.
+func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil || p.SessionID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	ended, err := h.Service.RevokeAllSessions(r.Context(), RevokeAllSessionsInput{
+		UserID: *p.UserID, SessionID: *p.SessionID, TenantID: p.TenantID,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	// Every hosted-login session has ended server-side, whichever browser holds
+	// it; a browser calling directly also drops its cookie.
+	ClearLoginSessionCookie(w, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"revoked":               ended.Total(),
+		"sessions":              ended.Sessions,
+		"hosted_login_sessions": ended.LoginSessions,
+		"app_grants":            ended.AppGrants,
+	})
 }
 
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {

@@ -1141,6 +1141,134 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, in RevokeOtherSession
 	return revoked, nil
 }
 
+// SignInsEnded counts what signing someone out everywhere ended, per place a
+// person can be signed in.
+type SignInsEnded struct {
+	// Sessions are API and console sessions (auth.sessions); ending one is
+	// what makes its refresh tokens stop working.
+	Sessions int64
+	// LoginSessions are hosted-login browser sessions (the qe_ls cookie).
+	LoginSessions int64
+	// AppGrants are the refresh grants applications hold (OIDC refresh-token
+	// chains), counted once per grant.
+	AppGrants int64
+}
+
+// Total is the number of sign-ins ended, all places together.
+func (e SignInsEnded) Total() int64 { return e.Sessions + e.LoginSessions + e.AppGrants }
+
+// RevokeAllSessionsInput names the caller. SessionID must come from the
+// caller's own access token, never from anything the client supplies.
+type RevokeAllSessionsInput struct {
+	UserID    uuid.UUID
+	SessionID uuid.UUID
+	TenantID  *uuid.UUID
+	IP        string
+	UserAgent string
+	RequestID string
+}
+
+// RevokeAllSessions signs the caller out everywhere: every API and console
+// session including the current one, every hosted-login session and every
+// application grant (see EndAllSignIns), and records it as a self-initiated
+// global sign-out. Access tokens already issued stay valid until they expire.
+//
+// The presented token must stand for one of the caller's own sessions — live or
+// already ended — so an application's access token (which names no session) or
+// a token naming someone else's session is refused. An ended session is allowed
+// so that repeating the call, e.g. after a lost response, succeeds and changes
+// nothing (all counts zero). It is all-or-nothing: the ending and its audit
+// record commit together.
+func (s *Service) RevokeAllSessions(ctx context.Context, in RevokeAllSessionsInput) (SignInsEnded, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return SignInsEnded{}, err
+	}
+	defer tx.Rollback(ctx)
+	owned, err := s.q.WithTx(tx).IsSessionOfUser(ctx, dbgen.IsSessionOfUserParams{
+		SessionID: in.SessionID,
+		UserID:    in.UserID,
+	})
+	if err != nil {
+		return SignInsEnded{}, err
+	}
+	if !owned {
+		return SignInsEnded{}, errs.ErrUnauthorized
+	}
+	var ended SignInsEnded
+	ended.Sessions, ended.LoginSessions, ended.AppGrants, err = s.EndAllSignIns(ctx, tx, in.UserID)
+	if err != nil {
+		return SignInsEnded{}, err
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
+		Action: "auth.all_sessions_revoked", ResourceType: "user", ResourceID: &in.UserID,
+		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
+		Metadata: map[string]any{
+			"revoked_sessions":       ended.Sessions,
+			"revoked_login_sessions": ended.LoginSessions,
+			"revoked_app_grants":     ended.AppGrants,
+			"session_id":             in.SessionID,
+		},
+	}); err != nil {
+		return SignInsEnded{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SignInsEnded{}, err
+	}
+	return ended, nil
+}
+
+// maxGrantPasses bounds the passes EndAllSignIns makes over a user's
+// application grants (see there).
+const maxGrantPasses = 5
+
+// EndAllSignIns ends, inside tx, every way the user is signed in, in all three
+// places, and returns how many it ended in each:
+//   - sessions: every live API and console session (their refresh tokens stop
+//     working with them);
+//   - loginSessions: every hosted-login browser session, deleted as hosted
+//     sign-out deletes one, counting those not yet expired;
+//   - appGrants: every application's refresh grant, for every application.
+//
+// It locks the user row first (the order bulk session revocation uses), so it
+// runs one at a time with other bulk revocations and password changes for the
+// same user. Nothing is committed here: the caller records its audit event in
+// the same tx and commits. Used by self-service sign-out everywhere and by the
+// administrator's force sign-out. errs.ErrNotFound for an unknown user.
+func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (sessions, loginSessions, appGrants int64, err error) {
+	q := s.q.WithTx(tx)
+	if _, err := q.LockUserForSessionRevocation(ctx, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, 0, errs.ErrNotFound
+		}
+		return 0, 0, 0, err
+	}
+	if sessions, err = q.RevokeAllSessionsForUser(ctx, userID); err != nil {
+		return 0, 0, 0, err
+	}
+	if loginSessions, err = q.EndLoginSessionsForUser(ctx, userID); err != nil {
+		return 0, 0, 0, err
+	}
+	// An application renewing a grant at this moment locks the token it
+	// presented, writes the successor and commits — possibly after a pass has
+	// already taken its snapshot, so that pass cannot see the successor. A
+	// further pass (a new statement, a new snapshot) does; repeat until a pass
+	// finds nothing left. Bounded: a renewal has to win a race against a pass
+	// that is already waiting for it, so one extra pass is the norm.
+	for pass := 0; pass < maxGrantPasses; pass++ {
+		row, err := q.RevokeAppGrantsForUser(ctx, userID)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		appGrants += row.Live
+		if row.Touched == 0 {
+			break
+		}
+	}
+	return sessions, loginSessions, appGrants, nil
+}
+
 type ChangePasswordInput struct {
 	UserID        uuid.UUID
 	KeepSessionID uuid.UUID
