@@ -32,17 +32,19 @@ const (
 func TestPasskeyFullCeremony(t *testing.T) {
 	requireDB(t)
 	for _, tc := range []struct {
-		name string
-		opts virtualwebauthn.AuthenticatorOptions
+		name      string
+		opts      virtualwebauthn.AuthenticatorOptions
+		syncLater bool // registered unsynced, starts syncing before the login
 	}{
-		{"device-bound", virtualwebauthn.AuthenticatorOptions{}},
-		{"synced", virtualwebauthn.AuthenticatorOptions{BackupEligible: true, BackupState: true}},
+		{"device-bound", virtualwebauthn.AuthenticatorOptions{}, false},
+		{"synced", virtualwebauthn.AuthenticatorOptions{BackupEligible: true, BackupState: true}, false},
+		{"synced-later", virtualwebauthn.AuthenticatorOptions{BackupEligible: true}, true},
 	} {
-		t.Run(tc.name, func(t *testing.T) { passkeyFullCeremony(t, tc.opts) })
+		t.Run(tc.name, func(t *testing.T) { passkeyFullCeremony(t, tc.opts, tc.syncLater) })
 	}
 }
 
-func passkeyFullCeremony(t *testing.T, opts virtualwebauthn.AuthenticatorOptions) {
+func passkeyFullCeremony(t *testing.T, opts virtualwebauthn.AuthenticatorOptions, syncLater bool) {
 	ctx := context.Background()
 	svc := newPasskeySvc(t)
 
@@ -90,6 +92,11 @@ func passkeyFullCeremony(t *testing.T, opts virtualwebauthn.AuthenticatorOptions
 	// Register the credential with the virtual authenticator so it can now be
 	// used to sign assertions for the login ceremony.
 	authenticator.AddCredential(cred)
+	if syncLater {
+		// The passkey has since been synced (backup state false -> true);
+		// backup eligibility never changes.
+		authenticator.Options.BackupState = true
+	}
 
 	// Authentication ceremony (log in with the passkey just registered)
 	loginSID, assertion, err := svc.BeginLogin(ctx, email)
@@ -118,6 +125,36 @@ func passkeyFullCeremony(t *testing.T, opts virtualwebauthn.AuthenticatorOptions
 	}
 	if loginPair.UserID != userID {
 		t.Fatalf("login issued a session for user %v, want the signed-up user %v", loginPair.UserID, userID)
+	}
+
+	// Stored flags: eligibility as registered, state as last asserted.
+	var storedBE, storedBS bool
+	if err := testPool.QueryRow(ctx,
+		`SELECT backup_eligible, backup_state FROM auth.passkey_credentials WHERE user_id = $1`, userID,
+	).Scan(&storedBE, &storedBS); err != nil {
+		t.Fatalf("read stored passkey flags: %v", err)
+	}
+	if storedBE != authenticator.Options.BackupEligible || storedBS != authenticator.Options.BackupState {
+		t.Fatalf("stored flags BE=%v BS=%v, want BE=%v BS=%v",
+			storedBE, storedBS, authenticator.Options.BackupEligible, authenticator.Options.BackupState)
+	}
+
+	// The same passkey as a second factor (passkey MFA).
+	mfaSID, mfaAssertion, err := svc.BeginMFA(ctx, userID)
+	if err != nil {
+		t.Fatalf("begin passkey MFA: %v", err)
+	}
+	mfaJSON, err := json.Marshal(mfaAssertion)
+	if err != nil {
+		t.Fatalf("marshal MFA assertion options: %v", err)
+	}
+	mfaOptions, err := virtualwebauthn.ParseAssertionOptions(string(mfaJSON))
+	if err != nil {
+		t.Fatalf("parse MFA assertion options: %v", err)
+	}
+	mfaResponse := virtualwebauthn.CreateAssertionResponse(rp, authenticator, cred, *mfaOptions)
+	if err := svc.FinishMFA(ctx, userID, mfaSID, json.RawMessage(mfaResponse)); err != nil {
+		t.Fatalf("finish passkey MFA (assertion verification): %v", err)
 	}
 }
 
