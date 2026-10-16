@@ -24,13 +24,30 @@ const (
 // service + go-webauthn verifier, using a virtual authenticator that produces
 // genuine attestation/assertion signatures (QID-07: the first test to complete a
 // real WebAuthn ceremony rather than stopping at challenge issuance).
+//
+// It runs for a device-bound passkey and for a synced one. Synced passkeys
+// (iCloud Keychain, Google Password Manager, password managers) are
+// backup-eligible, and go-webauthn rejects a login whose backup-eligible flag
+// differs from the one stored at registration, so the flags must round-trip.
 func TestPasskeyFullCeremony(t *testing.T) {
 	requireDB(t)
+	for _, tc := range []struct {
+		name string
+		opts virtualwebauthn.AuthenticatorOptions
+	}{
+		{"device-bound", virtualwebauthn.AuthenticatorOptions{}},
+		{"synced", virtualwebauthn.AuthenticatorOptions{BackupEligible: true, BackupState: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { passkeyFullCeremony(t, tc.opts) })
+	}
+}
+
+func passkeyFullCeremony(t *testing.T, opts virtualwebauthn.AuthenticatorOptions) {
 	ctx := context.Background()
 	svc := newPasskeySvc(t)
 
 	rp := virtualwebauthn.RelyingParty{Name: pkRPName, ID: pkRPID, Origin: pkRPOrigin}
-	authenticator := virtualwebauthn.NewAuthenticator()
+	authenticator := virtualwebauthn.NewAuthenticatorWithOptions(opts)
 	cred := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
 
 	email := uniqueSlug("pkfull") + "@example.com"

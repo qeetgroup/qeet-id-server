@@ -17,7 +17,7 @@ SELECT id FROM "user".users
 WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
 
 -- name: GetPasskeyCredentialsForCeremony :many
-SELECT credential_id, public_key, sign_count, aaguid, transports
+SELECT credential_id, public_key, sign_count, aaguid, transports, backup_eligible, backup_state
 FROM auth.passkey_credentials WHERE user_id = $1;
 
 -- name: InsertWebAuthnSession :one
@@ -71,9 +71,11 @@ VALUES ($1, $2, $3)
 RETURNING id;
 
 -- name: InsertPasskeyCredential :exec
-INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name)
-VALUES ($1, $2, $3, $4, $5, $6, $7);
+INSERT INTO auth.passkey_credentials (user_id, credential_id, public_key, sign_count, aaguid, transports, name, backup_eligible, backup_state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
 
 -- name: UpdatePasskeySignCount :exec
-UPDATE auth.passkey_credentials SET sign_count = $1, last_used_at = NOW()
-WHERE credential_id = $2;
+-- After a verified assertion: the new counter and the current backup state
+-- (backup eligibility never changes, so it is not updated).
+UPDATE auth.passkey_credentials SET sign_count = $1, backup_state = $2, last_used_at = NOW()
+WHERE credential_id = $3;
