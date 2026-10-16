@@ -152,6 +152,10 @@ func (s *Service) loadCredentials(ctx context.Context, userID uuid.UUID) ([]weba
 	for _, m := range rows {
 		c := webauthn.Credential{ID: m.CredentialID, PublicKey: m.PublicKey}
 		c.Authenticator.SignCount = uint32(m.SignCount)
+		// go-webauthn rejects a login whose backup-eligible flag differs from
+		// the stored one, so synced passkeys need the flags they registered with.
+		c.Flags.BackupEligible = m.BackupEligible
+		c.Flags.BackupState = m.BackupState
 		if m.Aaguid.Valid {
 			b := uuid.UUID(m.Aaguid.Bytes)
 			c.Authenticator.AAGUID = b[:]
@@ -280,13 +284,15 @@ func (s *Service) insertCredential(ctx context.Context, userID uuid.UUID, cred *
 		namePtr = &name
 	}
 	err := s.q.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
-		UserID:       userID,
-		CredentialID: cred.ID,
-		PublicKey:    cred.PublicKey,
-		SignCount:    int64(cred.Authenticator.SignCount),
-		Aaguid:       aaguidPG,
-		Transports:   transports,
-		Name:         namePtr,
+		UserID:         userID,
+		CredentialID:   cred.ID,
+		PublicKey:      cred.PublicKey,
+		SignCount:      int64(cred.Authenticator.SignCount),
+		Aaguid:         aaguidPG,
+		Transports:     transports,
+		Name:           namePtr,
+		BackupEligible: cred.Flags.BackupEligible,
+		BackupState:    cred.Flags.BackupState,
 	})
 	if err != nil {
 		if pgxerr.IsUnique(err) {
@@ -559,13 +565,15 @@ func (s *Service) createUserFromSignup(ctx context.Context, sess *signupSession,
 		namePtr = &name
 	}
 	if err := qtx.InsertPasskeyCredential(ctx, dbgen.InsertPasskeyCredentialParams{
-		UserID:       userID,
-		CredentialID: cred.ID,
-		PublicKey:    cred.PublicKey,
-		SignCount:    int64(cred.Authenticator.SignCount),
-		Aaguid:       aaguidPG,
-		Transports:   transports,
-		Name:         namePtr,
+		UserID:         userID,
+		CredentialID:   cred.ID,
+		PublicKey:      cred.PublicKey,
+		SignCount:      int64(cred.Authenticator.SignCount),
+		Aaguid:         aaguidPG,
+		Transports:     transports,
+		Name:           namePtr,
+		BackupEligible: cred.Flags.BackupEligible,
+		BackupState:    cred.Flags.BackupState,
 	}); err != nil {
 		if pgxerr.IsUnique(err) {
 			return uuid.Nil, errs.ErrPasskeyExists
@@ -681,6 +689,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),
+		BackupState:  cred.Flags.BackupState,
 		CredentialID: cred.ID,
 	}); err != nil {
 		return nil, err
@@ -762,6 +771,7 @@ func (s *Service) FinishMFA(ctx context.Context, userID, sessionID uuid.UUID, cr
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),
+		BackupState:  cred.Flags.BackupState,
 		CredentialID: cred.ID,
 	}); err != nil {
 		return err
