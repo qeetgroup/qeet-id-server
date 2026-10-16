@@ -229,6 +229,14 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **auth:** switching organisation (`POST /v1/auth/switch-tenant`) replaces the session instead of
+  adding one. **Behaviour change:** the session switched from now ends — its refresh token is refused
+  and `session.revoked` subscribers are told, with reason `tenant_switch` — where before it stayed
+  renewable for 30 days and every switch left another live session behind. The new token carries the
+  claims the target organisation's authentication hook adds (the hook may also refuse the switch),
+  and renewals keep a session's hook claims instead of dropping them after the first access token
+  expires. An access token whose session has already ended can no longer switch (it used to open a
+  fresh session). The person's own session list shows one entry per sign-in. Migration `0120`.
 * **auth:** signing out of the hosted login now signs the browser out of the applications it signed
   in to. Both ways of signing out — the hosted login's own (`DELETE /v1/auth/session`) and an
   application's (`/v1/oauth/logout`) — used to delete only the browser's SSO session, so every

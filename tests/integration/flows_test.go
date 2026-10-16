@@ -142,17 +142,18 @@ func TestOrganizationSelectionEligibility(t *testing.T) {
 		}
 	}
 	for _, denied := range []uuid.UUID{foreign, suspended, deleted} {
-		if _, err := svc.SwitchTenant(ctx, userID, denied, "", ""); !errors.Is(err, errs.ErrAuthNotTenantMember) {
+		if _, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: userID, FromSessionID: current.SessionID, TenantID: denied}); !errors.Is(err, errs.ErrAuthNotTenantMember) {
 			t.Fatalf("ineligible switch allowed: %v", err)
 		}
 	}
-	if _, err := svc.SwitchTenant(ctx, userID, eligible[2], "", ""); err != nil {
+	switched, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: userID, FromSessionID: current.SessionID, TenantID: eligible[2]})
+	if err != nil {
 		t.Fatalf("eligible switch rejected: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `DELETE FROM rbac.user_roles WHERE user_id=$1 AND tenant_id=$2`, userID, eligible[2]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.SwitchTenant(ctx, userID, eligible[2], "", ""); !errors.Is(err, errs.ErrAuthNotTenantMember) {
+	if _, err := svc.SwitchTenant(ctx, auth.SwitchTenantInput{UserID: userID, FromSessionID: switched.SessionID, TenantID: eligible[2]}); !errors.Is(err, errs.ErrAuthNotTenantMember) {
 		t.Fatal("removed membership remained switchable")
 	}
 	if _, err := repository.EligibleOrganizations(ctx, userID, current.SessionID, 200, "invalid"); err == nil {

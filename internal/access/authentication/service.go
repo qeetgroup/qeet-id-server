@@ -357,11 +357,33 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	}, u, nil, nil
 }
 
-// SwitchTenant mints a token pair scoped to tenantID if the user is a member; ErrForbidden otherwise.
-func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*TokenPair, error) {
+// SwitchTenantInput names who switches, from which of their sessions, and to
+// which organization. FromSessionID must come from the caller's own access
+// token, never from anything the client supplies.
+type SwitchTenantInput struct {
+	UserID        uuid.UUID
+	FromSessionID uuid.UUID
+	TenantID      uuid.UUID
+	IP            string
+	UserAgent     string
+}
+
+// SwitchTenant replaces the caller's session with one scoped to another
+// organization they belong to. The new session's token carries the claims that
+// organization's authentication hook adds (the hook may also refuse the
+// switch), and keeps them across renewals. The session switched from ends —
+// superseded by the new one, its refresh token refused — in the same
+// transaction, and revocation subscribers of the organization it belonged to
+// are told, with "tenant_switch" as the reason.
+//
+// Refused with ErrAuthNotTenantMember for an organization the caller does not
+// belong to, with the hook's error when the hook refuses, and with
+// ErrUnauthorized when the session switched from has already ended (its access
+// token outlives it by a few minutes); in every refusal nothing changes.
+func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*TokenPair, error) {
 	member, err := s.q.CheckTenantMembership(ctx, dbgen.CheckTenantMembershipParams{
-		UserID:   userID,
-		TenantID: tenantID,
+		UserID:   in.UserID,
+		TenantID: in.TenantID,
 	})
 	if err != nil {
 		return nil, err
@@ -369,7 +391,68 @@ func (s *Service) SwitchTenant(ctx context.Context, userID, tenantID uuid.UUID, 
 	if !member {
 		return nil, errs.ErrAuthNotTenantMember
 	}
-	return s.IssuePair(ctx, userID, tenantID, ip, ua, "tenant_switch")
+	// Cheap check before calling out to the hook; the supersede below is the
+	// authoritative one.
+	live, err := s.q.IsSessionLiveForUser(ctx, dbgen.IsSessionLiveForUserParams{SessionID: in.FromSessionID, UserID: in.UserID})
+	if err != nil {
+		return nil, err
+	}
+	if !live {
+		return nil, errs.ErrUnauthorized
+	}
+	var claims map[string]any
+	if s.loginHook != nil {
+		u, err := s.users.Get(ctx, in.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if claims, err = s.loginHook.Run(ctx, in.TenantID, in.UserID, u.Email); err != nil {
+			return nil, err
+		}
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	q := s.q.WithTx(tx)
+	// The user row first, in the order every bulk session revocation takes it.
+	if _, err := q.LockUserForSessionRevocation(ctx, in.UserID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, errs.ErrUnauthorized
+		}
+		return nil, err
+	}
+	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.TenantID, in.IP, in.UserAgent, "tenant_switch", claims,
+		map[string]any{"previous_session_id": in.FromSessionID})
+	if err != nil {
+		return nil, err
+	}
+	left, err := q.SupersedeSession(ctx, dbgen.SupersedeSessionParams{
+		NewSessionID: pgtype.UUID{Bytes: pair.SessionID, Valid: true},
+		SessionID:    in.FromSessionID,
+		UserID:       in.UserID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrUnauthorized
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	if left.Valid {
+		s.emit(ctx, uuid.UUID(left.Bytes), "session.revoked", map[string]any{
+			"user_id":       in.UserID,
+			"session_id":    in.FromSessionID,
+			"reason":        "tenant_switch",
+			"superseded_by": pair.SessionID,
+			"revoked_at":    time.Now().UTC(),
+		})
+	}
+	return pair, nil
 }
 
 // Login verifies the password and, when the user has a second factor enrolled,
@@ -814,7 +897,20 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return pair, nil
+}
 
+// issuePairTx is issuePair inside the caller's transaction, which commits. The
+// hook claims are stored with the session so renewals issue them again;
+// auditMeta (may be nil) is added to the sign-in audit record.
+func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any) (*TokenPair, error) {
 	sessionID := uuid.New()
 	var ipArg any
 	if ip != "" {
@@ -828,10 +924,18 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		tenantArg = t
 		tenantPtr = &t
 	}
+	var hookClaims []byte
+	if len(claims) > 0 {
+		raw, err := json.Marshal(claims)
+		if err != nil {
+			return nil, err
+		}
+		hookClaims = raw
+	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
-		VALUES ($1, $2, $3, NULLIF($4,'')::inet, $5)
-	`, sessionID, userID, tenantArg, ipArg, ua); err != nil {
+		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims)
+		VALUES ($1, $2, $3, NULLIF($4,'')::inet, $5, $6)
+	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims); err != nil {
 		return nil, err
 	}
 	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
@@ -853,6 +957,10 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 	if method == "" {
 		method = "unknown"
 	}
+	meta := map[string]any{"method": method}
+	for k, v := range auditMeta {
+		meta[k] = v
+	}
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID:     tenantPtr,
 		ActorUserID:  &userID,
@@ -862,11 +970,8 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		ResourceID:   &sessionID,
 		IP:           ip,
 		UserAgent:    ua,
-		Metadata:     map[string]any{"method": method},
+		Metadata:     meta,
 	}); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &TokenPair{
@@ -904,17 +1009,18 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		tenantPtr   *uuid.UUID // NULL for a tenant-less session
 		userStatus  string
 		userDeleted *time.Time
+		hookClaims  []byte
 	)
 	row := tx.QueryRow(ctx, `
 		SELECT rt.id, rt.session_id, rt.used_at, rt.expires_at,
-		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at
+		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims
 		FROM auth.refresh_tokens rt
 		JOIN auth.sessions s ON s.id = rt.session_id
 		JOIN "user".users u ON u.id = s.user_id
 		WHERE rt.token_hash = $1
 		FOR UPDATE OF rt
 	`, hash)
-	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted); err != nil {
+	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrAuthRefreshTokenInvalid
 		}
@@ -985,7 +1091,14 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID); err != nil {
 		return nil, err
 	}
-	access, exp, err := s.tokens.IssueAccess(userID, tenantID, sessionID, "")
+	// The hook ran when the session was opened; its claims stay with the session.
+	var claims map[string]any
+	if len(hookClaims) > 0 {
+		if err := json.Unmarshal(hookClaims, &claims); err != nil {
+			return nil, err
+		}
+	}
+	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
 	if err != nil {
 		return nil, err
 	}
@@ -1469,7 +1582,7 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 		       sess.created_at, sess.last_seen_at, sess.revoked_at
 		FROM auth.sessions sess
 		JOIN "user".users u ON u.id = sess.user_id
-		WHERE sess.user_id = $1 AND u.deleted_at IS NULL
+		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
 		  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3, $4))
 		ORDER BY sess.created_at DESC, sess.id DESC
 		LIMIT $5
@@ -1505,7 +1618,7 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 	if err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM auth.sessions sess
 		JOIN "user".users u ON u.id = sess.user_id
-		WHERE sess.user_id = $1 AND u.deleted_at IS NULL
+		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
 	`, userID).Scan(&total); err != nil {
 		return nil, err
 	}

@@ -464,10 +464,12 @@ type switchTenantInput struct {
 	TenantID string `json:"tenant_id" validate:"required,uuid"`
 }
 
-// switchTenant returns a token pair scoped to a tenant the caller belongs to (403 otherwise).
+// switchTenant → POST /v1/auth/switch-tenant. Replaces the caller's session
+// with one in another organization they belong to (Service.SwitchTenant); the
+// session in the presented access token is the one that ends.
 func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil {
+	if p == nil || p.UserID == nil || p.SessionID == nil {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
 	}
@@ -485,7 +487,10 @@ func (h *Handler) switchTenant(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenant_id"))
 		return
 	}
-	pair, err := h.Service.SwitchTenant(r.Context(), *p.UserID, tid, httpx.ClientIP(r), r.UserAgent())
+	pair, err := h.Service.SwitchTenant(r.Context(), SwitchTenantInput{
+		UserID: *p.UserID, FromSessionID: *p.SessionID, TenantID: tid,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(),
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

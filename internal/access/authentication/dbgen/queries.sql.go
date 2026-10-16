@@ -414,11 +414,6 @@ const lockUserForSessionRevocation = `-- name: LockUserForSessionRevocation :one
 SELECT id FROM "user".users WHERE id = $1 FOR NO KEY UPDATE
 `
 
-// LockUserForSessionRevocation row-locks the account so bulk session
-// revocations for one user (and password changes, which lock the same row FOR
-// UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
-// session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
-// are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
 func (q *Queries) LockUserForSessionRevocation(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, lockUserForSessionRevocation, userID)
 	var id uuid.UUID
@@ -680,6 +675,34 @@ type RevokeSessionForUserParams struct {
 // or was already revoked — a safe no-op, never a cross-user takedown.
 func (q *Queries) RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, revokeSessionForUser, arg.SessionID, arg.UserID)
+	var tenant_id pgtype.UUID
+	err := row.Scan(&tenant_id)
+	return tenant_id, err
+}
+
+const supersedeSession = `-- name: SupersedeSession :one
+UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = $1
+WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
+RETURNING tenant_id
+`
+
+type SupersedeSessionParams struct {
+	NewSessionID pgtype.UUID
+	SessionID    uuid.UUID
+	UserID       uuid.UUID
+}
+
+// LockUserForSessionRevocation row-locks the account so bulk session
+// revocations for one user (and password changes, which lock the same row FOR
+// UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
+// session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
+// are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
+// SupersedeSession ends the session a switch of organisation was made from —
+// only while it is live and the caller's own — and records the session that
+// replaced it. Ending it is what stops its refresh tokens. Returns the
+// organization it belonged to (NULL for none). No row: it had already ended.
+func (q *Queries) SupersedeSession(ctx context.Context, arg SupersedeSessionParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, supersedeSession, arg.NewSessionID, arg.SessionID, arg.UserID)
 	var tenant_id pgtype.UUID
 	err := row.Scan(&tenant_id)
 	return tenant_id, err
