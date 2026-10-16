@@ -72,6 +72,22 @@ WHERE user_id = @user_id;
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL;
 
+-- LockUserForSessionRevocation row-locks the account so bulk session
+-- revocations for one user (and password changes, which lock the same row FOR
+-- UPDATE) run one at a time. NO KEY UPDATE rather than UPDATE: creating a
+-- session takes only the foreign key's KEY SHARE lock on this row, so sign-ins
+-- are never blocked or deadlocked by it. pgx.ErrNoRows for an unknown user.
+-- name: LockUserForSessionRevocation :one
+SELECT id FROM "user".users WHERE id = @user_id FOR NO KEY UPDATE;
+
+-- IsSessionLiveForUser reports whether the session exists, belongs to the
+-- user and has not been revoked.
+-- name: IsSessionLiveForUser :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.sessions
+    WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
+) AS live;
+
 -- name: InsertRefreshToken :one
 INSERT INTO auth.refresh_tokens (session_id, token_hash, expires_at)
 VALUES (@session_id, @token_hash, @expires_at)

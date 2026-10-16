@@ -179,7 +179,7 @@ paths:
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
-      description: 'Signs the caller out and revokes the session behind the presented credential. The associated refresh token stops working as soon as this returns, so any subsequent authenticated call must start a fresh sign-in. Other active sessions for the same user are unaffected; remove those individually with the session-revocation call.'
+      description: 'Signs the caller out and revokes the session behind the presented credential. The associated refresh token stops working as soon as this returns, so any subsequent authenticated call must start a fresh sign-in. Other active sessions for the same user are unaffected; remove those individually with the session-revocation call, or all at once with the revoke-other-sessions call.'
       summary: Logout
       tags:
         - Auth
@@ -609,7 +609,7 @@ paths:
   /v1/auth/sessions:
     get:
       operationId: get_v1_auth_sessions
-      description: 'Lists the caller''s own active sessions, each with its device, address, and timestamp metadata, for review in account security settings. Results are cursor-paginated: pass the returned next_cursor to fetch the following page until has_more is false. Terminate any listed session individually with the session-revocation call.'
+      description: 'Lists the caller''s own active sessions, each with its device, address, and timestamp metadata, for review in account security settings. Results are cursor-paginated: pass the returned next_cursor to fetch the following page until has_more is false. Terminate any listed session individually with the session-revocation call, or every session except the current one with the revoke-other-sessions call.'
       summary: List sessions
       tags:
         - Auth
@@ -654,6 +654,44 @@ paths:
                     minimum: 0
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /v1/auth/sessions/revoke-others:
+    post:
+      operationId: post_v1_auth_sessions_revokeOthers
+      summary: Revoke all other sessions
+      description: >-
+        Ends every one of the caller's sessions except the one they are using,
+        in a single all-or-nothing step, and returns how many were ended. The
+        session that is kept is the one behind the presented access token; the
+        request takes no body and no session identifiers. Refresh tokens of the
+        ended sessions stop working as soon as this returns, but access tokens
+        already issued to them stay valid until they expire (minutes), so do not
+        present this as an instant cut-off. Succeeds with `revoked: 0` when
+        there is no other session. If any session cannot be ended the call fails
+        and none are ended. Returns 401 `auth.session_revoked` when the caller's
+        own session has already ended. Sessions in hosted login and tokens held
+        by applications are not affected.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The other sessions were ended
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revoked]
+                properties:
+                  revoked:
+                    type: integer
+                    minimum: 0
+                    description: Number of sessions ended by this call; 0 when there were none.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/auth/sessions/{id}:
     delete:
       operationId: delete_v1_auth_sessions_ById
