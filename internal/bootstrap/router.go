@@ -296,6 +296,9 @@ func NewRouter(d Deps) http.Handler {
 			// routes listed in permissionMap(); API-key/service actors and
 			// unmapped (self-service / public) routes pass through.
 			r.Use(rbac.Enforce(d.RBACChecker, routePolicyMap()))
+			// Sensitive actions also need a step-up of the calling session
+			// (stepUpRoutes); asked only of a caller already authorized.
+			r.Use(d.MFA.Service.StepUpGate(stepUpRoutes()))
 
 			mountAuthenticatedRoutes(r, d)
 		})
@@ -368,6 +371,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.APIKey.Mount(r)
 	d.Principal.Mount(r)
 	d.MFA.Mount(r)
+	d.MFA.MountAdmin(r)
 	d.Webhook.Mount(r)
 	d.Policy.Mount(r)
 	d.AuthPolicy.Mount(r)
@@ -454,14 +458,16 @@ func csrfExemptPaths() []string {
 		"/v1/auth/mfa/", // its helpers (send a code, begin a passkey, send a push) — likewise
 		"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
 		"/v1/passkeys/login/",
-		"/v1/social/exchange",         // one-time code exchange, no cookie session
-		"/v1/social/*/callback",       // Apple response_mode=form_post lands cross-site
-		"/v1/invites/accept",          // invitation token in the body, no cookie session
-		"/v1/invites/accept/passkey/", // the same, accepting with a passkey
-		"/v1/invites/lookup",          // read-only preview by invitation token
-		"/v1/billing/webhooks/",       // provider-signed (Stripe/Razorpay), no cookie session
-		"/v1/billing/sandbox/",        // dev-only mock hosted-checkout page + pay (no cookie session)
-		"/v1/agents/token",            // agent-credential auth (no cookie session)
-		"/v1/credentials/verify",      // public JWT-VC verification (no cookie session)
+		"/v1/social/exchange",           // one-time code exchange, no cookie session
+		"/v1/social/*/callback",         // Apple response_mode=form_post lands cross-site
+		"/v1/invites/accept",            // invitation token in the body, no cookie session
+		"/v1/invites/accept/passkey/",   // the same, accepting with a passkey
+		"/v1/invites/lookup",            // read-only preview by invitation token
+		"/v1/billing/webhooks/",         // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/billing/sandbox/",          // dev-only mock hosted-checkout page + pay (no cookie session)
+		"/v1/agents/token",              // agent-credential auth (no cookie session)
+		"/v1/credentials/verify",        // public JWT-VC verification (no cookie session)
+		"/v1/mfa/push/challenges/",      // a linked phone answers with its device credential (no cookie session)
+		"/v1/mfa/push/devices/*/unlink", // a linked phone removes itself with its device credential (no cookie session)
 	}
 }

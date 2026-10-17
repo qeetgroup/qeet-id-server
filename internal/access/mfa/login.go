@@ -60,9 +60,9 @@ func (s *Service) LoginFactors(ctx context.Context, userID uuid.UUID) ([]auth.Lo
 }
 
 // SendLoginCode sends a sign-in code to one of the user's confirmed email or
-// SMS factors.
-func (s *Service) SendLoginCode(ctx context.Context, userID, factorID uuid.UUID) error {
-	return s.ChallengeOTP(ctx, userID, factorID)
+// SMS factors, for a sign-in to tenantID (nil: none), whose plan decides SMS.
+func (s *Service) SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error {
+	return s.challengeOTP(ctx, userID, tenantID, factorID, "sign_in")
 }
 
 // verifyLoginOTP consumes an email/SMS code of the user's inside tx; false
@@ -133,8 +133,8 @@ func (s *Service) LoginPushStatusTx(ctx context.Context, tx pgx.Tx, userID, chal
 	if err != nil {
 		return "", err
 	}
-	if row.Status == "pending" && time.Now().After(row.ExpiresAt) {
-		return "expired", nil
+	if row.Status == "pending" && !time.Now().Before(row.ExpiresAt) {
+		return "expired", s.q.WithTx(tx).ExpirePushChallenge(ctx, challengeID)
 	}
 	return row.Status, nil
 }

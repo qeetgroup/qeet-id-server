@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 // A magic link proves only that the person can read the account's email: a
@@ -24,7 +25,7 @@ func (s *Service) BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uui
 	if err != nil {
 		return nil, err
 	}
-	if gate.challenged() {
+	if s.nextSignInStep(ctx, userID, tenantID, gate, firstFactorMagicLink, "", ip, ua, httpx.GeoCountry(ctx)) == stepChallenge {
 		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorMagicLink, ip, ua)
 		if err != nil {
 			return nil, err
@@ -49,7 +50,7 @@ func (s *Service) BeginMagicLinkSession(ctx context.Context, userID, tenantID uu
 	if err != nil {
 		return nil, err
 	}
-	if gate.enrollment() || (gate.challenged() && !s.deviceTrusted(ctx, userID, tenantID, trustedToken, ip, ua, country)) {
+	if s.nextSignInStep(ctx, userID, tenantID, gate, firstFactorMagicLink, trustedToken, ip, ua, country) == stepChallenge {
 		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorMagicLink, ip, ua)
 		if err != nil {
 			return nil, err

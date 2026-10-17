@@ -231,7 +231,7 @@ func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLog
 }
 
 const getLoginSessionUser = `-- name: GetLoginSessionUser :one
-SELECT s.user_id, u.tenant_id
+SELECT s.user_id, u.tenant_id, s.created_at
 FROM auth.login_sessions s
 JOIN "user".users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
@@ -242,17 +242,19 @@ WHERE s.token_hash = $1
 `
 
 type GetLoginSessionUserRow struct {
-	UserID   uuid.UUID
-	TenantID pgtype.UUID
+	UserID    uuid.UUID
+	TenantID  pgtype.UUID
+	CreatedAt time.Time
 }
 
 // The user behind a live hosted-login session, and their own organization (NULL
-// for a user without one). No row when the session is unknown or expired, or
-// the user or their organization is no longer active.
+// for a user without one), and when the sign-in happened. No row when the
+// session is unknown or expired, or the user or their organization is no
+// longer active.
 func (q *Queries) GetLoginSessionUser(ctx context.Context, tokenHash string) (GetLoginSessionUserRow, error) {
 	row := q.db.QueryRow(ctx, getLoginSessionUser, tokenHash)
 	var i GetLoginSessionUserRow
-	err := row.Scan(&i.UserID, &i.TenantID)
+	err := row.Scan(&i.UserID, &i.TenantID, &i.CreatedAt)
 	return i, err
 }
 
@@ -639,6 +641,20 @@ DELETE FROM auth.login_sessions WHERE expires_at < $1
 // the cutoff. Their cookie stopped being sent when they expired.
 func (q *Queries) PurgeExpiredLoginSessions(ctx context.Context, cutoff time.Time) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeExpiredLoginSessions, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeExpiredTrustedDevices = `-- name: PurgeExpiredTrustedDevices :execrows
+DELETE FROM auth.trusted_devices WHERE expires_at < $1
+`
+
+// PurgeExpiredTrustedDevices deletes remembered devices that expired before
+// the cutoff; they no longer skip anything.
+func (q *Queries) PurgeExpiredTrustedDevices(ctx context.Context, cutoff time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredTrustedDevices, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -1066,23 +1082,25 @@ func (q *Queries) TouchSession(ctx context.Context, sessionID uuid.UUID) error {
 	return err
 }
 
-const touchTrustedDevice = `-- name: TouchTrustedDevice :execrows
+const touchTrustedDevice = `-- name: TouchTrustedDevice :one
 UPDATE auth.trusted_devices SET last_used_at = NOW()
-WHERE token_hash = $1 AND user_id = $2 AND expires_at > NOW()
+WHERE token_hash = $1 AND user_id = $2 AND tenant_id = $3 AND expires_at > NOW()
+RETURNING id
 `
 
 type TouchTrustedDeviceParams struct {
 	TokenHash string
 	UserID    uuid.UUID
+	TenantID  pgtype.UUID
 }
 
-// Refreshes last_used_at and returns 1 when a live token was found, 0 otherwise.
-func (q *Queries) TouchTrustedDevice(ctx context.Context, arg TouchTrustedDeviceParams) (int64, error) {
-	result, err := q.db.Exec(ctx, touchTrustedDevice, arg.TokenHash, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Refreshes last_used_at on the live device the token names for the user in
+// the organisation that remembered it, and returns its id; no row otherwise.
+func (q *Queries) TouchTrustedDevice(ctx context.Context, arg TouchTrustedDeviceParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, touchTrustedDevice, arg.TokenHash, arg.UserID, arg.TenantID)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const updatePasswordCredentialHash = `-- name: UpdatePasswordCredentialHash :exec

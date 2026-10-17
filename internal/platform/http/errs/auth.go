@@ -10,21 +10,22 @@ const (
 	CodeAuthSessionExpired   = "auth.session_expired"
 	CodeAuthPasswordBreached = "auth.password_breached"
 
-	CodeAuthInvalidCredentials       = "auth.invalid_credentials"
-	CodeAuthAccountLocked            = "auth.account_locked"
-	CodeAuthNotTenantMember          = "auth.not_tenant_member"
-	CodeAuthSelfRegistrationDisabled = "auth.self_registration_disabled"
-	CodeAuthMethodDisabled           = "auth.method_disabled"
-	CodeAuthApplicationToken         = "auth.application_token"
-	CodeAuthPasswordWeak             = "auth.password_weak"
-	CodeAuthMFAChallengeExpired      = "auth.mfa_challenge_expired"
-	CodeAuthRefreshTokenInvalid      = "auth.refresh_token_invalid"
-	CodeAuthSessionRevoked           = "auth.session_revoked"
-	CodeAuthSessionTimedOut          = "auth.session_timed_out"
-	CodeAuthLastSignInMethod         = "auth.last_sign_in_method"
-	CodeAuthSessionLimit             = "auth.session_limit"
-	CodeAuthAccountSuspended         = "auth.account_suspended"
-	CodeAuthSignInUnavailable        = "auth.sign_in_unavailable"
+	CodeAuthInvalidCredentials          = "auth.invalid_credentials"
+	CodeAuthAccountLocked               = "auth.account_locked"
+	CodeAuthNotTenantMember             = "auth.not_tenant_member"
+	CodeAuthSelfRegistrationDisabled    = "auth.self_registration_disabled"
+	CodeAuthMethodDisabled              = "auth.method_disabled"
+	CodeAuthApplicationToken            = "auth.application_token"
+	CodeAuthPasswordWeak                = "auth.password_weak"
+	CodeAuthMFAChallengeExpired         = "auth.mfa_challenge_expired"
+	CodeAuthRiskVerificationUnavailable = "auth.risk_verification_unavailable"
+	CodeAuthRefreshTokenInvalid         = "auth.refresh_token_invalid"
+	CodeAuthSessionRevoked              = "auth.session_revoked"
+	CodeAuthSessionTimedOut             = "auth.session_timed_out"
+	CodeAuthLastSignInMethod            = "auth.last_sign_in_method"
+	CodeAuthSessionLimit                = "auth.session_limit"
+	CodeAuthAccountSuspended            = "auth.account_suspended"
+	CodeAuthSignInUnavailable           = "auth.sign_in_unavailable"
 )
 
 var (
@@ -48,6 +49,11 @@ var (
 	ErrAuthMethodDisabled      = New(CodeAuthMethodDisabled, "This sign-in method isn't available for this organisation. Use another way to sign in.")
 	ErrAuthPasswordWeak        = New(CodeAuthPasswordWeak, "Choose a stronger password.")
 	ErrAuthMFAChallengeExpired = New(CodeAuthMFAChallengeExpired, "Your sign-in session expired. Please sign in again.").AsRetryable()
+	// ErrAuthRiskVerificationUnavailable: the sign-in looks risky and must be
+	// confirmed, but the account has neither a second factor nor a verified
+	// email address to confirm it with.
+	ErrAuthRiskVerificationUnavailable = New(CodeAuthRiskVerificationUnavailable,
+		"We couldn't confirm this sign-in. Ask your administrator for help, or set up two-step verification from a device you usually use.")
 	ErrAuthRefreshTokenInvalid = New(CodeAuthRefreshTokenInvalid, "Your session is no longer valid. Please sign in again.").AsRetryable()
 	ErrAuthSessionRevoked      = New(CodeAuthSessionRevoked, "Your session was revoked. Please sign in again.").AsRetryable()
 	// ErrAuthSessionTimedOut: the session reached its maximum age or went

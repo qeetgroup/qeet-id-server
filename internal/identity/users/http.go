@@ -21,7 +21,7 @@ import (
 // mfaResetter clears a user's MFA factors (admin account-recovery). Kept as an
 // interface so the user package needn't import the mfa package.
 type mfaResetter interface {
-	ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) error
+	ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (map[string]int64, error)
 }
 
 // signInEnder ends, inside tx, every way a user is signed in — API and console
@@ -166,7 +166,8 @@ func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.MFA.ResetForUser(ctx, tx, id); err != nil {
+	removed, err := h.MFA.ResetForUser(ctx, tx, id)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -183,6 +184,7 @@ func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
+		Metadata:     map[string]any{"removed": removed},
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return

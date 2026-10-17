@@ -59,6 +59,10 @@ type Policy struct {
 	// skip the second factor on a previously-trusted device. Off by default so
 	// MFA stays always-on unless a tenant opts in.
 	RememberDeviceEnabled bool `json:"remember_device_enabled"`
+	// RememberDeviceDays is how long a device stays remembered after the
+	// sign-in that remembered it, 1–90 days (0 on update: 30). Applies to
+	// devices remembered after it is set.
+	RememberDeviceDays int `json:"remember_device_days"`
 	// Sign-in lockout. After LockoutThreshold failed password sign-ins to one
 	// account from one network, each within LockoutWindowMinutes of the last,
 	// the account is locked for that network for LockoutDurationMinutes. nil
@@ -164,8 +168,13 @@ func DefaultPolicy() Policy {
 		MagicLinkEnabled:    true,
 		MagicLinkTTLMinutes: 60,
 		PasskeyEnabled:      true,
+		RememberDeviceDays:  defaultRememberDeviceDays,
 	}
 }
+
+// defaultRememberDeviceDays is how long a remembered device stays remembered
+// where the organisation sets nothing (the column default).
+const defaultRememberDeviceDays = 30
 
 // ValidatePassword checks a plaintext password against the policy. Pure, so it
 // is unit-tested without a database. Each refusal names the rule that failed
@@ -233,6 +242,7 @@ func toDomain(row dbgen.TenantAuthPolicy) *Policy {
 		OTPSMSEnabled:            row.OtpSmsEnabled,
 		SelfRegistrationEnabled:  row.SelfRegistrationEnabled,
 		RememberDeviceEnabled:    row.RememberDeviceEnabled,
+		RememberDeviceDays:       int(row.RememberDeviceDays),
 		LockoutThreshold:         intOrNil(row.LockoutThreshold),
 		LockoutWindowMinutes:     intOrNil(row.LockoutWindowMinutes),
 		LockoutDurationMinutes:   intOrNil(row.LockoutDurationMinutes),
@@ -301,8 +311,15 @@ func (s *Service) SignInLockout(ctx context.Context, tenantID uuid.UUID) (Lockou
 // are refused with a validation error naming each field, before anything is
 // written; the password length and magic-link lifetime are clamped as before.
 func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p Policy) (*Policy, error) {
+	if p.RememberDeviceDays == 0 {
+		p.RememberDeviceDays = defaultRememberDeviceDays
+	}
 	fields := s.lockout.CheckLockout(p)
 	fields = append(fields, checkSignInMethods(p)...)
+	if p.RememberDeviceDays < 1 || p.RememberDeviceDays > 90 {
+		fields = append(fields, errs.FieldError{Field: "remember_device_days", Code: "out_of_range",
+			Message: "Remember a device for between 1 and 90 days."})
+	}
 	if len(fields) > 0 {
 		return nil, errs.ErrValidationFailed.WithFields(fields)
 	}
@@ -332,6 +349,7 @@ func (s *Service) Update(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, p P
 		OtpSmsEnabled:            p.OTPSMSEnabled,
 		SelfRegistrationEnabled:  p.SelfRegistrationEnabled,
 		RememberDeviceEnabled:    p.RememberDeviceEnabled,
+		RememberDeviceDays:       int32(p.RememberDeviceDays),
 		LockoutThreshold:         int32OrNil(p.LockoutThreshold),
 		LockoutWindowMinutes:     int32OrNil(p.LockoutWindowMinutes),
 		LockoutDurationMinutes:   int32OrNil(p.LockoutDurationMinutes),
@@ -480,6 +498,20 @@ func (s *Service) RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID)
 		return false, err
 	}
 	return p.RememberDeviceEnabled, nil
+}
+
+// RememberDevicePolicy reports whether the tenant allows remembering a device
+// and for how long one stays remembered.
+func (s *Service) RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error) {
+	p, err := s.Get(ctx, tenantID)
+	if err != nil {
+		return false, 0, err
+	}
+	days := p.RememberDeviceDays
+	if days == 0 {
+		days = defaultRememberDeviceDays
+	}
+	return p.RememberDeviceEnabled, time.Duration(days) * 24 * time.Hour, nil
 }
 
 type Handler struct {

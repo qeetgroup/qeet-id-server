@@ -109,20 +109,27 @@ func (s *Service) ResolveLoginSessionWithID(ctx context.Context, raw string) (se
 // ErrUnauthorized when the session is unknown, expired or ended, or the user or
 // their organization is no longer active.
 func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (userID, tenantID uuid.UUID, err error) {
+	userID, tenantID, _, err = s.resolveLoginSession(ctx, raw)
+	return userID, tenantID, err
+}
+
+// resolveLoginSession is ResolveLoginSessionUser plus when the sign-in that
+// opened the session happened.
+func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, tenantID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	row, err := s.q.GetLoginSessionUser(ctx, tokens.HashRefresh(raw))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	if row.TenantID.Valid {
 		tenantID = uuid.UUID(row.TenantID.Bytes)
 	}
-	return row.UserID, tenantID, nil
+	return row.UserID, tenantID, row.CreatedAt, nil
 }
 
 // LoginSessionAuth lets the hosted login's own pages call a short list of
@@ -166,12 +173,12 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			userID, tenantID, err := s.ResolveLoginSessionUser(r.Context(), c.Value)
+			userID, tenantID, signedInAt, err := s.resolveLoginSession(r.Context(), c.Value)
 			if err != nil {
 				httpx.WriteError(w, r, err)
 				return
 			}
-			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID}
+			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID, SignedInAt: &signedInAt}
 			if tenantID != uuid.Nil {
 				p.TenantID = &tenantID
 			}

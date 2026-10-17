@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa/dbgen"
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -53,6 +54,10 @@ type PushChallengeContext struct {
 
 // ── Service methods ───────────────────────────────────────────────────────────
 
+// pushDeviceTTL is how long a linked phone's device credential works after it
+// was last linked; linking again renews it.
+const pushDeviceTTL = 180 * 24 * time.Hour
+
 // RegisterPushDevice upserts a device push token and returns the device record
 // plus a one-time device_token the app must persist for future challenge-respond
 // calls. On re-registration of the same push_token the device_token is rotated.
@@ -81,8 +86,8 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 	err = tx.QueryRow(ctx, `
 		INSERT INTO auth.mfa_push_devices
 		    (user_id, name, push_token, push_token_ct, push_token_nonce, push_token_hash,
-		     platform, device_token, device_token_hash, encryption_version)
-		VALUES ($1, $2, NULL, $3, $4, $5, $6, NULL, $7, 1)
+		     platform, device_token, device_token_hash, encryption_version, device_token_expires_at)
+		VALUES ($1, $2, NULL, $3, $4, $5, $6, NULL, $7, 1, NOW() + make_interval(secs => $8))
 		ON CONFLICT (user_id, push_token_hash) WHERE push_token_hash IS NOT NULL DO UPDATE SET
 		    name = EXCLUDED.name,
 		    push_token = NULL,
@@ -92,9 +97,10 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 		    device_token = NULL,
 		    device_token_hash = EXCLUDED.device_token_hash,
 		    encryption_version = 1,
+		    device_token_expires_at = EXCLUDED.device_token_expires_at,
 		    last_seen_at = NOW()
 		RETURNING id, user_id, name, platform, created_at, last_seen_at
-	`, userID, name, ciphertext, nonce, pushTokenHash, platform, secretHash(tok)).Scan(
+	`, userID, name, ciphertext, nonce, pushTokenHash, platform, secretHash(tok), pushDeviceTTL.Seconds()).Scan(
 		&row.ID, &row.UserID, &row.Name, &row.Platform, &row.CreatedAt, &row.LastSeenAt,
 	)
 	if err != nil {
@@ -175,7 +181,9 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 	return ch.ID, nil
 }
 
-// GetPushChallenge returns the challenge for public polling / display.
+// GetPushChallenge returns the challenge for public polling / display. A
+// pending challenge past its expiry is recorded and reported as expired, so the
+// approval screen never offers to approve what can no longer be answered.
 func (s *Service) GetPushChallenge(ctx context.Context, id uuid.UUID) (*PushChallenge, error) {
 	row, err := s.q.GetPushChallenge(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -183,6 +191,12 @@ func (s *Service) GetPushChallenge(ctx context.Context, id uuid.UUID) (*PushChal
 	}
 	if err != nil {
 		return nil, err
+	}
+	if row.Status == "pending" && !time.Now().Before(row.ExpiresAt) {
+		if err := s.q.ExpirePushChallenge(ctx, id); err != nil {
+			return nil, err
+		}
+		row.Status = "expired"
 	}
 	return &PushChallenge{
 		ID:        row.ID,
@@ -209,7 +223,7 @@ func (s *Service) RespondToPushChallenge(ctx context.Context, challengeID, userI
 	var deviceID uuid.UUID
 	err = tx.QueryRow(ctx, `
 		SELECT id FROM auth.mfa_push_devices
-		WHERE user_id = $1 AND device_token_hash = $2
+		WHERE user_id = $1 AND device_token_hash = $2 AND device_token_expires_at > NOW()
 	`, userID, secretHash(deviceToken)).Scan(&deviceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return errs.ErrMFAPushUnauthorized
@@ -261,7 +275,7 @@ func (s *Service) loadPushTokens(ctx context.Context, tx pgx.Tx, userID uuid.UUI
 	rows, err := tx.Query(ctx, `
 		SELECT id, push_token, push_token_ct, push_token_nonce, push_token_hash, device_token
 		FROM auth.mfa_push_devices
-		WHERE user_id = $1
+		WHERE user_id = $1 AND device_token_expires_at > NOW()
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -379,6 +393,16 @@ func (s *Service) sendExpoPush(ctx context.Context, pushToken string, challengeI
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/mfa/push/challenges/{id}", h.getPushChallenge)
 	r.Post("/mfa/push/challenges/{id}/respond", h.respondToPushChallenge)
+	// A linked phone removes itself with its own device credential: the app
+	// holds no signed-in session to call the authenticated route with.
+	r.Post("/mfa/push/devices/{id}/unlink", h.unlinkPushDevice)
+}
+
+// MountAdmin mounts an administrator's view of a member's linked phones, in
+// the administrator's own organisation (user.read / user.write).
+func (h *Handler) MountAdmin(r chi.Router) {
+	r.Get("/users/{id}/push-devices", h.listMemberPushDevices)
+	r.Delete("/users/{id}/push-devices/{deviceID}", h.revokeMemberPushDevice)
 }
 
 // --- device management (authenticated) ---
@@ -449,8 +473,129 @@ func (h *Handler) revokePushDevice(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.Service.auditPushDevice(r, p.TenantID, *p.UserID, deviceID, "mfa.push_device_revoked")
 	w.WriteHeader(http.StatusNoContent)
 }
+
+type unlinkPushDeviceInput struct {
+	UserID      uuid.UUID `json:"user_id"`
+	DeviceToken string    `json:"device_token"`
+}
+
+// unlinkPushDevice → POST /v1/mfa/push/devices/{id}/unlink: a phone removes
+// itself, proving it is that device with the credential it was given when
+// linked (even one past its expiry: removing itself grants nothing).
+func (h *Handler) unlinkPushDevice(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+		return
+	}
+	var in unlinkPushDeviceInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if in.DeviceToken == "" || in.UserID == uuid.Nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("user_id and device_token required"))
+		return
+	}
+	n, err := h.Service.q.DeletePushDeviceByCredential(r.Context(), dbgen.DeletePushDeviceByCredentialParams{
+		ID: id, UserID: in.UserID, DeviceTokenHash: ptr(secretHash(in.DeviceToken)),
+	})
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if n == 0 {
+		httpx.WriteError(w, r, errs.ErrMFAPushUnauthorized)
+		return
+	}
+	h.Service.auditPushDevice(r, nil, in.UserID, id, "mfa.push_device_unlinked")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// memberInScope returns the member a route names, refused as not found unless
+// they belong to the caller's organisation.
+func (h *Handler) memberInScope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+	}
+	member, err := h.Service.q.IsTenantMember(r.Context(), dbgen.IsTenantMemberParams{UserID: userID, TenantID: tenantID})
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if !member {
+		return uuid.Nil, uuid.Nil, errs.ErrNotFound
+	}
+	return userID, tenantID, nil
+}
+
+// listMemberPushDevices → GET /v1/users/{id}/push-devices.
+func (h *Handler) listMemberPushDevices(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := h.memberInScope(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListPushDevices(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// revokeMemberPushDevice → DELETE /v1/users/{id}/push-devices/{deviceID}: an
+// administrator disconnects a member's lost phone.
+func (h *Handler) revokeMemberPushDevice(w http.ResponseWriter, r *http.Request) {
+	userID, tenantID, err := h.memberInScope(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	deviceID, err := uuid.Parse(chi.URLParam(r, "deviceID"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid deviceID"))
+		return
+	}
+	if err := h.Service.RevokePushDevice(r.Context(), userID, deviceID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.Service.auditPushDevice(r, &tenantID, userID, deviceID, "mfa.push_device_revoked")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// auditPushDevice records a linked phone removed, best effort: the removal
+// stands either way.
+func (s *Service) auditPushDevice(r *http.Request, tenantID *uuid.UUID, owner, deviceID uuid.UUID, action string) {
+	ctx := r.Context()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	actorID, actorType := &owner, "device"
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actorID, actorType = auditActor(r)
+	}
+	if audit.Record(ctx, tx, audit.Event{
+		TenantID: tenantID, ActorUserID: actorID, ActorType: actorType,
+		Action: action, ResourceType: "push_device", ResourceID: &deviceID,
+		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+		Metadata: map[string]any{"user_id": owner},
+	}) == nil {
+		_ = tx.Commit(ctx)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // --- public challenge endpoints ---
 

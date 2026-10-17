@@ -160,3 +160,43 @@ func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 		}
 	}
 }
+
+// TestNormalizeStepUp: a policy that leaves the step-up window out gets five
+// minutes and every factor type; a window outside 1m–60m, an unknown factor
+// type or a repeated one is named.
+func TestNormalizeStepUp(t *testing.T) {
+	r := &Repository{sessionMaxAge: 720 * time.Hour, sessionIdle: 24 * time.Hour}
+	base := func() Policy {
+		return Policy{PasswordMinLength: 8, PasswordComplexity: "standard", MFAEnforcement: "optional"}
+	}
+	p := base()
+	p.StepUpMethods = []string{}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Fatalf("valid policy refused: %+v", bad)
+	}
+	if time.Duration(p.StepUpWindow) != 5*time.Minute || p.StepUpMethods != nil {
+		t.Errorf("defaults not filled: window %v methods %v", time.Duration(p.StepUpWindow), p.StepUpMethods)
+	}
+	for name, mutate := range map[string]func(*Policy){
+		"window too short": func(p *Policy) { p.StepUpWindow = Duration(30 * time.Second) },
+		"window too long":  func(p *Policy) { p.StepUpWindow = Duration(61 * time.Minute) },
+		"unknown factor":   func(p *Policy) { p.StepUpMethods = []string{"totp", "sms"} },
+		"repeated factor":  func(p *Policy) { p.StepUpMethods = []string{"webauthn", "webauthn"} },
+	} {
+		p := base()
+		mutate(&p)
+		named := false
+		for _, f := range r.normalize(&p) {
+			named = named || f.Field == "step_up_window" || f.Field == "step_up_methods"
+		}
+		if !named {
+			t.Errorf("%s: not refused", name)
+		}
+	}
+	p = base()
+	p.StepUpWindow = Duration(time.Hour)
+	p.StepUpMethods = []string{"webauthn", "totp"}
+	if bad := r.normalize(&p); len(bad) != 0 {
+		t.Errorf("a 60m window counting passkeys and the authenticator app was refused: %+v", bad)
+	}
+}

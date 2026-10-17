@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -161,4 +162,30 @@ func attemptError(base *errs.Error, remaining int) error {
 		return errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 	}
 	return base.WithMetadata(map[string]any{"remaining_attempts": remaining})
+}
+
+// OTPCodeRetention is how long an email or SMS code is kept after it expires,
+// so the hourly sending limits still see every code sent in the last hour.
+const OTPCodeRetention = 24 * time.Hour
+
+// PurgeExpiredPushChallenges deletes push approval requests that expired
+// longer ago than retention, answered or not, and returns how many. Run on a
+// schedule.
+func PurgeExpiredPushChallenges(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
+	tag, err := pool.Exec(ctx, `DELETE FROM auth.mfa_push_challenges WHERE expires_at < $1`,
+		time.Now().UTC().Add(-retention))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// PurgeExpiredOTPCodes deletes the email and SMS codes that expired longer ago
+// than retention, used or not, and returns how many. Run on a schedule.
+func PurgeExpiredOTPCodes(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
+	tag, err := pool.Exec(ctx, `DELETE FROM auth.mfa_otp_codes WHERE expires_at < $1`, time.Now().UTC().Add(-retention))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }

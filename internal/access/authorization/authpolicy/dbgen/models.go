@@ -28,4 +28,5 @@ type TenantAuthPolicy struct {
 	LockoutThreshold         *int32
 	LockoutWindowMinutes     *int32
 	LockoutDurationMinutes   *int32
+	RememberDeviceDays       int32
 }

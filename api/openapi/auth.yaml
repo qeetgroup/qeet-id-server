@@ -113,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address.'
       summary: Sign in
       tags:
         - Auth
@@ -230,7 +230,9 @@ paths:
       description: >-
         Sends a code to one of the challenged person's email or SMS factors (factor_id, from the
         challenge's factors), to complete the challenge with. At most five per challenge (429).
-        Used by both sign-in flows.
+        Used by both sign-in flows. For a risky sign-in by someone with no second factor, the challenge's
+        one factor is their verified email address, named by the challenge's own id: send its code here
+        with factor_id set to the mfa_token, then submit it to complete the challenge. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       tags:
         - Auth
       security: []
@@ -971,6 +973,134 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/trusted-devices:
+    get:
+      operationId: get_v1_auth_trusted_devices
+      summary: List my remembered devices
+      description: >-
+        Lists the caller's own remembered devices, in every organisation, newest first: each device skips the second factor at sign-in until it expires or is forgotten. A device is remembered for its organisation's remember_device_days after the sign-in that remembered it, and is forgotten when its owner changes their password, signs out everywhere, or has their factors reset.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        tenant_id:
+                          type: string
+                          format: uuid
+                          nullable: true
+                          description: The organisation the device was remembered in.
+                        device:
+                          type: string
+                          description: The device and browser in words, such as "Chrome on macOS".
+                        device_kind:
+                          type: string
+                          enum: [desktop, mobile, tablet, unknown]
+                        user_agent:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        last_used_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: When the device last skipped the second factor.
+                        expires_at:
+                          type: string
+                          format: date-time
+                        current:
+                          type: boolean
+                          description: The request came from this device.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: delete_v1_auth_trusted_devices
+      summary: Forget all my remembered devices
+      description: >-
+        Forgets every device the caller has remembered, so each is asked for the second factor at its next sign-in. Each is audited as auth.trusted_device_revoked.
+      tags:
+        - Auth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forgotten:
+                    type: integer
+                    description: How many devices were forgotten.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/trusted-devices/{id}:
+    delete:
+      operationId: delete_v1_auth_trusted_devices_ById
+      summary: Forget one of my remembered devices
+      description: >-
+        Forgets one of the caller's remembered devices, so it is asked for the second factor at its next sign-in. 404 for a device that is not the caller's. Audited as auth.trusted_device_revoked.
+      tags:
+        - Auth
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forgotten:
+                    type: integer
+                    description: How many devices were forgotten.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/trusted-devices/count:
@@ -1753,9 +1883,17 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              properties:
+                channel:
+                  type: string
+                  enum: [email, sms]
+                destination:
+                  type: string
+                  description: The email address or phone number the codes go to.
+      description: >-
+        Adds an email or SMS factor (or returns the one already held for that address, untouched) and
+        sends a code to confirm it at /v1/mfa/otp/factors/{id}/confirm. A person may hold five email and
+        SMS factors (409 mfa.factor_limit). A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       responses:
         '201':
           description: Created
@@ -1826,7 +1964,9 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Sends a step-up code to one of the caller's confirmed email or SMS factors, to verify at
+        /v1/mfa/otp/verify. A code to one factor can be sent at most every 30 seconds, ten an hour to one person and five an hour to one address or number over every account; past that the call answers 429 mfa.code_send_limited with retry_after (seconds). A new code makes the factor's earlier unused code stop working. An SMS code needs an organisation whose plan includes SMS (403 upgrade_required). Each code sent is audited as mfa.otp_sent.
       responses:
         '201':
           description: Created
@@ -1996,7 +2136,32 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Reports whether the principal completed a second-factor verification within the step-up window, and when.
+      description: >-
+        Reports whether the calling session is stepped up: it met a second
+        factor of a type its organisation counts within the organisation's
+        step-up window. A step-up belongs to the session that earned it, so a
+        factor proved in another session, or by an API key or agent, never
+        counts.
+
+
+        These need a step-up, and answer 403 step_up_required without one
+        (with window_seconds and, when the organisation limits them,
+        allowed_methods): adding or removing the caller's own factors and
+        sign-in methods while they hold a factor their organisation counts;
+        switching the authenticator app off or replacing recovery codes;
+        creating, changing or revoking API keys, service principals, agents,
+        OAuth clients and their secrets, SCIM tokens, credentials, webhooks
+        and auth hooks; creating, changing, revealing or deleting secrets,
+        vault providers and the AI provider configuration; changing the
+        security policy, sign-in methods, risk, bot, IP and rate-limit
+        settings, a user's MFA requirement, factors or password; configuring
+        SAML, LDAP, social providers, domains, directory mappings and
+        administrator portal links; editing email templates; changing
+        retention, anomaly settings and log streaming; and updating or
+        deleting the organisation, deleting or purging a user, or deleting
+        one's own account. An API key, service principal or agent holds no
+        session, so it cannot perform these. The hosted login's own sign-in
+        counts as a step-up for the organisation's window after it happens.
       responses:
         '200':
           description: OK
@@ -2004,7 +2169,24 @@ paths:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  recently_verified:
+                    type: boolean
+                    description: The session is stepped up now.
+                  verified_at:
+                    type: string
+                    format: date-time
+                    nullable: true
+                    description: The session's latest step-up, whether or not it still counts.
+                  window_seconds:
+                    type: integer
+                    description: How long a step-up lasts in the organisation.
+                  allowed_methods:
+                    type: array
+                    nullable: true
+                    items:
+                      type: string
+                    description: The factor types the organisation counts; null when every one does.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2120,17 +2302,32 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              properties:
+                account:
+                  type: string
+                  description: The account name the authenticator app shows; the signed-in subject when omitted.
+      description: >-
+        Starts setting up an authenticator app and returns its secret. While the
+        account holds a confirmed app, this needs a step-up of the calling
+        session (403 step_up_required otherwise), and the new app waits beside
+        the confirmed one: the confirmed app keeps working until a code from the
+        new one confirms it at /v1/mfa/totp/enroll/confirm, and a setup not
+        confirmed within 30 minutes is ignored. A first setup needs no step-up.
       responses:
-        '201':
-          description: Created
+        '200':
+          description: OK
           content:
             application/json:
               schema:
                 type: object
-                additionalProperties: true
+                properties:
+                  secret:
+                    type: string
+                  provisioning_url:
+                    type: string
+                  replacing:
+                    type: boolean
+                    description: The account holds a confirmed app, which keeps working until this one is confirmed.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2313,10 +2510,53 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/devices/{id}/unlink:
+    post:
+      operationId: post_v1_mfa_push_devices_ById_unlink
+      summary: Unlink this phone
+      description: >-
+        Called by the mobile app to remove the phone it runs on from the account,
+        proving it is that device with the device_token it was given when linked
+        (the app holds no signed-in session). Works with a credential past its
+        expiry, since removing itself grants nothing. 401 mfa.push_unauthorized
+        when the device or credential does not match. Audited as
+        mfa.push_device_unlinked.
+      tags:
+        - MFA
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, device_token]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                device_token:
+                  type: string
+      responses:
+        '204':
+          description: The phone is no longer linked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/mfa/push/challenges/{id}:
     get:
       operationId: get_v1_mfa_push_challenges_ById
-      description: 'Returns the current status of a push-MFA challenge, letting the sign-in surface poll while it waits for the user to approve or deny on their device. It is unauthenticated because it is called before the second factor is satisfied, and it exposes only the challenge state, not user data. The enrolled device answers the challenge through the challenge-respond call.'
+      description: 'Returns the current status of a push-MFA challenge, letting the sign-in surface poll while it waits for the user to approve or deny on their device. It is unauthenticated because it is called before the second factor is satisfied. A request past its expiry (two minutes after it was sent) reads as expired, and can no longer be answered. The enrolled device answers the challenge through the challenge-respond call.'
       summary: Poll a push-MFA challenge
       tags: [MFA]
       security: []
@@ -4434,6 +4674,25 @@ components:
           description: >-
             When the requirement was turned on (from optional); null while
             optional. Moving between required and admin_only keeps it.
+        step_up_window:
+          type: string
+          example: 5m
+          description: >-
+            How long a step-up keeps a session's sensitive actions unlocked: a
+            duration between 1m and 60m. A step-up belongs to the session that
+            earned it; it ends with that session, and a changed password or an
+            administrative factor reset clears it. Omitted or zero on update:
+            5m.
+        step_up_methods:
+          type: array
+          nullable: true
+          items:
+            type: string
+            enum: [totp, recovery_code, otp, webauthn, push]
+          description: >-
+            The factor types that count as a step-up (otp: an emailed or
+            text-message code; webauthn: a passkey). Null or empty: every one.
+            A session stepped up by a factor that is not listed is asked again.
         settings:
           type: object
           additionalProperties: true
@@ -4564,6 +4823,14 @@ components:
           type: boolean
         remember_device_enabled:
           type: boolean
+        remember_device_days:
+          type: integer
+          minimum: 1
+          maximum: 90
+          description: >-
+            How long a device stays remembered after the sign-in that remembered
+            it, in days (30 by default; 0 on update keeps the default). Applies to
+            devices remembered after it is set.
         lockout_threshold:
           type: [integer, 'null']
           description: Failed password sign-ins to one account from one network, each within the window of the last, that lock the account for that network. null = the platform default. Must lie within lockout_limits (default bounds 3..20).

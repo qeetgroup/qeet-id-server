@@ -722,7 +722,7 @@ func TestAdminResetMFA(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin reset: %v", err)
 	}
-	if err := mfaSvc.ResetForUser(ctx, rtx, userID); err != nil {
+	if _, err := mfaSvc.ResetForUser(ctx, rtx, userID); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	if err := rtx.Commit(ctx); err != nil {

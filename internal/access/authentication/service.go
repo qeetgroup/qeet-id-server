@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -24,9 +25,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 type Service struct {
@@ -50,8 +53,12 @@ type Service struct {
 	// devicePolicy reports whether a tenant has opted into adaptive MFA
 	// (trusted-device skip). nil = always-on MFA. Set via SetDevicePolicy.
 	devicePolicy DevicePolicy
-	// riskAssessor overrides trusted-device skip when risk is too high. nil = no override.
+	// riskAssessor assesses every sign-in's risk (see risksignin.go). nil = no
+	// assessment.
 	riskAssessor RiskAssessor
+	// sender emails the code that confirms a risky sign-in by someone with no
+	// second factor. Set via SetSender; nil refuses such a sign-in.
+	sender notifier.Sender
 	// loginHook is an optional synchronous policy gate run after credentials
 	// verify (nil = no gate). Set via SetLoginHook.
 	loginHook LoginHook
@@ -108,12 +115,13 @@ type MFAEnroller interface {
 	LoginFactors(ctx context.Context, userID uuid.UUID) ([]LoginFactor, error)
 	// VerifyForLoginTx verifies an authenticator-app, recovery or email/SMS
 	// code inside the challenge transaction so the code's consumption and the
-	// challenge's commit together; (false, nil) means the code was wrong, a
-	// non-nil error is infrastructure.
-	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error)
+	// challenge's commit together, and returns which kind met it ("totp",
+	// "recovery_code" or "otp"); ("", nil) means the code was wrong, a non-nil
+	// error is infrastructure.
+	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (string, error)
 	// SendLoginCode sends a code to one of the user's confirmed email/SMS
-	// factors.
-	SendLoginCode(ctx context.Context, userID, factorID uuid.UUID) error
+	// factors for a sign-in to tenantID (nil: none).
+	SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error
 	// BeginLoginPasskey starts a passkey assertion for the user's own
 	// passkeys; FinishLoginPasskey verifies one (a domain error: not verified).
 	BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error)
@@ -123,9 +131,9 @@ type MFAEnroller interface {
 	// ("pending", "approved", "denied" or "expired") under lock.
 	StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (uuid.UUID, time.Time, error)
 	LoginPushStatusTx(ctx context.Context, tx pgx.Tx, userID, challengeID uuid.UUID) (string, error)
-	// RecordVerification records a met second factor, opening the step-up
-	// window.
-	RecordVerification(ctx context.Context, tx pgx.Tx, userID uuid.UUID, method string) error
+	// RecordVerification records that one of the user's sessions met a second
+	// factor, stepping that session (and no other) up.
+	RecordVerification(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, method string) error
 	// StartLoginEnrollment starts an authenticator app for a sign-in's
 	// enrolment challenge and returns its secret and provisioning URL;
 	// ConfirmLoginEnrollment confirms it with a code from the app and returns
@@ -220,6 +228,9 @@ func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 // SetDevicePolicy.
 type DevicePolicy interface {
 	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	// RememberDevicePolicy adds how long a device the tenant remembers stays
+	// remembered.
+	RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error)
 }
 
 // SetDevicePolicy wires the adaptive-MFA (trusted-device) gate. Called from
@@ -238,8 +249,12 @@ type RiskAssessor interface {
 	ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool
 }
 
-// SetRiskAssessor wires the adaptive-MFA risk override. Called from internal/bootstrap/dependencies.go.
+// SetRiskAssessor wires the sign-in risk assessment. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
+
+// SetSender wires the email sender for risk confirmation codes. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSender(n notifier.Sender) { s.sender = n }
 
 // LoginHook is a synchronous policy gate run after credentials verify: it
 // returns a non-nil error to DENY the sign-in, or nil to allow — in which case
@@ -556,8 +571,15 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 	if err != nil {
 		return nil, err
 	}
-	if gate.challenged() {
+	switch s.nextSignInStep(ctx, u.ID, u.TenantID, gate, firstFactorPassword, "", in.IP, in.UserAgent, httpx.GeoCountry(ctx)) {
+	case stepChallenge:
 		challenge, err := s.challengeSignIn(ctx, u.ID, u.TenantID, claims, gate, firstFactorPassword, in.IP, in.UserAgent)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{MFAChallenge: challenge}, nil
+	case stepRiskEmail:
+		challenge, err := s.riskEmailChallenge(ctx, u.ID, u.TenantID, claims, firstFactorPassword, in.IP, in.UserAgent)
 		if err != nil {
 			return nil, err
 		}
@@ -590,8 +612,15 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		return nil, err
 	}
 	// A trusted device may skip a factor the account holds, never the setting
-	// up of one it must have.
-	if gate.enrollment() || (gate.challenged() && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, in.IP, ua, country)) {
+	// up of one it must have, and never on a risky sign-in.
+	switch s.nextSignInStep(ctx, u.ID, u.TenantID, gate, firstFactorPassword, trustedToken, in.IP, ua, country) {
+	case stepRiskEmail:
+		challenge, err := s.riskEmailChallenge(ctx, u.ID, u.TenantID, nil, firstFactorPassword, in.IP, ua)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
+	case stepChallenge:
 		challenge, err := s.challengeSignIn(ctx, u.ID, u.TenantID, nil, gate, firstFactorPassword, in.IP, ua)
 		if err != nil {
 			return nil, err
@@ -603,28 +632,6 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		return nil, err
 	}
 	return &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
-}
-
-// deviceTrusted reports whether the second factor may be skipped for this login:
-// only when the tenant has opted into adaptive MFA AND the request carries a
-// live trusted-device token bound to this user AND the risk level is not too
-// high. Any failure or missing piece returns false — the safe default is always
-// to require MFA.
-func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID, trustedToken, ip, ua, country string) bool {
-	if s.devicePolicy == nil || trustedToken == "" {
-		return false
-	}
-	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, tenantID)
-	if err != nil || !enabled {
-		return false
-	}
-	// A high-risk request (bot-like UA, impossible travel, or an unrecognized
-	// device — whichever the tenant has opted into) forces MFA even on a
-	// trusted device.
-	if s.riskAssessor != nil && s.riskAssessor.ShouldForceMFA(ctx, tenantID, userID, ip, ua, country) {
-		return false
-	}
-	return s.IsTrustedDevice(ctx, userID, trustedToken)
 }
 
 // RegisterInTenant creates a new end-user in the given tenant from the hosted
@@ -687,12 +694,14 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	}
 
 	// A new account holds no factor: where the organisation requires one, it
-	// is set up before the first session.
+	// is set up before the first session. Its sign-in is still assessed, so
+	// later ones have a device and country to compare against; there is no
+	// verified address yet to confirm a risky one with.
 	gate, err := s.mfaGate(ctx, u.ID, tenantID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if gate.enrollment() {
+	if s.nextSignInStep(ctx, u.ID, tenantID, gate, firstFactorPassword, "", ip, ua, httpx.GeoCountry(ctx)) == stepChallenge {
 		challenge, err := s.challengeSignIn(ctx, u.ID, tenantID, nil, gate, firstFactorPassword, ip, ua)
 		if err != nil {
 			return nil, nil, err
@@ -793,12 +802,21 @@ type metChallenge struct {
 	deferred bool
 	// firstFactor is how the sign-in proved its first factor.
 	firstFactor string
+	// riskVerified: a risk challenge met by the code to the verified email —
+	// confirmed, but no second factor was met.
+	riskVerified bool
+	// stepUpMethod is the second factor that met the challenge ("" when none
+	// did): the session the sign-in opens starts stepped up by it.
+	stepUpMethod string
 }
 
 // method is the sign-in method recorded on the session.
 func (m metChallenge) method() string {
-	if m.deferred {
+	switch {
+	case m.deferred:
 		return m.firstFactor
+	case m.riskVerified:
+		return m.firstFactor + "_email_confirmed"
 	}
 	return m.firstFactor + "_mfa"
 }
@@ -826,8 +844,10 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	var rawClaims []byte
 	var challengeFailures int16
 	var passkeySession, pushChallenge *uuid.UUID
-	var enrollment, enrollmentStarted bool
+	var enrollment, enrollmentStarted, riskEmail bool
 	var firstFactor string
+	var emailCodeHash *string
+	var emailCodeExpires *time.Time
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return metChallenge{}, err
@@ -835,12 +855,12 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
 		SELECT user_id, tenant_id, expires_at, claims, failed_attempts, passkey_session_id, push_challenge_id,
-		       enrollment, enrollment_started, first_factor
+		       enrollment, enrollment_started, first_factor, risk_email, email_code_hash, email_code_expires_at
 		FROM auth.mfa_login_challenges
 		WHERE id = $1
 		FOR UPDATE
 	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures, &passkeySession, &pushChallenge,
-		&enrollment, &enrollmentStarted, &firstFactor)
+		&enrollment, &enrollmentStarted, &firstFactor, &riskEmail, &emailCodeHash, &emailCodeExpires)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
 	}
@@ -866,8 +886,10 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 	// What the challenge cannot be met with is refused before an attempt is
 	// counted.
 	switch {
-	case enrollment && (proof.Passkey != nil || proof.Push):
+	case (enrollment || riskEmail) && (proof.Passkey != nil || proof.Push):
 		return metChallenge{}, errNotAFactorChallenge
+	case riskEmail && proof.Skip:
+		return metChallenge{}, errs.ErrBadRequest.WithDetail("This sign-in needs confirming; it cannot be skipped.")
 	case enrollment && proof.Skip:
 		return s.deferEnrollment(ctx, tx, id, met)
 	case !enrollment && proof.Skip:
@@ -898,10 +920,20 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		return metChallenge{}, err
 	}
 	var ok bool
-	if enrollment {
+	if riskEmail {
+		// Confirmed by the latest code sent to the verified email; no second
+		// factor is met, so the session starts with no step-up.
+		ok = emailCodeHash != nil && emailCodeExpires != nil && time.Now().Before(*emailCodeExpires) &&
+			subtle.ConstantTimeCompare([]byte(*emailCodeHash), []byte(codes.Hash(strings.TrimSpace(proof.Code)))) == 1
+		met.riskVerified = ok
+	} else if enrollment {
 		met.recoveryCodes, ok, err = s.mfa.ConfirmLoginEnrollment(ctx, tx, userID, proof.Code)
+		if ok {
+			met.stepUpMethod = "totp"
+		}
 	} else {
-		ok, err = s.verifyMFAProof(ctx, tx, userID, passkeySession, pushChallenge, proof)
+		met.stepUpMethod, err = s.verifyMFAProof(ctx, tx, userID, passkeySession, pushChallenge, proof)
+		ok = met.stepUpMethod != ""
 	}
 	if err != nil {
 		return metChallenge{}, err
@@ -954,10 +986,10 @@ func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken str
 		TenantID:     tenantID,
 		ActorUserID:  &userID,
 		ActorType:    "user",
-		Action:       "auth.mfa_verified",
+		Action:       metAction(riskEmail),
 		ResourceType: "user",
 		ResourceID:   &userID,
-		Metadata:     map[string]any{"first_factor": firstFactor, "proof": proof.kind(enrollment)},
+		Metadata:     map[string]any{"first_factor": firstFactor, "proof": metProofKind(proof, enrollment, riskEmail)},
 	}); err != nil {
 		return metChallenge{}, err
 	}
@@ -1067,8 +1099,23 @@ func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, pro
 	if err != nil {
 		return nil, nil, err
 	}
-	pair, err := s.IssuePairWithClaims(ctx, met.userID, met.tenantID, ip, ua, met.method(), met.claims)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback(ctx)
+	pair, err := s.issuePairTx(ctx, tx, met.userID, met.tenantID, ip, ua, met.method(), met.claims, nil, time.Time{})
+	if err != nil {
+		return nil, nil, err
+	}
+	// The second factor this sign-in met steps up the session it opens, and
+	// only that one: no other session of the person's gains anything from it.
+	if met.stepUpMethod != "" {
+		if err := s.mfa.RecordVerification(ctx, tx, met.userID, pair.SessionID, met.stepUpMethod); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, err
 	}
 	return pair, met.recoveryCodes, nil
@@ -1114,8 +1161,9 @@ func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken stri
 	if err != nil {
 		return nil, err
 	}
+	// A confirmed risky sign-in met no factor either, so earns no remembered device.
 	return &MFALoginSession{UserID: met.userID, TenantID: met.tenantID, RawCookie: raw,
-		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred}, nil
+		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred || met.riskVerified}, nil
 }
 
 // CheckPassword runs the full credential check — sign-in lockout (see

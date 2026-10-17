@@ -116,6 +116,10 @@ type pendingMFAChallenge struct {
 	passkeySessionID *uuid.UUID
 	pushChallengeID  *uuid.UUID
 	codesSent        int32
+	// riskEmail: met by a code to the verified email (see risksignin.go);
+	// emailCodeSentAt is when the last one went.
+	riskEmail       bool
+	emailCodeSentAt *time.Time
 }
 
 // loadMFAChallenge reads a live challenge under lock: ErrAuthSessionInvalid
@@ -129,9 +133,11 @@ func loadMFAChallenge(ctx context.Context, tx pgx.Tx, mfaToken string) (uuid.UUI
 	var c pendingMFAChallenge
 	var expiresAt time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, enrollment, expires_at, passkey_session_id, push_challenge_id, codes_sent
+		SELECT user_id, tenant_id, enrollment, expires_at, passkey_session_id, push_challenge_id, codes_sent,
+		       risk_email, email_code_sent_at
 		FROM auth.mfa_login_challenges WHERE id = $1 FOR UPDATE`, id).
-		Scan(&c.userID, &c.tenantID, &c.enrollment, &expiresAt, &c.passkeySessionID, &c.pushChallengeID, &c.codesSent)
+		Scan(&c.userID, &c.tenantID, &c.enrollment, &expiresAt, &c.passkeySessionID, &c.pushChallengeID, &c.codesSent,
+			&c.riskEmail, &c.emailCodeSentAt)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && time.Now().After(expiresAt)) {
 		return uuid.Nil, pendingMFAChallenge{}, errs.ErrAuthMFAChallengeExpired
 	}
@@ -169,10 +175,18 @@ func (s *Service) SendMFACode(ctx context.Context, mfaToken string, factorID uui
 		if c.codesSent >= maxMFACodesSent {
 			return errs.ErrTooManyRequests
 		}
+		if c.riskEmail {
+			// The one factor a risk challenge offers is the verified email,
+			// named by the challenge itself.
+			if factorID != id {
+				return errs.ErrNotFound
+			}
+			return s.sendRiskEmailCode(ctx, tx, id, c)
+		}
 		if _, err := tx.Exec(ctx, `UPDATE auth.mfa_login_challenges SET codes_sent = codes_sent + 1 WHERE id = $1`, id); err != nil {
 			return err
 		}
-		return s.mfa.SendLoginCode(ctx, c.userID, factorID)
+		return s.mfa.SendLoginCode(ctx, c.userID, c.tenantID, factorID)
 	})
 }
 
@@ -182,7 +196,7 @@ func (s *Service) BeginMFAPasskey(ctx context.Context, mfaToken string) (uuid.UU
 	var sessionID uuid.UUID
 	var options any
 	err := s.withMFAChallenge(ctx, mfaToken, func(tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error {
-		if c.enrollment {
+		if c.enrollment || c.riskEmail {
 			return errNotAFactorChallenge
 		}
 		var err error
@@ -201,7 +215,7 @@ func (s *Service) BeginMFAPasskey(ctx context.Context, mfaToken string) (uuid.UU
 func (s *Service) StartMFAPush(ctx context.Context, mfaToken, ip, ua string) (time.Time, error) {
 	var expires time.Time
 	err := s.withMFAChallenge(ctx, mfaToken, func(tx pgx.Tx, id uuid.UUID, c pendingMFAChallenge) error {
-		if c.enrollment {
+		if c.enrollment || c.riskEmail {
 			return errNotAFactorChallenge
 		}
 		pushID, exp, err := s.mfa.StartLoginPush(ctx, c.userID, ip, ua)
@@ -215,38 +229,39 @@ func (s *Service) StartMFAPush(ctx context.Context, mfaToken, ip, ua string) (ti
 	return expires, err
 }
 
-// verifyMFAProof checks proof against the challenge inside tx. (false, nil) is
+// verifyMFAProof checks proof against the challenge inside tx and returns the
+// factor type that met it ("webauthn", "push", or a code's kind). ("", nil) is
 // a wrong proof, counted as a failed attempt; errs.ErrMFAPushPending is not.
-func (s *Service) verifyMFAProof(ctx context.Context, tx pgx.Tx, userID uuid.UUID, passkeySession, pushChallenge *uuid.UUID, proof MFAProof) (bool, error) {
+func (s *Service) verifyMFAProof(ctx context.Context, tx pgx.Tx, userID uuid.UUID, passkeySession, pushChallenge *uuid.UUID, proof MFAProof) (string, error) {
 	switch {
 	case proof.Passkey != nil:
 		if passkeySession == nil || *passkeySession != proof.Passkey.SessionID {
-			return false, nil
+			return "", nil
 		}
 		if err := s.mfa.FinishLoginPasskey(ctx, userID, proof.Passkey.SessionID, proof.Passkey.Credential); err != nil {
 			if errs.As(err) != nil {
-				return false, nil
+				return "", nil
 			}
-			return false, err
+			return "", err
 		}
-		return true, s.mfa.RecordVerification(ctx, tx, userID, "webauthn")
+		return "webauthn", nil
 	case proof.Push:
 		if pushChallenge == nil {
-			return false, nil
+			return "", nil
 		}
 		status, err := s.mfa.LoginPushStatusTx(ctx, tx, userID, *pushChallenge)
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		switch status {
 		case "approved":
-			return true, s.mfa.RecordVerification(ctx, tx, userID, "push")
+			return "push", nil
 		case "pending":
-			return false, errs.ErrMFAPushPending
+			return "", errs.ErrMFAPushPending
 		case "expired":
-			return false, errs.ErrMFAPushChallengeExpired
+			return "", errs.ErrMFAPushChallengeExpired
 		default:
-			return false, nil
+			return "", nil
 		}
 	default:
 		return s.mfa.VerifyForLoginTx(ctx, tx, userID, proof.Code)

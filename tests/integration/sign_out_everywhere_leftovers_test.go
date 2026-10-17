@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -38,7 +39,7 @@ func (f *signOutEverywhereFixture) leaveWaysBackIn(t *testing.T, ctx context.Con
 	t.Helper()
 	var l leftovers
 	var err error
-	if l.device, err = f.svc.CreateTrustedDevice(ctx, userID, f.tenantID, "laptop"); err != nil {
+	if l.device, err = f.svc.CreateTrustedDevice(ctx, userID, f.tenantID, "laptop", 30*24*time.Hour); err != nil {
 		t.Fatalf("remember device: %v", err)
 	}
 	if l.code, _, err = f.oidc.Authorize(ctx, userID, f.clientID, f.redirectURI, []string{"openid"}, "", "", ""); err != nil {
@@ -68,7 +69,7 @@ func (f *signOutEverywhereFixture) leaveWaysBackIn(t *testing.T, ctx context.Con
 func (f *signOutEverywhereFixture) stillOpen(t *testing.T, ctx context.Context, userID uuid.UUID, l leftovers, cibaClient string) map[string]bool {
 	t.Helper()
 	open := map[string]bool{}
-	open["remembered device"] = f.svc.IsTrustedDevice(ctx, userID, l.device)
+	open["remembered device"] = f.svc.IsTrustedDevice(ctx, userID, f.tenantID, l.device)
 	_, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, l.code, f.redirectURI, "", "")
 	open["authorisation code"] = err == nil
 	if err != nil && !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {

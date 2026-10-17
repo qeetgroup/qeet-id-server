@@ -17,6 +17,10 @@ const (
 	CodeMFAFactorNotConfirmed  = "mfa.factor_not_confirmed"
 	CodeMFAAttemptsExceeded    = "mfa.attempts_exceeded"
 	CodeMFAEnrollmentRequired  = "mfa.enrollment_required"
+	CodeMFACodeSendLimited     = "mfa.code_send_limited"
+	CodeMFADeliveryUnavailable = "mfa.delivery_unavailable"
+	CodeMFADeliveryFailed      = "mfa.delivery_failed"
+	CodeMFAFactorLimit         = "mfa.factor_limit"
 
 	// Push MFA
 	CodeMFAPushDeviceNotFound   = "mfa.push_device_not_found"
@@ -44,6 +48,18 @@ var (
 	// ErrMFAEnrollmentRequired: the account must set up a second factor
 	// before it can sign in — its organisation's grace period has ended.
 	ErrMFAEnrollmentRequired = New(CodeMFAEnrollmentRequired, "Your organisation requires two-step verification. Set up an authenticator app to continue.")
+	// ErrMFACodeSendLimited: a code was sent too recently, or too many were sent
+	// in the last hour; metadata retry_after says in how many seconds another
+	// may be asked for.
+	ErrMFACodeSendLimited = New(CodeMFACodeSendLimited, "A code was sent recently. Wait a moment before asking for another.").AsRetryable()
+	// ErrMFADeliveryUnavailable: this deployment has no way to send codes by
+	// that channel; nothing was stored or sent.
+	ErrMFADeliveryUnavailable = New(CodeMFADeliveryUnavailable, "Codes can't be sent this way right now. Use another way to verify, or ask your administrator.")
+	// ErrMFADeliveryFailed: the provider refused or failed to take the code.
+	ErrMFADeliveryFailed = New(CodeMFADeliveryFailed, "We couldn't send your code. Try again in a moment, or use another way to verify.").AsRetryable()
+	// ErrMFAFactorLimit: the person holds as many email and SMS factors as one
+	// account may.
+	ErrMFAFactorLimit = New(CodeMFAFactorLimit, "You have set up as many email and SMS codes as an account can have. Remove one to add another.")
 
 	// Push MFA
 	ErrMFAPushDeviceNotFound   = New(CodeMFAPushDeviceNotFound, "Push device not found.")

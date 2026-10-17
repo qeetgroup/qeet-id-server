@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk/dbgen"
 )
@@ -101,4 +102,21 @@ func (s *Service) recordLogin(ctx context.Context, tenantID, userID uuid.UUID, d
 	}); err != nil {
 		slog.Warn("risk: record login context", "err", err)
 	}
+}
+
+// SignInHistoryRetention is how long a sign-in's country and device are kept
+// for later sign-ins to be compared against. Older entries no longer inform
+// impossible travel (hours) or device reputation (a device unused this long is
+// new again).
+const SignInHistoryRetention = 90 * 24 * time.Hour
+
+// PurgeSignInHistory deletes sign-in history older than retention and returns
+// how many entries. Run on a schedule; a person's or organisation's history
+// also goes when they are deleted.
+func PurgeSignInHistory(ctx context.Context, pool *pgxpool.Pool, retention time.Duration) (int64, error) {
+	tag, err := pool.Exec(ctx, `DELETE FROM auth.login_context_history WHERE seen_at < $1`, time.Now().UTC().Add(-retention))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
