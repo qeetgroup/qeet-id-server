@@ -98,7 +98,7 @@ func (s *Service) Request(ctx context.Context, in CreateInput) (*Request, error)
 	if err != nil {
 		return nil, err
 	}
-	return purgeRequestFromRow(row), nil
+	return purgeRequestFromRow(dbgen.ListPurgeRequestsRow(row)), nil
 }
 
 // userBelongsToTenant keys off users.tenant_id — the user's home tenant —
@@ -141,9 +141,9 @@ func (s *Service) List(ctx context.Context, tenantID uuid.UUID) ([]Request, erro
 	return out, nil
 }
 
-// purgeRequestFromRow maps a generated UserPurgeRequest model to the domain
+// purgeRequestFromRow maps a generated purge-request row to the domain
 // Request type.
-func purgeRequestFromRow(r dbgen.UserPurgeRequest) *Request {
+func purgeRequestFromRow(r dbgen.ListPurgeRequestsRow) *Request {
 	return &Request{
 		ID:          r.ID,
 		TenantID:    r.TenantID,

@@ -77,7 +77,7 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 	if err != nil {
 		return PushDevice{}, "", err
 	}
-	var row dbgen.AuthMfaPushDevice
+	var row dbgen.ListPushDevicesRow
 	err = tx.QueryRow(ctx, `
 		INSERT INTO auth.mfa_push_devices
 		    (user_id, name, push_token, push_token_ct, push_token_nonce, push_token_hash,

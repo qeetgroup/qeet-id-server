@@ -148,13 +148,13 @@ func TestNormalizeFillsDefaultsAndRefusesOutOfRange(t *testing.T) {
 	if time.Duration(p.SessionIdleTimeout) != 2*time.Hour || p.IPAllowlist == nil || p.IPDenylist == nil {
 		t.Errorf("defaults not filled: idle %v allow %v deny %v", time.Duration(p.SessionIdleTimeout), p.IPAllowlist, p.IPDenylist)
 	}
-	p = Policy{PasswordMinLength: 4, PasswordComplexity: "basic", MFAEnforcement: "disabled",
+	p = Policy{PasswordMinLength: 4, PasswordComplexity: "basic", MFAEnforcement: "disabled", MFAGraceDays: 91,
 		SessionMaxAge: Duration(30 * time.Minute), SessionIdleTimeout: Duration(time.Hour)}
 	got := map[string]bool{}
 	for _, f := range r.normalize(&p) {
 		got[f.Field] = true
 	}
-	for _, want := range []string{"session_max_age", "session_idle_timeout", "password_min_length", "password_complexity", "mfa_enforcement"} {
+	for _, want := range []string{"session_max_age", "session_idle_timeout", "password_min_length", "password_complexity", "mfa_enforcement", "mfa_grace_days"} {
 		if !got[want] {
 			t.Errorf("%s out of range was not named (named: %v)", want, got)
 		}

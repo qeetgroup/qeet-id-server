@@ -130,24 +130,15 @@ paths:
       responses:
         '200':
           description: |
-            Either a full token pair (no MFA) or, when the user has a second
-            factor enrolled, an MFA challenge `{mfa_required:true, mfa_token,
-            methods[]}` to complete at POST /v1/auth/mfa.
+            Either a full token pair (no MFA) or an MFA challenge to complete at
+            POST /v1/auth/mfa — when the user holds a second factor, or must have
+            one (see MFAChallenge).
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: '#/components/schemas/TokenPair'
-                  - type: object
-                    properties:
-                      mfa_required:
-                        type: boolean
-                      mfa_token:
-                        type: string
-                      methods:
-                        type: array
-                        items:
-                          type: string
+                  - $ref: '#/components/schemas/MFAChallenge'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -160,7 +151,13 @@ paths:
     post:
       operationId: post_v1_auth_mfa
       summary: Complete MFA login
-      description: Exchanges the mfa_token from /v1/auth/login plus a TOTP or recovery code for a token pair.
+      description: >-
+        Exchanges the mfa_token from /v1/auth/login, plus exactly one proof from the factors the
+        challenge listed, for a token pair: a code, a passkey assertion, or an approved push.
+        An enrolment challenge is completed instead by a code from the authenticator app set
+        up for it (POST /v1/auth/mfa/enroll) — the response then carries the account's new
+        recovery codes, shown once — or skipped while its grace period runs. A wrong proof
+        counts against the challenge's and the account's attempt budgets.
       tags:
         - Auth
       security: []
@@ -172,26 +169,222 @@ paths:
               type: object
               required:
                 - mfa_token
-                - code
               properties:
                 mfa_token:
                   type: string
                 code:
                   type: string
-                  description: A TOTP code or a one-time recovery code.
+                  description: An authenticator-app code, a one-time recovery code, or a code sent to an email or SMS factor (POST /v1/auth/mfa/send).
+                passkey:
+                  type: object
+                  description: An assertion from the passkey ceremony begun for this challenge (POST /v1/auth/mfa/passkey/begin).
+                  properties:
+                    session_id:
+                      type: string
+                      format: uuid
+                    credential:
+                      type: object
+                      additionalProperties: true
+                push:
+                  type: boolean
+                  description: >-
+                    true to complete with the push request sent for this challenge (POST
+                    /v1/auth/mfa/push). Answers 409 mfa.push_pending — not counted as a failed
+                    attempt — until it is approved on the device; a denied request counts as a
+                    wrong answer, an expired one answers mfa.push_challenge_expired.
+                skip:
+                  type: boolean
+                  description: >-
+                    true to put off setting up a second factor, for an enrolment challenge that
+                    carries enrollment_due_at; a session is issued without one. Refused with 403
+                    mfa.enrollment_required once the grace period has ended. Not counted as an
+                    attempt.
       responses:
         '200':
-          description: Second factor verified; token pair issued
+          description: >-
+            Second factor verified (or, for an enrolment challenge, set up or put off); token
+            pair issued, with recovery_codes when an authenticator app was just set up.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenPair'
+                allOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    properties:
+                      recovery_codes:
+                        type: array
+                        items:
+                          type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
+  /v1/auth/mfa/send:
+    post:
+      operationId: post_v1_auth_mfa_send
+      summary: Send a sign-in code
+      description: >-
+        Sends a code to one of the challenged person's email or SMS factors (factor_id, from the
+        challenge's factors), to complete the challenge with. At most five per challenge (429).
+        Used by both sign-in flows.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mfa_token
+              properties:
+                mfa_token:
+                  type: string
+                factor_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/mfa/passkey/begin:
+    post:
+      operationId: post_v1_auth_mfa_passkey_begin
+      summary: Begin a passkey second factor
+      description: >-
+        Starts a passkey assertion for the challenged person's own passkeys; only an assertion
+        from this ceremony completes the challenge. Used by both sign-in flows.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mfa_token
+              properties:
+                mfa_token:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+                    format: uuid
+                  publicKey:
+                    type: object
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/mfa/push:
+    post:
+      operationId: post_v1_auth_mfa_push
+      summary: Send a push approval request
+      description: >-
+        Sends a sign-in approval request to the challenged person's push devices; only its
+        approval completes the challenge, and only once. Complete with push: true. Used by both
+        sign-in flows.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mfa_token
+              properties:
+                mfa_token:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  expires_at:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/auth/mfa/enroll:
+    post:
+      operationId: post_v1_auth_mfa_enroll
+      summary: Set up an authenticator app to sign in
+      description: >-
+        For an enrolment challenge — the account must have a second factor and holds none —
+        starts an authenticator app and returns its secret and otpauth:// provisioning URL.
+        A code from the app then completes the challenge (POST /v1/auth/mfa or
+        /v1/auth/session/mfa). Calling again replaces the app not yet confirmed. Refused (400)
+        for a challenge that is not an enrolment one; answers mfa challenge expired once the
+        account holds a factor. Used by both sign-in flows.
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mfa_token
+              properties:
+                mfa_token:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret:
+                    type: string
+                  provisioning_url:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /v1/auth/logout:
     post:
       operationId: post_v1_auth_logout
@@ -225,7 +418,7 @@ paths:
   /v1/auth/magic-link/consume:
     post:
       operationId: post_v1_auth_magic_link_consume
-      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused.'
+      description: 'Completes passwordless email sign-in by redeeming the single-use token delivered by the magic-link start call. On success it returns an access and refresh token pair; the token is invalidated once consumed and cannot be replayed. Tokens are short-lived, so an expired or already-used link must be re-requested from the start call. A link from an organisation that has since switched magic links off is refused with 403 auth.method_disabled and stays unused. The link proves the first factor only: when the account holds a second factor, or must have one, the answer is an MFA challenge instead of tokens, completed at POST /v1/auth/mfa (the session then records the method magic_link_mfa). The link is spent either way, so an abandoned or failed challenge leaves no tokens and no link to use again; an expired or used link is refused before any challenge is raised.'
       summary: Magic link consume
       tags:
         - Auth
@@ -243,11 +436,13 @@ paths:
                   type: string
       responses:
         '200':
-          description: Token pair
+          description: A token pair, or an MFA challenge to complete at POST /v1/auth/mfa
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenPair'
+                oneOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - $ref: '#/components/schemas/MFAChallenge'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -310,7 +505,12 @@ paths:
         used, expired or unknown links, and console links, are refused
         (recovery.link_used, recovery.link_expired,
         recovery.magic_link_invalid), and so are links of an organisation that
-        has since switched magic links off.
+        has since switched magic links off. When the account holds a second
+        factor, or must have one, no cookie is set: the answer is an MFA
+        challenge (with return_to) completed at POST /v1/auth/session/mfa — on
+        the same terms as the hosted password sign-in, including a trusted
+        device (qe_td) skipping it where the organisation allows. The link is
+        spent either way.
       tags:
         - Auth
       security: []
@@ -327,17 +527,24 @@ paths:
                   type: string
       responses:
         '200':
-          description: Signed in to the hosted login; the cookie is set
+          description: Signed in to the hosted login (the cookie is set), or an MFA challenge to complete first
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  user_id:
-                    type: string
-                    format: uuid
-                  return_to:
-                    type: string
+                oneOf:
+                  - type: object
+                    properties:
+                      user_id:
+                        type: string
+                        format: uuid
+                      return_to:
+                        type: string
+                  - allOf:
+                      - $ref: '#/components/schemas/MFAChallenge'
+                      - type: object
+                        properties:
+                          return_to:
+                            type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
@@ -496,10 +703,10 @@ paths:
       responses:
         '200':
           description: |
-            Either the SSO cookie was set (`{user_id}`) or, when the user has a
-            second factor enrolled, an MFA challenge `{mfa_required:true,
-            mfa_token, methods[]}` to complete at POST /v1/auth/session/mfa
-            (no cookie is set until then).
+            Either the SSO cookie was set (`{user_id}`) or an MFA challenge to
+            complete at POST /v1/auth/session/mfa — when the user holds a second
+            factor, or must have one (see MFAChallenge). No cookie is set until
+            then.
           content:
             application/json:
               schema:
@@ -509,16 +716,7 @@ paths:
                       user_id:
                         type: string
                         format: uuid
-                  - type: object
-                    properties:
-                      mfa_required:
-                        type: boolean
-                      mfa_token:
-                        type: string
-                      methods:
-                        type: array
-                        items:
-                          type: string
+                  - $ref: '#/components/schemas/MFAChallenge'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -535,7 +733,12 @@ paths:
     post:
       operationId: post_v1_auth_session_mfa
       summary: Complete SSO session MFA
-      description: Exchanges the mfa_token from POST /v1/auth/session plus a TOTP or recovery code for the SSO cookie (qe_ls).
+      description: >-
+        Exchanges the mfa_token from POST /v1/auth/session, plus exactly one proof from the
+        factors the challenge listed (a code, a passkey assertion, or an approved push — as for
+        POST /v1/auth/mfa), for the SSO cookie (qe_ls). An enrolment challenge is completed by
+        a code from the authenticator app set up for it, or skipped while its grace period
+        runs, as for POST /v1/auth/mfa; a skipped setup never remembers the device.
       tags:
         - Auth
       security: []
@@ -547,20 +750,45 @@ paths:
               type: object
               required:
                 - mfa_token
-                - code
               properties:
                 mfa_token:
                   type: string
                 code:
                   type: string
-                  description: A TOTP code or a one-time recovery code.
+                  description: An authenticator-app code, a one-time recovery code, or a code sent to an email or SMS factor (POST /v1/auth/mfa/send).
+                passkey:
+                  type: object
+                  description: An assertion from the passkey ceremony begun for this challenge (POST /v1/auth/mfa/passkey/begin).
+                  properties:
+                    session_id:
+                      type: string
+                      format: uuid
+                    credential:
+                      type: object
+                      additionalProperties: true
+                push:
+                  type: boolean
+                  description: >-
+                    true to complete with the push request sent for this challenge (POST
+                    /v1/auth/mfa/push). Answers 409 mfa.push_pending — not counted as a failed
+                    attempt — until it is approved on the device; a denied request counts as a
+                    wrong answer, an expired one answers mfa.push_challenge_expired.
+                skip:
+                  type: boolean
+                  description: >-
+                    true to put off setting up a second factor, for an enrolment challenge that
+                    carries enrollment_due_at; a session is issued without one. Refused with 403
+                    mfa.enrollment_required once the grace period has ended. Not counted as an
+                    attempt.
                 remember:
                   type: boolean
                   description: >-
                     Trust this device so future logins can skip the second factor (adaptive MFA). Honoured only when the tenant has enabled remember-device; sets the qe_td cookie.
       responses:
         '200':
-          description: Second factor verified; SSO cookie set
+          description: >-
+            Second factor verified (or set up, or put off); SSO cookie set. recovery_codes are
+            the account's new recovery codes when an authenticator app was just set up.
           content:
             application/json:
               schema:
@@ -569,10 +797,16 @@ paths:
                   user_id:
                     type: string
                     format: uuid
+                  recovery_codes:
+                    type: array
+                    items:
+                      type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/auth/register:
@@ -581,7 +815,10 @@ paths:
       summary: Register (hosted, B2C)
       description: |
         Creates a new end-user in the client's tenant and sets the SSO cookie
-        (qe_ls) so they continue into the OAuth authorize flow. Gated by the
+        (qe_ls) so they continue into the OAuth authorize flow. Where the tenant
+        requires MFA, no cookie is set: the response is an enrolment challenge
+        (with user_id) to complete at POST /v1/auth/session/mfa once an
+        authenticator app is set up. Gated by the
         tenant's self_registration_enabled policy (403 when disabled). The
         password must meet that tenant's password rules (422 naming the rule
         that failed). Enumeration-safe: an existing email returns a neutral 422.
@@ -611,15 +848,23 @@ paths:
                   type: string
       responses:
         '201':
-          description: User created and SSO cookie set
+          description: User created; SSO cookie set, or an enrolment challenge returned
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  user_id:
-                    type: string
-                    format: uuid
+                oneOf:
+                  - type: object
+                    properties:
+                      user_id:
+                        type: string
+                        format: uuid
+                  - allOf:
+                      - $ref: '#/components/schemas/MFAChallenge'
+                      - type: object
+                        properties:
+                          user_id:
+                            type: string
+                            format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
         '422':
@@ -4049,6 +4294,63 @@ components:
         current:
           type: boolean
           description: True for the session the listing request was made with.
+    MFAChallenge:
+      type: object
+      description: >-
+        A sign-in stopped before its session: the account holds a second factor,
+        or must have one — its organisation requires MFA (of everyone, or of
+        administrators) or it is marked as requiring it. Complete it at POST
+        /v1/auth/mfa (token sign-in) or /v1/auth/session/mfa (hosted login).
+        Each challenge is audited as auth.mfa_challenged with its reason
+        (enrolled, tenant_required, admin_required or user_required) and how
+        the first factor was proven (password or magic_link); meeting it as
+        auth.mfa_verified.
+      properties:
+        mfa_required:
+          type: boolean
+        mfa_token:
+          type: string
+        methods:
+          type: array
+          description: The distinct factor types of factors (["totp"] for an enrolment challenge).
+          items:
+            type: string
+            enum: [totp, recovery_code, email, sms, passkey, push]
+        factors:
+          type: array
+          description: >-
+            Exactly the second factors this person can complete the challenge
+            with — an authenticator app, recovery codes, each confirmed email or
+            SMS factor (with its id and masked destination, for
+            POST /v1/auth/mfa/send), passkeys while the organisation allows them,
+            and push devices. Empty for an enrolment challenge.
+          items:
+            $ref: '#/components/schemas/LoginFactor'
+        enrollment_required:
+          type: boolean
+          description: >-
+            The account must have a second factor and holds none: set up an
+            authenticator app (POST /v1/auth/mfa/enroll) and complete the
+            challenge with a code from it.
+        enrollment_due_at:
+          type: string
+          format: date-time
+          description: >-
+            On an enrolment challenge in the organisation's grace period: when
+            it ends. Until then the setup may be put off (skip: true).
+    LoginFactor:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [totp, recovery_code, email, sms, passkey, push]
+        id:
+          type: string
+          format: uuid
+          description: An email or SMS factor's id.
+        destination:
+          type: string
+          description: An email or SMS factor's masked address or number.
     SecurityPolicy:
       type: object
       properties:
@@ -4108,6 +4410,30 @@ components:
         mfa_enforcement:
           type: string
           enum: [optional, required, admin_only]
+          description: >-
+            Who must use a second factor to sign in, enforced at password
+            sign-in: optional (only people who set one up are challenged),
+            required (everyone), admin_only (anyone holding a role, directly or
+            through a group, that grants a write permission). Separately, an
+            account an administrator marks as requiring MFA must, whatever is
+            set here. An account that must and holds no factor sets up an
+            authenticator app before any session is issued.
+        mfa_grace_days:
+          type: integer
+          minimum: 0
+          maximum: 90
+          description: >-
+            For this many days after the requirement is turned on, the accounts
+            that already existed may put setting up a second factor off (they
+            are prompted at each sign-in). 0, the default: no grace period.
+        mfa_enforced_since:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+          description: >-
+            When the requirement was turned on (from optional); null while
+            optional. Moving between required and admin_only keeps it.
         settings:
           type: object
           additionalProperties: true

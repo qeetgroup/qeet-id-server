@@ -261,6 +261,43 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **mfa:** every confirmed second factor is now challenged at sign-in, not only an authenticator app. A person
+  whose second factor is an email or SMS code, a passkey (while their organisation allows passkeys) or a push
+  device used to sign in on their password alone. Both password sign-in paths now challenge when any factor
+  is held, and the challenge lists exactly those factors (`factors`, with each email/SMS factor's id and masked
+  destination; `methods` their types). It is met by a code (authenticator app, recovery, or one sent with the
+  new `POST /v1/auth/mfa/send`), a passkey assertion from `POST /v1/auth/mfa/passkey/begin`, or an approved push
+  sent with `POST /v1/auth/mfa/push` (`push: true` answers `mfa.push_pending` until approved, at no attempt cost).
+  The passkey ceremony and push request are bound to the challenge, so an approval signs in once. The token-flow
+  MFA endpoints are CSRF-exempt like `/v1/auth/login` (the mfa_token is the credential), which also lets the
+  console complete an MFA sign-in through its server. Migration `0126`.
+* **mfa:** an organisation's MFA requirement is enforced at sign-in. `mfa_enforcement` was stored, shown and
+  reported as a passing compliance control, and an account marked as requiring MFA showed a badge, but neither
+  changed how anyone signed in. Both password sign-in paths now challenge an account that must use a second
+  factor: everyone under `required`; under `admin_only`, anyone holding a role (directly or through a group)
+  that grants a write permission; and any account marked as requiring MFA, whatever its organisation sets. An
+  account that must and holds no factor gets an enrolment challenge (`enrollment_required`) instead of a
+  session: it sets up an authenticator app with the new `POST /v1/auth/mfa/enroll`, and the code confirming
+  the app completes the challenge, returning the account's new `recovery_codes`. Hosted self-registration into
+  such an organisation answers the same enrolment challenge. The security policy adds `mfa_grace_days` (0–90)
+  and the read-only `mfa_enforced_since`: in the grace period the accounts the organisation already had are
+  prompted (`enrollment_due_at`) and may put the setup off with `skip: true`, which is refused with
+  `mfa.enrollment_required` (403) once it ends. Every challenge is audited as `auth.mfa_challenged` with its
+  reason (`enrolled`, `tenant_required`, `admin_required`, `user_required`), a skipped setup as
+  `auth.mfa_enrollment_deferred`. The SOC 2 and ISO 27001 MFA evidence control now reports whether MFA is
+  enforced — failing while optional or during a grace period — and how many accounts hold no factor yet.
+  Organisations that already required MFA are enforced from the upgrade, with no grace period. Migration
+  `0127`.
+* **mfa:** magic-link sign-in meets the same second-factor decision as password sign-in. Completing a link
+  issued tokens (console) or the hosted-login session with no second-factor evaluation, so reading the mailbox
+  was enough to sign in to an account that holds a factor or whose organisation requires one. Now, where a
+  factor is held or required, `POST /v1/auth/magic-link/consume` answers an MFA challenge completed at
+  `POST /v1/auth/mfa`, and `POST /v1/auth/magic-link/session` one completed at `POST /v1/auth/session/mfa`
+  (with `return_to`), on the same terms as the hosted password sign-in — a trusted device skips it where the
+  organisation allows — and drawing on the same attempt budget. The link is spent before the challenge, so an
+  abandoned or failed challenge leaves no session and no link to reuse. A challenge records how the first
+  factor was proven (`first_factor`, audited on `auth.mfa_challenged`); a met challenge is audited as
+  `auth.mfa_verified`, and the session's method is `magic_link_mfa` (or `password_mfa`). Migration `0128`.
 * **auth:** sessions end by themselves. A session used to end only when something revoked it: every renewal
   issued a fresh 30-day refresh token, so a session renewed once a month never ended, and an organisation's
   `session_max_age` was stored and shown but never applied. Now a session ends at its maximum age however

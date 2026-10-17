@@ -414,8 +414,10 @@ func main() {
 			Settings:         map[string]any{"login_headline": "Sign in to Qeet"},
 		})
 	})
+	// MFA is required, with a grace period: the accounts seeded above may put
+	// setting up a second factor off for 30 days.
 	inTx("policy", func(tx pgx.Tx) error {
-		return policyRepo.Upsert(ctx, tx, policy.Policy{
+		_, err := policyRepo.Upsert(ctx, tx, policy.Policy{
 			TenantID:           qeet.ID,
 			IPAllowlist:        []string{},
 			IPDenylist:         []string{},
@@ -424,8 +426,10 @@ func main() {
 			SessionMaxAge:      policy.Duration(12 * time.Hour),
 			SessionIdleTimeout: policy.Duration(time.Hour),
 			MFAEnforcement:     "required",
+			MFAGraceDays:       30,
 			Settings:           map[string]any{},
 		})
+		return err
 	})
 
 	// ---- Auth policy (passkeys-first, MFA enforced) ----
@@ -674,11 +678,14 @@ func main() {
 	loginCount := 0
 	for n, email := range logins {
 		for i := 0; i < 2; i++ {
-			_, err := authSvc.Login(ctx, auth.LoginInput{
-				Email: email, Password: seedPassword,
-				IP: ips[(n+i)%len(ips)], UserAgent: agents[(n+i)%len(agents)],
-			})
+			ip, ua := ips[(n+i)%len(ips)], agents[(n+i)%len(agents)]
+			res, err := authSvc.Login(ctx, auth.LoginInput{Email: email, Password: seedPassword, IP: ip, UserAgent: ua})
 			must(err, "login "+email)
+			// In the grace period: put setting up a second factor off.
+			if res.EnrollmentRequired {
+				_, _, err = authSvc.CompleteMFALoginWith(ctx, res.MFAToken, auth.MFAProof{Skip: true}, ip, ua)
+				must(err, "login "+email)
+			}
 			loginCount++
 		}
 	}

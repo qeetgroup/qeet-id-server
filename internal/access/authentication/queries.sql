@@ -401,3 +401,32 @@ UPDATE auth.sessions SET last_seen_at = NOW()
 WHERE id = @session_id AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
   AND last_seen_at < NOW() - INTERVAL '1 minute';
+
+-- MFARequirement reads what decides whether an account must use a second
+-- factor to sign in to an organisation: the account's own flag, the
+-- organisation's requirement and grace period, and whether the account is an
+-- administrator there — holds a role, directly or through a group, granting
+-- any write permission.
+-- name: MFARequirement :one
+SELECT u.mfa_required,
+       u.created_at,
+       COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
+       COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
+       sp.mfa_enforced_since,
+       EXISTS (
+           SELECT 1
+           FROM rbac.user_roles ur
+           JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+           JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id AND p.key LIKE '%.write'
+           UNION ALL
+           SELECT 1
+           FROM tenant.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+           JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+           JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id AND p.key LIKE '%.write'
+       ) AS is_admin
+FROM "user".users u
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = @tenant_id
+WHERE u.id = @user_id;

@@ -117,20 +117,45 @@ func toTimePtr(t pgtype.Timestamptz) *time.Time {
 	return &t.Time
 }
 
-// checkMFAEnforcement verifies the tenant's MFA enforcement level is not
-// the permissive default ('optional').  Reads tenant.security_policies.
+// checkMFAEnforcement reports whether sign-in enforces a second factor for
+// the tenant, not merely whether the setting is stored. Password sign-in
+// enforces mfa_enforcement: an account that must use a factor is challenged,
+// and one holding none sets one up before any session — except during the
+// grace period after the requirement is turned on, when the accounts that
+// already existed may put that off.  Reads tenant.security_policies.
 func checkMFAEnforcement(ctx context.Context, svc *EvidenceService, tenantID uuid.UUID) (ControlStatus, string) {
-	enforcement, err := svc.q.CheckMFAEnforcement(ctx, tenantID)
+	const notEnforced = "MFA is not enforced: it is optional, so sign-in challenges only people who chose to set up a second factor — set mfa_enforcement to 'required'"
+	row, err := svc.q.CheckMFAEnforcement(ctx, tenantID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ControlFail, "no security policy row; MFA defaults to 'optional' — set mfa_enforcement to 'required'"
+		return ControlFail, notEnforced + " (no security policy row)"
 	}
 	if err != nil {
 		return ControlNA, fmt.Sprintf("could not query security policy: %v", err)
 	}
-	if enforcement == "optional" {
-		return ControlFail, fmt.Sprintf("MFA enforcement is %q — change to 'required' or 'enforced'", enforcement)
+	if row.MfaEnforcement == "optional" {
+		return ControlFail, notEnforced
 	}
-	return ControlPass, fmt.Sprintf("MFA enforcement is %q", enforcement)
+	scope := "every account"
+	if row.MfaEnforcement == "admin_only" {
+		scope = "administrators (accounts holding a role that grants a write permission)"
+	}
+	since := ""
+	if row.MfaEnforcedSince.Valid {
+		since = " since " + row.MfaEnforcedSince.Time.UTC().Format(time.RFC3339)
+		until := row.MfaEnforcedSince.Time.Add(time.Duration(row.MfaGraceDays) * 24 * time.Hour)
+		if row.MfaGraceDays > 0 && time.Now().Before(until) {
+			return ControlFail, fmt.Sprintf("MFA is required of %s but not yet enforced: the grace period runs until %s, and until then accounts that existed when it was turned on may sign in with a password alone",
+				scope, until.UTC().Format(time.RFC3339))
+		}
+	}
+	detail := fmt.Sprintf("MFA is enforced at sign-in for %s%s: password sign-in challenges an account holding a second factor, and has one holding none set it up before any session is issued",
+		scope, since)
+	if row.MfaEnforcement == "required" {
+		if without, err := svc.q.CountUsersWithoutSecondFactor(ctx, pgtype.UUID{Bytes: tenantID, Valid: true}); err == nil {
+			detail += fmt.Sprintf(" (%d account(s) hold none yet and will set one up at their next sign-in)", without)
+		}
+	}
+	return ControlPass, detail
 }
 
 // checkPasswordMinLength verifies the tenant auth policy requires passwords of

@@ -42,10 +42,20 @@ type Policy struct {
 	// session, "refuse" refuses the sign-in. An ended session's renewal stops
 	// at once; an access token it already issued lasts out its own short
 	// lifetime (ACCESS_TOKEN_TTL).
-	MaxSessions        *int           `json:"max_sessions"`
-	SessionLimitAction string         `json:"session_limit_action"`
-	MFAEnforcement     string         `json:"mfa_enforcement"`
-	Settings           map[string]any `json:"settings"`
+	MaxSessions        *int   `json:"max_sessions"`
+	SessionLimitAction string `json:"session_limit_action"`
+	// MFAEnforcement is who must use a second factor to sign in: "optional"
+	// (whoever set one up), "required" (everyone), "admin_only" (anyone
+	// holding a role that grants a write permission). Enforced at password
+	// sign-in; an account without a factor sets one up before its session.
+	MFAEnforcement string `json:"mfa_enforcement"`
+	// MFAGraceDays (0–90) lets accounts that existed when the requirement was
+	// turned on put the setup off for that many days after MFAEnforcedSince.
+	// MFAEnforcedSince is read-only: set when the requirement is turned on,
+	// cleared when it goes back to optional.
+	MFAGraceDays     int            `json:"mfa_grace_days"`
+	MFAEnforcedSince *time.Time     `json:"mfa_enforced_since"`
+	Settings         map[string]any `json:"settings"`
 }
 
 // Duration is a time.Duration written to JSON as a duration string ("720h",
@@ -148,6 +158,9 @@ func (r *Repository) normalize(p *Policy) []errs.FieldError {
 	if !mfaEnforcements[p.MFAEnforcement] {
 		field("mfa_enforcement", "Choose optional, required or admin_only.")
 	}
+	if p.MFAGraceDays < 0 || p.MFAGraceDays > 90 {
+		field("mfa_grace_days", "Set the grace period between 0 and 90 days.")
+	}
 	if p.MaxSessions != nil && (*p.MaxSessions < 1 || *p.MaxSessions > 1000) {
 		field("max_sessions", "Set the session limit between 1 and 1000, or leave it empty for no limit.")
 	}
@@ -170,10 +183,11 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 		       EXTRACT(EPOCH FROM session_max_age)::bigint,
 		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
 		       max_sessions, session_limit_action,
-		       mfa_enforcement, settings
+		       mfa_enforcement, mfa_grace_days, mfa_enforced_since, settings
 		FROM tenant.security_policies WHERE tenant_id = $1
 	`, tenantID).Scan(&p.TenantID, &allow, &deny, &p.PasswordMinLength,
-		&p.PasswordComplexity, &sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement, &settings)
+		&p.PasswordComplexity, &sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
+		&p.MFAGraceDays, &p.MFAEnforcedSince, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{
 			TenantID:           tenantID,
@@ -199,17 +213,23 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	return &p, nil
 }
 
-func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) error {
+// Upsert stores the policy and returns when its MFA requirement was turned on
+// (nil while optional): the moment it changes from optional, kept while it
+// stays on — moving between required and admin_only does not restart a grace
+// period.
+func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Time, error) {
 	settings, _ := json.Marshal(p.Settings)
-	_, err := tx.Exec(ctx, `
+	var enforcedSince *time.Time
+	err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.security_policies (
 			tenant_id, ip_allowlist, ip_denylist,
 			password_min_length, password_complexity,
 			session_max_age, session_idle_timeout, mfa_enforcement, settings,
-			max_sessions, session_limit_action
+			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since
 		) VALUES ($1, $2::cidr[], $3::cidr[], $4, $5, make_interval(secs => $6::bigint),
 		         make_interval(secs => $7::bigint), $8,
-		         COALESCE(NULLIF($9::jsonb,'null'::jsonb), '{}'::jsonb), $10, COALESCE(NULLIF($11, ''), 'evict_oldest'))
+		         COALESCE(NULLIF($9::jsonb,'null'::jsonb), '{}'::jsonb), $10, COALESCE(NULLIF($11, ''), 'evict_oldest'),
+		         $12, CASE WHEN $8 = 'optional' THEN NULL ELSE NOW() END)
 		ON CONFLICT (tenant_id) DO UPDATE SET
 			ip_allowlist = EXCLUDED.ip_allowlist,
 			ip_denylist = EXCLUDED.ip_denylist,
@@ -220,13 +240,20 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) error {
 			max_sessions = EXCLUDED.max_sessions,
 			session_limit_action = EXCLUDED.session_limit_action,
 			mfa_enforcement = EXCLUDED.mfa_enforcement,
+			mfa_grace_days = EXCLUDED.mfa_grace_days,
+			mfa_enforced_since = CASE
+				WHEN EXCLUDED.mfa_enforcement = 'optional' THEN NULL
+				WHEN security_policies.mfa_enforcement = 'optional' THEN NOW()
+				ELSE COALESCE(security_policies.mfa_enforced_since, NOW())
+			END,
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
+		RETURNING mfa_enforced_since
 	`, p.TenantID, p.IPAllowlist, p.IPDenylist, p.PasswordMinLength,
 		p.PasswordComplexity, int64(time.Duration(p.SessionMaxAge).Seconds()),
 		int64(time.Duration(p.SessionIdleTimeout).Seconds()), p.MFAEnforcement, settings,
-		p.MaxSessions, p.SessionLimitAction)
-	return err
+		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays).Scan(&enforcedSince)
+	return enforcedSince, err
 }
 
 // Allowed returns true if the IP is permitted by the policy. Empty
@@ -319,7 +346,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Repo.Upsert(ctx, tx, in); err != nil {
+	if in.MFAEnforcedSince, err = h.Repo.Upsert(ctx, tx, in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -339,6 +366,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 			"ip_allowlist_count":   len(in.IPAllowlist),
 			"ip_denylist_count":    len(in.IPDenylist),
 			"mfa_enforcement":      in.MFAEnforcement,
+			"mfa_grace_days":       in.MFAGraceDays,
 			"password_min_length":  in.PasswordMinLength,
 			"session_max_age_s":    int64(time.Duration(in.SessionMaxAge).Seconds()),
 			"session_idle_s":       int64(time.Duration(in.SessionIdleTimeout).Seconds()),

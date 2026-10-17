@@ -121,3 +121,24 @@ WHERE f.user_id = $1 AND f.verified_at IS NOT NULL AND c.code_hash = $2
   AND c.used_at IS NULL AND c.expires_at > NOW()
 ORDER BY c.created_at DESC LIMIT 1
 FOR UPDATE;
+
+-- LoginFactorCounts says which second factors the user can meet a sign-in
+-- challenge with: a confirmed authenticator app, unused recovery codes,
+-- passkeys (while the user's organisation allows passkeys) and push devices.
+-- name: LoginFactorCounts :one
+SELECT
+    EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = @user_id AND t.confirmed_at IS NOT NULL) AS totp,
+    (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = @user_id AND r.used_at IS NULL)::int AS recovery_codes,
+    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM "user".users u
+                        JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
+                        WHERE u.id = @user_id), TRUE)
+         THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = @user_id)
+         ELSE 0 END::int AS passkeys,
+    (SELECT count(*) FROM auth.mfa_push_devices d WHERE d.user_id = @user_id)::int AS push_devices;
+
+-- PushChallengeForLogin reads a push challenge of the user's for a sign-in,
+-- locked, to see whether it has been approved.
+-- name: PushChallengeForLogin :one
+SELECT status, expires_at FROM auth.mfa_push_challenges
+WHERE id = @id AND user_id = @user_id
+FOR UPDATE;

@@ -62,6 +62,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/mfa", h.mfaLogin)
+	// Second-factor helpers, for either sign-in flow: send an email/SMS
+	// code, begin a passkey assertion, send a push approval request.
+	r.Post("/auth/mfa/send", h.mfaSendCode)
+	r.Post("/auth/mfa/passkey/begin", h.mfaPasskeyBegin)
+	r.Post("/auth/mfa/push", h.mfaPush)
+	r.Post("/auth/mfa/enroll", h.mfaEnroll)
 	r.Post("/auth/refresh", h.refresh)
 	// Hosted-login SSO session (HttpOnly cookie) for the OAuth authorize flow.
 	r.Post("/auth/session", h.createSession)
@@ -181,19 +187,24 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Password ok, but a second factor is required. No tokens yet — the
 		// client completes the challenge at POST /v1/auth/mfa.
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"mfa_required": true,
-			"mfa_token":    res.MFAToken,
-			"methods":      res.Methods,
-		})
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res.Pair)
 }
 
+// mfaLoginInput meets a sign-in's second-factor challenge with exactly one
+// proof: a code (authenticator app, recovery, or an emailed/texted code), a
+// passkey assertion from the ceremony begun for the challenge, or push: true
+// once the push request sent for it is approved. An enrolment challenge is met
+// by the code confirming the authenticator app set up for it, or skip: true
+// while the setup may be put off.
 type mfaLoginInput struct {
-	MFAToken string `json:"mfa_token" validate:"required"`
-	Code     string `json:"code" validate:"required"`
+	MFAToken string        `json:"mfa_token" validate:"required"`
+	Code     string        `json:"code"`
+	Passkey  *PasskeyProof `json:"passkey"`
+	Push     bool          `json:"push"`
+	Skip     bool          `json:"skip"`
 	// Remember opts into adaptive MFA on the hosted flow: trust this device so
 	// future logins from it can skip the second factor (honoured only when the
 	// tenant has enabled it). Ignored by the token-flow /v1/auth/mfa endpoint.
@@ -201,7 +212,8 @@ type mfaLoginInput struct {
 }
 
 // mfaLogin completes a two-step login: it exchanges the mfa_token from /login
-// plus a TOTP or recovery code for a full token pair.
+// plus a proof for a full token pair — with the new recovery codes when the
+// proof confirmed an authenticator app set up for the challenge.
 func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 	var in mfaLoginInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -212,9 +224,21 @@ func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	pair, err := h.Service.CompleteMFALogin(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
+	proof, err := in.proof()
 	if err != nil {
 		httpx.WriteError(w, r, err)
+		return
+	}
+	pair, codes, err := h.Service.CompleteMFALoginWith(r.Context(), in.MFAToken, proof, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(codes) > 0 {
+		httpx.WriteJSON(w, http.StatusOK, struct {
+			*TokenPair
+			RecoveryCodes []string `json:"recovery_codes"`
+		}{pair, codes})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
@@ -265,11 +289,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Password ok, but a second factor is required. No cookie yet — the
 		// client completes the challenge at POST /v1/auth/session/mfa.
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"mfa_required": true,
-			"mfa_token":    res.MFAToken,
-			"methods":      res.Methods,
-		})
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
 		return
 	}
 	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
@@ -289,21 +309,30 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	userID, tenantID, raw, err := h.Service.CompleteMFALoginSession(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
+	proof, err := in.proof()
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	res, err := h.Service.CompleteMFALoginSessionWith(r.Context(), in.MFAToken, proof, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
 	// Trust this device when asked — MaybeRememberDevice is a no-op unless the
 	// tenant has opted into adaptive MFA, so a client-supplied flag can't grant
-	// trust the policy forbids.
-	if in.Remember {
-		if draw, derr := h.Service.MaybeRememberDevice(r.Context(), userID, tenantID, r.UserAgent()); derr == nil && draw != "" {
+	// trust the policy forbids. A skipped setup met no factor, so earns none.
+	if in.Remember && !res.Deferred {
+		if draw, derr := h.Service.MaybeRememberDevice(r.Context(), res.UserID, res.TenantID, r.UserAgent()); derr == nil && draw != "" {
 			SetTrustedDeviceCookie(w, draw, h.CookieSecure)
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
+	body := map[string]any{"user_id": res.UserID}
+	if len(res.RecoveryCodes) > 0 {
+		body["recovery_codes"] = res.RecoveryCodes
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
 type registerInput struct {
@@ -316,7 +345,9 @@ type registerInput struct {
 // register is the hosted end-user signup endpoint (B2C self-registration). It
 // creates the user in the client's tenant — gated by that tenant's
 // self_registration_enabled policy — and on success sets the SSO cookie so the
-// new user continues straight into the OAuth authorize flow. Like signup it is
+// new user continues straight into the OAuth authorize flow. Where the tenant
+// requires MFA it answers an enrolment challenge instead (completed at POST
+// /v1/auth/session/mfa), so the first session follows the setup. Like signup it is
 // enumeration-safe: a conflict on an existing email returns a neutral 422 under
 // a timing floor so the response can't distinguish "exists" from "new".
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -333,7 +364,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	u, raw, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
+	u, res, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
 			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
@@ -343,7 +374,13 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	if res.MFARequired {
+		body := res.Body()
+		body["user_id"] = u.ID
+		httpx.WriteJSON(w, http.StatusCreated, body)
+		return
+	}
+	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
@@ -648,6 +685,109 @@ func (h *Handler) trustedDeviceCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := h.Service.CountTrustedDevices(r.Context(), tenantID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// proof is the one proof the input carries, or a validation error naming the
+// problem.
+func (in mfaLoginInput) proof() (MFAProof, error) {
+	n := 0
+	if in.Code != "" {
+		n++
+	}
+	if in.Passkey != nil {
+		n++
+	}
+	if in.Push {
+		n++
+	}
+	if in.Skip {
+		n++
+	}
+	if n != 1 {
+		return MFAProof{}, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "code", Code: "required",
+			Message: "Give exactly one of a code, a passkey assertion, push, or skip.",
+		}})
+	}
+	return MFAProof{Code: in.Code, Passkey: in.Passkey, Push: in.Push, Skip: in.Skip}, nil
+}
+
+type mfaTokenInput struct {
+	MFAToken string    `json:"mfa_token" validate:"required"`
+	FactorID uuid.UUID `json:"factor_id"`
+}
+
+func (h *Handler) decodeMFAToken(w http.ResponseWriter, r *http.Request) (mfaTokenInput, bool) {
+	var in mfaTokenInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return in, false
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return in, false
+	}
+	return in, true
+}
+
+// mfaSendCode sends a code to one of the challenged person's email or SMS
+// factors (factor_id, from the challenge's factors).
+func (h *Handler) mfaSendCode(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Service.SendMFACode(r.Context(), in.MFAToken, in.FactorID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": true})
+}
+
+// mfaPasskeyBegin starts the passkey assertion that can meet the challenge.
+func (h *Handler) mfaPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	sessionID, options, err := h.Service.BeginMFAPasskey(r.Context(), in.MFAToken)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "publicKey": options})
+}
+
+// mfaPush sends the push approval request that can meet the challenge; the
+// client then completes with push: true, which answers mfa.push_pending until
+// the request is approved.
+func (h *Handler) mfaPush(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	expires, err := h.Service.StartMFAPush(r.Context(), in.MFAToken, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"expires_at": expires})
+}
+
+// mfaEnroll starts the authenticator app that meets an enrolment challenge
+// and returns its secret and otpauth:// provisioning URL; a code from the app
+// then completes the challenge.
+func (h *Handler) mfaEnroll(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.Service.StartMFAEnrollment(r.Context(), in.MFAToken, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

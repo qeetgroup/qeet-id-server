@@ -15,10 +15,12 @@ func init() {
 		errs.CodeMFANotEnrolled:        http.StatusBadRequest,
 		errs.CodeMFAFactorNotConfirmed: http.StatusBadRequest,
 		errs.CodeMFAAttemptsExceeded:   http.StatusTooManyRequests,
+		errs.CodeMFAEnrollmentRequired: http.StatusForbidden,
 		// Push MFA
 		errs.CodeMFAPushDeviceNotFound:   http.StatusNotFound,
 		errs.CodeMFAPushChallengeExpired: http.StatusGone,
 		errs.CodeMFAPushChallengeInvalid: http.StatusConflict,
 		errs.CodeMFAPushUnauthorized:     http.StatusUnauthorized,
+		errs.CodeMFAPushPending:          http.StatusConflict,
 	})
 }
