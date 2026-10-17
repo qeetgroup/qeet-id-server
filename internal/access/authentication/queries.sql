@@ -125,9 +125,10 @@ SELECT id, user_id, expires_at FROM auth.login_sessions WHERE token_hash = @toke
 
 -- name: GetLoginSessionUser :one
 -- The user behind a live hosted-login session, and their own organization (NULL
--- for a user without one). No row when the session is unknown or expired, or
--- the user or their organization is no longer active.
-SELECT s.user_id, u.tenant_id
+-- for a user without one), and when the sign-in happened. No row when the
+-- session is unknown or expired, or the user or their organization is no
+-- longer active.
+SELECT s.user_id, u.tenant_id, s.created_at
 FROM auth.login_sessions s
 JOIN "user".users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
@@ -172,10 +173,17 @@ SELECT COUNT(*)::bigint AS touched,
        COUNT(*) FILTER (WHERE used_at IS NULL AND expires_at > NOW())::bigint AS live
 FROM ended;
 
--- name: TouchTrustedDevice :execrows
--- Refreshes last_used_at and returns 1 when a live token was found, 0 otherwise.
+-- name: TouchTrustedDevice :one
+-- Refreshes last_used_at on the live device the token names for the user in
+-- the organisation that remembered it, and returns its id; no row otherwise.
 UPDATE auth.trusted_devices SET last_used_at = NOW()
-WHERE token_hash = @token_hash AND user_id = @user_id AND expires_at > NOW();
+WHERE token_hash = @token_hash AND user_id = @user_id AND tenant_id = @tenant_id AND expires_at > NOW()
+RETURNING id;
+
+-- PurgeExpiredTrustedDevices deletes remembered devices that expired before
+-- the cutoff; they no longer skip anything.
+-- name: PurgeExpiredTrustedDevices :execrows
+DELETE FROM auth.trusted_devices WHERE expires_at < @cutoff;
 
 -- name: CheckTenantMembership :one
 SELECT EXISTS (

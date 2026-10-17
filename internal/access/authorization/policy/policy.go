@@ -53,9 +53,14 @@ type Policy struct {
 	// turned on put the setup off for that many days after MFAEnforcedSince.
 	// MFAEnforcedSince is read-only: set when the requirement is turned on,
 	// cleared when it goes back to optional.
-	MFAGraceDays     int            `json:"mfa_grace_days"`
-	MFAEnforcedSince *time.Time     `json:"mfa_enforced_since"`
-	Settings         map[string]any `json:"settings"`
+	MFAGraceDays     int        `json:"mfa_grace_days"`
+	MFAEnforcedSince *time.Time `json:"mfa_enforced_since"`
+	// StepUpWindow is how long a step-up keeps a session's sensitive actions
+	// unlocked, 1m–60m (zero on update: 5m). StepUpMethods are the factor
+	// types that count as a step-up; nil or empty: every one.
+	StepUpWindow  Duration       `json:"step_up_window"`
+	StepUpMethods []string       `json:"step_up_methods"`
+	Settings      map[string]any `json:"settings"`
 }
 
 // Duration is a time.Duration written to JSON as a duration string ("720h",
@@ -98,6 +103,15 @@ var (
 	passwordComplexities = map[string]bool{"relaxed": true, "standard": true, "strict": true}
 	sessionLimitActions  = map[string]bool{"evict_oldest": true, "refuse": true}
 	mfaEnforcements      = map[string]bool{"optional": true, "required": true, "admin_only": true}
+	stepUpMethods        = map[string]bool{"totp": true, "recovery_code": true, "otp": true, "webauthn": true, "push": true}
+)
+
+// The bounds of a step-up window, and the window of an organisation that sets
+// none (the column default).
+const (
+	stepUpWindowMin     = time.Minute
+	stepUpWindowMax     = time.Hour
+	stepUpWindowDefault = 5 * time.Minute
 )
 
 type Repository struct {
@@ -138,6 +152,12 @@ func (r *Repository) normalize(p *Policy) []errs.FieldError {
 	if p.SessionIdleTimeout == 0 {
 		p.SessionIdleTimeout = Duration(min(r.sessionIdle, time.Duration(p.SessionMaxAge)))
 	}
+	if p.StepUpWindow == 0 {
+		p.StepUpWindow = Duration(stepUpWindowDefault)
+	}
+	if len(p.StepUpMethods) == 0 {
+		p.StepUpMethods = nil
+	}
 	var bad []errs.FieldError
 	field := func(name, msg string) {
 		bad = append(bad, errs.FieldError{Field: name, Code: "out_of_range", Message: msg})
@@ -167,6 +187,17 @@ func (r *Repository) normalize(p *Policy) []errs.FieldError {
 	if !sessionLimitActions[p.SessionLimitAction] {
 		field("session_limit_action", "Choose evict_oldest or refuse.")
 	}
+	if w := time.Duration(p.StepUpWindow); w < stepUpWindowMin || w > stepUpWindowMax {
+		field("step_up_window", "Set the step-up window between 1m and 60m.")
+	}
+	seen := map[string]bool{}
+	for _, m := range p.StepUpMethods {
+		if !stepUpMethods[m] || seen[m] {
+			field("step_up_methods", "List each of totp, recovery_code, otp, webauthn and push at most once, or leave it empty for all of them.")
+			break
+		}
+		seen[m] = true
+	}
 	return bad
 }
 
@@ -176,18 +207,19 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	var p Policy
 	var allow, deny []string
 	var settings []byte
-	var sessionAge, sessionIdle int64
+	var sessionAge, sessionIdle, stepUpWindow int64
 	err := r.pool.QueryRow(ctx, `
 		SELECT tenant_id, ip_allowlist::text[], ip_denylist::text[],
 		       password_min_length, password_complexity,
 		       EXTRACT(EPOCH FROM session_max_age)::bigint,
 		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
 		       max_sessions, session_limit_action,
-		       mfa_enforcement, mfa_grace_days, mfa_enforced_since, settings
+		       mfa_enforcement, mfa_grace_days, mfa_enforced_since,
+		       EXTRACT(EPOCH FROM step_up_window)::bigint, step_up_methods, settings
 		FROM tenant.security_policies WHERE tenant_id = $1
 	`, tenantID).Scan(&p.TenantID, &allow, &deny, &p.PasswordMinLength,
 		&p.PasswordComplexity, &sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
-		&p.MFAGraceDays, &p.MFAEnforcedSince, &settings)
+		&p.MFAGraceDays, &p.MFAEnforcedSince, &stepUpWindow, &p.StepUpMethods, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{
 			TenantID:           tenantID,
@@ -199,6 +231,7 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 			SessionIdleTimeout: Duration(r.sessionIdle),
 			SessionLimitAction: "evict_oldest",
 			MFAEnforcement:     "optional",
+			StepUpWindow:       Duration(stepUpWindowDefault),
 			Settings:           map[string]any{},
 		}, nil
 	}
@@ -209,6 +242,7 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	p.IPDenylist = deny
 	p.SessionMaxAge = Duration(time.Duration(sessionAge) * time.Second)
 	p.SessionIdleTimeout = Duration(time.Duration(sessionIdle) * time.Second)
+	p.StepUpWindow = Duration(time.Duration(stepUpWindow) * time.Second)
 	p.Settings = dbutil.Metadata(settings)
 	return &p, nil
 }
@@ -219,17 +253,23 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 // period.
 func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Time, error) {
 	settings, _ := json.Marshal(p.Settings)
+	stepUpWindow := time.Duration(p.StepUpWindow)
+	if stepUpWindow == 0 {
+		stepUpWindow = stepUpWindowDefault
+	}
 	var enforcedSince *time.Time
 	err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.security_policies (
 			tenant_id, ip_allowlist, ip_denylist,
 			password_min_length, password_complexity,
 			session_max_age, session_idle_timeout, mfa_enforcement, settings,
-			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since
+			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since,
+			step_up_window, step_up_methods
 		) VALUES ($1, $2::cidr[], $3::cidr[], $4, $5, make_interval(secs => $6::bigint),
 		         make_interval(secs => $7::bigint), $8,
 		         COALESCE(NULLIF($9::jsonb,'null'::jsonb), '{}'::jsonb), $10, COALESCE(NULLIF($11, ''), 'evict_oldest'),
-		         $12, CASE WHEN $8 = 'optional' THEN NULL ELSE NOW() END)
+		         $12, CASE WHEN $8 = 'optional' THEN NULL ELSE NOW() END,
+		         make_interval(secs => $13::bigint), $14::text[])
 		ON CONFLICT (tenant_id) DO UPDATE SET
 			ip_allowlist = EXCLUDED.ip_allowlist,
 			ip_denylist = EXCLUDED.ip_denylist,
@@ -241,6 +281,8 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 			session_limit_action = EXCLUDED.session_limit_action,
 			mfa_enforcement = EXCLUDED.mfa_enforcement,
 			mfa_grace_days = EXCLUDED.mfa_grace_days,
+			step_up_window = EXCLUDED.step_up_window,
+			step_up_methods = EXCLUDED.step_up_methods,
 			mfa_enforced_since = CASE
 				WHEN EXCLUDED.mfa_enforcement = 'optional' THEN NULL
 				WHEN security_policies.mfa_enforcement = 'optional' THEN NOW()
@@ -252,7 +294,8 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 	`, p.TenantID, p.IPAllowlist, p.IPDenylist, p.PasswordMinLength,
 		p.PasswordComplexity, int64(time.Duration(p.SessionMaxAge).Seconds()),
 		int64(time.Duration(p.SessionIdleTimeout).Seconds()), p.MFAEnforcement, settings,
-		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays).Scan(&enforcedSince)
+		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays,
+		int64(stepUpWindow.Seconds()), p.StepUpMethods).Scan(&enforcedSince)
 	return enforcedSince, err
 }
 
@@ -372,6 +415,8 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 			"session_idle_s":       int64(time.Duration(in.SessionIdleTimeout).Seconds()),
 			"max_sessions":         in.MaxSessions,
 			"session_limit_action": in.SessionLimitAction,
+			"step_up_window_s":     int64(time.Duration(in.StepUpWindow).Seconds()),
+			"step_up_methods":      in.StepUpMethods,
 		},
 	}); err != nil {
 		httpx.WriteError(w, r, err)

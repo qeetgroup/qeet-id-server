@@ -41,6 +41,13 @@ func userPermissionMap() map[string]string {
 		"DELETE /v1/users/{id}/purge":    "user.write",
 		"POST /v1/users/{id}/password":   "user.write",
 		"DELETE /v1/users/{id}/mfa":      "user.write", // admin MFA reset (Phase 3 feature)
+		// A member's remembered devices, in the administrator's organisation.
+		"GET /v1/users/{id}/trusted-devices":               "user.read",
+		"DELETE /v1/users/{id}/trusted-devices":            "user.write",
+		"DELETE /v1/users/{id}/trusted-devices/{deviceID}": "user.write",
+		// A member's linked phones, in the administrator's organisation.
+		"GET /v1/users/{id}/push-devices":               "user.read",
+		"DELETE /v1/users/{id}/push-devices/{deviceID}": "user.write",
 
 		// User 360 — per-user admin read surfaces + force sign-out (see user360.go).
 		"GET /v1/users/{id}/security":             "user.read",
@@ -341,6 +348,9 @@ func routePolicyMap() map[string]rbac.RoutePolicy {
 		"POST /v1/auth/sessions/revoke-others",
 		"POST /v1/auth/sessions/revoke-all",
 		"DELETE /v1/auth/sessions/{id}",
+		"GET /v1/auth/trusted-devices",
+		"DELETE /v1/auth/trusted-devices",
+		"DELETE /v1/auth/trusted-devices/{id}",
 		"GET /v1/auth/me",
 		"GET /v1/auth/password",
 		"GET /v1/auth/sign-in-methods",

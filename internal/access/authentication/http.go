@@ -10,6 +10,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -82,6 +83,14 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/auth/switch-tenant", h.switchTenant)
 	r.Get("/auth/sessions", h.listSessions)
 	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
+	r.Get("/auth/trusted-devices", h.listOwnTrustedDevices)
+	r.Delete("/auth/trusted-devices", h.forgetOwnTrustedDevices)
+	r.Delete("/auth/trusted-devices/{id}", h.forgetOwnTrustedDevices)
+	// An administrator's view of a member's remembered devices, in the
+	// administrator's own organisation (user.read / user.write).
+	r.Get("/users/{id}/trusted-devices", h.listMemberTrustedDevices)
+	r.Delete("/users/{id}/trusted-devices", h.forgetMemberTrustedDevices)
+	r.Delete("/users/{id}/trusted-devices/{deviceID}", h.forgetMemberTrustedDevices)
 	r.Post("/auth/sessions/revoke-others", h.revokeOtherSessions)
 	r.Post("/auth/sessions/revoke-all", h.revokeAllSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
@@ -324,8 +333,8 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 	// tenant has opted into adaptive MFA, so a client-supplied flag can't grant
 	// trust the policy forbids. A skipped setup met no factor, so earns none.
 	if in.Remember && !res.Deferred {
-		if draw, derr := h.Service.MaybeRememberDevice(r.Context(), res.UserID, res.TenantID, r.UserAgent()); derr == nil && draw != "" {
-			SetTrustedDeviceCookie(w, draw, h.CookieSecure)
+		if draw, ttl, derr := h.Service.MaybeRememberDevice(r.Context(), res.UserID, res.TenantID, r.UserAgent()); derr == nil && draw != "" {
+			SetTrustedDeviceCookie(w, draw, ttl, h.CookieSecure)
 		}
 	}
 	body := map[string]any{"user_id": res.UserID}
@@ -793,4 +802,128 @@ func (h *Handler) mfaEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// requestTrustedDevice is the trusted-device cookie the request carries, if
+// any, so a list can mark the device it came from.
+func requestTrustedDevice(r *http.Request) string {
+	if c, err := r.Cookie(TrustedDeviceCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+func trustedDeviceActor(r *http.Request) audit.Actor {
+	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		a.UserID = p.UserID
+		if p.ActorType != "" {
+			a.Type = p.ActorType
+		}
+	}
+	return a
+}
+
+// listOwnTrustedDevices → GET /v1/auth/trusted-devices: the caller's own
+// remembered devices, in every organisation.
+func (h *Handler) listOwnTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	out, err := h.Service.ListTrustedDevices(r.Context(), *p.UserID, nil, requestTrustedDevice(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// forgetOwnTrustedDevices → DELETE /v1/auth/trusted-devices[/{id}]: forget one
+// of the caller's remembered devices, or all of them.
+func (h *Handler) forgetOwnTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	in := ForgetTrustedDevicesInput{UserID: *p.UserID, Actor: trustedDeviceActor(r)}
+	if raw := chi.URLParam(r, "id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+			return
+		}
+		in.DeviceID = &id
+	}
+	n, err := h.Service.ForgetTrustedDevices(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"forgotten": n})
+}
+
+// memberInScope returns the user a member route names, refused as not found
+// unless they belong to the caller's organisation.
+func (h *Handler) memberInScope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+	}
+	member, err := h.Service.IsMember(r.Context(), userID, tenantID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if !member {
+		return uuid.Nil, uuid.Nil, errs.ErrNotFound
+	}
+	return userID, tenantID, nil
+}
+
+// listMemberTrustedDevices → GET /v1/users/{id}/trusted-devices: a member's
+// devices remembered in the caller's organisation.
+func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	userID, tenantID, err := h.memberInScope(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListTrustedDevices(r.Context(), userID, &tenantID, "")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// forgetMemberTrustedDevices → DELETE /v1/users/{id}/trusted-devices[/{deviceID}]:
+// forget one or all of a member's devices remembered in the caller's
+// organisation.
+func (h *Handler) forgetMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	userID, tenantID, err := h.memberInScope(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	in := ForgetTrustedDevicesInput{UserID: userID, TenantID: &tenantID, Actor: trustedDeviceActor(r)}
+	if raw := chi.URLParam(r, "deviceID"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid deviceID"))
+			return
+		}
+		in.DeviceID = &id
+	}
+	n, err := h.Service.ForgetTrustedDevices(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"forgotten": n})
 }

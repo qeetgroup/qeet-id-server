@@ -298,7 +298,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	notificationService := notification.NewService(pool)
 	threatService.SetNotifier(notificationService) // alert the affected user in-app on lockout
 	riskService := risk.NewService(pool)
-	authService.SetRiskAssessor(riskService) // override trusted-device skip when risk is too high
+	authService.SetRiskAssessor(riskService) // assess every sign-in; a risky one skips no factor
+	authService.SetSender(sender)            // email the code that confirms a risky sign-in with no factor
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
@@ -403,6 +404,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	passkeyService.SetMethodPolicy(authPolicyService) // offer and accept new passkeys only where the tenant allows them
 	passkeyService.SetInvitations(inviteService)      // accept an invitation with a passkey
 	mfaService.SetWebAuthn(passkeyService)            // a passkey can meet a sign-in's second-factor challenge
+	mfaService.SetPlan(entitlementSvc)                // SMS codes only on plans that include them
+	if emailRouter {
+		mfaService.SetDeliveryCheck(emailTransport.Configured) // refuse codes no provider can deliver
+	}
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	socialService.SetCipher(sharedCipher)
 	// Allowlist for the hosted flow's return_to. The callback sets the SSO
@@ -609,7 +614,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
-		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService, Plan: entitlementSvc},
+		MFA:           &mfa.Handler{Service: mfaService, WebAuthn: passkeyService},
 		Webhook:       &webhook.Handler{Service: webhookService},
 		Policy:        &policy.Handler{Repo: policyRepo},
 		GDPR:          &gdpr.Handler{Service: gdprService, Evidence: evidenceService, Reauth: authService},

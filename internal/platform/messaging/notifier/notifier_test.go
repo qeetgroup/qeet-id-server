@@ -244,3 +244,28 @@ func TestNewRouterRevealsOnlyInDev(t *testing.T) {
 		}
 	}
 }
+
+// TestRouterConfigured: a channel can deliver with a real provider, and in
+// development through the log that prints the message; outside development the
+// log fallback reaches nobody.
+func TestRouterConfigured(t *testing.T) {
+	provider := LogSender{}
+	cases := []struct {
+		name    string
+		r       Router
+		channel string
+		want    bool
+	}{
+		{"email provider", Router{Email: provider, Default: LogSender{}}, "email", true},
+		{"no email provider in production", Router{Default: LogSender{}}, "email", false},
+		{"no SMS provider in production", Router{Email: provider, Default: LogSender{}}, "sms", false},
+		{"SMS provider", Router{SMS: provider, Default: LogSender{}}, "sms", true},
+		{"development log", Router{Default: LogSender{Reveal: true}}, "sms", true},
+		{"no default at all", Router{}, "email", false},
+	}
+	for _, c := range cases {
+		if got := c.r.Configured(c.channel); got != c.want {
+			t.Errorf("%s: Configured(%q) = %v, want %v", c.name, c.channel, got, c.want)
+		}
+	}
+}

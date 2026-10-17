@@ -22,6 +22,8 @@ type SessionsPurged struct {
 	LoginSessions int64
 	// Ceremonies are passkey ceremonies that expired unfinished.
 	Ceremonies int64
+	// TrustedDevices are remembered devices that expired.
+	TrustedDevices int64
 }
 
 // PurgeEndedSessions deletes the sessions that are past retention (see
@@ -56,6 +58,9 @@ func PurgeEndedSessions(ctx context.Context, pool *pgxpool.Pool, retention time.
 	signals.Revoked(ctx, tx, sessionsignal.ReasonExpired, expired...)
 	out := SessionsPurged{Sessions: int64(len(rows))}
 	if out.LoginSessions, err = q.PurgeExpiredLoginSessions(ctx, cutoff); err != nil {
+		return SessionsPurged{}, err
+	}
+	if out.TrustedDevices, err = q.PurgeExpiredTrustedDevices(ctx, cutoff); err != nil {
 		return SessionsPurged{}, err
 	}
 	if out.Ceremonies, err = q.PurgeExpiredCeremonies(ctx); err != nil {

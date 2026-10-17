@@ -96,7 +96,34 @@ func New(c Config) Sender {
 	if c.TwilioAccountSID != "" && c.TwilioAuthToken != "" && c.TwilioFrom != "" {
 		r.SMS = TwilioSender{AccountSID: c.TwilioAccountSID, AuthToken: c.TwilioAuthToken, From: c.TwilioFrom}
 		slog.Info("notifier: SMS via Twilio")
+	} else if !c.Dev {
+		slog.Warn("notifier: no SMS provider configured — SMS one-time codes are refused")
 	}
 
 	return r
+}
+
+// Configured reports whether channel ("email" or "sms") has a way to reach the
+// person: a real provider, or, in development, the log that prints the
+// message. Outside development the log fallback reaches nobody, so a one-time
+// code is refused rather than silently dropped.
+func (r Router) Configured(channel string) bool {
+	switch channel {
+	case "sms":
+		if r.SMS != nil {
+			return true
+		}
+	case "email", "":
+		if r.Email != nil {
+			return true
+		}
+	}
+	switch d := r.Default.(type) {
+	case nil:
+		return false
+	case LogSender:
+		return d.Reveal
+	default:
+		return true
+	}
 }

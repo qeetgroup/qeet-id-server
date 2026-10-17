@@ -261,6 +261,98 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **mfa:** a linked phone can be removed for real, its credential ages out, and its answers reach the server.
+  Unlinking in the mobile app cleared only the app's storage: the server's revoke needed a signed-in session the
+  app never holds, and the device credential never expired, so an "unlinked" or lost phone could still approve
+  sign-ins. Now the app removes its phone with `POST /v1/mfa/push/devices/{id}/unlink` and its own device
+  credential (`mfa.push_device_unlinked`); a device credential expires 180 days after the phone was last linked,
+  after which the phone is not offered, gets no requests and cannot answer one; and an administrator can list
+  and disconnect a member's phones at `/v1/users/{id}/push-devices[/{deviceID}]` (`user.read` / `user.write`,
+  `mfa.push_device_revoked`). The app's answer to an approval request, and its unlink, carry no cookie, token or
+  Origin and were refused by the CSRF check; both device-credential paths are now exempt, as they authenticate
+  with the device credential, not a cookie. Migration `0132`.
+* **mfa:** an expired push approval request reads as expired. A request past its two-minute expiry was still
+  served as `pending`, so the mobile app offered to approve something the server would refuse. Now reading it,
+  at `GET /v1/mfa/push/challenges/{id}` or during the sign-in that sent it, records and reports `expired`, and
+  the scheduler's `mfa-cleanup` job removes requests a day after they expire.
+* **mfa:** an administrator's MFA reset removes every second factor. It left push devices (and their pending
+  approval requests) and the step-up window, so the person still showed as MFA-enabled and a device an attacker
+  registered could still approve sign-ins. Now `DELETE /v1/users/{id}/mfa` removes the authenticator app,
+  recovery codes, email/SMS factors, push devices and pending push requests, and what they earned (remembered
+  devices, step-ups); passkeys stay, as they are how the person signs in. The `mfa.admin_reset` audit record
+  names how many of each were removed (`removed`).
+* **mfa:** a one-time code that cannot be delivered is no longer reported as sent. With no provider for a channel
+  (SMS has none by default), setting up or challenging that factor answered that a code was sent while the code
+  was logged and dropped. Now a channel that cannot reach anyone is refused with `503 mfa.delivery_unavailable`
+  before any factor or code is stored (the development log still counts as delivery in development), and a
+  provider failure answers `502 mfa.delivery_failed` and withdraws the code, audited as `mfa.otp_delivery_failed`.
+  The server logs a warning at start when no SMS provider is configured.
+* **auth:** remembered devices can be seen and forgotten, stay with the organisation that remembered them, and do
+  not outlive a changed password. A device remembered to skip the second factor stayed trusted for 30 days with no
+  way for anyone to remove it, so a stolen device cookie plus a password bypassed MFA for a month. Now `GET
+  /v1/auth/trusted-devices` lists the caller's remembered devices (named, with when each was remembered, last
+  used and expires, and the current one marked) and `DELETE /v1/auth/trusted-devices[/{id}]` forgets one or all;
+  an administrator does the same for a member at `/v1/users/{id}/trusted-devices[/{deviceID}]` (`user.read` /
+  `user.write`), for devices remembered in their own organisation. A device skips the second factor only in the
+  organisation that remembered it, for that organisation's new `remember_device_days` (1–90, default 30). A
+  changed password and an administrative factor reset forget every device, as signing out everywhere already did.
+  Remembering, using and forgetting a device are audited (`auth.trusted_device_added`, `_used`, `_revoked`), and
+  the session clean-up removes expired devices. Migration `0131`.
+* **mfa:** sending email and SMS codes is limited. Any signed-in caller could request codes at about thirty a
+  second, each staying valid for ten minutes, so a session could flood an inbox or a phone, run up the operator's
+  SMS bill, or stack hundreds of live codes against five guesses. Now a code to one factor goes at most every
+  30 seconds, ten an hour to one person and five an hour to one address or number over every account, refused
+  with `429 mfa.code_send_limited` and `retry_after` (seconds); a new code makes the factor's earlier unused code
+  stop working; a person may hold five email and SMS factors (`409 mfa.factor_limit`); SMS codes need a plan that
+  includes them at sign-in and step-up as well as setup, and are refused without an organisation; and each code
+  sent is audited as `mfa.otp_sent` with the destination masked. The scheduler's new `mfa-cleanup` job
+  removes codes a day after they expire.
+* **mfa:** sensitive operations need a step-up. Only switching the authenticator app off and regenerating
+  recovery codes did, so a stolen access token could add its own factor, remove the owner's, mint an API key,
+  change the sign-in policy or delete the organisation. A step-up of the calling session is now needed to add or
+  remove one's own factors and sign-in methods (while holding a factor the organisation counts, so a first
+  factor needs none), to create, change or revoke machine credentials (API keys, service principals, agents,
+  OAuth clients and their secrets, SCIM tokens, credentials, webhooks, auth hooks), to create, reveal or delete
+  secrets and vault and AI provider configuration, to change security, sign-in, risk, bot, IP and rate-limit
+  settings or a user's MFA requirement, factors or password, to configure SAML, LDAP, social providers, domains,
+  directory mappings and administrator portal links, to edit email templates, to change retention, anomaly
+  settings and log streaming, and to update or delete the organisation, delete or purge a user, or delete one's
+  own account. Each answers the existing `step_up_required` refusal. API keys, service principals and agents
+  hold no session and cannot perform these; the hosted login's own sign-in counts as a step-up for the
+  organisation's window after it. The catalogue is `stepUpRoutes` in `internal/bootstrap`, and a test fails
+  when a mutating route that looks sensitive is neither in it nor exempted with a reason.
+* **mfa:** setting up a new authenticator app no longer switches off the one that works, and needs a step-up
+  while one is held. Starting a setup used to clear the confirmed app at once, so a single call with a stolen
+  token turned the account's second factor off and left the owner unable to answer a challenge, while
+  switching the app off properly needed a step-up. Now, while an app is confirmed, `POST
+  /v1/mfa/totp/enroll/start` needs a step-up of the calling session (a first setup needs none) and the new app
+  waits beside the confirmed one: the confirmed app keeps signing in and stepping up until a code from the new
+  one confirms it, and a setup left unconfirmed for 30 minutes is ignored. The response adds `replacing`, and
+  the start is audited with it. Asking for a new code to an email or SMS factor already confirmed no longer
+  takes that factor away until it is confirmed again. Migration `0130`.
+* **auth:** every sign-in is assessed for risk, and a risky one is confirmed. Risk was assessed only on a hosted
+  sign-in from a remembered device in an organisation that remembers devices, and only to cancel that skip; the
+  API sign-in and anyone without a second factor were never assessed, and the history impossible travel and
+  device reputation compare against was written only then. Now the API, hosted, self-registration and magic-link
+  sign-ins are all assessed, once, and each records its country and a coarse browser-and-OS device key (kept 90
+  days; the scheduler's `sign-in-history-cleanup` job removes older ones). A risky sign-in skips no factor on a
+  remembered device; one by someone with no second factor answers a challenge met by a code sent to their
+  verified email (the challenge's one `email` factor, named by its own id, sent with `POST /v1/auth/mfa/send`),
+  audited as `auth.sign_in_confirmed` with the session method `<first factor>_email_confirmed` and no step-up,
+  or is refused with `403 auth.risk_verification_unavailable` when there is no verified address. A magic link has
+  proved the mailbox already, so it goes in. Settings that cannot be read still fail open, as before. Migration
+  `0133`.
+* **mfa:** a step-up belongs to the session that earned it. It was recorded per person, so proving a factor in
+  one browser unlocked sensitive actions in every other session the person held for five minutes, and every
+  sign-in with a second factor did the same. Now a step-up is recorded against the calling session only: it
+  ends with that session (revoked, expired or ended by idleness), a sign-in with a second factor steps up the
+  session it opens and no other, and a changed password or an administrative factor reset clears the person's
+  step-ups everywhere. Principals without a session (API keys, agents, hosted-login cookies) cannot step up. The
+  security policy adds `step_up_window` (1m–60m, default 5m) and `step_up_methods` (the factor types that count;
+  null for every one), both applied at once. The `step_up_required` refusal carries `window_seconds` and, when
+  the organisation limits them, `allowed_methods`; `GET /v1/mfa/step-up/status` reports the same. A refusal is
+  audited as `mfa.step_up_required` and a completed step-up as `mfa.step_up_verified`, both with the session.
+  Migration `0129`.
 * **mfa:** every confirmed second factor is now challenged at sign-in, not only an authenticator app. A person
   whose second factor is an email or SMS code, a passkey (while their organisation allows passkeys) or a push
   device used to sign in on their password alone. Both password sign-in paths now challenge when any factor

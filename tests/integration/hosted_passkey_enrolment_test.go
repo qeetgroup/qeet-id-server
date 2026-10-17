@@ -19,6 +19,7 @@ import (
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
 	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
 	user "github.com/qeetgroup/qeet-id-server/internal/identity/users"
@@ -41,7 +42,9 @@ type signedInAPI struct {
 	handler http.Handler
 }
 
-func newSignedInAPI(t *testing.T) *signedInAPI {
+// newSignedInAPI builds the API; after (optional) runs after RequireAuth, as
+// the production router's step-up gate does.
+func newSignedInAPI(t *testing.T, after ...func(http.Handler) http.Handler) *signedInAPI {
 	t.Helper()
 	issuer := mustIssuer()
 	authSvc := auth.NewService(testPool, user.NewRepository(testPool), issuer)
@@ -64,6 +67,9 @@ func newSignedInAPI(t *testing.T) *signedInAPI {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(authSvc.LoginSessionAuth(bootstrap.LoginSessionRoutes()))
 		r.Use(httpx.RequireAuth(&httpx.AuthVerifier{Tokens: issuer}))
+		for _, mw := range after {
+			r.Use(mw)
+		}
 		(&passkey.Handler{Service: pk}).Mount(r)
 		r.Get("/auth/sessions", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	})
@@ -524,5 +530,34 @@ func TestPasskeyEnrolmentFollowsTenantPolicy(t *testing.T) {
 				t.Errorf("register finish: status %d, body %s", rr.Code, rr.Body)
 			}
 		})
+	}
+}
+
+// TestHostedPasskeyEnrolmentStepUp: for a person who already holds a second
+// factor, adding a passkey needs a step-up; the hosted login's own fresh
+// sign-in counts as one, and a sign-in older than the organisation's step-up
+// window does not.
+func TestHostedPasskeyEnrolmentStepUp(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	svc := newStepUpMFA(t)
+	api := newSignedInAPI(t, svc.StepUpGate(map[string]mfa.StepUpRule{
+		"POST /v1/passkeys/register/begin": mfa.StepUpWhenFactorHeld,
+	}))
+	tenantID := createTenant(t, ctx, uniqueSlug("hostedpk-stepup"))
+	userID := createUserInTenant(t, ctx, tenantID)
+	holdApp(t, ctx, svc, userID)
+	browser := api.signIn(t, ctx, userID)
+
+	if rr := api.call(t, browser, http.MethodPost, "/v1/passkeys/register/begin", nil); rr.Code != http.StatusOK {
+		t.Fatalf("enrolment right after a hosted sign-in: %d %s, want 200", rr.Code, rr.Body)
+	}
+	if _, err := testPool.Exec(ctx,
+		`UPDATE auth.login_sessions SET created_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if rr := api.call(t, browser, http.MethodPost, "/v1/passkeys/register/begin", nil); rr.Code != http.StatusForbidden ||
+		!strings.Contains(rr.Body.String(), "step_up_required") {
+		t.Fatalf("enrolment six minutes after the sign-in: %d %s, want 403 step_up_required", rr.Code, rr.Body)
 	}
 }

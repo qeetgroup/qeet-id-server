@@ -971,6 +971,236 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/trusted-devices:
+    get:
+      operationId: get_v1_users_ById_trusted_devices
+      summary: List a member's remembered devices
+      description: >-
+        Lists a member's devices remembered in the caller's organisation. Requires the user.read permission; 404 for someone who is not a member.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        tenant_id:
+                          type: string
+                          format: uuid
+                          nullable: true
+                          description: The organisation the device was remembered in.
+                        device:
+                          type: string
+                          description: The device and browser in words, such as "Chrome on macOS".
+                        device_kind:
+                          type: string
+                          enum: [desktop, mobile, tablet, unknown]
+                        user_agent:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                        last_used_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: When the device last skipped the second factor.
+                        expires_at:
+                          type: string
+                          format: date-time
+                        current:
+                          type: boolean
+                          description: The request came from this device.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: delete_v1_users_ById_trusted_devices
+      summary: Forget a member's remembered devices
+      description: >-
+        Forgets every device a member has remembered in the caller's organisation, so each is asked for the second factor at its next sign-in there. Requires the user.write permission; each is audited as auth.trusted_device_revoked.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forgotten:
+                    type: integer
+                    description: How many devices were forgotten.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/users/{id}/trusted-devices/{deviceID}:
+    delete:
+      operationId: delete_v1_users_ById_trusted_devices_ByDeviceID
+      summary: Forget one of a member's remembered devices
+      description: >-
+        Forgets one device a member has remembered in the caller's organisation. Requires the user.write permission; 404 for a device that is not theirs there. Audited as auth.trusted_device_revoked.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: deviceID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forgotten:
+                    type: integer
+                    description: How many devices were forgotten.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/users/{id}/push-devices:
+    get:
+      operationId: get_v1_users_ById_push_devices
+      summary: List a member's linked phones
+      description: Lists the phones a member has linked for push approval. Requires the user.read permission; 404 for someone who is not a member of the caller's organisation.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        name:
+                          type: string
+                        platform:
+                          type: string
+                          enum: [ios, android]
+                        created_at:
+                          type: string
+                          format: date-time
+                        last_seen_at:
+                          type: string
+                          format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/users/{id}/push-devices/{deviceID}:
+    delete:
+      operationId: delete_v1_users_ById_push_devices_ByDeviceID
+      summary: Disconnect a member's phone
+      description: Disconnects a member's linked phone, for example a lost one, so it receives no approval requests and cannot answer one. Requires the user.write permission; audited as mfa.push_device_revoked.
+      tags:
+        - Users
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: deviceID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Disconnected
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/users/{id}/security:
     get:
       operationId: get_v1_users_ById_security

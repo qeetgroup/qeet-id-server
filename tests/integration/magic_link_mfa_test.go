@@ -250,7 +250,7 @@ func TestHostedMagicLinkTrustedDevice(t *testing.T) {
 		ON CONFLICT (tenant_id) DO UPDATE SET remember_device_enabled = TRUE`, f.tenantID); err != nil {
 		t.Fatal(err)
 	}
-	device, err := f.auth.MaybeRememberDevice(ctx, me, f.tenantID, "test")
+	device, _, err := f.auth.MaybeRememberDevice(ctx, me, f.tenantID, "test")
 	if err != nil || device == "" {
 		t.Fatalf("remember device: %q %v", device, err)
 	}

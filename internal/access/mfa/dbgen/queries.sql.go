@@ -86,6 +86,38 @@ func (q *Queries) DeletePushDevice(ctx context.Context, arg DeletePushDevicePara
 	return result.RowsAffected(), nil
 }
 
+const deletePushDeviceByCredential = `-- name: DeletePushDeviceByCredential :execrows
+DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2 AND device_token_hash = $3
+`
+
+type DeletePushDeviceByCredentialParams struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	DeviceTokenHash *string
+}
+
+// DeletePushDeviceByCredential removes a linked phone that proves it is that
+// device with its own credential.
+func (q *Queries) DeletePushDeviceByCredential(ctx context.Context, arg DeletePushDeviceByCredentialParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePushDeviceByCredential, arg.ID, arg.UserID, arg.DeviceTokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const expirePushChallenge = `-- name: ExpirePushChallenge :exec
+UPDATE auth.mfa_push_challenges SET status = 'expired'
+WHERE id = $1 AND status = 'pending' AND expires_at <= NOW()
+`
+
+// ExpirePushChallenge records that a pending push request has passed its
+// expiry, so every reader sees it as expired.
+func (q *Queries) ExpirePushChallenge(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expirePushChallenge, id)
+	return err
+}
+
 const getMFARecoveryCodeStats = `-- name: GetMFARecoveryCodeStats :one
 SELECT
     count(*)                             AS total,
@@ -118,17 +150,6 @@ func (q *Queries) GetMFATOTPConfirmed(ctx context.Context, userID uuid.UUID) (pg
 	var confirmed_at pgtype.Timestamptz
 	err := row.Scan(&confirmed_at)
 	return confirmed_at, err
-}
-
-const getMFAVerification = `-- name: GetMFAVerification :one
-SELECT verified_at FROM auth.mfa_verifications WHERE user_id = $1
-`
-
-func (q *Queries) GetMFAVerification(ctx context.Context, userID uuid.UUID) (time.Time, error) {
-	row := q.db.QueryRow(ctx, getMFAVerification, userID)
-	var verified_at time.Time
-	err := row.Scan(&verified_at)
-	return verified_at, err
 }
 
 const getOTPCodeForConfirm = `-- name: GetOTPCodeForConfirm :one
@@ -323,6 +344,25 @@ func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallen
 	return i, err
 }
 
+const isTenantMember = `-- name: IsTenantMember :one
+SELECT (EXISTS (SELECT 1 FROM rbac.user_roles ur WHERE ur.user_id = $1 AND ur.tenant_id = $2)
+     OR EXISTS (SELECT 1 FROM "user".users u WHERE u.id = $1 AND u.tenant_id = $2 AND u.deleted_at IS NULL))::bool
+`
+
+type IsTenantMemberParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+// IsTenantMember says whether the user belongs to the organisation: holds a
+// role in it, or has it as their home organisation.
+func (q *Queries) IsTenantMember(ctx context.Context, arg IsTenantMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isTenantMember, arg.UserID, arg.TenantID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listOTPFactors = `-- name: ListOTPFactors :many
 SELECT id, user_id, channel, destination, verified_at, created_at
 FROM auth.mfa_otp_factors WHERE user_id = $1 ORDER BY created_at
@@ -440,7 +480,8 @@ SELECT
                         WHERE u.id = $1), TRUE)
          THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = $1)
          ELSE 0 END::int AS passkeys,
-    (SELECT count(*) FROM auth.mfa_push_devices d WHERE d.user_id = $1)::int AS push_devices
+    (SELECT count(*) FROM auth.mfa_push_devices d
+      WHERE d.user_id = $1 AND d.device_token_expires_at > NOW())::int AS push_devices
 `
 
 type LoginFactorCountsRow struct {
@@ -492,6 +533,27 @@ func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
+const orgStepUpPolicy = `-- name: OrgStepUpPolicy :one
+SELECT EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
+       (sp.step_up_methods IS NULL)::bool AS every_factor
+FROM (SELECT $1::uuid AS id) q
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = q.id
+`
+
+type OrgStepUpPolicyRow struct {
+	WindowSeconds int64
+	EveryFactor   bool
+}
+
+// OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
+// it counts every factor type (no organisation, or none set: 5 minutes, yes).
+func (q *Queries) OrgStepUpPolicy(ctx context.Context, tenantID uuid.UUID) (OrgStepUpPolicyRow, error) {
+	row := q.db.QueryRow(ctx, orgStepUpPolicy, tenantID)
+	var i OrgStepUpPolicyRow
+	err := row.Scan(&i.WindowSeconds, &i.EveryFactor)
+	return i, err
+}
+
 const pushChallengeForLogin = `-- name: PushChallengeForLogin :one
 SELECT status, expires_at FROM auth.mfa_push_challenges
 WHERE id = $1 AND user_id = $2
@@ -517,6 +579,110 @@ func (q *Queries) PushChallengeForLogin(ctx context.Context, arg PushChallengeFo
 	return i, err
 }
 
+const recordStepUp = `-- name: RecordStepUp :exec
+INSERT INTO auth.mfa_verifications (session_id, user_id, method, verified_at)
+SELECT s.id, s.user_id, $1::text, NOW()
+FROM auth.sessions s
+WHERE s.id = $2 AND s.user_id = $3 AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+ON CONFLICT (session_id) DO UPDATE SET method = EXCLUDED.method, verified_at = NOW()
+`
+
+type RecordStepUpParams struct {
+	Method    string
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+// RecordStepUp records that a session proved a second factor. Only a live
+// session of the user's own is recorded; for any other nothing is written.
+func (q *Queries) RecordStepUp(ctx context.Context, arg RecordStepUpParams) error {
+	_, err := q.db.Exec(ctx, recordStepUp, arg.Method, arg.SessionID, arg.UserID)
+	return err
+}
+
+const stepUpFactorsHeld = `-- name: StepUpFactorsHeld :one
+SELECT
+    EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)::bool AS totp,
+    EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = $1 AND f.verified_at IS NOT NULL)::bool AS otp,
+    (EXISTS (SELECT 1 FROM auth.passkey_credentials c WHERE c.user_id = $1)
+     AND COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = $2::uuid), TRUE))::bool AS passkeys,
+    (SELECT sp.step_up_methods FROM tenant.security_policies sp WHERE sp.tenant_id = $2::uuid)::text[] AS step_up_methods
+`
+
+type StepUpFactorsHeldParams struct {
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+}
+
+type StepUpFactorsHeldRow struct {
+	Totp          bool
+	Otp           bool
+	Passkeys      bool
+	StepUpMethods []string
+}
+
+// StepUpFactorsHeld says which kinds of factor the user could step up with —
+// a confirmed authenticator app (or its recovery codes), a confirmed email or
+// SMS factor, a passkey while the organisation allows passkeys — and which
+// factor types the organisation counts (NULL: every one).
+func (q *Queries) StepUpFactorsHeld(ctx context.Context, arg StepUpFactorsHeldParams) (StepUpFactorsHeldRow, error) {
+	row := q.db.QueryRow(ctx, stepUpFactorsHeld, arg.UserID, arg.TenantID)
+	var i StepUpFactorsHeldRow
+	err := row.Scan(
+		&i.Totp,
+		&i.Otp,
+		&i.Passkeys,
+		&i.StepUpMethods,
+	)
+	return i, err
+}
+
+const stepUpState = `-- name: StepUpState :one
+SELECT v.verified_at, v.method,
+       COALESCE(v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes'), FALSE)::bool AS fresh,
+       COALESCE(sp.step_up_methods IS NULL OR v.method = ANY (sp.step_up_methods), FALSE)::bool AS method_counts,
+       EXTRACT(EPOCH FROM COALESCE(sp.step_up_window, INTERVAL '5 minutes'))::bigint AS window_seconds,
+       sp.step_up_methods
+FROM (SELECT $1::uuid AS id, $2::uuid AS user_id) q
+LEFT JOIN auth.sessions s ON s.id = q.id AND s.user_id = q.user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+LEFT JOIN auth.mfa_verifications v ON v.session_id = s.id
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+`
+
+type StepUpStateParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+type StepUpStateRow struct {
+	VerifiedAt    pgtype.Timestamptz
+	Method        *string
+	Fresh         bool
+	MethodCounts  bool
+	WindowSeconds int64
+	StepUpMethods []string
+}
+
+// StepUpState is a session's step-up as its organisation judges it: fresh
+// while inside the organisation's window, and counted only when met by a
+// factor type the organisation accepts (step_up_methods NULL: any). A session
+// that has ended reads as never stepped up.
+func (q *Queries) StepUpState(ctx context.Context, arg StepUpStateParams) (StepUpStateRow, error) {
+	row := q.db.QueryRow(ctx, stepUpState, arg.SessionID, arg.UserID)
+	var i StepUpStateRow
+	err := row.Scan(
+		&i.VerifiedAt,
+		&i.Method,
+		&i.Fresh,
+		&i.MethodCounts,
+		&i.WindowSeconds,
+		&i.StepUpMethods,
+	)
+	return i, err
+}
+
 const updatePushChallengeStatus = `-- name: UpdatePushChallengeStatus :exec
 UPDATE auth.mfa_push_challenges
 SET status = $2, responded_at = NOW()
@@ -536,7 +702,7 @@ func (q *Queries) UpdatePushChallengeStatus(ctx context.Context, arg UpdatePushC
 const upsertMFAOTPFactor = `-- name: UpsertMFAOTPFactor :one
 INSERT INTO auth.mfa_otp_factors (user_id, channel, destination)
 VALUES ($1, $2, $3)
-ON CONFLICT (user_id, channel, destination) DO UPDATE SET verified_at = NULL
+ON CONFLICT (user_id, channel, destination) DO UPDATE SET destination = EXCLUDED.destination
 RETURNING id
 `
 
@@ -546,25 +712,12 @@ type UpsertMFAOTPFactorParams struct {
 	Destination string
 }
 
+// UpsertMFAOTPFactor adds an email or SMS factor, or returns the one already
+// held for that address or number untouched: asking for a new code to an
+// address already confirmed must not take the factor away until it is.
 func (q *Queries) UpsertMFAOTPFactor(ctx context.Context, arg UpsertMFAOTPFactorParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, upsertMFAOTPFactor, arg.UserID, arg.Channel, arg.Destination)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const upsertMFAVerification = `-- name: UpsertMFAVerification :exec
-INSERT INTO auth.mfa_verifications (user_id, method, verified_at)
-VALUES ($1, $2, NOW())
-ON CONFLICT (user_id) DO UPDATE SET method = EXCLUDED.method, verified_at = NOW()
-`
-
-type UpsertMFAVerificationParams struct {
-	UserID uuid.UUID
-	Method string
-}
-
-func (q *Queries) UpsertMFAVerification(ctx context.Context, arg UpsertMFAVerificationParams) error {
-	_, err := q.db.Exec(ctx, upsertMFAVerification, arg.UserID, arg.Method)
-	return err
 }
