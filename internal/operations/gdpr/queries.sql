@@ -45,7 +45,24 @@ SELECT count(*) FROM tenant.compliance_evidence_runs WHERE tenant_id = @tenant_i
 -- -----------------------------------------------------------------------
 
 -- name: CheckMFAEnforcement :one
-SELECT mfa_enforcement FROM tenant.security_policies WHERE tenant_id = @tenant_id;
+SELECT mfa_enforcement, mfa_grace_days, mfa_enforced_since
+FROM tenant.security_policies WHERE tenant_id = @tenant_id;
+
+-- CountUsersWithoutSecondFactor counts the tenant's accounts holding no
+-- factor a sign-in challenge can be met with (as auth.LoginFactors reads
+-- them): they set one up at their next sign-in.
+-- name: CountUsersWithoutSecondFactor :one
+SELECT count(*)::int
+FROM "user".users u
+WHERE u.tenant_id = @tenant_id AND u.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = u.id AND f.verified_at IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = u.id)
+  AND NOT (
+      COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = u.tenant_id), TRUE)
+      AND EXISTS (SELECT 1 FROM auth.passkey_credentials p WHERE p.user_id = u.id)
+  );
 
 -- name: CheckPasswordMinLength :one
 SELECT password_min_length FROM tenant.auth_policy WHERE tenant_id = @tenant_id;

@@ -22,27 +22,3 @@ type TenantComplianceEvidenceRun struct {
 	NaCount     int32
 	Controls    []byte
 }
-
-type UserExportRequest struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	UserID      uuid.UUID
-	RequestedBy pgtype.UUID
-	Status      string
-	Payload     []byte
-	Error       *string
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
-}
-
-type UserPurgeRequest struct {
-	ID          uuid.UUID
-	TenantID    uuid.UUID
-	UserID      uuid.UUID
-	RequestedBy pgtype.UUID
-	Reason      *string
-	Status      string
-	GraceUntil  time.Time
-	CompletedAt pgtype.Timestamptz
-	CreatedAt   time.Time
-}

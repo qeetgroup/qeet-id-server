@@ -103,12 +103,36 @@ func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []s
 // MFAEnroller is the slice of the MFA service the auth package needs to enforce
 // a second factor at login. Wired in internal/bootstrap/dependencies.go via SetMFA.
 type MFAEnroller interface {
-	// IsEnrolled reports whether the user has a usable login second factor.
-	IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error)
-	// VerifyForLoginTx verifies a TOTP/recovery code inside the challenge
-	// transaction so recovery-code and challenge consumption are atomic;
-	// (false, nil) means the code was wrong, a non-nil error is infrastructure.
+	// LoginFactors lists the second factors the user can meet a sign-in
+	// challenge with (none: sign in without one). See mfalogin.go.
+	LoginFactors(ctx context.Context, userID uuid.UUID) ([]LoginFactor, error)
+	// VerifyForLoginTx verifies an authenticator-app, recovery or email/SMS
+	// code inside the challenge transaction so the code's consumption and the
+	// challenge's commit together; (false, nil) means the code was wrong, a
+	// non-nil error is infrastructure.
 	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error)
+	// SendLoginCode sends a code to one of the user's confirmed email/SMS
+	// factors.
+	SendLoginCode(ctx context.Context, userID, factorID uuid.UUID) error
+	// BeginLoginPasskey starts a passkey assertion for the user's own
+	// passkeys; FinishLoginPasskey verifies one (a domain error: not verified).
+	BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error)
+	FinishLoginPasskey(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage) error
+	// StartLoginPush sends a push approval request to the user's devices and
+	// returns its id and expiry; LoginPushStatusTx reads its state
+	// ("pending", "approved", "denied" or "expired") under lock.
+	StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (uuid.UUID, time.Time, error)
+	LoginPushStatusTx(ctx context.Context, tx pgx.Tx, userID, challengeID uuid.UUID) (string, error)
+	// RecordVerification records a met second factor, opening the step-up
+	// window.
+	RecordVerification(ctx context.Context, tx pgx.Tx, userID uuid.UUID, method string) error
+	// StartLoginEnrollment starts an authenticator app for a sign-in's
+	// enrolment challenge and returns its secret and provisioning URL;
+	// ConfirmLoginEnrollment confirms it with a code from the app and returns
+	// the account's new recovery codes ((nil, false, nil): a wrong code). Both
+	// run inside the challenge transaction. See mfapolicy.go.
+	StartLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, account string) (string, string, error)
+	ConfirmLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, bool, error)
 }
 
 // SetMFA wires the MFA-at-login checker. Called from internal/bootstrap/dependencies.go.
@@ -236,10 +260,24 @@ const mfaChallengeTTL = 10 * time.Minute
 // LoginResult is either a full token pair (no MFA needed) or a pending MFA
 // challenge that must be completed via CompleteMFALogin before tokens issue.
 type LoginResult struct {
-	Pair        *TokenPair
+	Pair *TokenPair
+	MFAChallenge
+}
+
+// MFAChallenge is a sign-in's pending second-factor challenge, when
+// MFARequired is set.
+type MFAChallenge struct {
 	MFARequired bool
 	MFAToken    string
 	Methods     []string
+	// Factors are the second factors the challenge can be met with.
+	Factors []LoginFactor
+	// EnrollmentRequired: the account must have a second factor and holds
+	// none, so the challenge is met by setting up an authenticator app.
+	// EnrollmentDueAt, when set, is when the organisation's grace period
+	// ends; until then the setup may be skipped. See mfapolicy.go.
+	EnrollmentRequired bool
+	EnrollmentDueAt    *time.Time
 }
 
 // LoginSessionResult is the hosted-login (cookie) analogue of LoginResult:
@@ -247,11 +285,9 @@ type LoginResult struct {
 // SetLoginSessionCookie) or a pending MFA challenge to complete via
 // CompleteMFALoginSession before the cookie is issued.
 type LoginSessionResult struct {
-	UserID      uuid.UUID
-	RawCookie   string
-	MFARequired bool
-	MFAToken    string
-	Methods     []string
+	UserID    uuid.UUID
+	RawCookie string
+	MFAChallenge
 }
 
 type LoginInput struct {
@@ -507,26 +543,25 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	return pair, nil
 }
 
-// Login verifies the password and, when the user has a second factor enrolled,
-// returns an MFA challenge instead of tokens (complete it via CompleteMFALogin).
-// Otherwise it returns a full token pair.
+// Login verifies the password and, when the account holds a second factor or
+// must have one (see mfapolicy.go), returns an MFA challenge instead of tokens
+// (complete it via CompleteMFALoginWith). Otherwise it returns a full token
+// pair.
 func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
 	u, claims, err := s.CheckPassword(ctx, SignInAttempt{Email: in.Email, Password: in.Password, IP: in.IP})
 	if err != nil {
 		return nil, err
 	}
-	if s.mfa != nil {
-		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+	gate, err := s.mfaGate(ctx, u.ID, u.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if gate.challenged() {
+		challenge, err := s.challengeSignIn(ctx, u.ID, u.TenantID, claims, gate, firstFactorPassword, in.IP, in.UserAgent)
 		if err != nil {
 			return nil, err
 		}
-		if enrolled {
-			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, claims)
-			if err != nil {
-				return nil, err
-			}
-			return &LoginResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
-		}
+		return &LoginResult{MFAChallenge: challenge}, nil
 	}
 	pair, err := s.IssuePairWithClaims(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password", claims)
 	if err != nil {
@@ -536,11 +571,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 }
 
 // BeginLoginSession is the hosted-login (cookie) equivalent of Login: it
-// verifies the password and, when the user has a second factor enrolled,
-// returns an MFA challenge instead of an SSO session (complete it via
-// CompleteMFALoginSession). Otherwise it mints the SSO session cookie value.
-// Without this check the cookie flow would bypass MFA that the token flow
-// enforces.
+// verifies the password and, when the account holds a second factor or must
+// have one, returns an MFA challenge instead of an SSO session (complete it
+// via CompleteMFALoginSessionWith). Otherwise it mints the SSO session cookie
+// value. Without this check the cookie flow would bypass MFA that the token
+// flow enforces.
 func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, trustedToken, country string) (*LoginSessionResult, error) {
 	// Hook-issued claims aren't threaded into the hosted-login cookie flow: the
 	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
@@ -550,18 +585,18 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	if err != nil {
 		return nil, err
 	}
-	if s.mfa != nil {
-		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+	gate, err := s.mfaGate(ctx, u.ID, u.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	// A trusted device may skip a factor the account holds, never the setting
+	// up of one it must have.
+	if gate.enrollment() || (gate.challenged() && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, in.IP, ua, country)) {
+		challenge, err := s.challengeSignIn(ctx, u.ID, u.TenantID, nil, gate, firstFactorPassword, in.IP, ua)
 		if err != nil {
 			return nil, err
 		}
-		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, in.IP, ua, country) {
-			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, nil)
-			if err != nil {
-				return nil, err
-			}
-			return &LoginSessionResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
-		}
+		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
 	}
 	raw, err := s.CreateLoginSession(ctx, u.ID, in.IP, ua)
 	if err != nil {
@@ -596,29 +631,31 @@ func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID,
 // signup flow and signs them in by minting the SSO session cookie value. It is
 // gated by the tenant's self_registration_enabled policy and checks the
 // password against that tenant's rules (see RegistrationPolicy). Returns
-// the created user and the raw cookie value to write via SetLoginSessionCookie.
-func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, string, error) {
+// the created user and either the raw cookie value to write via
+// SetLoginSessionCookie or, when the organisation requires MFA, an enrolment
+// challenge to meet first (see mfapolicy.go).
+func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, *LoginSessionResult, error) {
 	if s.regPolicy == nil {
-		return nil, "", errs.ErrNotImplemented
+		return nil, nil, errs.ErrNotImplemented
 	}
 	enabled, err := s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if !enabled {
-		return nil, "", errs.ErrAuthSelfRegistrationDisabled
+		return nil, nil, errs.ErrAuthSelfRegistrationDisabled
 	}
 	if err := s.checkNewPassword(ctx, tenantID, email, plain); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	hash, err := password.Hash(plain)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -635,150 +672,336 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		RETURNING id, created_at, updated_at
 	`, tenantID, u.Email, dnArg).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, "", errs.ErrAuthEmailExists
+			return nil, nil, errs.ErrAuthEmailExists
 		}
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := s.q.WithTx(tx).InsertPasswordCredential(ctx, dbgen.InsertPasswordCredentialParams{
 		UserID:       u.ID,
 		PasswordHash: hash,
 	}); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
+	// A new account holds no factor: where the organisation requires one, it
+	// is set up before the first session.
+	gate, err := s.mfaGate(ctx, u.ID, tenantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if gate.enrollment() {
+		challenge, err := s.challengeSignIn(ctx, u.ID, tenantID, nil, gate, firstFactorPassword, ip, ua)
+		if err != nil {
+			return nil, nil, err
+		}
+		return u, &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
+	}
 	raw, err := s.CreateLoginSession(ctx, u.ID, ip, ua)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
-	return u, raw, nil
+	return u, &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
 }
 
-// createMFAChallenge records a single-use, short-lived pending login that
-// CompleteMFALogin later exchanges for tokens. claims (nilable) are any
+// How a challenged sign-in proved its first factor (mfa_login_challenges
+// first_factor). The session it completes records the method
+// "<first factor>_mfa", or the first factor alone when an enrolment was put
+// off.
+const (
+	firstFactorPassword  = "password"
+	firstFactorMagicLink = "magic_link"
+)
+
+// challengeSignIn records a single-use, short-lived pending sign-in that
+// CompleteMFALoginWith (or CompleteMFALoginSessionWith) later exchanges for a
+// session, and audits why it was challenged. claims (nilable) are any
 // Auth-Hook-issued custom claims to carry across the MFA step into the
-// eventual access token. Returns the opaque token id.
-func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any) (string, error) {
+// eventual access token.
+func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any, gate mfaGate, firstFactor, ip, ua string) (MFAChallenge, error) {
 	var tid any
+	var tenantPtr *uuid.UUID
 	if tenantID != uuid.Nil {
 		tid = tenantID
+		tenantPtr = &tenantID
 	}
 	var claimsArg any
 	if len(claims) > 0 {
 		raw, err := json.Marshal(claims)
 		if err != nil {
-			return "", err
+			return MFAChallenge{}, err
 		}
 		claimsArg = raw
 	}
-	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims)
-		VALUES ($1, $2, $3, $4) RETURNING id
-	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg).Scan(&id)
-	if err != nil {
-		return "", err
+	challenge := MFAChallenge{MFARequired: true, Methods: methodsOf(gate.factors), Factors: gate.factors}
+	if gate.enrollment() {
+		challenge.Methods = []string{"totp"}
+		challenge.Factors = []LoginFactor{}
+		challenge.EnrollmentRequired = true
+		challenge.EnrollmentDueAt = gate.req.graceUntil
 	}
-	return id.String(), nil
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return MFAChallenge{}, err
+	}
+	defer tx.Rollback(ctx)
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims, enrollment, first_factor)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg, challenge.EnrollmentRequired, firstFactor).Scan(&id); err != nil {
+		return MFAChallenge{}, err
+	}
+	meta := map[string]any{"reason": gate.reason(), "enrollment": challenge.EnrollmentRequired, "methods": challenge.Methods,
+		"first_factor": firstFactor}
+	if challenge.EnrollmentDueAt != nil {
+		meta["grace_until"] = challenge.EnrollmentDueAt
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantPtr,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       "auth.mfa_challenged",
+		ResourceType: "user",
+		ResourceID:   &userID,
+		IP:           ip,
+		UserAgent:    ua,
+		Metadata:     meta,
+	}); err != nil {
+		return MFAChallenge{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MFAChallenge{}, err
+	}
+	challenge.MFAToken = id.String()
+	return challenge, nil
 }
 
-// verifyAndConsumeMFAChallenge validates a pending MFA login challenge and its
-// second-factor code. On a correct code it consumes (deletes) the challenge
-// and returns the user, its tenant (uuid.Nil for a tenant-less challenge), and
-// any claims stashed by createMFAChallenge. A wrong code is rejected WITHOUT
-// consuming the challenge so the user can retry within the TTL. Shared by the
-// token flow (CompleteMFALogin) and the hosted cookie flow
-// (CompleteMFALoginSession).
-func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, code string) (uuid.UUID, uuid.UUID, map[string]any, error) {
+// metChallenge is a sign-in challenge met and consumed.
+type metChallenge struct {
+	userID uuid.UUID
+	// tenantID is uuid.Nil for a tenant-less challenge.
+	tenantID uuid.UUID
+	claims   map[string]any
+	// recoveryCodes are minted when the challenge was met by setting up an
+	// authenticator app; shown once.
+	recoveryCodes []string
+	// deferred: an enrolment challenge skipped in the grace period — no
+	// factor was met.
+	deferred bool
+	// firstFactor is how the sign-in proved its first factor.
+	firstFactor string
+}
+
+// method is the sign-in method recorded on the session.
+func (m metChallenge) method() string {
+	if m.deferred {
+		return m.firstFactor
+	}
+	return m.firstFactor + "_mfa"
+}
+
+// verifyAndConsumeMFAChallenge validates a pending MFA login challenge and the
+// proof offered for it. On a valid proof it consumes (deletes) the challenge
+// and returns the user, its tenant, and any claims stashed by challengeSignIn.
+// A wrong proof is rejected WITHOUT consuming the challenge so the user can
+// retry within the TTL. An enrolment challenge is met by the code that
+// confirms the authenticator app started for it, or skipped while the grace
+// period runs (see mfapolicy.go). Shared by the token flow
+// (CompleteMFALoginWith) and the hosted cookie flow
+// (CompleteMFALoginSessionWith).
+func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof) (metChallenge, error) {
 	if s.mfa == nil {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrNotImplemented
+		return metChallenge{}, errs.ErrNotImplemented
 	}
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthSessionInvalid
+		return metChallenge{}, errs.ErrAuthSessionInvalid
 	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
 	var expiresAt time.Time
 	var rawClaims []byte
 	var challengeFailures int16
+	var passkeySession, pushChallenge *uuid.UUID
+	var enrollment, enrollmentStarted bool
+	var firstFactor string
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at, claims, failed_attempts
+		SELECT user_id, tenant_id, expires_at, claims, failed_attempts, passkey_session_id, push_challenge_id,
+		       enrollment, enrollment_started, first_factor
 		FROM auth.mfa_login_challenges
 		WHERE id = $1
 		FOR UPDATE
-	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures)
+	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures, &passkeySession, &pushChallenge,
+		&enrollment, &enrollmentStarted, &firstFactor)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
+		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	if time.Now().After(expiresAt) {
 		if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
-		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
+		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
+	}
+	met := metChallenge{userID: userID, firstFactor: firstFactor}
+	if tenantID != nil {
+		met.tenantID = *tenantID
+	}
+	if len(rawClaims) > 0 {
+		_ = json.Unmarshal(rawClaims, &met.claims)
+	}
+	// What the challenge cannot be met with is refused before an attempt is
+	// counted.
+	switch {
+	case enrollment && (proof.Passkey != nil || proof.Push):
+		return metChallenge{}, errNotAFactorChallenge
+	case enrollment && proof.Skip:
+		return s.deferEnrollment(ctx, tx, id, met)
+	case !enrollment && proof.Skip:
+		return metChallenge{}, errs.ErrBadRequest.WithDetail("This sign-in needs a second factor; it cannot be skipped.")
+	case enrollment && !enrollmentStarted:
+		return metChallenge{}, errs.ErrMFAEnrollNotStarted
+	case enrollment:
+		if err := s.stillWithoutFactor(ctx, userID); err != nil {
+			return metChallenge{}, err
+		}
+	}
+	// An unanswered or expired push request is not a wrong answer: it costs
+	// no attempt, and the challenge stays as it is.
+	if proof.Push && pushChallenge != nil {
+		status, err := s.mfa.LoginPushStatusTx(ctx, tx, userID, *pushChallenge)
+		if err != nil {
+			return metChallenge{}, err
+		}
+		switch status {
+		case "pending":
+			return metChallenge{}, errs.ErrMFAPushPending
+		case "expired":
+			return metChallenge{}, errs.ErrMFAPushChallengeExpired
+		}
 	}
 	accountRemaining, err := reserveLoginMFAAttempt(ctx, tx, userID)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
-	ok, err := s.mfa.VerifyForLoginTx(ctx, tx, userID, code)
+	var ok bool
+	if enrollment {
+		met.recoveryCodes, ok, err = s.mfa.ConfirmLoginEnrollment(ctx, tx, userID, proof.Code)
+	} else {
+		ok, err = s.verifyMFAProof(ctx, tx, userID, passkeySession, pushChallenge, proof)
+	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	if !ok {
 		next := challengeFailures + 1
 		remaining := maxMFALoginAttempts - int(next)
 		if next >= maxMFALoginAttempts {
 			if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
-				return uuid.Nil, uuid.Nil, nil, err
+				return metChallenge{}, err
 			}
 		} else if _, err := tx.Exec(ctx, `
 			UPDATE auth.mfa_login_challenges SET failed_attempts = $2 WHERE id = $1
 		`, id, next); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
 		if remaining <= 0 || accountRemaining <= 0 {
-			return uuid.Nil, uuid.Nil, nil, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
+			return metChallenge{}, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 		}
 		if accountRemaining < remaining {
 			remaining = accountRemaining
 		}
-		return uuid.Nil, uuid.Nil, nil, errs.ErrMFACodeInvalid.WithMetadata(map[string]any{"remaining_attempts": remaining})
+		return metChallenge{}, errs.ErrMFACodeInvalid.WithMetadata(map[string]any{"remaining_attempts": remaining})
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = 'login'`, userID); err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
-	var tid uuid.UUID
-	if tenantID != nil {
-		tid = *tenantID
+	if enrollment {
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID:     tenantID,
+			ActorUserID:  &userID,
+			ActorType:    "user",
+			Action:       "mfa.totp_enrolled",
+			ResourceType: "user",
+			ResourceID:   &userID,
+			Metadata:     map[string]any{"recovery_codes_minted": len(met.recoveryCodes), "via": "sign_in"},
+		}); err != nil {
+			return metChallenge{}, err
+		}
 	}
-	var claims map[string]any
-	if len(rawClaims) > 0 {
-		_ = json.Unmarshal(rawClaims, &claims)
+	// The sign-in met its second factor: recorded for both sign-in flows, so
+	// the trail says which first factor it followed.
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantID,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       "auth.mfa_verified",
+		ResourceType: "user",
+		ResourceID:   &userID,
+		Metadata:     map[string]any{"first_factor": firstFactor, "proof": proof.kind(enrollment)},
+	}); err != nil {
+		return metChallenge{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
-	return userID, tid, claims, nil
+	return met, nil
+}
+
+// deferEnrollment consumes an enrolment challenge skipped while the grace
+// period runs, and audits it. Refused (ErrMFAEnrollmentRequired) once the
+// account must set up a factor now; refusing costs no attempt.
+func (s *Service) deferEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, met metChallenge) (metChallenge, error) {
+	graceUntil, err := s.mayDeferEnrollment(ctx, met.userID, met.tenantID)
+	if err != nil {
+		return metChallenge{}, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
+		return metChallenge{}, err
+	}
+	var tenantPtr *uuid.UUID
+	if met.tenantID != uuid.Nil {
+		tenantPtr = &met.tenantID
+	}
+	meta := map[string]any{"first_factor": met.firstFactor}
+	if graceUntil != nil {
+		meta["grace_until"] = graceUntil
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantPtr,
+		ActorUserID:  &met.userID,
+		ActorType:    "user",
+		Action:       "auth.mfa_enrollment_deferred",
+		ResourceType: "user",
+		ResourceID:   &met.userID,
+		Metadata:     meta,
+	}); err != nil {
+		return metChallenge{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return metChallenge{}, err
+	}
+	met.deferred = true
+	return met, nil
 }
 
 const (
@@ -831,11 +1054,38 @@ func reserveLoginMFAAttempt(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (i
 // CompleteMFALogin verifies the second-factor code for a pending token-flow
 // login and, on success, issues the token pair.
 func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua string) (*TokenPair, error) {
-	userID, tid, claims, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	pair, _, err := s.CompleteMFALoginWith(ctx, mfaToken, MFAProof{Code: code}, ip, ua)
+	return pair, err
+}
+
+// CompleteMFALoginWith is CompleteMFALogin met by any proof: a code, a
+// passkey assertion, an approved push, or — for an enrolment challenge — the
+// code confirming the authenticator app set up for it (whose new recovery
+// codes it also returns) or a skip in the grace period.
+func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (*TokenPair, []string, error) {
+	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.IssuePairWithClaims(ctx, userID, tid, ip, ua, "password_mfa", claims)
+	pair, err := s.IssuePairWithClaims(ctx, met.userID, met.tenantID, ip, ua, met.method(), met.claims)
+	if err != nil {
+		return nil, nil, err
+	}
+	return pair, met.recoveryCodes, nil
+}
+
+// MFALoginSession is a hosted-login challenge met: the SSO session cookie
+// value to write via SetLoginSessionCookie, and the recovery codes minted
+// when the challenge was met by setting up an authenticator app.
+type MFALoginSession struct {
+	UserID uuid.UUID
+	// TenantID is uuid.Nil when tenant-less.
+	TenantID      uuid.UUID
+	RawCookie     string
+	RecoveryCodes []string
+	// Deferred: an enrolment challenge skipped in the grace period. No
+	// factor was met, so the device must not be remembered.
+	Deferred bool
 }
 
 // CompleteMFALoginSession verifies the second-factor code for a pending
@@ -844,17 +1094,28 @@ func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua s
 // tenant (uuid.Nil when tenant-less), and the raw cookie value to write via
 // SetLoginSessionCookie.
 func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, uuid.UUID, string, error) {
+	res, err := s.CompleteMFALoginSessionWith(ctx, mfaToken, MFAProof{Code: code}, ip, ua)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, "", err
+	}
+	return res.UserID, res.TenantID, res.RawCookie, nil
+}
+
+// CompleteMFALoginSessionWith is CompleteMFALoginSession met by any proof
+// (see CompleteMFALoginWith).
+func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (*MFALoginSession, error) {
 	// Any hook claims stashed on the challenge are discarded here — see the
 	// note in BeginLoginSession on why this cookie flow doesn't carry them.
-	userID, tid, _, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, "", err
+		return nil, err
 	}
-	raw, err := s.CreateLoginSession(ctx, userID, ip, ua)
+	raw, err := s.CreateLoginSession(ctx, met.userID, ip, ua)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, "", err
+		return nil, err
 	}
-	return userID, tid, raw, nil
+	return &MFALoginSession{UserID: met.userID, TenantID: met.tenantID, RawCookie: raw,
+		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred}, nil
 }
 
 // CheckPassword runs the full credential check — sign-in lockout (see

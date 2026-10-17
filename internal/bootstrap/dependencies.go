@@ -402,6 +402,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	passkeyService := passkey.NewService(pool, wa, authService)
 	passkeyService.SetMethodPolicy(authPolicyService) // offer and accept new passkeys only where the tenant allows them
 	passkeyService.SetInvitations(inviteService)      // accept an invitation with a passkey
+	mfaService.SetWebAuthn(passkeyService)            // a passkey can meet a sign-in's second-factor challenge
 	socialService := social.NewService(pool, authService, cfg.AppBaseURL, outboundPolicy)
 	socialService.SetCipher(sharedCipher)
 	// Allowlist for the hosted flow's return_to. The callback sets the SSO

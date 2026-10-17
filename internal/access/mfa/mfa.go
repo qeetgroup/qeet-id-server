@@ -40,6 +40,9 @@ type Service struct {
 	sender  notifier.Sender
 	pushURL string // Expo push API endpoint
 	box     *envelope.Cipher
+	// webauthn asserts passkeys as a sign-in second factor (nil = not
+	// offered). Set via SetWebAuthn; see login.go.
+	webauthn WebAuthnVerifier
 }
 
 func NewService(pool *pgxpool.Pool, issuer string, sender notifier.Sender, pushURL string) *Service {
@@ -114,30 +117,42 @@ func (s *Service) StartEnroll(ctx context.Context, tx pgx.Tx, userID uuid.UUID, 
 }
 
 func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt, code string) ([]string, error) {
-	userID := attempt.userID
-	qtx := s.q.WithTx(tx)
-	secret, _, err := s.loadTOTP(ctx, tx, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrMFAEnrollNotStarted
-	}
+	codes, ok, err := s.confirmTOTP(ctx, tx, attempt.userID, code)
 	if err != nil {
 		return nil, err
 	}
-	step, ok := totp.VerifyStep(secret, code)
 	if !ok {
 		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, attempt.remaining)
+	}
+	return codes, nil
+}
+
+// confirmTOTP confirms the authenticator app being set up with a code from
+// it and mints fresh recovery codes. (nil, false, nil) is a wrong code.
+func (s *Service) confirmTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, bool, error) {
+	qtx := s.q.WithTx(tx)
+	secret, _, err := s.loadTOTP(ctx, tx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, errs.ErrMFAEnrollNotStarted
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	step, ok := totp.VerifyStep(secret, code)
+	if !ok {
+		return nil, false, nil
 	}
 	// Burn the step here too, so the code that completed enrollment cannot be
 	// immediately replayed against the login/step-up path below.
 	fresh, err := consumeTOTPStep(ctx, tx, userID, step)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !fresh {
-		return nil, attemptError(errs.ErrMFATOTPCodeInvalid, attempt.remaining)
+		return nil, false, nil
 	}
 	if err := qtx.ConfirmMFATOTP(ctx, userID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// Completing enrollment is itself a successful factor verification (the user
 	// just proved possession of the authenticator), so it refreshes the step-up
@@ -145,13 +160,14 @@ func (s *Service) ConfirmEnroll(ctx context.Context, tx pgx.Tx, attempt Attempt,
 	// codes, disable TOTP), which is RequireRecentMFA-gated, would 403 with no
 	// way to satisfy it (QID-17).
 	if err := s.RecordVerification(ctx, tx, userID, "totp"); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := clearMFAAttempt(ctx, tx, userID, PurposeTOTPEnroll); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// Wipe old recovery codes, mint a fresh batch.
-	return s.mintRecoveryCodes(ctx, tx, userID)
+	codes, err := s.mintRecoveryCodes(ctx, tx, userID)
+	return codes, err == nil, err
 }
 
 func (s *Service) loadTOTP(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (string, pgtype.Timestamptz, error) {
@@ -383,7 +399,8 @@ func (s *Service) IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error
 	return ts.Valid, nil
 }
 
-// VerifyForLogin verifies a TOTP or recovery code as the second step of login
+// VerifyForLoginTx verifies an authenticator-app, recovery or email/SMS code as
+// the second step of login
 // and records the verification (so a step-up window is open immediately after
 // sign-in). Returns (false, nil) when the code is simply wrong/expired; a
 // non-nil error indicates an infrastructure failure.
@@ -391,11 +408,16 @@ func (s *Service) VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.U
 	res, err := s.verifyCode(ctx, tx, userID, code)
 	if err != nil {
 		// A domain error (wrong/expired code, not-configured) means "not
-		// verified" — surface it as a clean negative, not a 500.
-		if errs.As(err) != nil {
-			return false, nil
+		// verified" by the authenticator app or a recovery code — the code
+		// may still be one sent to an email or SMS factor.
+		if errs.As(err) == nil {
+			return false, err
 		}
-		return false, err
+		ok, oerr := s.verifyLoginOTP(ctx, tx, userID, code)
+		if oerr != nil || !ok {
+			return false, oerr
+		}
+		return true, s.RecordVerification(ctx, tx, userID, "otp")
 	}
 	method := "totp"
 	if res.UsedRecoveryCode {

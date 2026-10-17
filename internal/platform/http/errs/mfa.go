@@ -16,12 +16,14 @@ const (
 	CodeMFANotEnrolled         = "mfa.not_enrolled"
 	CodeMFAFactorNotConfirmed  = "mfa.factor_not_confirmed"
 	CodeMFAAttemptsExceeded    = "mfa.attempts_exceeded"
+	CodeMFAEnrollmentRequired  = "mfa.enrollment_required"
 
 	// Push MFA
 	CodeMFAPushDeviceNotFound   = "mfa.push_device_not_found"
 	CodeMFAPushChallengeExpired = "mfa.push_challenge_expired"
 	CodeMFAPushChallengeInvalid = "mfa.push_challenge_invalid"
 	CodeMFAPushUnauthorized     = "mfa.push_unauthorized"
+	CodeMFAPushPending          = "mfa.push_pending"
 )
 
 // MFA errors. The Message is what the end user sees — edit wording here, in one
@@ -39,10 +41,16 @@ var (
 	ErrMFANotEnrolled         = New(CodeMFANotEnrolled, "Set up multi-factor authentication first.")
 	ErrMFAFactorNotConfirmed  = New(CodeMFAFactorNotConfirmed, "Confirm this factor before requesting a code.")
 	ErrMFAAttemptsExceeded    = New(CodeMFAAttemptsExceeded, "Too many verification attempts. Start again or wait before retrying.").AsRetryable()
+	// ErrMFAEnrollmentRequired: the account must set up a second factor
+	// before it can sign in — its organisation's grace period has ended.
+	ErrMFAEnrollmentRequired = New(CodeMFAEnrollmentRequired, "Your organisation requires two-step verification. Set up an authenticator app to continue.")
 
 	// Push MFA
 	ErrMFAPushDeviceNotFound   = New(CodeMFAPushDeviceNotFound, "Push device not found.")
 	ErrMFAPushChallengeExpired = New(CodeMFAPushChallengeExpired, "This push challenge has expired. Try signing in again.")
 	ErrMFAPushChallengeInvalid = New(CodeMFAPushChallengeInvalid, "This push challenge is no longer pending.")
 	ErrMFAPushUnauthorized     = New(CodeMFAPushUnauthorized, "Invalid device token.")
+	// ErrMFAPushPending: the sign-in's push request has not been answered
+	// yet. Ask again shortly; it does not count as a failed attempt.
+	ErrMFAPushPending = New(CodeMFAPushPending, "Approve the sign-in on your phone to continue.").AsRetryable()
 )

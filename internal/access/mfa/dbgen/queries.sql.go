@@ -14,9 +14,12 @@ import (
 )
 
 const confirmMFATOTP = `-- name: ConfirmMFATOTP :exec
+
 UPDATE auth.mfa_totp SET confirmed_at = NOW() WHERE user_id = $1
 `
 
+// Queries for the access/mfa domain.
+// All static queries are compiled by sqlc into ./dbgen.
 func (q *Queries) ConfirmMFATOTP(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, confirmMFATOTP, userID)
 	return err
@@ -60,6 +63,23 @@ type DeleteOTPFactorParams struct {
 
 func (q *Queries) DeleteOTPFactor(ctx context.Context, arg DeleteOTPFactorParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteOTPFactor, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deletePushDevice = `-- name: DeletePushDevice :execrows
+DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2
+`
+
+type DeletePushDeviceParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+func (q *Queries) DeletePushDevice(ctx context.Context, arg DeletePushDeviceParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePushDevice, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -137,7 +157,6 @@ func (q *Queries) GetOTPCodeForConfirm(ctx context.Context, arg GetOTPCodeForCon
 }
 
 const getOTPCodeForVerify = `-- name: GetOTPCodeForVerify :one
-
 SELECT c.id
 FROM auth.mfa_otp_codes c
 JOIN auth.mfa_otp_factors f ON f.id = c.factor_id
@@ -152,7 +171,6 @@ type GetOTPCodeForVerifyParams struct {
 	CodeHash string
 }
 
-// GetOTPCodeForVerify finds a pending OTP code for any verified factor of the user.
 func (q *Queries) GetOTPCodeForVerify(ctx context.Context, arg GetOTPCodeForVerifyParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, getOTPCodeForVerify, arg.UserID, arg.CodeHash)
 	var id uuid.UUID
@@ -180,6 +198,61 @@ func (q *Queries) GetOTPFactorForChallenge(ctx context.Context, arg GetOTPFactor
 	row := q.db.QueryRow(ctx, getOTPFactorForChallenge, arg.ID, arg.UserID)
 	var i GetOTPFactorForChallengeRow
 	err := row.Scan(&i.Channel, &i.Destination, &i.VerifiedAt)
+	return i, err
+}
+
+const getPushChallenge = `-- name: GetPushChallenge :one
+SELECT id, user_id, action, context, status, expires_at, created_at
+FROM auth.mfa_push_challenges WHERE id = $1
+`
+
+type GetPushChallengeRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Action    string
+	Context   []byte
+	Status    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+func (q *Queries) GetPushChallenge(ctx context.Context, id uuid.UUID) (GetPushChallengeRow, error) {
+	row := q.db.QueryRow(ctx, getPushChallenge, id)
+	var i GetPushChallengeRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Action,
+		&i.Context,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPushChallengeForUpdate = `-- name: GetPushChallengeForUpdate :one
+SELECT id, user_id, status, expires_at
+FROM auth.mfa_push_challenges WHERE id = $1
+FOR UPDATE
+`
+
+type GetPushChallengeForUpdateRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Status    string
+	ExpiresAt time.Time
+}
+
+func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (GetPushChallengeForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getPushChallengeForUpdate, id)
+	var i GetPushChallengeForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Status,
+		&i.ExpiresAt,
+	)
 	return i, err
 }
 
@@ -213,6 +286,43 @@ func (q *Queries) InsertMFARecoveryCode(ctx context.Context, arg InsertMFARecove
 	return err
 }
 
+const insertPushChallenge = `-- name: InsertPushChallenge :one
+INSERT INTO auth.mfa_push_challenges (user_id, action, context)
+VALUES ($1, $2, $3)
+RETURNING id, user_id, action, context, status, expires_at, created_at
+`
+
+type InsertPushChallengeParams struct {
+	UserID  uuid.UUID
+	Action  string
+	Context []byte
+}
+
+type InsertPushChallengeRow struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Action    string
+	Context   []byte
+	Status    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallengeParams) (InsertPushChallengeRow, error) {
+	row := q.db.QueryRow(ctx, insertPushChallenge, arg.UserID, arg.Action, arg.Context)
+	var i InsertPushChallengeRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Action,
+		&i.Context,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listOTPFactors = `-- name: ListOTPFactors :many
 SELECT id, user_id, channel, destination, verified_at, created_at
 FROM auth.mfa_otp_factors WHERE user_id = $1 ORDER BY created_at
@@ -234,6 +344,51 @@ func (q *Queries) ListOTPFactors(ctx context.Context, userID uuid.UUID) ([]AuthM
 			&i.Destination,
 			&i.VerifiedAt,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPushDevices = `-- name: ListPushDevices :many
+
+
+SELECT id, user_id, name, platform, created_at, last_seen_at
+FROM auth.mfa_push_devices WHERE user_id = $1 ORDER BY created_at
+`
+
+type ListPushDevicesRow struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	Name       string
+	Platform   string
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+}
+
+// GetOTPCodeForVerify finds a pending OTP code for any verified factor of the user.
+// ── Push MFA ──────────────────────────────────────────────────────────────────
+func (q *Queries) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]ListPushDevicesRow, error) {
+	rows, err := q.db.Query(ctx, listPushDevices, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPushDevicesRow{}
+	for rows.Next() {
+		var i ListPushDevicesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.Platform,
+			&i.CreatedAt,
+			&i.LastSeenAt,
 		); err != nil {
 			return nil, err
 		}
@@ -276,6 +431,40 @@ func (q *Queries) ListUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID)
 	return items, nil
 }
 
+const loginFactorCounts = `-- name: LoginFactorCounts :one
+SELECT
+    EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL) AS totp,
+    (SELECT count(*) FROM auth.mfa_recovery_codes r WHERE r.user_id = $1 AND r.used_at IS NULL)::int AS recovery_codes,
+    CASE WHEN COALESCE((SELECT ap.passkey_enabled FROM "user".users u
+                        JOIN tenant.auth_policy ap ON ap.tenant_id = u.tenant_id
+                        WHERE u.id = $1), TRUE)
+         THEN (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = $1)
+         ELSE 0 END::int AS passkeys,
+    (SELECT count(*) FROM auth.mfa_push_devices d WHERE d.user_id = $1)::int AS push_devices
+`
+
+type LoginFactorCountsRow struct {
+	Totp          bool
+	RecoveryCodes int32
+	Passkeys      int32
+	PushDevices   int32
+}
+
+// LoginFactorCounts says which second factors the user can meet a sign-in
+// challenge with: a confirmed authenticator app, unused recovery codes,
+// passkeys (while the user's organisation allows passkeys) and push devices.
+func (q *Queries) LoginFactorCounts(ctx context.Context, userID uuid.UUID) (LoginFactorCountsRow, error) {
+	row := q.db.QueryRow(ctx, loginFactorCounts, userID)
+	var i LoginFactorCountsRow
+	err := row.Scan(
+		&i.Totp,
+		&i.RecoveryCodes,
+		&i.Passkeys,
+		&i.PushDevices,
+	)
+	return i, err
+}
+
 const markOTPCodeUsed = `-- name: MarkOTPCodeUsed :exec
 UPDATE auth.mfa_otp_codes SET used_at = NOW() WHERE id = $1 AND used_at IS NULL
 `
@@ -303,6 +492,47 @@ func (q *Queries) MarkRecoveryCodeUsed(ctx context.Context, id uuid.UUID) error 
 	return err
 }
 
+const pushChallengeForLogin = `-- name: PushChallengeForLogin :one
+SELECT status, expires_at FROM auth.mfa_push_challenges
+WHERE id = $1 AND user_id = $2
+FOR UPDATE
+`
+
+type PushChallengeForLoginParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+type PushChallengeForLoginRow struct {
+	Status    string
+	ExpiresAt time.Time
+}
+
+// PushChallengeForLogin reads a push challenge of the user's for a sign-in,
+// locked, to see whether it has been approved.
+func (q *Queries) PushChallengeForLogin(ctx context.Context, arg PushChallengeForLoginParams) (PushChallengeForLoginRow, error) {
+	row := q.db.QueryRow(ctx, pushChallengeForLogin, arg.ID, arg.UserID)
+	var i PushChallengeForLoginRow
+	err := row.Scan(&i.Status, &i.ExpiresAt)
+	return i, err
+}
+
+const updatePushChallengeStatus = `-- name: UpdatePushChallengeStatus :exec
+UPDATE auth.mfa_push_challenges
+SET status = $2, responded_at = NOW()
+WHERE id = $1
+`
+
+type UpdatePushChallengeStatusParams struct {
+	ID     uuid.UUID
+	Status string
+}
+
+func (q *Queries) UpdatePushChallengeStatus(ctx context.Context, arg UpdatePushChallengeStatusParams) error {
+	_, err := q.db.Exec(ctx, updatePushChallengeStatus, arg.ID, arg.Status)
+	return err
+}
+
 const upsertMFAOTPFactor = `-- name: UpsertMFAOTPFactor :one
 INSERT INTO auth.mfa_otp_factors (user_id, channel, destination)
 VALUES ($1, $2, $3)
@@ -321,112 +551,6 @@ func (q *Queries) UpsertMFAOTPFactor(ctx context.Context, arg UpsertMFAOTPFactor
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const listPushDevices = `-- name: ListPushDevices :many
-SELECT id, user_id, name, platform, created_at, last_seen_at
-FROM auth.mfa_push_devices WHERE user_id = $1 ORDER BY created_at
-`
-
-func (q *Queries) ListPushDevices(ctx context.Context, userID uuid.UUID) ([]AuthMfaPushDevice, error) {
-	rows, err := q.db.Query(ctx, listPushDevices, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AuthMfaPushDevice{}
-	for rows.Next() {
-		var i AuthMfaPushDevice
-		if err := rows.Scan(&i.ID, &i.UserID, &i.Name, &i.Platform, &i.CreatedAt, &i.LastSeenAt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
-}
-
-const deletePushDevice = `-- name: DeletePushDevice :execrows
-DELETE FROM auth.mfa_push_devices WHERE id = $1 AND user_id = $2
-`
-
-type DeletePushDeviceParams struct {
-	ID     uuid.UUID
-	UserID uuid.UUID
-}
-
-func (q *Queries) DeletePushDevice(ctx context.Context, arg DeletePushDeviceParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deletePushDevice, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const insertPushChallenge = `-- name: InsertPushChallenge :one
-INSERT INTO auth.mfa_push_challenges (user_id, action, context)
-VALUES ($1, $2, $3)
-RETURNING id, user_id, action, context, status, expires_at, created_at
-`
-
-type InsertPushChallengeParams struct {
-	UserID  uuid.UUID
-	Action  string
-	Context []byte
-}
-
-func (q *Queries) InsertPushChallenge(ctx context.Context, arg InsertPushChallengeParams) (AuthMfaPushChallenge, error) {
-	row := q.db.QueryRow(ctx, insertPushChallenge, arg.UserID, arg.Action, arg.Context)
-	var i AuthMfaPushChallenge
-	err := row.Scan(&i.ID, &i.UserID, &i.Action, &i.Context, &i.Status, &i.ExpiresAt, &i.CreatedAt)
-	return i, err
-}
-
-const getPushChallenge = `-- name: GetPushChallenge :one
-SELECT id, user_id, action, context, status, expires_at, created_at
-FROM auth.mfa_push_challenges WHERE id = $1
-`
-
-func (q *Queries) GetPushChallenge(ctx context.Context, id uuid.UUID) (AuthMfaPushChallenge, error) {
-	row := q.db.QueryRow(ctx, getPushChallenge, id)
-	var i AuthMfaPushChallenge
-	err := row.Scan(&i.ID, &i.UserID, &i.Action, &i.Context, &i.Status, &i.ExpiresAt, &i.CreatedAt)
-	return i, err
-}
-
-const getPushChallengeForUpdate = `-- name: GetPushChallengeForUpdate :one
-SELECT id, user_id, status, expires_at
-FROM auth.mfa_push_challenges WHERE id = $1
-FOR UPDATE
-`
-
-type GetPushChallengeForUpdateRow struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Status    string
-	ExpiresAt time.Time
-}
-
-func (q *Queries) GetPushChallengeForUpdate(ctx context.Context, id uuid.UUID) (GetPushChallengeForUpdateRow, error) {
-	row := q.db.QueryRow(ctx, getPushChallengeForUpdate, id)
-	var i GetPushChallengeForUpdateRow
-	err := row.Scan(&i.ID, &i.UserID, &i.Status, &i.ExpiresAt)
-	return i, err
-}
-
-const updatePushChallengeStatus = `-- name: UpdatePushChallengeStatus :exec
-UPDATE auth.mfa_push_challenges
-SET status = $2, responded_at = NOW()
-WHERE id = $1
-`
-
-type UpdatePushChallengeStatusParams struct {
-	ID     uuid.UUID
-	Status string
-}
-
-func (q *Queries) UpdatePushChallengeStatus(ctx context.Context, arg UpdatePushChallengeStatusParams) error {
-	_, err := q.db.Exec(ctx, updatePushChallengeStatus, arg.ID, arg.Status)
-	return err
 }
 
 const upsertMFAVerification = `-- name: UpsertMFAVerification :exec

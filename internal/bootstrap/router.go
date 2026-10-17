@@ -450,6 +450,8 @@ func csrfExemptPaths() []string {
 		"/v1/oauth/token-code", "/v1/oauth/device_authorization",
 		"/v1/oauth/bc-authorize", // exact: .../decision below it is authenticated
 		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
+		"/v1/auth/mfa",  // completes a token-flow sign-in: the mfa_token, not a cookie, is the credential
+		"/v1/auth/mfa/", // its helpers (send a code, begin a passkey, send a push) — likewise
 		"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
 		"/v1/passkeys/login/",
 		"/v1/social/exchange",         // one-time code exchange, no cookie session

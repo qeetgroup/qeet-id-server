@@ -15,10 +15,12 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// tokenIssuer is the slice of auth.Service this handler needs (mockable).
+// tokenIssuer is the slice of auth.Service this handler needs (mockable): a
+// consumed magic link signs in through the same second-factor decision as a
+// password (see auth's magiclink.go).
 type tokenIssuer interface {
-	IssuePair(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, method string) (*auth.TokenPair, error)
-	CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error)
+	BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*auth.LoginResult, error)
+	BeginMagicLinkSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error)
 }
 
 type Handler struct {
@@ -174,20 +176,27 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	pair, err := h.AuthService.IssuePair(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(), "magic_link")
+	signIn, err := h.AuthService.BeginMagicLinkSignIn(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if pair == nil {
+	if signIn.MFARequired {
+		// The link is spent; the sign-in completes at POST /v1/auth/mfa.
+		httpx.WriteJSON(w, http.StatusOK, signIn.Body())
+		return
+	}
+	if signIn.Pair == nil {
 		httpx.WriteError(w, r, errs.ErrInternalServer)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	httpx.WriteJSON(w, http.StatusOK, signIn.Pair)
 }
 
 // magicSession exchanges a hosted-login magic link for the hosted-login
-// session cookie and says where the sign-in journey continues.
+// session cookie and says where the sign-in journey continues — or, when a
+// second factor is required, for a challenge (completed at POST
+// /v1/auth/session/mfa) and where to continue after it.
 func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 	var in magicConsumeInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -200,12 +209,23 @@ func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	raw, err := h.AuthService.CreateLoginSession(r.Context(), res.UserID, httpx.ClientIP(r), r.UserAgent())
+	trusted := ""
+	if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
+		trusted = c.Value
+	}
+	session, err := h.AuthService.BeginMagicLinkSession(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(),
+		trusted, httpx.GeoCountry(r.Context()))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	if session.MFARequired {
+		body := session.Body()
+		body["return_to"] = res.ReturnTo
+		httpx.WriteJSON(w, http.StatusOK, body)
+		return
+	}
+	auth.SetLoginSessionCookie(w, session.RawCookie, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": res.UserID, "return_to": res.ReturnTo})
 }
 
