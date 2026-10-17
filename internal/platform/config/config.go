@@ -318,6 +318,9 @@ type Config struct {
 	// ExpoPushURL is the Expo push notification API endpoint. Defaults to the
 	// public Expo push service. Override for self-hosted / proxied deployments.
 	ExpoPushURL string `envconfig:"EXPO_PUSH_URL" default:"https://exp.host/--/api/v2/push/send"`
+	// ExpoAccessToken is sent with every push when set; Expo requires it once
+	// enhanced push security is turned on for the mobile app's project.
+	ExpoAccessToken string `envconfig:"EXPO_ACCESS_TOKEN" default:""`
 
 	// AI Qeetai (enterprise feature). Empty QeetaiProvider disables the
 	// feature: /status returns configured=false, conversation CRUD still works,

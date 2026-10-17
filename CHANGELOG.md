@@ -272,6 +272,16 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **mfa:** a sign-in's push approval request is delivered with care and its failures are seen (QTID-78). The
+  request was handed to Expo's push service with no timeout and the answer thrown away, so a refused push, an
+  uninstalled app or a push service outage left the sign-in waiting two minutes for nothing, with nothing logged.
+  Now each push is high priority (it wakes an idle Android phone), lives as long as the request can be answered
+  (two minutes), uses the app's `push-mfa` channel and is bounded to ten seconds; the service's answer is read
+  and every refusal is logged with a token reference, never the token. A phone the service reports as no longer
+  having the app (`DeviceNotRegistered`) is retired — its credential expires, so it is neither sent requests nor
+  offered — until it is linked again. When the request reaches none of the person's phones, `POST
+  /v1/auth/mfa/push` answers `502 mfa.push_delivery_failed` and the request is closed. New optional
+  `EXPO_ACCESS_TOKEN`, sent with every push, for Expo projects with enhanced push security.
 * **mfa:** a linked phone can be removed for real, its credential ages out, and its answers reach the server.
   Unlinking in the mobile app cleared only the app's storage: the server's revoke needed a signed-in session the
   app never holds, and the device credential never expired, so an "unlinked" or lost phone could still approve

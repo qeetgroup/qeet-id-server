@@ -314,7 +314,10 @@ paths:
       description: >-
         Sends a sign-in approval request to the challenged person's push devices; only its
         approval completes the challenge, and only once. Complete with push: true. Used by both
-        sign-in flows.
+        sign-in flows. Each phone is sent a high-priority push that lives as long as the request can
+        be answered (two minutes); a phone the push service reports as no longer having the app is
+        retired. When the request reaches none of the person's phones it is closed and the call
+        answers 502 mfa.push_delivery_failed, so the person can use another way to verify.
       tags:
         - Auth
       security: []
@@ -346,6 +349,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '502':
+          description: The request reached none of the person's phones (mfa.push_delivery_failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/auth/mfa/enroll:
     post:
       operationId: post_v1_auth_mfa_enroll
