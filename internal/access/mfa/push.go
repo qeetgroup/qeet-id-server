@@ -62,6 +62,23 @@ const pushDeviceTTL = 180 * 24 * time.Hour
 // plus a one-time device_token the app must persist for future challenge-respond
 // calls. On re-registration of the same push_token the device_token is rotated.
 func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name, pushToken, platform string) (PushDevice, string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PushDevice{}, "", err
+	}
+	defer tx.Rollback(ctx)
+	d, tok, err := s.registerPushDeviceTx(ctx, tx, userID, name, pushToken, platform)
+	if err != nil {
+		return PushDevice{}, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return PushDevice{}, "", err
+	}
+	return d, tok, nil
+}
+
+// registerPushDeviceTx is RegisterPushDevice inside the caller's transaction.
+func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, name, pushToken, platform string) (PushDevice, string, error) {
 	tok, err := randomHex(32)
 	if err != nil {
 		return PushDevice{}, "", err
@@ -69,11 +86,6 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 	if s.box == nil {
 		return PushDevice{}, "", errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return PushDevice{}, "", err
-	}
-	defer tx.Rollback(ctx)
 	if _, err := s.loadPushTokens(ctx, tx, userID); err != nil {
 		return PushDevice{}, "", err
 	}
@@ -104,9 +116,6 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 		&row.ID, &row.UserID, &row.Name, &row.Platform, &row.CreatedAt, &row.LastSeenAt,
 	)
 	if err != nil {
-		return PushDevice{}, "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return PushDevice{}, "", err
 	}
 	d := PushDevice{
@@ -396,6 +405,12 @@ func (h *Handler) MountPublic(r chi.Router) {
 	// A linked phone removes itself with its own device credential: the app
 	// holds no signed-in session to call the authenticated route with.
 	r.Post("/mfa/push/devices/{id}/unlink", h.unlinkPushDevice)
+	// The mobile app links the phone with a pairing code, holding no session.
+	if h.PairingThrottle != nil {
+		r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
+	} else {
+		r.Post("/mfa/push/pairing/claim", h.claimPushPairing)
+	}
 }
 
 // MountAdmin mounts an administrator's view of a member's linked phones, in

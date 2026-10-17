@@ -535,6 +535,7 @@ func (s *Service) ResetForUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID)
 		{"otp_factors", `DELETE FROM auth.mfa_otp_factors WHERE user_id = $1`},
 		{"push_devices", `DELETE FROM auth.mfa_push_devices WHERE user_id = $1`},
 		{"push_challenges", `DELETE FROM auth.mfa_push_challenges WHERE user_id = $1 AND status = 'pending'`},
+		{"push_pairings", `DELETE FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW()`},
 		{"trusted_devices", `DELETE FROM auth.trusted_devices WHERE user_id = $1`},
 		{"step_ups", `DELETE FROM auth.mfa_verifications WHERE user_id = $1`},
 	} {
@@ -1195,6 +1196,9 @@ type Handler struct {
 	// WebAuthn, when set, exposes the user's registered passkeys as a second
 	// factor (POST /mfa/webauthn/{challenge,verify}). Nil = feature disabled.
 	WebAuthn WebAuthnVerifier
+	// PairingThrottle, when set, wraps the public route a phone links with a
+	// pairing code, which guesses at a code when the code is wrong.
+	PairingThrottle func(http.Handler) http.Handler
 }
 
 // PlanGate reports whether a plan-gated boolean feature is included in the
@@ -1224,6 +1228,10 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/mfa/push/devices", h.listPushDevices)
 	r.Post("/mfa/push/devices", h.registerPushDevice)
 	r.Delete("/mfa/push/devices/{id}", h.revokePushDevice)
+	// A pairing code links a phone without copying an access token.
+	r.Post("/mfa/push/pairing", h.createPushPairing)
+	r.Get("/mfa/push/pairing/{id}", h.getPushPairing)
+	r.Delete("/mfa/push/pairing/{id}", h.withdrawPushPairing)
 
 	// Step-up status — lets a client decide whether to prompt before a
 	// sensitive action.
