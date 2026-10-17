@@ -223,6 +223,17 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Features
 
+* **mfa:** a phone is linked to an account with a one-time pairing code instead of a copied access token
+  (QTID-369). `POST /v1/mfa/push/pairing` gives the signed-in person a code (`ABCDE-FGHJK`, Crockford base32,
+  50 bits) after a step-up when they already hold a second factor; it links one phone, once, within five minutes,
+  and a new one stops the person's earlier unused codes working. At most ten an hour (429 with `retry_after`).
+  The mobile app, holding no session, exchanges it at the public `POST /v1/mfa/push/pairing/claim` for the
+  account's `user_id`, its device and device credential, as registering a device returns them. A wrong, used,
+  replaced, withdrawn or expired code, or one whose account is no longer active, answers `401
+  mfa.pairing_code_invalid`, all alike, and the claim is throttled per address. `GET
+  /v1/mfa/push/pairing/{id}` tells the screen showing a code when it has linked a phone, and `DELETE` withdraws
+  an unused one. Audited as `mfa.push_pairing_created` and `mfa.push_device_linked`; an administrator's MFA
+  reset withdraws live codes, and the `mfa-cleanup` job deletes expired ones after a day. Migration `0134`.
 * **auth:** an organisation can cap how many live sessions one person holds in it at once — new
   `max_sessions` (none by default) and `session_limit_action` on its security policy. A sign-in at the cap
   either ends the person's least recently used session (`evict_oldest`, the default: audited as

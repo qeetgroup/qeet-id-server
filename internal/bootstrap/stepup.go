@@ -26,6 +26,7 @@ func stepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/mfa/otp/factors/{id}",
 		"POST /v1/mfa/push/devices",
 		"DELETE /v1/mfa/push/devices/{id}",
+		"POST /v1/mfa/push/pairing",
 		"POST /v1/passkeys/register/begin",
 		"DELETE /v1/passkeys/{id}",
 		"POST /v1/social/{provider}/link/start",
@@ -142,6 +143,7 @@ func stepUpRoutes() map[string]mfa.StepUpRule {
 func stepUpExempt() map[string]string {
 	return map[string]string{
 		"POST /v1/mfa/totp/enroll/confirm":                                                  "completes a setup its start already gated, with a code from the app",
+		"DELETE /v1/mfa/push/pairing/{id}":                                                  "withdraws an unused pairing code; asking for one is gated",
 		"POST /v1/mfa/totp/verify":                                                          "is how a session steps up",
 		"POST /v1/mfa/otp/verify":                                                           "is how a session steps up",
 		"POST /v1/mfa/otp/factors/{id}/confirm":                                             "completes a setup its start already gated, with a code sent to it",

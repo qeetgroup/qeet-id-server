@@ -111,7 +111,12 @@ func main() {
 				if err != nil {
 					return err
 				}
-				slog.Info("expired MFA codes and push requests cleaned", "codes", codes, "push_requests", push)
+				pairings, err := mfa.PurgeExpiredPushPairings(ctx, pool, mfa.OTPCodeRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("expired MFA codes and push requests cleaned", "codes", codes, "push_requests", push,
+					"pairing_codes", pairings)
 				return nil
 			},
 		},
