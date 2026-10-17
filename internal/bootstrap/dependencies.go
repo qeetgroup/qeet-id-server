@@ -262,6 +262,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	principalService := principal.NewService(pool, issuer)
 	mfaService := mfa.NewService(pool, cfg.JWTIssuer, sender, cfg.ExpoPushURL)
 	mfaService.SetCipher(sharedCipher)
+	mfaService.SetExpoAccessToken(cfg.ExpoAccessToken)
 	authService.SetMFA(mfaService)                       // gate password login on a second factor when enrolled
 	authService.SetRegistrationPolicy(authPolicyService) // gate hosted signup + the password check (signup, register, change)
 	authService.SetMethodPolicy(authPolicyService)       // password sign-in only where the tenant allows it

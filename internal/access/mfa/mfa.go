@@ -38,8 +38,10 @@ type Service struct {
 	q       *dbgen.Queries
 	issuer  string // "qeet-id" — shown in the authenticator app
 	sender  notifier.Sender
-	pushURL string // Expo push API endpoint
-	box     *envelope.Cipher
+	pushURL string // Expo push API endpoint ("" = push delivery off)
+	// pushAccessToken is sent to the push service when set (SetExpoAccessToken).
+	pushAccessToken string
+	box             *envelope.Cipher
 	// webauthn asserts passkeys as a sign-in second factor (nil = not
 	// offered). Set via SetWebAuthn; see login.go.
 	webauthn WebAuthnVerifier
