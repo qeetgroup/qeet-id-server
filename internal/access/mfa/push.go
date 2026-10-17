@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -62,6 +64,23 @@ const pushDeviceTTL = 180 * 24 * time.Hour
 // plus a one-time device_token the app must persist for future challenge-respond
 // calls. On re-registration of the same push_token the device_token is rotated.
 func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name, pushToken, platform string) (PushDevice, string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return PushDevice{}, "", err
+	}
+	defer tx.Rollback(ctx)
+	d, tok, err := s.registerPushDeviceTx(ctx, tx, userID, name, pushToken, platform)
+	if err != nil {
+		return PushDevice{}, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return PushDevice{}, "", err
+	}
+	return d, tok, nil
+}
+
+// registerPushDeviceTx is RegisterPushDevice inside the caller's transaction.
+func (s *Service) registerPushDeviceTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, name, pushToken, platform string) (PushDevice, string, error) {
 	tok, err := randomHex(32)
 	if err != nil {
 		return PushDevice{}, "", err
@@ -69,11 +88,6 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 	if s.box == nil {
 		return PushDevice{}, "", errs.ErrInternalServer.WithDetail("MFA secret encryption is unavailable")
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return PushDevice{}, "", err
-	}
-	defer tx.Rollback(ctx)
 	if _, err := s.loadPushTokens(ctx, tx, userID); err != nil {
 		return PushDevice{}, "", err
 	}
@@ -104,9 +118,6 @@ func (s *Service) RegisterPushDevice(ctx context.Context, userID uuid.UUID, name
 		&row.ID, &row.UserID, &row.Name, &row.Platform, &row.CreatedAt, &row.LastSeenAt,
 	)
 	if err != nil {
-		return PushDevice{}, "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return PushDevice{}, "", err
 	}
 	d := PushDevice{
@@ -175,8 +186,31 @@ func (s *Service) CreatePushChallenge(ctx context.Context, userID uuid.UUID, act
 	if err := tx.Commit(ctx); err != nil {
 		return uuid.Nil, err
 	}
+	if s.pushURL == "" {
+		return ch.ID, nil // push delivery not configured
+	}
+	delivered := 0
 	for _, tok := range tokens {
-		_ = s.sendExpoPush(ctx, tok, ch.ID, action)
+		err := s.sendExpoPush(ctx, tok, ch.ID, action)
+		switch {
+		case err == nil:
+			delivered++
+		case errors.Is(err, errPushDeviceGone):
+			// The app was removed from that phone: stop sending to it.
+			s.retirePushToken(ctx, userID, tok)
+			slog.Info("push device no longer registered; retired", "challenge_id", ch.ID, "device_ref", pushTokenRef(tok))
+		default:
+			slog.Warn("push delivery failed", "challenge_id", ch.ID, "device_ref", pushTokenRef(tok), "err", err)
+		}
+	}
+	if len(tokens) > 0 && delivered == 0 {
+		// Nothing can answer it: close it now rather than leave the sign-in
+		// waiting out its two minutes.
+		_, _ = s.pool.Exec(ctx, `
+			UPDATE auth.mfa_push_challenges SET status = 'expired', expires_at = LEAST(expires_at, NOW())
+			WHERE id = $1 AND status = 'pending'
+		`, ch.ID)
+		return uuid.Nil, errs.ErrMFAPushDeliveryFailed
 	}
 	return ch.ID, nil
 }
@@ -348,13 +382,54 @@ func secretHash(secret string) string {
 
 // ── Expo push helper ──────────────────────────────────────────────────────────
 
+// Approval requests reach a phone through Expo's push service, which hands
+// them to Apple's or Google's.
+const (
+	// pushSendTimeout bounds one call to the push service; a sign-in waits on it.
+	pushSendTimeout = 10 * time.Second
+	// pushRequestTTL is how long the push service keeps trying to deliver a
+	// request: as long as it can be answered (two minutes, migration 0086).
+	pushRequestTTL = 2 * time.Minute
+	// pushChannelID is the Android notification channel the mobile app sets
+	// up for approval requests, at the highest importance.
+	pushChannelID = "push-mfa"
+)
+
+// errPushDeviceGone: the push service says the app is no longer installed
+// on that phone (DeviceNotRegistered).
+var errPushDeviceGone = errors.New("push device not registered")
+
 type expoPushMessage struct {
 	To    string         `json:"to"`
 	Title string         `json:"title"`
 	Body  string         `json:"body"`
 	Data  map[string]any `json:"data"`
+	// High priority wakes an idle Android phone; normal can wait for it.
+	Priority  string `json:"priority"`
+	TTL       int    `json:"ttl"`
+	ChannelID string `json:"channelId"`
 }
 
+// expoPushTicket is the push service's answer for one message: "ok", or
+// "error" with a machine-readable reason in details.error.
+type expoPushTicket struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Details struct {
+		Error string `json:"error"`
+	} `json:"details"`
+}
+
+// SetExpoAccessToken sets the Expo access token sent with every push, which
+// Expo requires once enhanced push security is turned on for the project.
+func (s *Service) SetExpoAccessToken(token string) { s.pushAccessToken = token }
+
+// pushTokenRef names a push token in logs without revealing it.
+func pushTokenRef(pushToken string) string { return secretHash(pushToken)[:12] }
+
+// sendExpoPush sends one approval request to one phone and reads the push
+// service's answer: a refused message is an error (errPushDeviceGone when the
+// app is gone from the phone), not a silent success.
 func (s *Service) sendExpoPush(ctx context.Context, pushToken string, challengeID uuid.UUID, action string) error {
 	msg := expoPushMessage{
 		To:    pushToken,
@@ -364,25 +439,67 @@ func (s *Service) sendExpoPush(ctx context.Context, pushToken string, challengeI
 			"challenge_id": challengeID.String(),
 			"action":       action,
 		},
+		Priority:  "high",
+		TTL:       int(pushRequestTTL.Seconds()),
+		ChannelID: pushChannelID,
 	}
 	payload, err := json.Marshal([]expoPushMessage{msg})
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, pushSendTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.pushURL, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if s.pushAccessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.pushAccessToken)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	if err != nil {
+		return err
+	}
+	// The service's messages can quote the token back; it is kept encrypted,
+	// so it must not reach a log.
+	redact := func(text string) string { return strings.ReplaceAll(text, pushToken, "[push token]") }
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("push service answered %d: %.200s", resp.StatusCode, redact(string(body)))
+	}
+	var out struct {
+		Data []expoPushTicket `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return fmt.Errorf("push service answer: %w", err)
+	}
+	if len(out.Data) != 1 {
+		return fmt.Errorf("push service answered %d tickets for one message", len(out.Data))
+	}
+	if t := out.Data[0]; t.Status != "ok" {
+		if t.Details.Error == "DeviceNotRegistered" {
+			return errPushDeviceGone
+		}
+		return fmt.Errorf("push service refused the message: %s (%s)", t.Details.Error, redact(t.Message))
+	}
 	return nil
+}
+
+// retirePushToken stops sending to a phone the app is gone from: its device
+// credential is expired, so it is neither sent requests nor offered at
+// sign-in. Linking the phone again renews it. Best effort.
+func (s *Service) retirePushToken(ctx context.Context, userID uuid.UUID, pushToken string) {
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE auth.mfa_push_devices SET device_token_expires_at = NOW()
+		WHERE user_id = $1 AND push_token_hash = $2 AND device_token_expires_at > NOW()
+	`, userID, secretHash(pushToken))
 }
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
@@ -396,6 +513,12 @@ func (h *Handler) MountPublic(r chi.Router) {
 	// A linked phone removes itself with its own device credential: the app
 	// holds no signed-in session to call the authenticated route with.
 	r.Post("/mfa/push/devices/{id}/unlink", h.unlinkPushDevice)
+	// The mobile app links the phone with a pairing code, holding no session.
+	if h.PairingThrottle != nil {
+		r.With(h.PairingThrottle).Post("/mfa/push/pairing/claim", h.claimPushPairing)
+	} else {
+		r.Post("/mfa/push/pairing/claim", h.claimPushPairing)
+	}
 }
 
 // MountAdmin mounts an administrator's view of a member's linked phones, in

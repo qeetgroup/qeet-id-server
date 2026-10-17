@@ -26,5 +26,7 @@ func init() {
 		errs.CodeMFAPushChallengeInvalid: http.StatusConflict,
 		errs.CodeMFAPushUnauthorized:     http.StatusUnauthorized,
 		errs.CodeMFAPushPending:          http.StatusConflict,
+		errs.CodeMFAPairingCodeInvalid:   http.StatusUnauthorized,
+		errs.CodeMFAPushDeliveryFailed:   http.StatusBadGateway,
 	})
 }

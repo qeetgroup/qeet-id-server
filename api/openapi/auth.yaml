@@ -314,7 +314,10 @@ paths:
       description: >-
         Sends a sign-in approval request to the challenged person's push devices; only its
         approval completes the challenge, and only once. Complete with push: true. Used by both
-        sign-in flows.
+        sign-in flows. Each phone is sent a high-priority push that lives as long as the request can
+        be answered (two minutes); a phone the push service reports as no longer having the app is
+        retired. When the request reaches none of the person's phones it is closed and the call
+        answers 502 mfa.push_delivery_failed, so the person can use another way to verify.
       tags:
         - Auth
       security: []
@@ -346,6 +349,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '502':
+          description: The request reached none of the person's phones (mfa.push_delivery_failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/auth/mfa/enroll:
     post:
       operationId: post_v1_auth_mfa_enroll
@@ -2547,6 +2556,142 @@ paths:
       responses:
         '204':
           description: The phone is no longer linked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/push/pairing:
+    post:
+      operationId: post_v1_mfa_push_pairing
+      summary: Ask for a code to link a phone
+      description: >-
+        Issues a pairing code that links a phone running the mobile app to the caller's own account, so
+        nobody copies an access token. The code is returned only in this response, shown grouped for
+        reading (ABCDE-FGHJK); it links one phone, once, within five minutes, and asking for a new one
+        stops the caller's earlier unused codes working. Needs a recent step-up when the caller already
+        holds a second factor (403 step_up_required). At most ten an hour (429 with retry_after).
+        Audited as mfa.push_pairing_created. The phone exchanges the code with the claim call; the
+        status call tells the screen showing it when it has been used.
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '201':
+          description: Pairing code issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, code, status, expires_at]
+                properties:
+                  id: { type: string, format: uuid }
+                  code: { type: string, example: ABCDE-FGHJK }
+                  status: { type: string, enum: [pending] }
+                  expires_at: { type: string, format: date-time }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/push/pairing/{id}:
+    get:
+      operationId: get_v1_mfa_push_pairing_ById
+      summary: Check a pairing code
+      description: >-
+        Reports one of the caller's pairing codes: pending (it can still link a phone), linked (it did;
+        device_id names the phone) or expired (it timed out, was replaced by a newer code, or was
+        withdrawn). Someone else's code reads as not found.
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The pairing code's state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status, expires_at]
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [pending, linked, expired] }
+                  expires_at: { type: string, format: date-time }
+                  device_id: { type: string, format: uuid }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: delete_v1_mfa_push_pairing_ById
+      summary: Withdraw a pairing code
+      description: >-
+        Stops one of the caller's unused pairing codes working, as when the screen showing it is closed.
+        A code that already linked a phone is left as it is: remove the phone instead. Someone else's code
+        reads as not found.
+      tags: [MFA]
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: The code no longer works }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/pairing/claim:
+    post:
+      operationId: post_v1_mfa_push_pairing_claim
+      summary: Link this phone with a pairing code
+      description: >-
+        Called by the mobile app, which holds no signed-in session, to link the phone it runs on to the
+        account that asked for the pairing code. The code is read as typed or scanned: case, spaces and
+        hyphens do not matter, and O, I and L read as 0, 1 and 1. Like registering a device, it returns
+        the account's user_id, the device and its device_token, which is shown only here. A wrong, used or
+        expired code, or one whose account is no longer active, answers 401 mfa.pairing_code_invalid, all
+        alike. Throttled per address (429). Audited as mfa.push_device_linked.
+      tags: [MFA]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, push_token, platform]
+              properties:
+                code: { type: string }
+                name: { type: string }
+                push_token: { type: string }
+                platform: { type: string, enum: [ios, android] }
+      responses:
+        '201':
+          description: The phone is linked; device_token is returned once
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, device, device_token]
+                properties:
+                  user_id: { type: string, format: uuid }
+                  device:
+                    type: object
+                    additionalProperties: true
+                  device_token: { type: string }
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':

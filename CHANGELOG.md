@@ -223,6 +223,17 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Features
 
+* **mfa:** a phone is linked to an account with a one-time pairing code instead of a copied access token
+  (QTID-369). `POST /v1/mfa/push/pairing` gives the signed-in person a code (`ABCDE-FGHJK`, Crockford base32,
+  50 bits) after a step-up when they already hold a second factor; it links one phone, once, within five minutes,
+  and a new one stops the person's earlier unused codes working. At most ten an hour (429 with `retry_after`).
+  The mobile app, holding no session, exchanges it at the public `POST /v1/mfa/push/pairing/claim` for the
+  account's `user_id`, its device and device credential, as registering a device returns them. A wrong, used,
+  replaced, withdrawn or expired code, or one whose account is no longer active, answers `401
+  mfa.pairing_code_invalid`, all alike, and the claim is throttled per address. `GET
+  /v1/mfa/push/pairing/{id}` tells the screen showing a code when it has linked a phone, and `DELETE` withdraws
+  an unused one. Audited as `mfa.push_pairing_created` and `mfa.push_device_linked`; an administrator's MFA
+  reset withdraws live codes, and the `mfa-cleanup` job deletes expired ones after a day. Migration `0134`.
 * **auth:** an organisation can cap how many live sessions one person holds in it at once — new
   `max_sessions` (none by default) and `session_limit_action` on its security policy. A sign-in at the cap
   either ends the person's least recently used session (`evict_oldest`, the default: audited as
@@ -261,6 +272,16 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Bug Fixes
 
+* **mfa:** a sign-in's push approval request is delivered with care and its failures are seen (QTID-78). The
+  request was handed to Expo's push service with no timeout and the answer thrown away, so a refused push, an
+  uninstalled app or a push service outage left the sign-in waiting two minutes for nothing, with nothing logged.
+  Now each push is high priority (it wakes an idle Android phone), lives as long as the request can be answered
+  (two minutes), uses the app's `push-mfa` channel and is bounded to ten seconds; the service's answer is read
+  and every refusal is logged with a token reference, never the token. A phone the service reports as no longer
+  having the app (`DeviceNotRegistered`) is retired — its credential expires, so it is neither sent requests nor
+  offered — until it is linked again. When the request reaches none of the person's phones, `POST
+  /v1/auth/mfa/push` answers `502 mfa.push_delivery_failed` and the request is closed. New optional
+  `EXPO_ACCESS_TOKEN`, sent with every push, for Expo projects with enhanced push security.
 * **mfa:** a linked phone can be removed for real, its credential ages out, and its answers reach the server.
   Unlinking in the mobile app cleared only the app's storage: the server's revoke needed a signed-in session the
   app never holds, and the device credential never expired, so an "unlinked" or lost phone could still approve

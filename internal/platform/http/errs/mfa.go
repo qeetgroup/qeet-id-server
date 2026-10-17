@@ -28,6 +28,8 @@ const (
 	CodeMFAPushChallengeInvalid = "mfa.push_challenge_invalid"
 	CodeMFAPushUnauthorized     = "mfa.push_unauthorized"
 	CodeMFAPushPending          = "mfa.push_pending"
+	CodeMFAPairingCodeInvalid   = "mfa.pairing_code_invalid"
+	CodeMFAPushDeliveryFailed   = "mfa.push_delivery_failed"
 )
 
 // MFA errors. The Message is what the end user sees — edit wording here, in one
@@ -69,4 +71,10 @@ var (
 	// ErrMFAPushPending: the sign-in's push request has not been answered
 	// yet. Ask again shortly; it does not count as a failed attempt.
 	ErrMFAPushPending = New(CodeMFAPushPending, "Approve the sign-in on your phone to continue.").AsRetryable()
+	// ErrMFAPairingCodeInvalid: no pairing code matches — wrong, already used
+	// or expired, which are not told apart.
+	ErrMFAPairingCodeInvalid = New(CodeMFAPairingCodeInvalid, "That pairing code is wrong, already used or expired. Ask for a new one on your account's security page.")
+	// ErrMFAPushDeliveryFailed: the approval request reached none of the
+	// person's phones; the request is closed.
+	ErrMFAPushDeliveryFailed = New(CodeMFAPushDeliveryFailed, "We couldn't reach your phone. Try again, or use another way to verify.").AsRetryable()
 )

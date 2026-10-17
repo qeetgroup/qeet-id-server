@@ -17,9 +17,9 @@ import (
 )
 
 // An administrator resetting a person's MFA removes every second factor they
-// hold — push devices included — and what those factors earned, so the person
-// shows as having none and can set one up afresh; the audit record names what
-// was removed.
+// hold — push devices included — and what those factors earned, and withdraws
+// an unused code for linking a phone, so the person shows as having none and
+// can set one up afresh; the audit record names what was removed.
 func TestAdminMFAResetRemovesEveryFactor(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
@@ -41,6 +41,10 @@ func TestAdminMFAResetRemovesEveryFactor(t *testing.T) {
 		t.Fatal(err)
 	}
 	rememberDevice(t, ctx, devices, member, tenantID, uaChromeMac)
+	_, pairingCode, err := svc.CreatePushPairing(ctx, member, &tenantID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	recordStepUp(t, ctx, svc, member, openSession(t, ctx, member, tenantID), "totp")
 
 	r := chi.NewRouter()
@@ -59,6 +63,7 @@ func TestAdminMFAResetRemovesEveryFactor(t *testing.T) {
 		     + (SELECT count(*) FROM auth.mfa_otp_factors WHERE user_id = $1)
 		     + (SELECT count(*) FROM auth.mfa_push_devices WHERE user_id = $1)
 		     + (SELECT count(*) FROM auth.mfa_push_challenges WHERE user_id = $1 AND status = 'pending')
+		     + (SELECT count(*) FROM auth.mfa_push_pairings WHERE user_id = $1 AND used_at IS NULL AND expires_at > NOW())
 		     + (SELECT count(*) FROM auth.trusted_devices WHERE user_id = $1)
 		     + (SELECT count(*) FROM auth.mfa_verifications WHERE user_id = $1)`, member).Scan(&left); err != nil {
 		t.Fatal(err)
@@ -78,13 +83,17 @@ func TestAdminMFAResetRemovesEveryFactor(t *testing.T) {
 	}
 	var removed map[string]int
 	_ = json.Unmarshal(raw, &removed)
-	for _, kind := range []string{"totp", "otp_factors", "push_devices", "push_challenges", "trusted_devices", "step_ups"} {
+	for _, kind := range []string{"totp", "otp_factors", "push_devices", "push_challenges", "push_pairings", "trusted_devices", "step_ups"} {
 		if removed[kind] != 1 {
 			t.Errorf("audit: removed[%s] = %d, want 1 (%s)", kind, removed[kind], raw)
 		}
 	}
 	if removed["recovery_codes"] != 10 {
 		t.Errorf("audit: removed[recovery_codes] = %d, want 10", removed["recovery_codes"])
+	}
+
+	if _, err := svc.ClaimPushPairing(ctx, pairingCode, "Phone", "ExponentPushToken["+uniqueSlug("tok")+"]", "ios", "", ""); err == nil {
+		t.Fatal("a pairing code asked for before the reset must not link a phone after it")
 	}
 
 	// Setting up again works as for someone new.
