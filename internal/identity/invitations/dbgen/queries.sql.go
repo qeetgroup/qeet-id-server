@@ -351,6 +351,45 @@ func (q *Queries) ListInvitesForEmail(ctx context.Context, email string) ([]List
 	return items, nil
 }
 
+const lookupInvite = `-- name: LookupInvite :one
+SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
+       t.name AS tenant_name, t.slug AS tenant_slug,
+       EXISTS (SELECT 1 FROM "user".users u WHERE u.email = i.email) AS account_exists
+FROM tenant.invites i
+JOIN tenant.tenants t ON t.id = i.tenant_id
+WHERE i.token_hash = $1
+`
+
+type LookupInviteRow struct {
+	ID            uuid.UUID
+	TenantID      uuid.UUID
+	Email         string
+	Status        string
+	ExpiresAt     time.Time
+	TenantName    string
+	TenantSlug    string
+	AccountExists bool
+}
+
+// LookupInvite reads the invitation a link names for the acceptance screen:
+// the organisation it is from, the address it is for, its state, and whether
+// an account already holds that address. Read-only.
+func (q *Queries) LookupInvite(ctx context.Context, tokenHash string) (LookupInviteRow, error) {
+	row := q.db.QueryRow(ctx, lookupInvite, tokenHash)
+	var i LookupInviteRow
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Email,
+		&i.Status,
+		&i.ExpiresAt,
+		&i.TenantName,
+		&i.TenantSlug,
+		&i.AccountExists,
+	)
+	return i, err
+}
+
 const markInviteAccepted = `-- name: MarkInviteAccepted :exec
 UPDATE tenant.invites SET status = 'accepted', accepted_at = NOW() WHERE id = $1
 `
@@ -366,6 +405,19 @@ UPDATE tenant.invites SET status = 'expired' WHERE id = $1
 
 func (q *Queries) MarkInviteExpired(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markInviteExpired, id)
+	return err
+}
+
+const markInvitedAccountVerified = `-- name: MarkInvitedAccountVerified :exec
+UPDATE "user".users SET status = 'active', email_verified_at = COALESCE(email_verified_at, NOW())
+WHERE id = $1
+`
+
+// MarkInvitedAccountVerified records that the account created to accept an
+// invitation owns its address — the invitation reached it there — as the
+// password path's InsertInvitedUser does.
+func (q *Queries) MarkInvitedAccountVerified(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markInvitedAccountVerified, userID)
 	return err
 }
 

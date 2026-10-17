@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -16,28 +17,188 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/dbutil"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 type Policy struct {
-	TenantID           uuid.UUID      `json:"tenant_id"`
-	IPAllowlist        []string       `json:"ip_allowlist"`
-	IPDenylist         []string       `json:"ip_denylist"`
-	PasswordMinLength  int            `json:"password_min_length"`
-	PasswordComplexity string         `json:"password_complexity"`
-	SessionMaxAge      time.Duration  `json:"session_max_age"`
-	MFAEnforcement     string         `json:"mfa_enforcement"`
-	Settings           map[string]any `json:"settings"`
+	TenantID           uuid.UUID `json:"tenant_id"`
+	IPAllowlist        []string  `json:"ip_allowlist"`
+	IPDenylist         []string  `json:"ip_denylist"`
+	PasswordMinLength  int       `json:"password_min_length"`
+	PasswordComplexity string    `json:"password_complexity"`
+	// SessionMaxAge ends a session that long after sign-in however active it
+	// is, and bounds an application's grant; SessionIdleTimeout ends a
+	// session that goes that long without being renewed. Both apply to
+	// sessions opened after they are set. Zero on update = the platform
+	// default.
+	SessionMaxAge      Duration `json:"session_max_age"`
+	SessionIdleTimeout Duration `json:"session_idle_timeout"`
+	// MaxSessions caps how many live sessions one person may hold in the
+	// organisation at once (nil: no limit). SessionLimitAction is what a
+	// sign-in at the cap does: "evict_oldest" ends their least recently used
+	// session, "refuse" refuses the sign-in. An ended session's renewal stops
+	// at once; an access token it already issued lasts out its own short
+	// lifetime (ACCESS_TOKEN_TTL).
+	MaxSessions        *int   `json:"max_sessions"`
+	SessionLimitAction string `json:"session_limit_action"`
+	// MFAEnforcement is who must use a second factor to sign in: "optional"
+	// (whoever set one up), "required" (everyone), "admin_only" (anyone
+	// holding a role that grants a write permission). Enforced at password
+	// sign-in; an account without a factor sets one up before its session.
+	MFAEnforcement string `json:"mfa_enforcement"`
+	// MFAGraceDays (0–90) lets accounts that existed when the requirement was
+	// turned on put the setup off for that many days after MFAEnforcedSince.
+	// MFAEnforcedSince is read-only: set when the requirement is turned on,
+	// cleared when it goes back to optional.
+	MFAGraceDays     int        `json:"mfa_grace_days"`
+	MFAEnforcedSince *time.Time `json:"mfa_enforced_since"`
+	// StepUpWindow is how long a step-up keeps a session's sensitive actions
+	// unlocked, 1m–60m (zero on update: 5m). StepUpMethods are the factor
+	// types that count as a step-up; nil or empty: every one.
+	StepUpWindow  Duration       `json:"step_up_window"`
+	StepUpMethods []string       `json:"step_up_methods"`
+	Settings      map[string]any `json:"settings"`
 }
+
+// Duration is a time.Duration written to JSON as a duration string ("720h",
+// "30m"), the form the console edits. It reads that form, or a number of
+// nanoseconds (how earlier responses wrote it).
+type Duration time.Duration
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	v := time.Duration(d)
+	switch {
+	case v != 0 && v%time.Hour == 0:
+		return json.Marshal(fmt.Sprintf("%dh", v/time.Hour))
+	case v != 0 && v%time.Minute == 0:
+		return json.Marshal(fmt.Sprintf("%dm", v/time.Minute))
+	}
+	return json.Marshal(v.String())
+}
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		v, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("invalid duration %q: write it like \"720h\" or \"30m\"", s)
+		}
+		*d = Duration(v)
+		return nil
+	}
+	var n int64
+	if err := json.Unmarshal(b, &n); err != nil {
+		return errors.New(`a duration is a string like "720h" or "30m"`)
+	}
+	*d = Duration(n)
+	return nil
+}
+
+// The values password_complexity and mfa_enforcement may take (the table's
+// CHECK constraints).
+var (
+	passwordComplexities = map[string]bool{"relaxed": true, "standard": true, "strict": true}
+	sessionLimitActions  = map[string]bool{"evict_oldest": true, "refuse": true}
+	mfaEnforcements      = map[string]bool{"optional": true, "required": true, "admin_only": true}
+	stepUpMethods        = map[string]bool{"totp": true, "recovery_code": true, "otp": true, "webauthn": true, "push": true}
+)
+
+// The bounds of a step-up window, and the window of an organisation that sets
+// none (the column default).
+const (
+	stepUpWindowMin     = time.Minute
+	stepUpWindowMax     = time.Hour
+	stepUpWindowDefault = 5 * time.Minute
+)
 
 type Repository struct {
 	pool *pgxpool.Pool
+	// The session bounds of an organisation that has not set its own
+	// (config SESSION_MAX_AGE, SESSION_IDLE_TIMEOUT). Set by SetSessionDefaults.
+	sessionMaxAge time.Duration
+	sessionIdle   time.Duration
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, sessionMaxAge: 30 * 24 * time.Hour, sessionIdle: 24 * time.Hour}
+}
+
+// SetSessionDefaults sets the session bounds reported for an organisation
+// that has not set its own, and stored for one that saves its policy without
+// them. Called from internal/bootstrap/dependencies.go.
+func (r *Repository) SetSessionDefaults(maxAge, idle time.Duration) {
+	r.sessionMaxAge, r.sessionIdle = maxAge, idle
+}
+
+// normalize fills what an update left out — no IP lists, session bounds left
+// zero (the platform defaults, the idle timeout no longer than the maximum
+// age) — and reports the fields that are out of range.
+func (r *Repository) normalize(p *Policy) []errs.FieldError {
+	if p.IPAllowlist == nil {
+		p.IPAllowlist = []string{}
+	}
+	if p.IPDenylist == nil {
+		p.IPDenylist = []string{}
+	}
+	if p.SessionLimitAction == "" {
+		p.SessionLimitAction = "evict_oldest"
+	}
+	if p.SessionMaxAge == 0 {
+		p.SessionMaxAge = Duration(r.sessionMaxAge)
+	}
+	if p.SessionIdleTimeout == 0 {
+		p.SessionIdleTimeout = Duration(min(r.sessionIdle, time.Duration(p.SessionMaxAge)))
+	}
+	if p.StepUpWindow == 0 {
+		p.StepUpWindow = Duration(stepUpWindowDefault)
+	}
+	if len(p.StepUpMethods) == 0 {
+		p.StepUpMethods = nil
+	}
+	var bad []errs.FieldError
+	field := func(name, msg string) {
+		bad = append(bad, errs.FieldError{Field: name, Code: "out_of_range", Message: msg})
+	}
+	maxAge, idle := time.Duration(p.SessionMaxAge), time.Duration(p.SessionIdleTimeout)
+	if maxAge < config.SessionMaxAgeMin || maxAge > config.SessionMaxAgeMax {
+		field("session_max_age", "Set the maximum session age between 1h and 8760h (one year).")
+	}
+	if idle < config.SessionIdleTimeoutMin || idle > maxAge {
+		field("session_idle_timeout", "Set the idle timeout to at least 15m and no longer than the maximum session age.")
+	}
+	if p.PasswordMinLength < 8 || p.PasswordMinLength > 128 {
+		field("password_min_length", "Set the minimum password length between 8 and 128.")
+	}
+	if !passwordComplexities[p.PasswordComplexity] {
+		field("password_complexity", "Choose relaxed, standard or strict.")
+	}
+	if !mfaEnforcements[p.MFAEnforcement] {
+		field("mfa_enforcement", "Choose optional, required or admin_only.")
+	}
+	if p.MFAGraceDays < 0 || p.MFAGraceDays > 90 {
+		field("mfa_grace_days", "Set the grace period between 0 and 90 days.")
+	}
+	if p.MaxSessions != nil && (*p.MaxSessions < 1 || *p.MaxSessions > 1000) {
+		field("max_sessions", "Set the session limit between 1 and 1000, or leave it empty for no limit.")
+	}
+	if !sessionLimitActions[p.SessionLimitAction] {
+		field("session_limit_action", "Choose evict_oldest or refuse.")
+	}
+	if w := time.Duration(p.StepUpWindow); w < stepUpWindowMin || w > stepUpWindowMax {
+		field("step_up_window", "Set the step-up window between 1m and 60m.")
+	}
+	seen := map[string]bool{}
+	for _, m := range p.StepUpMethods {
+		if !stepUpMethods[m] || seen[m] {
+			field("step_up_methods", "List each of totp, recovery_code, otp, webauthn and push at most once, or leave it empty for all of them.")
+			break
+		}
+		seen[m] = true
+	}
+	return bad
 }
 
 func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
@@ -46,15 +207,19 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	var p Policy
 	var allow, deny []string
 	var settings []byte
-	var sessionAge time.Duration
+	var sessionAge, sessionIdle, stepUpWindow int64
 	err := r.pool.QueryRow(ctx, `
 		SELECT tenant_id, ip_allowlist::text[], ip_denylist::text[],
 		       password_min_length, password_complexity,
-		       EXTRACT(EPOCH FROM session_max_age) * INTERVAL '1 second',
-		       mfa_enforcement, settings
+		       EXTRACT(EPOCH FROM session_max_age)::bigint,
+		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
+		       max_sessions, session_limit_action,
+		       mfa_enforcement, mfa_grace_days, mfa_enforced_since,
+		       EXTRACT(EPOCH FROM step_up_window)::bigint, step_up_methods, settings
 		FROM tenant.security_policies WHERE tenant_id = $1
 	`, tenantID).Scan(&p.TenantID, &allow, &deny, &p.PasswordMinLength,
-		&p.PasswordComplexity, &sessionAge, &p.MFAEnforcement, &settings)
+		&p.PasswordComplexity, &sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
+		&p.MFAGraceDays, &p.MFAEnforcedSince, &stepUpWindow, &p.StepUpMethods, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{
 			TenantID:           tenantID,
@@ -62,8 +227,11 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 			IPDenylist:         []string{},
 			PasswordMinLength:  8,
 			PasswordComplexity: "standard",
-			SessionMaxAge:      30 * 24 * time.Hour,
+			SessionMaxAge:      Duration(r.sessionMaxAge),
+			SessionIdleTimeout: Duration(r.sessionIdle),
+			SessionLimitAction: "evict_oldest",
 			MFAEnforcement:     "optional",
+			StepUpWindow:       Duration(stepUpWindowDefault),
 			Settings:           map[string]any{},
 		}, nil
 	}
@@ -72,32 +240,63 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	}
 	p.IPAllowlist = allow
 	p.IPDenylist = deny
-	p.SessionMaxAge = sessionAge
+	p.SessionMaxAge = Duration(time.Duration(sessionAge) * time.Second)
+	p.SessionIdleTimeout = Duration(time.Duration(sessionIdle) * time.Second)
+	p.StepUpWindow = Duration(time.Duration(stepUpWindow) * time.Second)
 	p.Settings = dbutil.Metadata(settings)
 	return &p, nil
 }
 
-func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) error {
+// Upsert stores the policy and returns when its MFA requirement was turned on
+// (nil while optional): the moment it changes from optional, kept while it
+// stays on — moving between required and admin_only does not restart a grace
+// period.
+func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Time, error) {
 	settings, _ := json.Marshal(p.Settings)
-	_, err := tx.Exec(ctx, `
+	stepUpWindow := time.Duration(p.StepUpWindow)
+	if stepUpWindow == 0 {
+		stepUpWindow = stepUpWindowDefault
+	}
+	var enforcedSince *time.Time
+	err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.security_policies (
 			tenant_id, ip_allowlist, ip_denylist,
 			password_min_length, password_complexity,
-			session_max_age, mfa_enforcement, settings
-		) VALUES ($1, $2::cidr[], $3::cidr[], $4, $5, ($6::bigint || ' seconds')::interval, $7,
-		         COALESCE(NULLIF($8::jsonb,'null'::jsonb), '{}'::jsonb))
+			session_max_age, session_idle_timeout, mfa_enforcement, settings,
+			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since,
+			step_up_window, step_up_methods
+		) VALUES ($1, $2::cidr[], $3::cidr[], $4, $5, make_interval(secs => $6::bigint),
+		         make_interval(secs => $7::bigint), $8,
+		         COALESCE(NULLIF($9::jsonb,'null'::jsonb), '{}'::jsonb), $10, COALESCE(NULLIF($11, ''), 'evict_oldest'),
+		         $12, CASE WHEN $8 = 'optional' THEN NULL ELSE NOW() END,
+		         make_interval(secs => $13::bigint), $14::text[])
 		ON CONFLICT (tenant_id) DO UPDATE SET
 			ip_allowlist = EXCLUDED.ip_allowlist,
 			ip_denylist = EXCLUDED.ip_denylist,
 			password_min_length = EXCLUDED.password_min_length,
 			password_complexity = EXCLUDED.password_complexity,
 			session_max_age = EXCLUDED.session_max_age,
+			session_idle_timeout = EXCLUDED.session_idle_timeout,
+			max_sessions = EXCLUDED.max_sessions,
+			session_limit_action = EXCLUDED.session_limit_action,
 			mfa_enforcement = EXCLUDED.mfa_enforcement,
+			mfa_grace_days = EXCLUDED.mfa_grace_days,
+			step_up_window = EXCLUDED.step_up_window,
+			step_up_methods = EXCLUDED.step_up_methods,
+			mfa_enforced_since = CASE
+				WHEN EXCLUDED.mfa_enforcement = 'optional' THEN NULL
+				WHEN security_policies.mfa_enforcement = 'optional' THEN NOW()
+				ELSE COALESCE(security_policies.mfa_enforced_since, NOW())
+			END,
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
+		RETURNING mfa_enforced_since
 	`, p.TenantID, p.IPAllowlist, p.IPDenylist, p.PasswordMinLength,
-		p.PasswordComplexity, int64(p.SessionMaxAge.Seconds()), p.MFAEnforcement, settings)
-	return err
+		p.PasswordComplexity, int64(time.Duration(p.SessionMaxAge).Seconds()),
+		int64(time.Duration(p.SessionIdleTimeout).Seconds()), p.MFAEnforcement, settings,
+		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays,
+		int64(stepUpWindow.Seconds()), p.StepUpMethods).Scan(&enforcedSince)
+	return enforcedSince, err
 }
 
 // Allowed returns true if the IP is permitted by the policy. Empty
@@ -179,6 +378,10 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.TenantID = tid
+	if bad := h.Repo.normalize(&in); len(bad) > 0 {
+		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
+		return
+	}
 	ctx := r.Context()
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
@@ -186,7 +389,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	if err := h.Repo.Upsert(ctx, tx, in); err != nil {
+	if in.MFAEnforcedSince, err = h.Repo.Upsert(ctx, tx, in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -203,11 +406,17 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
 		Metadata: map[string]any{
-			"ip_allowlist_count":  len(in.IPAllowlist),
-			"ip_denylist_count":   len(in.IPDenylist),
-			"mfa_enforcement":     in.MFAEnforcement,
-			"password_min_length": in.PasswordMinLength,
-			"session_max_age_s":   int64(in.SessionMaxAge.Seconds()),
+			"ip_allowlist_count":   len(in.IPAllowlist),
+			"ip_denylist_count":    len(in.IPDenylist),
+			"mfa_enforcement":      in.MFAEnforcement,
+			"mfa_grace_days":       in.MFAGraceDays,
+			"password_min_length":  in.PasswordMinLength,
+			"session_max_age_s":    int64(time.Duration(in.SessionMaxAge).Seconds()),
+			"session_idle_s":       int64(time.Duration(in.SessionIdleTimeout).Seconds()),
+			"max_sessions":         in.MaxSessions,
+			"session_limit_action": in.SessionLimitAction,
+			"step_up_window_s":     int64(time.Duration(in.StepUpWindow).Seconds()),
+			"step_up_methods":      in.StepUpMethods,
 		},
 	}); err != nil {
 		httpx.WriteError(w, r, err)

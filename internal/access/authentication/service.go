@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -24,7 +25,11 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 type Service struct {
@@ -48,8 +53,12 @@ type Service struct {
 	// devicePolicy reports whether a tenant has opted into adaptive MFA
 	// (trusted-device skip). nil = always-on MFA. Set via SetDevicePolicy.
 	devicePolicy DevicePolicy
-	// riskAssessor overrides trusted-device skip when risk is too high. nil = no override.
+	// riskAssessor assesses every sign-in's risk (see risksignin.go). nil = no
+	// assessment.
 	riskAssessor RiskAssessor
+	// sender emails the code that confirms a risky sign-in by someone with no
+	// second factor. Set via SetSender; nil refuses such a sign-in.
+	sender notifier.Sender
 	// loginHook is an optional synchronous policy gate run after credentials
 	// verify (nil = no gate). Set via SetLoginHook.
 	loginHook LoginHook
@@ -61,6 +70,12 @@ type Service struct {
 	// every sign-in). See lockout.go.
 	lockout       LockoutConfig
 	lockoutSource LockoutSource
+	// sessionMaxAge and sessionIdle bound a session whose organisation sets
+	// no bounds of its own (zero = the platform defaults). See lifetime.go.
+	sessionMaxAge time.Duration
+	sessionIdle   time.Duration
+	// uses throttles the record of sessions' use; see SessionUsed.
+	uses sessionUses
 }
 
 func NewService(pool *pgxpool.Pool, users *user.Repository, t *tokens.Issuer) *Service {
@@ -95,12 +110,37 @@ func endedSessions(userID uuid.UUID, ids []uuid.UUID, tenants []pgtype.UUID) []s
 // MFAEnroller is the slice of the MFA service the auth package needs to enforce
 // a second factor at login. Wired in internal/bootstrap/dependencies.go via SetMFA.
 type MFAEnroller interface {
-	// IsEnrolled reports whether the user has a usable login second factor.
-	IsEnrolled(ctx context.Context, userID uuid.UUID) (bool, error)
-	// VerifyForLoginTx verifies a TOTP/recovery code inside the challenge
-	// transaction so recovery-code and challenge consumption are atomic;
-	// (false, nil) means the code was wrong, a non-nil error is infrastructure.
-	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (bool, error)
+	// LoginFactors lists the second factors the user can meet a sign-in
+	// challenge with (none: sign in without one). See mfalogin.go.
+	LoginFactors(ctx context.Context, userID uuid.UUID) ([]LoginFactor, error)
+	// VerifyForLoginTx verifies an authenticator-app, recovery or email/SMS
+	// code inside the challenge transaction so the code's consumption and the
+	// challenge's commit together, and returns which kind met it ("totp",
+	// "recovery_code" or "otp"); ("", nil) means the code was wrong, a non-nil
+	// error is infrastructure.
+	VerifyForLoginTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) (string, error)
+	// SendLoginCode sends a code to one of the user's confirmed email/SMS
+	// factors for a sign-in to tenantID (nil: none).
+	SendLoginCode(ctx context.Context, userID uuid.UUID, tenantID *uuid.UUID, factorID uuid.UUID) error
+	// BeginLoginPasskey starts a passkey assertion for the user's own
+	// passkeys; FinishLoginPasskey verifies one (a domain error: not verified).
+	BeginLoginPasskey(ctx context.Context, userID uuid.UUID) (uuid.UUID, any, error)
+	FinishLoginPasskey(ctx context.Context, userID, sessionID uuid.UUID, credential json.RawMessage) error
+	// StartLoginPush sends a push approval request to the user's devices and
+	// returns its id and expiry; LoginPushStatusTx reads its state
+	// ("pending", "approved", "denied" or "expired") under lock.
+	StartLoginPush(ctx context.Context, userID uuid.UUID, ip, ua string) (uuid.UUID, time.Time, error)
+	LoginPushStatusTx(ctx context.Context, tx pgx.Tx, userID, challengeID uuid.UUID) (string, error)
+	// RecordVerification records that one of the user's sessions met a second
+	// factor, stepping that session (and no other) up.
+	RecordVerification(ctx context.Context, tx pgx.Tx, userID, sessionID uuid.UUID, method string) error
+	// StartLoginEnrollment starts an authenticator app for a sign-in's
+	// enrolment challenge and returns its secret and provisioning URL;
+	// ConfirmLoginEnrollment confirms it with a code from the app and returns
+	// the account's new recovery codes ((nil, false, nil): a wrong code). Both
+	// run inside the challenge transaction. See mfapolicy.go.
+	StartLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, account string) (string, string, error)
+	ConfirmLoginEnrollment(ctx context.Context, tx pgx.Tx, userID uuid.UUID, code string) ([]string, bool, error)
 }
 
 // SetMFA wires the MFA-at-login checker. Called from internal/bootstrap/dependencies.go.
@@ -188,6 +228,9 @@ func (s *Service) SetAnomalyRecorder(a AnomalyRecorder) { s.anomaly = a }
 // SetDevicePolicy.
 type DevicePolicy interface {
 	RememberDeviceEnabled(ctx context.Context, tenantID uuid.UUID) (bool, error)
+	// RememberDevicePolicy adds how long a device the tenant remembers stays
+	// remembered.
+	RememberDevicePolicy(ctx context.Context, tenantID uuid.UUID) (bool, time.Duration, error)
 }
 
 // SetDevicePolicy wires the adaptive-MFA (trusted-device) gate. Called from
@@ -206,8 +249,12 @@ type RiskAssessor interface {
 	ShouldForceMFA(ctx context.Context, tenantID, userID uuid.UUID, ip, ua, country string) bool
 }
 
-// SetRiskAssessor wires the adaptive-MFA risk override. Called from internal/bootstrap/dependencies.go.
+// SetRiskAssessor wires the sign-in risk assessment. Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetRiskAssessor(r RiskAssessor) { s.riskAssessor = r }
+
+// SetSender wires the email sender for risk confirmation codes. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSender(n notifier.Sender) { s.sender = n }
 
 // LoginHook is a synchronous policy gate run after credentials verify: it
 // returns a non-nil error to DENY the sign-in, or nil to allow — in which case
@@ -228,10 +275,24 @@ const mfaChallengeTTL = 10 * time.Minute
 // LoginResult is either a full token pair (no MFA needed) or a pending MFA
 // challenge that must be completed via CompleteMFALogin before tokens issue.
 type LoginResult struct {
-	Pair        *TokenPair
+	Pair *TokenPair
+	MFAChallenge
+}
+
+// MFAChallenge is a sign-in's pending second-factor challenge, when
+// MFARequired is set.
+type MFAChallenge struct {
 	MFARequired bool
 	MFAToken    string
 	Methods     []string
+	// Factors are the second factors the challenge can be met with.
+	Factors []LoginFactor
+	// EnrollmentRequired: the account must have a second factor and holds
+	// none, so the challenge is met by setting up an authenticator app.
+	// EnrollmentDueAt, when set, is when the organisation's grace period
+	// ends; until then the setup may be skipped. See mfapolicy.go.
+	EnrollmentRequired bool
+	EnrollmentDueAt    *time.Time
 }
 
 // LoginSessionResult is the hosted-login (cookie) analogue of LoginResult:
@@ -239,11 +300,9 @@ type LoginResult struct {
 // SetLoginSessionCookie) or a pending MFA challenge to complete via
 // CompleteMFALoginSession before the cookie is issued.
 type LoginSessionResult struct {
-	UserID      uuid.UUID
-	RawCookie   string
-	MFARequired bool
-	MFAToken    string
-	Methods     []string
+	UserID    uuid.UUID
+	RawCookie string
+	MFAChallenge
 }
 
 type LoginInput struct {
@@ -297,8 +356,14 @@ type TokenPair struct {
 	TokenType    string    `json:"token_type"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	RefreshToken string    `json:"refresh_token"`
-	SessionID    uuid.UUID `json:"session_id"`
-	UserID       uuid.UUID `json:"user_id"`
+	// SessionExpiresAt is when the session ends however active it is, and
+	// IdleExpiresAt when it ends unless renewed before then, so a client can
+	// warn its user ahead of either. The server refuses the session after
+	// them whatever the client does.
+	SessionExpiresAt time.Time `json:"session_expires_at"`
+	IdleExpiresAt    time.Time `json:"idle_expires_at"`
+	SessionID        uuid.UUID `json:"session_id"`
+	UserID           uuid.UUID `json:"user_id"`
 	// Tenant the token is scoped to; nil/omitted for a tenant-less session.
 	TenantID *uuid.UUID `json:"tenant_id,omitempty"`
 }
@@ -349,15 +414,20 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	// 3) Tenant-less session + access + refresh token, all in the same tx so
 	// signup is fully atomic.
 	sessionID := uuid.New()
-	if err := s.q.WithTx(tx).InsertTenantlessSession(ctx, dbgen.InsertTenantlessSessionParams{
-		ID:        sessionID,
-		UserID:    u.ID,
-		Ip:        in.IP,
-		UserAgent: &in.UserAgent,
-	}); err != nil {
+	maxAge, idle := s.sessionDefaults()
+	bounds, err := s.q.WithTx(tx).InsertTenantlessSession(ctx, dbgen.InsertTenantlessSessionParams{
+		ID:            sessionID,
+		UserID:        u.ID,
+		Ip:            in.IP,
+		UserAgent:     &in.UserAgent,
+		MaxAgeSeconds: maxAge.Seconds(),
+		IdleSeconds:   idle.Seconds(),
+		Country:       httpx.GeoCountry(ctx),
+	})
+	if err != nil {
 		return nil, nil, nil, err
 	}
-	access, exp, err := s.tokens.IssueAccess(u.ID, uuid.Nil, sessionID, "")
+	access, exp, err := s.tokens.IssueSessionAccess(u.ID, uuid.Nil, sessionID, nil, bounds.ExpiresAt)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -365,11 +435,10 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
 	if _, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		SessionID: sessionID,
 		TokenHash: refreshHash,
-		ExpiresAt: refreshExp,
+		ExpiresAt: s.refreshExpiry(bounds.ExpiresAt),
 	}); err != nil {
 		return nil, nil, nil, err
 	}
@@ -379,12 +448,14 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (*TokenPair, *user
 	}
 
 	return &TokenPair{
-		AccessToken:  access,
-		TokenType:    "Bearer",
-		ExpiresAt:    exp,
-		RefreshToken: refreshRaw,
-		SessionID:    sessionID,
-		UserID:       u.ID,
+		AccessToken:      access,
+		TokenType:        "Bearer",
+		ExpiresAt:        exp,
+		RefreshToken:     refreshRaw,
+		SessionExpiresAt: bounds.ExpiresAt,
+		IdleExpiresAt:    bounds.IdleExpiresAt,
+		SessionID:        sessionID,
+		UserID:           u.ID,
 	}, u, nil, nil
 }
 
@@ -455,8 +526,16 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 		}
 		return nil, err
 	}
+	// The same sign-in, so the new session ends when this one would have.
+	ends, err := q.SessionEnd(ctx, dbgen.SessionEndParams{SessionID: in.FromSessionID, UserID: in.UserID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrUnauthorized
+	}
+	if err != nil {
+		return nil, err
+	}
 	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.TenantID, in.IP, in.UserAgent, "tenant_switch", claims,
-		map[string]any{"previous_session_id": in.FromSessionID})
+		map[string]any{"previous_session_id": in.FromSessionID}, ends)
 	if err != nil {
 		return nil, err
 	}
@@ -479,26 +558,32 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	return pair, nil
 }
 
-// Login verifies the password and, when the user has a second factor enrolled,
-// returns an MFA challenge instead of tokens (complete it via CompleteMFALogin).
-// Otherwise it returns a full token pair.
+// Login verifies the password and, when the account holds a second factor or
+// must have one (see mfapolicy.go), returns an MFA challenge instead of tokens
+// (complete it via CompleteMFALoginWith). Otherwise it returns a full token
+// pair.
 func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error) {
 	u, claims, err := s.CheckPassword(ctx, SignInAttempt{Email: in.Email, Password: in.Password, IP: in.IP})
 	if err != nil {
 		return nil, err
 	}
-	if s.mfa != nil {
-		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+	gate, err := s.mfaGate(ctx, u.ID, u.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	switch s.nextSignInStep(ctx, u.ID, u.TenantID, gate, firstFactorPassword, "", in.IP, in.UserAgent, httpx.GeoCountry(ctx)) {
+	case stepChallenge:
+		challenge, err := s.challengeSignIn(ctx, u.ID, u.TenantID, claims, gate, firstFactorPassword, in.IP, in.UserAgent)
 		if err != nil {
 			return nil, err
 		}
-		if enrolled {
-			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, claims)
-			if err != nil {
-				return nil, err
-			}
-			return &LoginResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
+		return &LoginResult{MFAChallenge: challenge}, nil
+	case stepRiskEmail:
+		challenge, err := s.riskEmailChallenge(ctx, u.ID, u.TenantID, claims, firstFactorPassword, in.IP, in.UserAgent)
+		if err != nil {
+			return nil, err
 		}
+		return &LoginResult{MFAChallenge: challenge}, nil
 	}
 	pair, err := s.IssuePairWithClaims(ctx, u.ID, u.TenantID, in.IP, in.UserAgent, "password", claims)
 	if err != nil {
@@ -508,11 +593,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*LoginResult, error
 }
 
 // BeginLoginSession is the hosted-login (cookie) equivalent of Login: it
-// verifies the password and, when the user has a second factor enrolled,
-// returns an MFA challenge instead of an SSO session (complete it via
-// CompleteMFALoginSession). Otherwise it mints the SSO session cookie value.
-// Without this check the cookie flow would bypass MFA that the token flow
-// enforces.
+// verifies the password and, when the account holds a second factor or must
+// have one, returns an MFA challenge instead of an SSO session (complete it
+// via CompleteMFALoginSessionWith). Otherwise it mints the SSO session cookie
+// value. Without this check the cookie flow would bypass MFA that the token
+// flow enforces.
 func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, trustedToken, country string) (*LoginSessionResult, error) {
 	// Hook-issued claims aren't threaded into the hosted-login cookie flow: the
 	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
@@ -522,18 +607,25 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	if err != nil {
 		return nil, err
 	}
-	if s.mfa != nil {
-		enrolled, err := s.mfa.IsEnrolled(ctx, u.ID)
+	gate, err := s.mfaGate(ctx, u.ID, u.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	// A trusted device may skip a factor the account holds, never the setting
+	// up of one it must have, and never on a risky sign-in.
+	switch s.nextSignInStep(ctx, u.ID, u.TenantID, gate, firstFactorPassword, trustedToken, in.IP, ua, country) {
+	case stepRiskEmail:
+		challenge, err := s.riskEmailChallenge(ctx, u.ID, u.TenantID, nil, firstFactorPassword, in.IP, ua)
 		if err != nil {
 			return nil, err
 		}
-		if enrolled && !s.deviceTrusted(ctx, u.ID, u.TenantID, trustedToken, in.IP, ua, country) {
-			token, err := s.createMFAChallenge(ctx, u.ID, u.TenantID, nil)
-			if err != nil {
-				return nil, err
-			}
-			return &LoginSessionResult{MFARequired: true, MFAToken: token, Methods: []string{"totp", "recovery_code"}}, nil
+		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
+	case stepChallenge:
+		challenge, err := s.challengeSignIn(ctx, u.ID, u.TenantID, nil, gate, firstFactorPassword, in.IP, ua)
+		if err != nil {
+			return nil, err
 		}
+		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
 	}
 	raw, err := s.CreateLoginSession(ctx, u.ID, in.IP, ua)
 	if err != nil {
@@ -542,55 +634,35 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	return &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
 }
 
-// deviceTrusted reports whether the second factor may be skipped for this login:
-// only when the tenant has opted into adaptive MFA AND the request carries a
-// live trusted-device token bound to this user AND the risk level is not too
-// high. Any failure or missing piece returns false — the safe default is always
-// to require MFA.
-func (s *Service) deviceTrusted(ctx context.Context, userID, tenantID uuid.UUID, trustedToken, ip, ua, country string) bool {
-	if s.devicePolicy == nil || trustedToken == "" {
-		return false
-	}
-	enabled, err := s.devicePolicy.RememberDeviceEnabled(ctx, tenantID)
-	if err != nil || !enabled {
-		return false
-	}
-	// A high-risk request (bot-like UA, impossible travel, or an unrecognized
-	// device — whichever the tenant has opted into) forces MFA even on a
-	// trusted device.
-	if s.riskAssessor != nil && s.riskAssessor.ShouldForceMFA(ctx, tenantID, userID, ip, ua, country) {
-		return false
-	}
-	return s.IsTrustedDevice(ctx, userID, trustedToken)
-}
-
 // RegisterInTenant creates a new end-user in the given tenant from the hosted
 // signup flow and signs them in by minting the SSO session cookie value. It is
 // gated by the tenant's self_registration_enabled policy and checks the
 // password against that tenant's rules (see RegistrationPolicy). Returns
-// the created user and the raw cookie value to write via SetLoginSessionCookie.
-func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, string, error) {
+// the created user and either the raw cookie value to write via
+// SetLoginSessionCookie or, when the organisation requires MFA, an enrolment
+// challenge to meet first (see mfapolicy.go).
+func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, email, plain, displayName, ip, ua string) (*user.User, *LoginSessionResult, error) {
 	if s.regPolicy == nil {
-		return nil, "", errs.ErrNotImplemented
+		return nil, nil, errs.ErrNotImplemented
 	}
 	enabled, err := s.regPolicy.SelfRegistrationEnabled(ctx, tenantID)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if !enabled {
-		return nil, "", errs.ErrAuthSelfRegistrationDisabled
+		return nil, nil, errs.ErrAuthSelfRegistrationDisabled
 	}
 	if err := s.checkNewPassword(ctx, tenantID, email, plain); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	hash, err := password.Hash(plain)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -607,150 +679,361 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 		RETURNING id, created_at, updated_at
 	`, tenantID, u.Email, dnArg).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		if pgxerr.IsUnique(err) {
-			return nil, "", errs.ErrAuthEmailExists
+			return nil, nil, errs.ErrAuthEmailExists
 		}
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := s.q.WithTx(tx).InsertPasswordCredential(ctx, dbgen.InsertPasswordCredentialParams{
 		UserID:       u.ID,
 		PasswordHash: hash,
 	}); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
+	// A new account holds no factor: where the organisation requires one, it
+	// is set up before the first session. Its sign-in is still assessed, so
+	// later ones have a device and country to compare against; there is no
+	// verified address yet to confirm a risky one with.
+	gate, err := s.mfaGate(ctx, u.ID, tenantID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if s.nextSignInStep(ctx, u.ID, tenantID, gate, firstFactorPassword, "", ip, ua, httpx.GeoCountry(ctx)) == stepChallenge {
+		challenge, err := s.challengeSignIn(ctx, u.ID, tenantID, nil, gate, firstFactorPassword, ip, ua)
+		if err != nil {
+			return nil, nil, err
+		}
+		return u, &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
+	}
 	raw, err := s.CreateLoginSession(ctx, u.ID, ip, ua)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
-	return u, raw, nil
+	return u, &LoginSessionResult{UserID: u.ID, RawCookie: raw}, nil
 }
 
-// createMFAChallenge records a single-use, short-lived pending login that
-// CompleteMFALogin later exchanges for tokens. claims (nilable) are any
+// How a challenged sign-in proved its first factor (mfa_login_challenges
+// first_factor). The session it completes records the method
+// "<first factor>_mfa", or the first factor alone when an enrolment was put
+// off.
+const (
+	firstFactorPassword  = "password"
+	firstFactorMagicLink = "magic_link"
+)
+
+// challengeSignIn records a single-use, short-lived pending sign-in that
+// CompleteMFALoginWith (or CompleteMFALoginSessionWith) later exchanges for a
+// session, and audits why it was challenged. claims (nilable) are any
 // Auth-Hook-issued custom claims to carry across the MFA step into the
-// eventual access token. Returns the opaque token id.
-func (s *Service) createMFAChallenge(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any) (string, error) {
+// eventual access token.
+func (s *Service) challengeSignIn(ctx context.Context, userID, tenantID uuid.UUID, claims map[string]any, gate mfaGate, firstFactor, ip, ua string) (MFAChallenge, error) {
 	var tid any
+	var tenantPtr *uuid.UUID
 	if tenantID != uuid.Nil {
 		tid = tenantID
+		tenantPtr = &tenantID
 	}
 	var claimsArg any
 	if len(claims) > 0 {
 		raw, err := json.Marshal(claims)
 		if err != nil {
-			return "", err
+			return MFAChallenge{}, err
 		}
 		claimsArg = raw
 	}
-	var id uuid.UUID
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims)
-		VALUES ($1, $2, $3, $4) RETURNING id
-	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg).Scan(&id)
-	if err != nil {
-		return "", err
+	challenge := MFAChallenge{MFARequired: true, Methods: methodsOf(gate.factors), Factors: gate.factors}
+	if gate.enrollment() {
+		challenge.Methods = []string{"totp"}
+		challenge.Factors = []LoginFactor{}
+		challenge.EnrollmentRequired = true
+		challenge.EnrollmentDueAt = gate.req.graceUntil
 	}
-	return id.String(), nil
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return MFAChallenge{}, err
+	}
+	defer tx.Rollback(ctx)
+	var id uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO auth.mfa_login_challenges (user_id, tenant_id, expires_at, claims, enrollment, first_factor)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+	`, userID, tid, time.Now().UTC().Add(mfaChallengeTTL), claimsArg, challenge.EnrollmentRequired, firstFactor).Scan(&id); err != nil {
+		return MFAChallenge{}, err
+	}
+	meta := map[string]any{"reason": gate.reason(), "enrollment": challenge.EnrollmentRequired, "methods": challenge.Methods,
+		"first_factor": firstFactor}
+	if challenge.EnrollmentDueAt != nil {
+		meta["grace_until"] = challenge.EnrollmentDueAt
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantPtr,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       "auth.mfa_challenged",
+		ResourceType: "user",
+		ResourceID:   &userID,
+		IP:           ip,
+		UserAgent:    ua,
+		Metadata:     meta,
+	}); err != nil {
+		return MFAChallenge{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MFAChallenge{}, err
+	}
+	challenge.MFAToken = id.String()
+	return challenge, nil
 }
 
-// verifyAndConsumeMFAChallenge validates a pending MFA login challenge and its
-// second-factor code. On a correct code it consumes (deletes) the challenge
-// and returns the user, its tenant (uuid.Nil for a tenant-less challenge), and
-// any claims stashed by createMFAChallenge. A wrong code is rejected WITHOUT
-// consuming the challenge so the user can retry within the TTL. Shared by the
-// token flow (CompleteMFALogin) and the hosted cookie flow
-// (CompleteMFALoginSession).
-func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken, code string) (uuid.UUID, uuid.UUID, map[string]any, error) {
+// metChallenge is a sign-in challenge met and consumed.
+type metChallenge struct {
+	userID uuid.UUID
+	// tenantID is uuid.Nil for a tenant-less challenge.
+	tenantID uuid.UUID
+	claims   map[string]any
+	// recoveryCodes are minted when the challenge was met by setting up an
+	// authenticator app; shown once.
+	recoveryCodes []string
+	// deferred: an enrolment challenge skipped in the grace period — no
+	// factor was met.
+	deferred bool
+	// firstFactor is how the sign-in proved its first factor.
+	firstFactor string
+	// riskVerified: a risk challenge met by the code to the verified email —
+	// confirmed, but no second factor was met.
+	riskVerified bool
+	// stepUpMethod is the second factor that met the challenge ("" when none
+	// did): the session the sign-in opens starts stepped up by it.
+	stepUpMethod string
+}
+
+// method is the sign-in method recorded on the session.
+func (m metChallenge) method() string {
+	switch {
+	case m.deferred:
+		return m.firstFactor
+	case m.riskVerified:
+		return m.firstFactor + "_email_confirmed"
+	}
+	return m.firstFactor + "_mfa"
+}
+
+// verifyAndConsumeMFAChallenge validates a pending MFA login challenge and the
+// proof offered for it. On a valid proof it consumes (deletes) the challenge
+// and returns the user, its tenant, and any claims stashed by challengeSignIn.
+// A wrong proof is rejected WITHOUT consuming the challenge so the user can
+// retry within the TTL. An enrolment challenge is met by the code that
+// confirms the authenticator app started for it, or skipped while the grace
+// period runs (see mfapolicy.go). Shared by the token flow
+// (CompleteMFALoginWith) and the hosted cookie flow
+// (CompleteMFALoginSessionWith).
+func (s *Service) verifyAndConsumeMFAChallenge(ctx context.Context, mfaToken string, proof MFAProof) (metChallenge, error) {
 	if s.mfa == nil {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrNotImplemented
+		return metChallenge{}, errs.ErrNotImplemented
 	}
 	id, err := uuid.Parse(mfaToken)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthSessionInvalid
+		return metChallenge{}, errs.ErrAuthSessionInvalid
 	}
 	var userID uuid.UUID
 	var tenantID *uuid.UUID
 	var expiresAt time.Time
 	var rawClaims []byte
 	var challengeFailures int16
+	var passkeySession, pushChallenge *uuid.UUID
+	var enrollment, enrollmentStarted, riskEmail bool
+	var firstFactor string
+	var emailCodeHash *string
+	var emailCodeExpires *time.Time
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		SELECT user_id, tenant_id, expires_at, claims, failed_attempts
+		SELECT user_id, tenant_id, expires_at, claims, failed_attempts, passkey_session_id, push_challenge_id,
+		       enrollment, enrollment_started, first_factor, risk_email, email_code_hash, email_code_expires_at
 		FROM auth.mfa_login_challenges
 		WHERE id = $1
 		FOR UPDATE
-	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures)
+	`, id).Scan(&userID, &tenantID, &expiresAt, &rawClaims, &challengeFailures, &passkeySession, &pushChallenge,
+		&enrollment, &enrollmentStarted, &firstFactor, &riskEmail, &emailCodeHash, &emailCodeExpires)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
+		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	if time.Now().After(expiresAt) {
 		if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
-		return uuid.Nil, uuid.Nil, nil, errs.ErrAuthMFAChallengeExpired
+		return metChallenge{}, errs.ErrAuthMFAChallengeExpired
+	}
+	met := metChallenge{userID: userID, firstFactor: firstFactor}
+	if tenantID != nil {
+		met.tenantID = *tenantID
+	}
+	if len(rawClaims) > 0 {
+		_ = json.Unmarshal(rawClaims, &met.claims)
+	}
+	// What the challenge cannot be met with is refused before an attempt is
+	// counted.
+	switch {
+	case (enrollment || riskEmail) && (proof.Passkey != nil || proof.Push):
+		return metChallenge{}, errNotAFactorChallenge
+	case riskEmail && proof.Skip:
+		return metChallenge{}, errs.ErrBadRequest.WithDetail("This sign-in needs confirming; it cannot be skipped.")
+	case enrollment && proof.Skip:
+		return s.deferEnrollment(ctx, tx, id, met)
+	case !enrollment && proof.Skip:
+		return metChallenge{}, errs.ErrBadRequest.WithDetail("This sign-in needs a second factor; it cannot be skipped.")
+	case enrollment && !enrollmentStarted:
+		return metChallenge{}, errs.ErrMFAEnrollNotStarted
+	case enrollment:
+		if err := s.stillWithoutFactor(ctx, userID); err != nil {
+			return metChallenge{}, err
+		}
+	}
+	// An unanswered or expired push request is not a wrong answer: it costs
+	// no attempt, and the challenge stays as it is.
+	if proof.Push && pushChallenge != nil {
+		status, err := s.mfa.LoginPushStatusTx(ctx, tx, userID, *pushChallenge)
+		if err != nil {
+			return metChallenge{}, err
+		}
+		switch status {
+		case "pending":
+			return metChallenge{}, errs.ErrMFAPushPending
+		case "expired":
+			return metChallenge{}, errs.ErrMFAPushChallengeExpired
+		}
 	}
 	accountRemaining, err := reserveLoginMFAAttempt(ctx, tx, userID)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
-	ok, err := s.mfa.VerifyForLoginTx(ctx, tx, userID, code)
+	var ok bool
+	if riskEmail {
+		// Confirmed by the latest code sent to the verified email; no second
+		// factor is met, so the session starts with no step-up.
+		ok = emailCodeHash != nil && emailCodeExpires != nil && time.Now().Before(*emailCodeExpires) &&
+			subtle.ConstantTimeCompare([]byte(*emailCodeHash), []byte(codes.Hash(strings.TrimSpace(proof.Code)))) == 1
+		met.riskVerified = ok
+	} else if enrollment {
+		met.recoveryCodes, ok, err = s.mfa.ConfirmLoginEnrollment(ctx, tx, userID, proof.Code)
+		if ok {
+			met.stepUpMethod = "totp"
+		}
+	} else {
+		met.stepUpMethod, err = s.verifyMFAProof(ctx, tx, userID, passkeySession, pushChallenge, proof)
+		ok = met.stepUpMethod != ""
+	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	if !ok {
 		next := challengeFailures + 1
 		remaining := maxMFALoginAttempts - int(next)
 		if next >= maxMFALoginAttempts {
 			if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
-				return uuid.Nil, uuid.Nil, nil, err
+				return metChallenge{}, err
 			}
 		} else if _, err := tx.Exec(ctx, `
 			UPDATE auth.mfa_login_challenges SET failed_attempts = $2 WHERE id = $1
 		`, id, next); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return uuid.Nil, uuid.Nil, nil, err
+			return metChallenge{}, err
 		}
 		if remaining <= 0 || accountRemaining <= 0 {
-			return uuid.Nil, uuid.Nil, nil, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
+			return metChallenge{}, errs.ErrMFAAttemptsExceeded.WithMetadata(map[string]any{"remaining_attempts": 0})
 		}
 		if accountRemaining < remaining {
 			remaining = accountRemaining
 		}
-		return uuid.Nil, uuid.Nil, nil, errs.ErrMFACodeInvalid.WithMetadata(map[string]any{"remaining_attempts": remaining})
+		return metChallenge{}, errs.ErrMFACodeInvalid.WithMetadata(map[string]any{"remaining_attempts": remaining})
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_attempt_budgets WHERE user_id = $1 AND purpose = 'login'`, userID); err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
-	var tid uuid.UUID
-	if tenantID != nil {
-		tid = *tenantID
+	if enrollment {
+		if err := audit.Record(ctx, tx, audit.Event{
+			TenantID:     tenantID,
+			ActorUserID:  &userID,
+			ActorType:    "user",
+			Action:       "mfa.totp_enrolled",
+			ResourceType: "user",
+			ResourceID:   &userID,
+			Metadata:     map[string]any{"recovery_codes_minted": len(met.recoveryCodes), "via": "sign_in"},
+		}); err != nil {
+			return metChallenge{}, err
+		}
 	}
-	var claims map[string]any
-	if len(rawClaims) > 0 {
-		_ = json.Unmarshal(rawClaims, &claims)
+	// The sign-in met its second factor: recorded for both sign-in flows, so
+	// the trail says which first factor it followed.
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantID,
+		ActorUserID:  &userID,
+		ActorType:    "user",
+		Action:       metAction(riskEmail),
+		ResourceType: "user",
+		ResourceID:   &userID,
+		Metadata:     map[string]any{"first_factor": firstFactor, "proof": metProofKind(proof, enrollment, riskEmail)},
+	}); err != nil {
+		return metChallenge{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return uuid.Nil, uuid.Nil, nil, err
+		return metChallenge{}, err
 	}
-	return userID, tid, claims, nil
+	return met, nil
+}
+
+// deferEnrollment consumes an enrolment challenge skipped while the grace
+// period runs, and audits it. Refused (ErrMFAEnrollmentRequired) once the
+// account must set up a factor now; refusing costs no attempt.
+func (s *Service) deferEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, met metChallenge) (metChallenge, error) {
+	graceUntil, err := s.mayDeferEnrollment(ctx, met.userID, met.tenantID)
+	if err != nil {
+		return metChallenge{}, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM auth.mfa_login_challenges WHERE id = $1`, id); err != nil {
+		return metChallenge{}, err
+	}
+	var tenantPtr *uuid.UUID
+	if met.tenantID != uuid.Nil {
+		tenantPtr = &met.tenantID
+	}
+	meta := map[string]any{"first_factor": met.firstFactor}
+	if graceUntil != nil {
+		meta["grace_until"] = graceUntil
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     tenantPtr,
+		ActorUserID:  &met.userID,
+		ActorType:    "user",
+		Action:       "auth.mfa_enrollment_deferred",
+		ResourceType: "user",
+		ResourceID:   &met.userID,
+		Metadata:     meta,
+	}); err != nil {
+		return metChallenge{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return metChallenge{}, err
+	}
+	met.deferred = true
+	return met, nil
 }
 
 const (
@@ -803,11 +1086,53 @@ func reserveLoginMFAAttempt(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (i
 // CompleteMFALogin verifies the second-factor code for a pending token-flow
 // login and, on success, issues the token pair.
 func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua string) (*TokenPair, error) {
-	userID, tid, claims, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	pair, _, err := s.CompleteMFALoginWith(ctx, mfaToken, MFAProof{Code: code}, ip, ua)
+	return pair, err
+}
+
+// CompleteMFALoginWith is CompleteMFALogin met by any proof: a code, a
+// passkey assertion, an approved push, or — for an enrolment challenge — the
+// code confirming the authenticator app set up for it (whose new recovery
+// codes it also returns) or a skip in the grace period.
+func (s *Service) CompleteMFALoginWith(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (*TokenPair, []string, error) {
+	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.IssuePairWithClaims(ctx, userID, tid, ip, ua, "password_mfa", claims)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback(ctx)
+	pair, err := s.issuePairTx(ctx, tx, met.userID, met.tenantID, ip, ua, met.method(), met.claims, nil, time.Time{})
+	if err != nil {
+		return nil, nil, err
+	}
+	// The second factor this sign-in met steps up the session it opens, and
+	// only that one: no other session of the person's gains anything from it.
+	if met.stepUpMethod != "" {
+		if err := s.mfa.RecordVerification(ctx, tx, met.userID, pair.SessionID, met.stepUpMethod); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, err
+	}
+	return pair, met.recoveryCodes, nil
+}
+
+// MFALoginSession is a hosted-login challenge met: the SSO session cookie
+// value to write via SetLoginSessionCookie, and the recovery codes minted
+// when the challenge was met by setting up an authenticator app.
+type MFALoginSession struct {
+	UserID uuid.UUID
+	// TenantID is uuid.Nil when tenant-less.
+	TenantID      uuid.UUID
+	RawCookie     string
+	RecoveryCodes []string
+	// Deferred: an enrolment challenge skipped in the grace period. No
+	// factor was met, so the device must not be remembered.
+	Deferred bool
 }
 
 // CompleteMFALoginSession verifies the second-factor code for a pending
@@ -816,17 +1141,29 @@ func (s *Service) CompleteMFALogin(ctx context.Context, mfaToken, code, ip, ua s
 // tenant (uuid.Nil when tenant-less), and the raw cookie value to write via
 // SetLoginSessionCookie.
 func (s *Service) CompleteMFALoginSession(ctx context.Context, mfaToken, code, ip, ua string) (uuid.UUID, uuid.UUID, string, error) {
+	res, err := s.CompleteMFALoginSessionWith(ctx, mfaToken, MFAProof{Code: code}, ip, ua)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, "", err
+	}
+	return res.UserID, res.TenantID, res.RawCookie, nil
+}
+
+// CompleteMFALoginSessionWith is CompleteMFALoginSession met by any proof
+// (see CompleteMFALoginWith).
+func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken string, proof MFAProof, ip, ua string) (*MFALoginSession, error) {
 	// Any hook claims stashed on the challenge are discarded here — see the
 	// note in BeginLoginSession on why this cookie flow doesn't carry them.
-	userID, tid, _, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, code)
+	met, err := s.verifyAndConsumeMFAChallenge(ctx, mfaToken, proof)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, "", err
+		return nil, err
 	}
-	raw, err := s.CreateLoginSession(ctx, userID, ip, ua)
+	raw, err := s.CreateLoginSession(ctx, met.userID, ip, ua)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, "", err
+		return nil, err
 	}
-	return userID, tid, raw, nil
+	// A confirmed risky sign-in met no factor either, so earns no remembered device.
+	return &MFALoginSession{UserID: met.userID, TenantID: met.tenantID, RawCookie: raw,
+		RecoveryCodes: met.recoveryCodes, Deferred: met.deferred || met.riskVerified}, nil
 }
 
 // CheckPassword runs the full credential check — sign-in lockout (see
@@ -938,7 +1275,7 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil)
+	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, method, claims, nil, time.Time{})
 	if err != nil {
 		return nil, err
 	}
@@ -950,8 +1287,9 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 
 // issuePairTx is issuePair inside the caller's transaction, which commits. The
 // hook claims are stored with the session so renewals issue them again;
-// auditMeta (may be nil) is added to the sign-in audit record.
-func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any) (*TokenPair, error) {
+// auditMeta (may be nil) is added to the sign-in audit record. notAfter (zero:
+// none) is when the sign-in this session continues ends: it ends no later.
+func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
 	sessionID := uuid.New()
 	var ipArg any
 	if ip != "" {
@@ -973,13 +1311,31 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		}
 		hookClaims = raw
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims)
-		VALUES ($1, $2, $3, NULLIF($4,'')::inet, $5, $6)
-	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims); err != nil {
+	// The organisation's limit on one person's simultaneous sessions.
+	if tenantID != uuid.Nil {
+		if err := s.enforceSessionLimit(ctx, tx, userID, tenantID, ip, ua); err != nil {
+			return nil, err
+		}
+	}
+	// The organisation's own session bounds, else the platform's; taken now,
+	// so a later change to the policy applies to new sessions only.
+	maxAge, idle := s.sessionDefaults()
+	var sessionExp, idleExp time.Time
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country)
+		SELECT $1, $2, $3, NULLIF($4,'')::inet, $5, $6,
+		       LEAST(NOW() + COALESCE(sp.session_max_age, make_interval(secs => $7::float8)),
+		             COALESCE($9::timestamptz, 'infinity'::timestamptz)),
+		       COALESCE(sp.session_idle_timeout, make_interval(secs => $8::float8)),
+		       NULLIF($10, '')
+		FROM (VALUES (1)) AS one
+		LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $3
+		RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)
+	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims, maxAge.Seconds(), idle.Seconds(), notAfterArg(notAfter),
+		httpx.GeoCountry(ctx)).Scan(&sessionExp, &idleExp); err != nil {
 		return nil, err
 	}
-	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
+	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
 	if err != nil {
 		return nil, err
 	}
@@ -987,11 +1343,10 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	if err != nil {
 		return nil, err
 	}
-	refreshExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
 	if _, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		SessionID: sessionID,
 		TokenHash: refreshHash,
-		ExpiresAt: refreshExp,
+		ExpiresAt: s.refreshExpiry(sessionExp),
 	}); err != nil {
 		return nil, err
 	}
@@ -1016,14 +1371,34 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 		return nil, err
 	}
 	return &TokenPair{
-		AccessToken:  access,
-		TokenType:    "Bearer",
-		ExpiresAt:    exp,
-		RefreshToken: refreshRaw,
-		SessionID:    sessionID,
-		UserID:       userID,
-		TenantID:     tenantPtr,
+		AccessToken:      access,
+		TokenType:        "Bearer",
+		ExpiresAt:        exp,
+		RefreshToken:     refreshRaw,
+		SessionExpiresAt: sessionExp,
+		IdleExpiresAt:    idleExp,
+		SessionID:        sessionID,
+		UserID:           userID,
+		TenantID:         tenantPtr,
 	}, nil
+}
+
+// notAfterArg is a session's latest end for the insert: NULL for none.
+func notAfterArg(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t
+}
+
+// refreshExpiry is when a refresh token issued now expires: its usual
+// lifetime, but never after the session it renews has ended.
+func (s *Service) refreshExpiry(sessionExp time.Time) time.Time {
+	exp := time.Now().UTC().Add(s.tokens.RefreshTTL())
+	if sessionExp.Before(exp) {
+		return sessionExp
+	}
+	return exp
 }
 
 // Refresh rotates the provided refresh token: the old row is marked used,
@@ -1051,21 +1426,54 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		userStatus  string
 		userDeleted *time.Time
 		hookClaims  []byte
+		sessionExp  time.Time
+		pastMaxAge  bool
+		pastIdle    bool
 	)
+	// Whether the session had reached its maximum age or idle timeout by the
+	// time it ended — now, if it has not ended — is decided on the database's
+	// clock, as the bounds were set.
 	row := tx.QueryRow(ctx, `
 		SELECT rt.id, rt.session_id, rt.used_at, rt.expires_at,
-		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims
+		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims,
+		       s.expires_at,
+		       s.expires_at <= COALESCE(s.revoked_at, NOW()),
+		       s.last_seen_at + s.idle_timeout <= COALESCE(s.revoked_at, NOW())
 		FROM auth.refresh_tokens rt
 		JOIN auth.sessions s ON s.id = rt.session_id
 		JOIN "user".users u ON u.id = s.user_id
 		WHERE rt.token_hash = $1
-		FOR UPDATE OF rt
+		FOR UPDATE OF rt, s
 	`, hash)
-	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims); err != nil {
+	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims,
+		&sessionExp, &pastMaxAge, &pastIdle); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrAuthRefreshTokenInvalid
 		}
 		return nil, err
+	}
+	// uuid.Nil = tenant-less session; preserved across refresh.
+	var tenantID uuid.UUID
+	if tenantPtr != nil {
+		tenantID = *tenantPtr
+	}
+	// A session past its maximum age or idle timeout has ended, whatever the
+	// client was told and whether or not it is the first renewal to notice.
+	// The first one records the ending; it is never renewed.
+	if pastMaxAge || pastIdle {
+		if sessionRev == nil {
+			reason := timedOutIdle
+			if pastMaxAge {
+				reason = timedOutMaxAge
+			}
+			if err := s.endTimedOutSession(ctx, tx, userID, tenantID, sessionID, reason, in); err != nil {
+				return nil, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return nil, errs.ErrAuthSessionTimedOut
 	}
 	if sessionRev != nil {
 		return nil, errs.ErrAuthSessionRevoked
@@ -1080,11 +1488,6 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	}
 	if time.Now().After(expiresAt) {
 		return nil, errs.ErrAuthRefreshTokenInvalid
-	}
-	// uuid.Nil = tenant-less session; preserved across refresh.
-	var tenantID uuid.UUID
-	if tenantPtr != nil {
-		tenantID = *tenantPtr
 	}
 	if usedAt != nil {
 		// Reuse — assume theft. Revoke the session, write an audit row,
@@ -1105,11 +1508,10 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	if err != nil {
 		return nil, err
 	}
-	newExp := time.Now().UTC().Add(s.tokens.RefreshTTL())
 	newID, err := s.q.WithTx(tx).InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		SessionID: sessionID,
 		TokenHash: newHash,
-		ExpiresAt: newExp,
+		ExpiresAt: s.refreshExpiry(sessionExp),
 	})
 	if err != nil {
 		return nil, err
@@ -1120,7 +1522,9 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	}); err != nil {
 		return nil, err
 	}
-	if err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID); err != nil {
+	// The renewal is the session's use: its idle timeout counts from now.
+	idleExp, err := s.q.WithTx(tx).UpdateSessionLastSeen(ctx, sessionID)
+	if err != nil {
 		return nil, err
 	}
 	// The hook ran when the session was opened; its claims stay with the session.
@@ -1130,7 +1534,7 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 			return nil, err
 		}
 	}
-	access, exp, err := s.tokens.IssueAccessClaims(userID, tenantID, sessionID, "", claims)
+	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)
 	if err != nil {
 		return nil, err
 	}
@@ -1138,13 +1542,15 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		return nil, err
 	}
 	return &TokenPair{
-		AccessToken:  access,
-		TokenType:    "Bearer",
-		ExpiresAt:    exp,
-		RefreshToken: newRaw,
-		SessionID:    sessionID,
-		UserID:       userID,
-		TenantID:     tenantPtr,
+		AccessToken:      access,
+		TokenType:        "Bearer",
+		ExpiresAt:        exp,
+		RefreshToken:     newRaw,
+		SessionExpiresAt: sessionExp,
+		IdleExpiresAt:    idleExp,
+		SessionID:        sessionID,
+		UserID:           userID,
+		TenantID:         tenantPtr,
 	}, nil
 }
 
@@ -1582,6 +1988,11 @@ func (s *Service) ReauthPassword(ctx context.Context, userID uuid.UUID, plain st
 	return true, plain != "" && password.Verify(hash, plain), nil
 }
 
+// SignInMethods counts the user's ways to sign in (see user.SignInMethods).
+func (s *Service) SignInMethods(ctx context.Context, userID uuid.UUID) (user.SignInMethods, error) {
+	return user.CountSignInMethods(ctx, s.pool, userID)
+}
+
 type Session struct {
 	ID         uuid.UUID  `json:"id"`
 	UserID     uuid.UUID  `json:"user_id"`
@@ -1591,6 +2002,24 @@ type Session struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeenAt time.Time  `json:"last_seen_at"`
 	RevokedAt  *time.Time `json:"revoked_at"`
+	// ExpiresAt is when the session ends however active it is, and
+	// IdleExpiresAt when it ends unless renewed first. Status is "active",
+	// "revoked" (ended by sign-out or revocation) or "expired" (reached its
+	// maximum age or idle timeout first).
+	ExpiresAt     time.Time `json:"expires_at"`
+	IdleExpiresAt time.Time `json:"idle_expires_at"`
+	Status        string    `json:"status"`
+	// Device describes the device and browser in words ("Chrome on macOS",
+	// "Unknown device"), read from the user agent on the server so every
+	// surface names it alike; DeviceKind is desktop, mobile, tablet or
+	// unknown. The raw user agent stays in UserAgent, for support.
+	Device     string `json:"device"`
+	DeviceKind string `json:"device_kind"`
+	// Country is where the session was opened, approximately (ISO 3166-1
+	// alpha-2), when the deployment supplies it; omitted otherwise.
+	Country string `json:"country,omitempty"`
+	// Current marks the session the request listing them was made with.
+	Current bool `json:"current"`
 }
 
 func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID) ([]Session, error) {
@@ -1608,7 +2037,14 @@ type SessionPage struct {
 	Total      int       `json:"total"`
 }
 
+// ListSessionsPage lists the user's sessions, newest first.
 func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit int, cursor string) (*SessionPage, error) {
+	return s.ListSessionsPageFor(ctx, userID, uuid.Nil, limit, cursor)
+}
+
+// ListSessionsPageFor is ListSessionsPage marking current (uuid.Nil: none) as
+// the caller's own session.
+func (s *Service) ListSessionsPageFor(ctx context.Context, userID, current uuid.UUID, limit int, cursor string) (*SessionPage, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1640,8 +2076,14 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 	// `users.deleted_at`.
 	rows, err := s.pool.Query(ctx, `
 		SELECT sess.id, sess.user_id, sess.tenant_id, host(sess.ip), sess.user_agent,
-		       sess.created_at, sess.last_seen_at, sess.revoked_at
+		       sess.created_at, sess.last_seen_at, sess.revoked_at,
+		       sess.expires_at, ends.idle,
+		       CASE WHEN ends.idle <= COALESCE(sess.revoked_at, NOW()) THEN 'expired'
+		            WHEN sess.revoked_at IS NOT NULL THEN 'revoked'
+		            ELSE 'active' END,
+		       COALESCE(sess.country, '')
 		FROM auth.sessions sess
+		CROSS JOIN LATERAL (SELECT LEAST(sess.last_seen_at + sess.idle_timeout, sess.expires_at) AS idle) ends
 		JOIN "user".users u ON u.id = sess.user_id
 		WHERE sess.user_id = $1 AND u.deleted_at IS NULL AND sess.superseded_by IS NULL
 		  AND ($2::boolean = FALSE OR (sess.created_at, sess.id) < ($3, $4))
@@ -1656,9 +2098,17 @@ func (s *Service) ListSessionsPage(ctx context.Context, userID uuid.UUID, limit 
 	for rows.Next() {
 		var session Session
 		var tenantID pgtype.UUID
-		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt); err != nil {
+		if err := rows.Scan(&session.ID, &session.UserID, &tenantID, &session.IP, &session.UserAgent, &session.CreatedAt, &session.LastSeenAt, &session.RevokedAt,
+			&session.ExpiresAt, &session.IdleExpiresAt, &session.Status, &session.Country); err != nil {
 			return nil, err
 		}
+		ua := ""
+		if session.UserAgent != nil {
+			ua = *session.UserAgent
+		}
+		device := useragent.Parse(ua)
+		session.Device, session.DeviceKind = device.Label(), device.Kind
+		session.Current = current != uuid.Nil && session.ID == current
 		if tenantID.Valid {
 			session.TenantID = uuid.UUID(tenantID.Bytes)
 		}

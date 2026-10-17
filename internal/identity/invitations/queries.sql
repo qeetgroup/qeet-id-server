@@ -105,3 +105,21 @@ INSERT INTO auth.password_credentials (user_id, password_hash) VALUES (@user_id,
 INSERT INTO rbac.user_roles (user_id, tenant_id, role_id)
 VALUES (@user_id, @tenant_id, @role_id)
 ON CONFLICT (user_id, tenant_id, role_id) DO NOTHING;
+
+-- LookupInvite reads the invitation a link names for the acceptance screen:
+-- the organisation it is from, the address it is for, its state, and whether
+-- an account already holds that address. Read-only.
+-- name: LookupInvite :one
+SELECT i.id, i.tenant_id, i.email, i.status, i.expires_at,
+       t.name AS tenant_name, t.slug AS tenant_slug,
+       EXISTS (SELECT 1 FROM "user".users u WHERE u.email = i.email) AS account_exists
+FROM tenant.invites i
+JOIN tenant.tenants t ON t.id = i.tenant_id
+WHERE i.token_hash = @token_hash;
+
+-- MarkInvitedAccountVerified records that the account created to accept an
+-- invitation owns its address — the invitation reached it there — as the
+-- password path's InsertInvitedUser does.
+-- name: MarkInvitedAccountVerified :exec
+UPDATE "user".users SET status = 'active', email_verified_at = COALESCE(email_verified_at, NOW())
+WHERE id = @user_id;

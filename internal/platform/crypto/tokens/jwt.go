@@ -310,14 +310,14 @@ func (i *Issuer) replaceKeyring(activePrivatePEM string, verificationKeys []veri
 }
 
 func (i *Issuer) IssueAccess(userID, tenantID, sessionID uuid.UUID, scopes string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "")
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", nil, "", time.Time{})
 }
 
 // IssueAccessActor mints an access token like IssueAccess but with an RFC 8693
 // actor (act) claim, marking it a delegated token: the subject's authority is
 // being exercised by actorSubject (e.g. an AI agent acting for a user).
 func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "")
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, "", nil, "", time.Time{})
 }
 
 // IssueAccessResource mints an access token whose audience carries an RFC 8707
@@ -326,14 +326,21 @@ func (i *Issuer) IssueAccessActor(userID, tenantID, sessionID uuid.UUID, scopes,
 // appended, letting a downstream resource server (e.g. an MCP server) confirm
 // the token was minted for it. An empty resource behaves like IssueAccess.
 func (i *Issuer) IssueAccessResource(userID, tenantID, sessionID uuid.UUID, scopes, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "")
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, resource, nil, "", time.Time{})
 }
 
 // IssueAccessClaims mints an access token like IssueAccess but with additional
 // tenant-supplied custom claims (see Claims.Custom), sourced from a post-login
 // Auth Hook. A nil/empty map behaves like IssueAccess.
 func (i *Issuer) IssueAccessClaims(userID, tenantID, sessionID uuid.UUID, scopes string, custom map[string]any) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom, "")
+	return i.issueAccess(userID, tenantID, sessionID, scopes, nil, "", custom, "", time.Time{})
+}
+
+// IssueSessionAccess mints the access token of a first-party session, like
+// IssueAccessClaims, but never past sessionEnd: a token issued shortly before
+// its session's maximum age ends with the session instead of outliving it.
+func (i *Issuer) IssueSessionAccess(userID, tenantID, sessionID uuid.UUID, custom map[string]any, sessionEnd time.Time) (string, time.Time, error) {
+	return i.issueAccess(userID, tenantID, sessionID, "", nil, "", custom, "", sessionEnd)
 }
 
 // IssueAccessActorResource combines IssueAccessActor and IssueAccessResource:
@@ -341,7 +348,7 @@ func (i *Issuer) IssueAccessClaims(userID, tenantID, sessionID uuid.UUID, scopes
 // resource indicator. This is the token-exchange grant's MCP case — an agent
 // token scoped to one specific downstream resource server.
 func (i *Issuer) IssueAccessActorResource(userID, tenantID, sessionID uuid.UUID, scopes, actorSubject, resource string) (string, time.Time, error) {
-	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "")
+	return i.issueAccess(userID, tenantID, sessionID, scopes, &ActClaim{Subject: actorSubject}, resource, nil, "", time.Time{})
 }
 
 // ClientAccess describes an access token issued to an application on a
@@ -365,12 +372,15 @@ func (i *Issuer) IssueClientAccess(in ClientAccess) (string, time.Time, error) {
 	if in.ActorSubject != "" {
 		act = &ActClaim{Subject: in.ActorSubject}
 	}
-	return i.issueAccess(in.UserID, in.TenantID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID)
+	return i.issueAccess(in.UserID, in.TenantID, in.SessionID, in.Scopes, act, in.Resource, nil, in.ClientID, time.Time{})
 }
 
-func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string) (string, time.Time, error) {
+func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes string, act *ActClaim, resource string, custom map[string]any, clientID string, notAfter time.Time) (string, time.Time, error) {
 	now := time.Now().UTC()
 	exp := now.Add(i.accessTTL)
+	if !notAfter.IsZero() && notAfter.Before(exp) {
+		exp = notAfter.UTC()
+	}
 	aud := jwt.ClaimStrings{i.audience}
 	if resource != "" && resource != i.audience {
 		aud = append(aud, resource) // RFC 8707: bind the token to the requested resource

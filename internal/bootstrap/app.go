@@ -69,6 +69,7 @@ func Run() {
 	// Client IP resolution must be configured before the listener starts: it
 	// keys the login rate limiter and every audit record.
 	httpx.SetTrustedProxyHops(cfg.TrustedProxyHops)
+	httpx.SetGeoCountryHeader(cfg.GeoCountryHeader)
 	if !cfg.IsDev() && cfg.TrustedProxyHops == 0 {
 		slog.Warn("TRUSTED_PROXY_HOPS is 0: X-Forwarded-For is ignored and every " +
 			"client IP will be the transport peer. Set it to the number of reverse " +

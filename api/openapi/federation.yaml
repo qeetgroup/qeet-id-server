@@ -1520,9 +1520,25 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+              properties:
+                provider:
+                  type: string
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                  writeOnly: true
+                  description: Required for a new provider. On a provider that exists, empty keeps the stored secret.
+                discovery_url:
+                  type: string
+        description: Adds a provider to the caller's organisation, or replaces the settings of one it has.
+      description: >-
+        Adds a social provider, or replaces the settings of one the organisation
+        already has. Replacing keeps whether the provider is switched on, and an
+        empty client_secret keeps the stored one. The secret is stored encrypted
+        and never returned. Audited as social_provider.created or
+        social_provider.updated (the fields saved and whether the secret was
+        replaced, never its value).
       responses:
         '201':
           description: Created
@@ -1539,6 +1555,103 @@ paths:
           $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/social/providers/{provider}:
+    patch:
+      operationId: patch_v1_social_providers_ByProvider
+      summary: Update a provider
+      tags:
+        - Social
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                  description: false switches the provider off — it is no longer offered and sign-in through it is refused — until switched on again; other saves keep it off.
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                  writeOnly: true
+                  description: Replaces the stored secret; omitted or empty keeps it.
+                discovery_url:
+                  type: string
+      description: >-
+        Changes only the fields given on one of the caller's organisation's
+        social providers — switch it off or on, replace its secret, or change
+        its client ID or discovery URL. Takes effect for the next sign-in;
+        other providers are unaffected. A switched-off provider reads to a
+        signing-in user exactly like one that was never set up. Audited as
+        social_provider.updated (fields changed, whether the secret was
+        replaced), social_provider.disabled and social_provider.enabled. 404
+        for a provider the organisation does not have.
+      responses:
+        '200':
+          description: The provider (never its secret)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    delete:
+      operationId: delete_v1_social_providers_ByProvider
+      summary: Remove a provider
+      tags:
+        - Social
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: >-
+        Removes one of the caller's organisation's social providers. The
+        identities people linked through it are kept — they still show in those
+        people's connected accounts and work again if the provider is added
+        back — but nobody can sign in through it meanwhile. Refused with 409
+        social.provider_in_use (metadata.people: how many) while anyone in the
+        organisation can sign in only through it (no password, no passkey, no
+        other linked identity); switch it off instead, or give them another way
+        in first. Audited as social_provider.deleted. 404 for a provider the
+        organisation does not have.
+      responses:
+        '204':
+          description: Removed
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/social/{provider}/callback:
@@ -4081,6 +4194,22 @@ components:
           format: date-time
         refresh_token:
           type: string
+        session_expires_at:
+          type: string
+          format: date-time
+          description: >-
+            When the session ends however active it is: the organisation's
+            maximum session age from sign-in (the platform default where it
+            sets none). Switching organisation never moves it later.
+        idle_expires_at:
+          type: string
+          format: date-time
+          description: >-
+            When the session ends unless it is renewed before then: the
+            organisation's idle timeout from this sign-in or renewal, never
+            after session_expires_at. Clients can warn the user ahead of either
+            time; the server refuses a renewal after them with 401
+            auth.session_timed_out whatever the client does.
         session_id:
           type: string
           format: uuid

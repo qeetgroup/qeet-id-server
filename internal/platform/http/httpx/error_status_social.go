@@ -15,6 +15,7 @@ func init() {
 		errs.CodeSocialTenantNotFound:        http.StatusNotFound,
 		errs.CodeSocialProviderNotConfigured: http.StatusNotFound,
 		errs.CodeSocialProviderDisabled:      http.StatusBadRequest,
+		errs.CodeSocialProviderInUse:         http.StatusConflict,
 		errs.CodeSocialProviderNoDiscovery:   http.StatusBadRequest,
 		errs.CodeSocialDiscoveryFailed:       http.StatusUnprocessableEntity,
 		errs.CodeSocialCallbackParamsMissing: http.StatusBadRequest,

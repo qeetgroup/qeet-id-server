@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -29,6 +30,10 @@ type Principal struct {
 	// authorization server (its client_id claim); empty for the user's own
 	// tokens. See RefuseApplicationTokens.
 	ClientID string
+	// SignedInAt is set for a principal authenticated by the hosted login's
+	// session cookie, which has no API session: when that sign-in happened. A
+	// fresh one counts as a step-up (see mfa.Service.StepUpGate).
+	SignedInAt *time.Time
 }
 
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {

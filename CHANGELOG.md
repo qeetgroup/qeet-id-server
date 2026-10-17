@@ -223,12 +223,214 @@ plus follow-up fixes from reviewing that remediation. Migrations `0097`–`0106`
 
 ### Features
 
+* **auth:** an organisation can cap how many live sessions one person holds in it at once — new
+  `max_sessions` (none by default) and `session_limit_action` on its security policy. A sign-in at the cap
+  either ends the person's least recently used session (`evict_oldest`, the default: audited as
+  `auth.session_evicted`, announced as `session_limit`) or is refused with `auth.session_limit` (403, audited).
+  The count happens as the session opens, under the account's lock, so simultaneous sign-ins cannot exceed it.
+  Migration `0125`.
+* **auth:** the session list describes each session: `device` ("Chrome on macOS", "Unknown device") and
+  `device_kind` read from the user agent on the server, `country` where a trusted proxy reports one
+  (`GEO_COUNTRY_HEADER`; omitted otherwise, never taken from the client), and `current` on the caller's own
+  session. A session's last use now moves on requests made with its access tokens (at most once a minute), not
+  only on renewal, so its idle timeout counts from its last use. Migration `0124`.
+* **passkeys:** the session cleanup job also deletes passkey ceremony state that expired unfinished. The
+  console and hosted sign-in pages now start a passkey ceremony in the background as they load (so the browser
+  can offer passkeys in its autofill prompt), and most are never finished. The job's log line reports them as
+  `ceremonies`.
+* **auth:** magic-link sign-in works end to end. A link can be asked for from the console's sign-in page (no
+  organisation: the account is found by its address, as password sign-in finds it) and from an organisation's
+  hosted sign-in page (`app: "hosted_login"`, with the journey's `return_to`): the link opens where it was asked
+  for, and the hosted login exchanges it at the new `POST /v1/auth/magic-link/session`, which opens the
+  hosted-login session and returns where the journey continues. A link is exchanged only where it was issued
+  for. Asking answers the same, and takes the same minimum time, whether or not the address has an account, and
+  sends nothing to one without; requests are bounded to three per address and ten per caller (429), counted
+  either way. New `POST /v1/auth/magic-link/resend` replaces a used or expired link without the address being
+  typed again. Migration `0123`.
+* **invites:** an invited person can accept with a passkey instead of a password. `POST /v1/invites/lookup`
+  previews an invitation (organisation, address, whether an account already holds it, and the ways of accepting
+  it: a password always, a passkey where the organisation allows passkeys). `POST
+  /v1/invites/accept/passkey/begin` and `/finish` run the passkey ceremony: the email and organisation come from
+  the invitation, and finishing creates the account with the passkey and no password, grants the invited role and
+  accepts the invitation in one transaction, then returns a token pair as `POST /v1/invites/accept` does. A
+  ceremony that expires, is abandoned or replaced, or is submitted twice creates nothing and leaves the invitation
+  pending; an ordinary passkey sign-up cannot finish an invitation's ceremony. Migration `0122`.
 * **deploy:** add deploy/release layer (Compose, Helm, migrate image, AWS KMS, CI→CD) ([3e176c5](https://github.com/qeetgroup/qeet-id-server/commit/3e176c59a8fca6bbf1bf614a4c97b0bdab5a8dfb))
 * **frontend:** adopt @qeetrix/ui across admin, web, and docs ([c32b8b9](https://github.com/qeetgroup/qeet-id-server/commit/c32b8b9b7d152b1aeb94d8424ac3d7ef9d7667dd))
 
 
 ### Bug Fixes
 
+* **mfa:** a linked phone can be removed for real, its credential ages out, and its answers reach the server.
+  Unlinking in the mobile app cleared only the app's storage: the server's revoke needed a signed-in session the
+  app never holds, and the device credential never expired, so an "unlinked" or lost phone could still approve
+  sign-ins. Now the app removes its phone with `POST /v1/mfa/push/devices/{id}/unlink` and its own device
+  credential (`mfa.push_device_unlinked`); a device credential expires 180 days after the phone was last linked,
+  after which the phone is not offered, gets no requests and cannot answer one; and an administrator can list
+  and disconnect a member's phones at `/v1/users/{id}/push-devices[/{deviceID}]` (`user.read` / `user.write`,
+  `mfa.push_device_revoked`). The app's answer to an approval request, and its unlink, carry no cookie, token or
+  Origin and were refused by the CSRF check; both device-credential paths are now exempt, as they authenticate
+  with the device credential, not a cookie. Migration `0132`.
+* **mfa:** an expired push approval request reads as expired. A request past its two-minute expiry was still
+  served as `pending`, so the mobile app offered to approve something the server would refuse. Now reading it,
+  at `GET /v1/mfa/push/challenges/{id}` or during the sign-in that sent it, records and reports `expired`, and
+  the scheduler's `mfa-cleanup` job removes requests a day after they expire.
+* **mfa:** an administrator's MFA reset removes every second factor. It left push devices (and their pending
+  approval requests) and the step-up window, so the person still showed as MFA-enabled and a device an attacker
+  registered could still approve sign-ins. Now `DELETE /v1/users/{id}/mfa` removes the authenticator app,
+  recovery codes, email/SMS factors, push devices and pending push requests, and what they earned (remembered
+  devices, step-ups); passkeys stay, as they are how the person signs in. The `mfa.admin_reset` audit record
+  names how many of each were removed (`removed`).
+* **mfa:** a one-time code that cannot be delivered is no longer reported as sent. With no provider for a channel
+  (SMS has none by default), setting up or challenging that factor answered that a code was sent while the code
+  was logged and dropped. Now a channel that cannot reach anyone is refused with `503 mfa.delivery_unavailable`
+  before any factor or code is stored (the development log still counts as delivery in development), and a
+  provider failure answers `502 mfa.delivery_failed` and withdraws the code, audited as `mfa.otp_delivery_failed`.
+  The server logs a warning at start when no SMS provider is configured.
+* **auth:** remembered devices can be seen and forgotten, stay with the organisation that remembered them, and do
+  not outlive a changed password. A device remembered to skip the second factor stayed trusted for 30 days with no
+  way for anyone to remove it, so a stolen device cookie plus a password bypassed MFA for a month. Now `GET
+  /v1/auth/trusted-devices` lists the caller's remembered devices (named, with when each was remembered, last
+  used and expires, and the current one marked) and `DELETE /v1/auth/trusted-devices[/{id}]` forgets one or all;
+  an administrator does the same for a member at `/v1/users/{id}/trusted-devices[/{deviceID}]` (`user.read` /
+  `user.write`), for devices remembered in their own organisation. A device skips the second factor only in the
+  organisation that remembered it, for that organisation's new `remember_device_days` (1–90, default 30). A
+  changed password and an administrative factor reset forget every device, as signing out everywhere already did.
+  Remembering, using and forgetting a device are audited (`auth.trusted_device_added`, `_used`, `_revoked`), and
+  the session clean-up removes expired devices. Migration `0131`.
+* **mfa:** sending email and SMS codes is limited. Any signed-in caller could request codes at about thirty a
+  second, each staying valid for ten minutes, so a session could flood an inbox or a phone, run up the operator's
+  SMS bill, or stack hundreds of live codes against five guesses. Now a code to one factor goes at most every
+  30 seconds, ten an hour to one person and five an hour to one address or number over every account, refused
+  with `429 mfa.code_send_limited` and `retry_after` (seconds); a new code makes the factor's earlier unused code
+  stop working; a person may hold five email and SMS factors (`409 mfa.factor_limit`); SMS codes need a plan that
+  includes them at sign-in and step-up as well as setup, and are refused without an organisation; and each code
+  sent is audited as `mfa.otp_sent` with the destination masked. The scheduler's new `mfa-cleanup` job
+  removes codes a day after they expire.
+* **mfa:** sensitive operations need a step-up. Only switching the authenticator app off and regenerating
+  recovery codes did, so a stolen access token could add its own factor, remove the owner's, mint an API key,
+  change the sign-in policy or delete the organisation. A step-up of the calling session is now needed to add or
+  remove one's own factors and sign-in methods (while holding a factor the organisation counts, so a first
+  factor needs none), to create, change or revoke machine credentials (API keys, service principals, agents,
+  OAuth clients and their secrets, SCIM tokens, credentials, webhooks, auth hooks), to create, reveal or delete
+  secrets and vault and AI provider configuration, to change security, sign-in, risk, bot, IP and rate-limit
+  settings or a user's MFA requirement, factors or password, to configure SAML, LDAP, social providers, domains,
+  directory mappings and administrator portal links, to edit email templates, to change retention, anomaly
+  settings and log streaming, and to update or delete the organisation, delete or purge a user, or delete one's
+  own account. Each answers the existing `step_up_required` refusal. API keys, service principals and agents
+  hold no session and cannot perform these; the hosted login's own sign-in counts as a step-up for the
+  organisation's window after it. The catalogue is `stepUpRoutes` in `internal/bootstrap`, and a test fails
+  when a mutating route that looks sensitive is neither in it nor exempted with a reason.
+* **mfa:** setting up a new authenticator app no longer switches off the one that works, and needs a step-up
+  while one is held. Starting a setup used to clear the confirmed app at once, so a single call with a stolen
+  token turned the account's second factor off and left the owner unable to answer a challenge, while
+  switching the app off properly needed a step-up. Now, while an app is confirmed, `POST
+  /v1/mfa/totp/enroll/start` needs a step-up of the calling session (a first setup needs none) and the new app
+  waits beside the confirmed one: the confirmed app keeps signing in and stepping up until a code from the new
+  one confirms it, and a setup left unconfirmed for 30 minutes is ignored. The response adds `replacing`, and
+  the start is audited with it. Asking for a new code to an email or SMS factor already confirmed no longer
+  takes that factor away until it is confirmed again. Migration `0130`.
+* **auth:** every sign-in is assessed for risk, and a risky one is confirmed. Risk was assessed only on a hosted
+  sign-in from a remembered device in an organisation that remembers devices, and only to cancel that skip; the
+  API sign-in and anyone without a second factor were never assessed, and the history impossible travel and
+  device reputation compare against was written only then. Now the API, hosted, self-registration and magic-link
+  sign-ins are all assessed, once, and each records its country and a coarse browser-and-OS device key (kept 90
+  days; the scheduler's `sign-in-history-cleanup` job removes older ones). A risky sign-in skips no factor on a
+  remembered device; one by someone with no second factor answers a challenge met by a code sent to their
+  verified email (the challenge's one `email` factor, named by its own id, sent with `POST /v1/auth/mfa/send`),
+  audited as `auth.sign_in_confirmed` with the session method `<first factor>_email_confirmed` and no step-up,
+  or is refused with `403 auth.risk_verification_unavailable` when there is no verified address. A magic link has
+  proved the mailbox already, so it goes in. Settings that cannot be read still fail open, as before. Migration
+  `0133`.
+* **mfa:** a step-up belongs to the session that earned it. It was recorded per person, so proving a factor in
+  one browser unlocked sensitive actions in every other session the person held for five minutes, and every
+  sign-in with a second factor did the same. Now a step-up is recorded against the calling session only: it
+  ends with that session (revoked, expired or ended by idleness), a sign-in with a second factor steps up the
+  session it opens and no other, and a changed password or an administrative factor reset clears the person's
+  step-ups everywhere. Principals without a session (API keys, agents, hosted-login cookies) cannot step up. The
+  security policy adds `step_up_window` (1m–60m, default 5m) and `step_up_methods` (the factor types that count;
+  null for every one), both applied at once. The `step_up_required` refusal carries `window_seconds` and, when
+  the organisation limits them, `allowed_methods`; `GET /v1/mfa/step-up/status` reports the same. A refusal is
+  audited as `mfa.step_up_required` and a completed step-up as `mfa.step_up_verified`, both with the session.
+  Migration `0129`.
+* **mfa:** every confirmed second factor is now challenged at sign-in, not only an authenticator app. A person
+  whose second factor is an email or SMS code, a passkey (while their organisation allows passkeys) or a push
+  device used to sign in on their password alone. Both password sign-in paths now challenge when any factor
+  is held, and the challenge lists exactly those factors (`factors`, with each email/SMS factor's id and masked
+  destination; `methods` their types). It is met by a code (authenticator app, recovery, or one sent with the
+  new `POST /v1/auth/mfa/send`), a passkey assertion from `POST /v1/auth/mfa/passkey/begin`, or an approved push
+  sent with `POST /v1/auth/mfa/push` (`push: true` answers `mfa.push_pending` until approved, at no attempt cost).
+  The passkey ceremony and push request are bound to the challenge, so an approval signs in once. The token-flow
+  MFA endpoints are CSRF-exempt like `/v1/auth/login` (the mfa_token is the credential), which also lets the
+  console complete an MFA sign-in through its server. Migration `0126`.
+* **mfa:** an organisation's MFA requirement is enforced at sign-in. `mfa_enforcement` was stored, shown and
+  reported as a passing compliance control, and an account marked as requiring MFA showed a badge, but neither
+  changed how anyone signed in. Both password sign-in paths now challenge an account that must use a second
+  factor: everyone under `required`; under `admin_only`, anyone holding a role (directly or through a group)
+  that grants a write permission; and any account marked as requiring MFA, whatever its organisation sets. An
+  account that must and holds no factor gets an enrolment challenge (`enrollment_required`) instead of a
+  session: it sets up an authenticator app with the new `POST /v1/auth/mfa/enroll`, and the code confirming
+  the app completes the challenge, returning the account's new `recovery_codes`. Hosted self-registration into
+  such an organisation answers the same enrolment challenge. The security policy adds `mfa_grace_days` (0–90)
+  and the read-only `mfa_enforced_since`: in the grace period the accounts the organisation already had are
+  prompted (`enrollment_due_at`) and may put the setup off with `skip: true`, which is refused with
+  `mfa.enrollment_required` (403) once it ends. Every challenge is audited as `auth.mfa_challenged` with its
+  reason (`enrolled`, `tenant_required`, `admin_required`, `user_required`), a skipped setup as
+  `auth.mfa_enrollment_deferred`. The SOC 2 and ISO 27001 MFA evidence control now reports whether MFA is
+  enforced — failing while optional or during a grace period — and how many accounts hold no factor yet.
+  Organisations that already required MFA are enforced from the upgrade, with no grace period. Migration
+  `0127`.
+* **mfa:** magic-link sign-in meets the same second-factor decision as password sign-in. Completing a link
+  issued tokens (console) or the hosted-login session with no second-factor evaluation, so reading the mailbox
+  was enough to sign in to an account that holds a factor or whose organisation requires one. Now, where a
+  factor is held or required, `POST /v1/auth/magic-link/consume` answers an MFA challenge completed at
+  `POST /v1/auth/mfa`, and `POST /v1/auth/magic-link/session` one completed at `POST /v1/auth/session/mfa`
+  (with `return_to`), on the same terms as the hosted password sign-in — a trusted device skips it where the
+  organisation allows — and drawing on the same attempt budget. The link is spent before the challenge, so an
+  abandoned or failed challenge leaves no session and no link to reuse. A challenge records how the first
+  factor was proven (`first_factor`, audited on `auth.mfa_challenged`); a met challenge is audited as
+  `auth.mfa_verified`, and the session's method is `magic_link_mfa` (or `password_mfa`). Migration `0128`.
+* **auth:** sessions end by themselves. A session used to end only when something revoked it: every renewal
+  issued a fresh 30-day refresh token, so a session renewed once a month never ended, and an organisation's
+  `session_max_age` was stored and shown but never applied. Now a session ends at its maximum age however
+  active it is, and once it goes longer than its idle timeout without a renewal (each renewal restarts it).
+  Both bounds come from the organisation's security policy when the session opens — new
+  `session_idle_timeout` next to `session_max_age` — or from the new `SESSION_MAX_AGE` (720h) and
+  `SESSION_IDLE_TIMEOUT` (24h) where it sets none; switching organisation never extends a session. An access
+  token never outlives its session (its `exp` is the session's end when that comes first, and the shortest idle
+  timeout is longer than an access token), and a hosted-login sign-in lasts no longer than the organisation's
+  idle timeout or maximum age when those are under its usual 30 minutes. A renewal
+  past either bound is refused with the new `auth.session_timed_out` (401); the session ends, the audit
+  records `auth.session_expired` with the bound reached, and `session.revoked` subscribers are told `expired`.
+  Sign-in and renewal responses add `session_expires_at` and `idle_expires_at`, and the session list adds
+  `expires_at`, `idle_expires_at` and `status` (`active`, `revoked`, `expired`); expired sessions are no longer
+  counted, listed as active, or ended again by a sign-out everywhere. An application's grant ends at the same
+  maximum age however often it is renewed. `ACCESS_TOKEN_TTL` must now be shorter than 15m, the shortest idle
+  timeout. Migration `0121`.
+* **auth:** an account can no longer lose its last way to sign in. Removing a passkey, unlinking a connected
+  account, or an administrator unlinking someone's identity used to delete it without looking at what the account
+  had left, so a passkey-only account could remove its passkey and never sign in again. Each removal now counts
+  the account's ways in — its password and passkeys while its organisation allows them, and linked identities
+  that can still sign in — under the
+  account's lock, in the same transaction, and refuses the last one with `auth.last_sign_in_method` (409),
+  recorded as `auth.sign_in_method_removal_refused`. New `GET /v1/auth/sign-in-methods` reports the counts so a
+  client can disable or explain the action first.
+* **social:** an organisation's social providers can be switched off, changed field by field and removed. A
+  provider could not be switched off — every save switched it back on — and a save without a secret replaced
+  the stored one with an empty one. New `PATCH /v1/social/providers/{provider}` changes only the fields given
+  (`enabled`, `client_id`, `client_secret`, `discovery_url`); `POST /v1/social/providers` keeps whether a
+  provider is on and keeps the stored secret when none is given. New `DELETE /v1/social/providers/{provider}`
+  removes one, keeping the identities people linked through it (they work again if it is added back); it is
+  refused with `social.provider_in_use` (409) while someone in the organisation can sign in only through it.
+  A switched-off or removed provider now refuses sign-in with the same answer as one never set up
+  (`social.provider_not_configured`), so the refusal does not reveal which. Every change is audited
+  (`social_provider.created`, `.updated`, `.enabled`, `.disabled`, `.deleted`), naming the fields changed but
+  never the secret.
+* **policy:** the organisation security policy could not be saved from the console: the API read
+  `session_max_age` as nanoseconds while the console sends `"720h"` (400), the console's "Basic" complexity and
+  "Disabled" MFA options are not values the database accepts (500), and omitting the IP lists failed (500).
+  Session bounds are now read and written as duration strings, every field is checked, and an out-of-range
+  value is refused with `validation_failed` naming the field.
 * **oidc:** an access token an application receives on a user's behalf can no longer manage the user's account or
   organisation. Such tokens verified like the user's own, so a token approved only for `openid email` could list
   and end the user's sessions or, for an administrator, delete users. They now carry `client_id` (RFC 9068) —

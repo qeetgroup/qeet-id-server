@@ -104,8 +104,10 @@ SELECT
   (SELECT count(*) FROM auth.passkey_credentials p WHERE p.user_id = u.id)::int AS passkeys,
   (SELECT count(*) FROM auth.mfa_recovery_codes rc WHERE rc.user_id = u.id AND rc.used_at IS NULL)::int AS recovery_codes_remaining,
   EXISTS(SELECT 1 FROM auth.password_credentials pc WHERE pc.user_id = u.id)::boolean AS password_set,
-  (SELECT count(*) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL)::int AS active_sessions,
-  (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL)::int AS distinct_devices
+  (SELECT count(*) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
+     AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW())::int AS active_sessions,
+  (SELECT count(DISTINCT s.user_agent) FROM auth.sessions s WHERE s.user_id = u.id AND s.revoked_at IS NULL
+     AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW())::int AS distinct_devices
 FROM "user".users u
 WHERE u.id = $1 AND u.deleted_at IS NULL;
 
@@ -123,13 +125,15 @@ WHERE user_id = $1 AND last_used_at IS NOT NULL
 ORDER BY last_used_at DESC
 LIMIT 1;
 
--- ListUserActiveSessions lists a user's live sessions (most-recently-seen first).
+-- ListUserActiveSessions lists a user's live sessions (most-recently-seen first):
+-- not revoked and not past their maximum age or idle timeout.
 -- ip is rendered through host() (clean address, no INET CIDR suffix) and
 -- COALESCEd so the nullable INET scans into a plain non-null string.
 -- name: ListUserActiveSessions :many
 SELECT id, COALESCE(host(ip), '')::text AS ip, user_agent, created_at, last_seen_at
 FROM auth.sessions
 WHERE user_id = $1 AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 ORDER BY last_seen_at DESC
 LIMIT 100;
 

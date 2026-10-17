@@ -10,6 +10,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -62,6 +63,12 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/auth/signup", h.signup)
 	r.Post("/auth/login", h.login)
 	r.Post("/auth/mfa", h.mfaLogin)
+	// Second-factor helpers, for either sign-in flow: send an email/SMS
+	// code, begin a passkey assertion, send a push approval request.
+	r.Post("/auth/mfa/send", h.mfaSendCode)
+	r.Post("/auth/mfa/passkey/begin", h.mfaPasskeyBegin)
+	r.Post("/auth/mfa/push", h.mfaPush)
+	r.Post("/auth/mfa/enroll", h.mfaEnroll)
 	r.Post("/auth/refresh", h.refresh)
 	// Hosted-login SSO session (HttpOnly cookie) for the OAuth authorize flow.
 	r.Post("/auth/session", h.createSession)
@@ -76,11 +83,20 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/auth/switch-tenant", h.switchTenant)
 	r.Get("/auth/sessions", h.listSessions)
 	r.Get("/auth/trusted-devices/count", h.trustedDeviceCount)
+	r.Get("/auth/trusted-devices", h.listOwnTrustedDevices)
+	r.Delete("/auth/trusted-devices", h.forgetOwnTrustedDevices)
+	r.Delete("/auth/trusted-devices/{id}", h.forgetOwnTrustedDevices)
+	// An administrator's view of a member's remembered devices, in the
+	// administrator's own organisation (user.read / user.write).
+	r.Get("/users/{id}/trusted-devices", h.listMemberTrustedDevices)
+	r.Delete("/users/{id}/trusted-devices", h.forgetMemberTrustedDevices)
+	r.Delete("/users/{id}/trusted-devices/{deviceID}", h.forgetMemberTrustedDevices)
 	r.Post("/auth/sessions/revoke-others", h.revokeOtherSessions)
 	r.Post("/auth/sessions/revoke-all", h.revokeAllSessions)
 	r.Delete("/auth/sessions/{id}", h.revokeSession)
 	r.Get("/auth/me", h.me)
 	r.Get("/auth/password", h.passwordStatus)
+	r.Get("/auth/sign-in-methods", h.signInMethods)
 	if h.Throttle != nil {
 		r.With(h.Throttle).Post("/auth/password", h.changePassword)
 	} else {
@@ -180,19 +196,24 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Password ok, but a second factor is required. No tokens yet — the
 		// client completes the challenge at POST /v1/auth/mfa.
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"mfa_required": true,
-			"mfa_token":    res.MFAToken,
-			"methods":      res.Methods,
-		})
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res.Pair)
 }
 
+// mfaLoginInput meets a sign-in's second-factor challenge with exactly one
+// proof: a code (authenticator app, recovery, or an emailed/texted code), a
+// passkey assertion from the ceremony begun for the challenge, or push: true
+// once the push request sent for it is approved. An enrolment challenge is met
+// by the code confirming the authenticator app set up for it, or skip: true
+// while the setup may be put off.
 type mfaLoginInput struct {
-	MFAToken string `json:"mfa_token" validate:"required"`
-	Code     string `json:"code" validate:"required"`
+	MFAToken string        `json:"mfa_token" validate:"required"`
+	Code     string        `json:"code"`
+	Passkey  *PasskeyProof `json:"passkey"`
+	Push     bool          `json:"push"`
+	Skip     bool          `json:"skip"`
 	// Remember opts into adaptive MFA on the hosted flow: trust this device so
 	// future logins from it can skip the second factor (honoured only when the
 	// tenant has enabled it). Ignored by the token-flow /v1/auth/mfa endpoint.
@@ -200,7 +221,8 @@ type mfaLoginInput struct {
 }
 
 // mfaLogin completes a two-step login: it exchanges the mfa_token from /login
-// plus a TOTP or recovery code for a full token pair.
+// plus a proof for a full token pair — with the new recovery codes when the
+// proof confirmed an authenticator app set up for the challenge.
 func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 	var in mfaLoginInput
 	if err := httpx.DecodeJSON(r, &in); err != nil {
@@ -211,9 +233,21 @@ func (h *Handler) mfaLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	pair, err := h.Service.CompleteMFALogin(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
+	proof, err := in.proof()
 	if err != nil {
 		httpx.WriteError(w, r, err)
+		return
+	}
+	pair, codes, err := h.Service.CompleteMFALoginWith(r.Context(), in.MFAToken, proof, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if len(codes) > 0 {
+		httpx.WriteJSON(w, http.StatusOK, struct {
+			*TokenPair
+			RecoveryCodes []string `json:"recovery_codes"`
+		}{pair, codes})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
@@ -264,11 +298,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	if res.MFARequired {
 		// Password ok, but a second factor is required. No cookie yet — the
 		// client completes the challenge at POST /v1/auth/session/mfa.
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"mfa_required": true,
-			"mfa_token":    res.MFAToken,
-			"methods":      res.Methods,
-		})
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
 		return
 	}
 	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
@@ -288,21 +318,30 @@ func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	userID, tenantID, raw, err := h.Service.CompleteMFALoginSession(r.Context(), in.MFAToken, in.Code, httpx.ClientIP(r), r.UserAgent())
+	proof, err := in.proof()
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	res, err := h.Service.CompleteMFALoginSessionWith(r.Context(), in.MFAToken, proof, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
 	// Trust this device when asked — MaybeRememberDevice is a no-op unless the
 	// tenant has opted into adaptive MFA, so a client-supplied flag can't grant
-	// trust the policy forbids.
-	if in.Remember {
-		if draw, derr := h.Service.MaybeRememberDevice(r.Context(), userID, tenantID, r.UserAgent()); derr == nil && draw != "" {
-			SetTrustedDeviceCookie(w, draw, h.CookieSecure)
+	// trust the policy forbids. A skipped setup met no factor, so earns none.
+	if in.Remember && !res.Deferred {
+		if draw, ttl, derr := h.Service.MaybeRememberDevice(r.Context(), res.UserID, res.TenantID, r.UserAgent()); derr == nil && draw != "" {
+			SetTrustedDeviceCookie(w, draw, ttl, h.CookieSecure)
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
+	body := map[string]any{"user_id": res.UserID}
+	if len(res.RecoveryCodes) > 0 {
+		body["recovery_codes"] = res.RecoveryCodes
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
 type registerInput struct {
@@ -315,7 +354,9 @@ type registerInput struct {
 // register is the hosted end-user signup endpoint (B2C self-registration). It
 // creates the user in the client's tenant — gated by that tenant's
 // self_registration_enabled policy — and on success sets the SSO cookie so the
-// new user continues straight into the OAuth authorize flow. Like signup it is
+// new user continues straight into the OAuth authorize flow. Where the tenant
+// requires MFA it answers an enrolment challenge instead (completed at POST
+// /v1/auth/session/mfa), so the first session follows the setup. Like signup it is
 // enumeration-safe: a conflict on an existing email returns a neutral 422 under
 // a timing floor so the response can't distinguish "exists" from "new".
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +373,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
 	}
-	u, raw, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
+	u, res, err := h.Service.RegisterInTenant(r.Context(), in.TenantID, in.Email, in.Password, in.DisplayName, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		if e := errs.As(err); e != nil && e.Code == errs.ErrConflict.Code {
 			httpx.WriteError(w, r, errs.ErrUnprocessable.WithMessage(
@@ -342,7 +383,13 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	SetLoginSessionCookie(w, raw, h.CookieSecure)
+	if res.MFARequired {
+		body := res.Body()
+		body["user_id"] = u.ID
+		httpx.WriteJSON(w, http.StatusCreated, body)
+		return
+	}
+	SetLoginSessionCookie(w, res.RawCookie, h.CookieSecure)
 	httpx.WriteJSON(w, http.StatusCreated, map[string]any{"user_id": u.ID})
 }
 
@@ -397,6 +444,28 @@ type changePasswordInput struct {
 	// password-less account (social / passkey signup) omits it to SET one.
 	CurrentPassword string `json:"current_password" validate:"omitempty"`
 	NewPassword     string `json:"new_password" validate:"required,max=256"` // length + rules: the service's password check
+}
+
+// signInMethods reports how many ways the caller can sign in, so a client can
+// disable or explain removing the last one before trying. The server refuses
+// that removal anyway.
+func (h *Handler) signInMethods(w http.ResponseWriter, r *http.Request) {
+	userID, err := httpx.RequireUser(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	m, err := h.Service.SignInMethods(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"password":          m.Password,
+		"passkeys":          m.Passkeys,
+		"linked_identities": m.LinkedIdentities,
+		"total":             m.Total(),
+	})
 }
 
 // passwordStatus reports whether the caller has a password set, so the account
@@ -513,7 +582,11 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	out, err := h.Service.ListSessionsPage(r.Context(), *p.UserID, limit, r.URL.Query().Get("cursor"))
+	current := uuid.Nil
+	if p.SessionID != nil {
+		current = *p.SessionID
+	}
+	out, err := h.Service.ListSessionsPageFor(r.Context(), *p.UserID, current, limit, r.URL.Query().Get("cursor"))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -626,4 +699,231 @@ func (h *Handler) trustedDeviceCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// proof is the one proof the input carries, or a validation error naming the
+// problem.
+func (in mfaLoginInput) proof() (MFAProof, error) {
+	n := 0
+	if in.Code != "" {
+		n++
+	}
+	if in.Passkey != nil {
+		n++
+	}
+	if in.Push {
+		n++
+	}
+	if in.Skip {
+		n++
+	}
+	if n != 1 {
+		return MFAProof{}, errs.ErrValidationFailed.WithFields([]errs.FieldError{{
+			Field: "code", Code: "required",
+			Message: "Give exactly one of a code, a passkey assertion, push, or skip.",
+		}})
+	}
+	return MFAProof{Code: in.Code, Passkey: in.Passkey, Push: in.Push, Skip: in.Skip}, nil
+}
+
+type mfaTokenInput struct {
+	MFAToken string    `json:"mfa_token" validate:"required"`
+	FactorID uuid.UUID `json:"factor_id"`
+}
+
+func (h *Handler) decodeMFAToken(w http.ResponseWriter, r *http.Request) (mfaTokenInput, bool) {
+	var in mfaTokenInput
+	if err := httpx.DecodeJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return in, false
+	}
+	if err := h.Validate.Struct(in); err != nil {
+		httpx.WriteError(w, r, httpx.ValidationError(err))
+		return in, false
+	}
+	return in, true
+}
+
+// mfaSendCode sends a code to one of the challenged person's email or SMS
+// factors (factor_id, from the challenge's factors).
+func (h *Handler) mfaSendCode(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	if err := h.Service.SendMFACode(r.Context(), in.MFAToken, in.FactorID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": true})
+}
+
+// mfaPasskeyBegin starts the passkey assertion that can meet the challenge.
+func (h *Handler) mfaPasskeyBegin(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	sessionID, options, err := h.Service.BeginMFAPasskey(r.Context(), in.MFAToken)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "publicKey": options})
+}
+
+// mfaPush sends the push approval request that can meet the challenge; the
+// client then completes with push: true, which answers mfa.push_pending until
+// the request is approved.
+func (h *Handler) mfaPush(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	expires, err := h.Service.StartMFAPush(r.Context(), in.MFAToken, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"expires_at": expires})
+}
+
+// mfaEnroll starts the authenticator app that meets an enrolment challenge
+// and returns its secret and otpauth:// provisioning URL; a code from the app
+// then completes the challenge.
+func (h *Handler) mfaEnroll(w http.ResponseWriter, r *http.Request) {
+	in, ok := h.decodeMFAToken(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.Service.StartMFAEnrollment(r.Context(), in.MFAToken, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// requestTrustedDevice is the trusted-device cookie the request carries, if
+// any, so a list can mark the device it came from.
+func requestTrustedDevice(r *http.Request) string {
+	if c, err := r.Cookie(TrustedDeviceCookie); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+func trustedDeviceActor(r *http.Request) audit.Actor {
+	a := audit.Actor{Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r)}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		a.UserID = p.UserID
+		if p.ActorType != "" {
+			a.Type = p.ActorType
+		}
+	}
+	return a
+}
+
+// listOwnTrustedDevices → GET /v1/auth/trusted-devices: the caller's own
+// remembered devices, in every organisation.
+func (h *Handler) listOwnTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	out, err := h.Service.ListTrustedDevices(r.Context(), *p.UserID, nil, requestTrustedDevice(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// forgetOwnTrustedDevices → DELETE /v1/auth/trusted-devices[/{id}]: forget one
+// of the caller's remembered devices, or all of them.
+func (h *Handler) forgetOwnTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	p := httpx.PrincipalFromCtx(r.Context())
+	if p == nil || p.UserID == nil {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	in := ForgetTrustedDevicesInput{UserID: *p.UserID, Actor: trustedDeviceActor(r)}
+	if raw := chi.URLParam(r, "id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid id"))
+			return
+		}
+		in.DeviceID = &id
+	}
+	n, err := h.Service.ForgetTrustedDevices(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"forgotten": n})
+}
+
+// memberInScope returns the user a member route names, refused as not found
+// unless they belong to the caller's organisation.
+func (h *Handler) memberInScope(r *http.Request) (uuid.UUID, uuid.UUID, error) {
+	tenantID, err := httpx.RequireTenant(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	userID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+	}
+	member, err := h.Service.IsMember(r.Context(), userID, tenantID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	if !member {
+		return uuid.Nil, uuid.Nil, errs.ErrNotFound
+	}
+	return userID, tenantID, nil
+}
+
+// listMemberTrustedDevices → GET /v1/users/{id}/trusted-devices: a member's
+// devices remembered in the caller's organisation.
+func (h *Handler) listMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	userID, tenantID, err := h.memberInScope(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.ListTrustedDevices(r.Context(), userID, &tenantID, "")
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+// forgetMemberTrustedDevices → DELETE /v1/users/{id}/trusted-devices[/{deviceID}]:
+// forget one or all of a member's devices remembered in the caller's
+// organisation.
+func (h *Handler) forgetMemberTrustedDevices(w http.ResponseWriter, r *http.Request) {
+	userID, tenantID, err := h.memberInScope(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	in := ForgetTrustedDevicesInput{UserID: userID, TenantID: &tenantID, Actor: trustedDeviceActor(r)}
+	if raw := chi.URLParam(r, "deviceID"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid deviceID"))
+			return
+		}
+		in.DeviceID = &id
+	}
+	n, err := h.Service.ForgetTrustedDevices(r.Context(), in)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"forgotten": n})
 }

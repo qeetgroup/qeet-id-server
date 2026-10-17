@@ -16,13 +16,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
+	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
+	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
-	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
+	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 )
 
 type scheduledJob struct {
@@ -92,7 +94,36 @@ func main() {
 				if err != nil {
 					return err
 				}
-				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions)
+				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions,
+					"ceremonies", purged.Ceremonies, "trusted_devices", purged.TrustedDevices)
+				return nil
+			},
+		},
+		{
+			name:     "mfa-cleanup",
+			interval: 1 * time.Hour,
+			run: func(ctx context.Context) error {
+				codes, err := mfa.PurgeExpiredOTPCodes(ctx, pool, mfa.OTPCodeRetention)
+				if err != nil {
+					return err
+				}
+				push, err := mfa.PurgeExpiredPushChallenges(ctx, pool, mfa.OTPCodeRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("expired MFA codes and push requests cleaned", "codes", codes, "push_requests", push)
+				return nil
+			},
+		},
+		{
+			name:     "sign-in-history-cleanup",
+			interval: 24 * time.Hour,
+			run: func(ctx context.Context) error {
+				n, err := risk.PurgeSignInHistory(ctx, pool, risk.SignInHistoryRetention)
+				if err != nil {
+					return err
+				}
+				slog.Info("sign-in history cleaned", "deleted", n)
 				return nil
 			},
 		},

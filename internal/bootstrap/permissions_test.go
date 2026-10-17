@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"regexp"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
+	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -202,6 +204,95 @@ func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
 	for _, route := range got {
 		if _, ok := mounted[route]; !ok {
 			t.Errorf("%s is not an authenticated route", route)
+		}
+	}
+}
+
+// sensitiveLooking matches the paths of routes that change factors, machine
+// credentials, secrets, sign-in or security policy, single sign-on, retention
+// or audit streaming, or destroy an account or organisation.
+var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-principals|/agents|` +
+	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
+	`/policy$|/auth-policy|/risk-settings|/bots/settings|/ip-rules|/rate-limits|/mfa-required|/mfa$|` +
+	`/password$|/saml|/ldap|/social/|/domains|/mappings|/admin-portal|/email-templates|/retention|` +
+	`/anomaly-settings|/log-sinks|/purge|/account/|/sessions|/gdpr/|/oauth/(grants|devices)|/anomalies/|` +
+	`^/v1/tenants/\{tenantID\}$|^/v1/users/\{id\}$`)
+
+// TestSensitiveRoutesNeedStepUp fails when a mutating route that looks
+// sensitive is neither in the step-up catalogue nor exempted with a reason, and
+// when either list names a route that is not mounted.
+func TestSensitiveRoutesNeedStepUp(t *testing.T) {
+	router := chi.NewRouter()
+	router.Route("/v1", func(r chi.Router) {
+		mountAuthenticatedRoutes(r, routeInventoryDeps(t))
+	})
+	mounted := map[string]bool{}
+	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		mounted[method+" "+strings.TrimSuffix(route, "/")] = true
+		return nil
+	}); err != nil {
+		t.Fatalf("walk authenticated router: %v", err)
+	}
+	gated, exempt := stepUpRoutes(), stepUpExempt()
+	var unclassified, stale, both []string
+	for route := range mounted {
+		method, path, _ := strings.Cut(route, " ")
+		if method == http.MethodGet || method == http.MethodHead || !sensitiveLooking.MatchString(path) {
+			continue
+		}
+		if _, ok := gated[route]; ok {
+			continue
+		}
+		if _, ok := exempt[route]; !ok {
+			unclassified = append(unclassified, route)
+		}
+	}
+	for route := range gated {
+		if !mounted[route] {
+			stale = append(stale, route)
+		}
+		if _, ok := exempt[route]; ok {
+			both = append(both, route)
+		}
+	}
+	for route := range exempt {
+		if !mounted[route] {
+			stale = append(stale, route)
+		}
+	}
+	sort.Strings(unclassified)
+	sort.Strings(stale)
+	sort.Strings(both)
+	if len(unclassified) > 0 {
+		t.Errorf("sensitive-looking routes neither in stepUpRoutes nor stepUpExempt:\n  %s", strings.Join(unclassified, "\n  "))
+	}
+	if len(stale) > 0 {
+		t.Errorf("step-up catalogue names routes that are not mounted:\n  %s", strings.Join(stale, "\n  "))
+	}
+	if len(both) > 0 {
+		t.Errorf("routes both gated and exempt:\n  %s", strings.Join(both, "\n  "))
+	}
+	// The catalogue must also build: every key a valid "METHOD /pattern".
+	_ = (&mfa.Service{}).StepUpGate(gated)
+}
+
+// TestLinkedPhoneCallsPassCSRF: the mobile app answers approval requests and
+// unlinks itself with its device credential, sending no cookie, bearer token or
+// Origin; those two calls must get past the CSRF check, and nothing else on
+// the push-device paths may.
+func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
+	reached := false
+	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://console.example"}, ExemptPaths: csrfExemptPaths()})(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	for path, want := range map[string]bool{
+		"/v1/mfa/push/challenges/" + uuid.NewString() + "/respond": true,
+		"/v1/mfa/push/devices/" + uuid.NewString() + "/unlink":     true,
+		"/v1/mfa/push/devices": false,
+	} {
+		reached = false
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, path, nil))
+		if reached != want {
+			t.Errorf("POST %s with no cookie, token or Origin: reached handler = %v, want %v", path, reached, want)
 		}
 	}
 }

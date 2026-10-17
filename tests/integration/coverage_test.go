@@ -5,16 +5,13 @@ package integration
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
@@ -735,7 +732,7 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 		t.Fatalf("correct TOTP after lockout expiry: %v", err)
 	}
 
-	factorID, err := service.EnrollOTPStart(ctx, userID, "email", "budget@example.com")
+	factorID, err := service.EnrollOTPStart(ctx, userID, nil, "email", "budget@example.com")
 	if err != nil {
 		t.Fatalf("start email OTP enrollment: %v", err)
 	}
@@ -743,7 +740,8 @@ func TestMFAFactorAndOTPAttemptBudgets(t *testing.T) {
 	if err := mfaEnrollOTPConfirm(ctx, service, userID, factorID, enrollmentCode); err != nil {
 		t.Fatalf("confirm email OTP: %v", err)
 	}
-	if err := service.ChallengeOTP(ctx, userID, factorID); err != nil {
+	allowNextCode(t, ctx, factorID)
+	if err := service.ChallengeOTP(ctx, userID, nil, factorID); err != nil {
 		t.Fatalf("challenge email OTP: %v", err)
 	}
 	challengeCode := extractCode(t, recorder.last.Body)
@@ -941,7 +939,7 @@ func TestMFAEmailOTP(t *testing.T) {
 	svc.SetCipher(testEnvelope(t))
 
 	dest := "user@example.com"
-	factorID, err := svc.EnrollOTPStart(ctx, userID, "email", dest)
+	factorID, err := svc.EnrollOTPStart(ctx, userID, nil, "email", dest)
 	if err != nil {
 		t.Fatalf("enroll otp: %v", err)
 	}
@@ -958,15 +956,16 @@ func TestMFAEmailOTP(t *testing.T) {
 	}
 
 	// Channel/destination validation.
-	if _, err := svc.EnrollOTPStart(ctx, userID, "carrier-pigeon", "x"); err == nil {
+	if _, err := svc.EnrollOTPStart(ctx, userID, nil, "carrier-pigeon", "x"); err == nil {
 		t.Error("an unknown channel must be rejected")
 	}
-	if _, err := svc.EnrollOTPStart(ctx, userID, "email", ""); err == nil {
+	if _, err := svc.EnrollOTPStart(ctx, userID, nil, "email", ""); err == nil {
 		t.Error("an empty destination must be rejected")
 	}
 
 	// Challenge sends a new code; verify consumes it.
-	if err := svc.ChallengeOTP(ctx, userID, factorID); err != nil {
+	allowNextCode(t, ctx, factorID)
+	if err := svc.ChallengeOTP(ctx, userID, nil, factorID); err != nil {
 		t.Fatalf("challenge otp: %v", err)
 	}
 	challengeCode := extractCode(t, rec.last.Body)
@@ -980,7 +979,8 @@ func TestMFAEmailOTP(t *testing.T) {
 	}
 
 	// Expired code is rejected: send one, then push it into the past.
-	if err := svc.ChallengeOTP(ctx, userID, factorID); err != nil {
+	allowNextCode(t, ctx, factorID)
+	if err := svc.ChallengeOTP(ctx, userID, nil, factorID); err != nil {
 		t.Fatalf("challenge otp: %v", err)
 	}
 	staleCode := extractCode(t, rec.last.Body)
@@ -1077,130 +1077,6 @@ func TestMFAWebAuthnFinishRejectsMismatch(t *testing.T) {
 	}
 }
 
-// =====================================================================
-// mfa — step-up: record/recent window, gate middleware, gated endpoints
-// =====================================================================
-
-// TestMFAEnrollSatisfiesStepUp locks in the QID-17 backend fix: completing TOTP
-// enrollment records a verification, so the recent-MFA (step-up) window is fresh
-// immediately afterward. Before the fix, ConfirmEnroll recorded nothing, so the
-// very next RequireRecentMFA-gated action (regenerate recovery codes, disable
-// TOTP) 403'd with no way for the console to satisfy it.
-func TestMFAEnrollSatisfiesStepUp(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
-	tenantID := createTenant(t, ctx, uniqueSlug("mfa-stepup"))
-	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
-	svc.SetCipher(testEnvelope(t))
-
-	// No verification before enrollment.
-	ok, _, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
-	if err != nil {
-		t.Fatalf("recently verified (pre): %v", err)
-	}
-	if ok {
-		t.Fatal("a user who has done nothing must not read as recently verified")
-	}
-
-	// Enroll: start + confirm with a real code.
-	tx, _ := testPool.Begin(ctx)
-	enr, err := svc.StartEnroll(ctx, tx, userID, "stepup@example.com")
-	if err != nil {
-		t.Fatalf("start enroll: %v", err)
-	}
-	tx.Commit(ctx)
-	code, err := totp.Code(enr.Secret, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("totp code: %v", err)
-	}
-	if _, err := mfaConfirmEnroll(ctx, svc, userID, code); err != nil {
-		t.Fatalf("confirm enroll: %v", err)
-	}
-
-	// The fix: enrollment itself counts as a recent verification.
-	ok, at, err := svc.RecentlyVerified(ctx, userID, 5*time.Minute)
-	if err != nil {
-		t.Fatalf("recently verified (post): %v", err)
-	}
-	if !ok || at == nil {
-		t.Fatalf("completing enrollment must satisfy the step-up window, got (%v, %v)", ok, at)
-	}
-
-	// And a step-up-gated action (regenerate) works right after enroll.
-	tx, _ = testPool.Begin(ctx)
-	fresh, err := svc.Regenerate(ctx, tx, userID)
-	if err != nil {
-		t.Fatalf("regenerate right after enroll should succeed: %v", err)
-	}
-	tx.Commit(ctx)
-	if len(fresh) != 10 {
-		t.Fatalf("regenerate should mint 10 codes, got %d", len(fresh))
-	}
-}
-
-// TestMFAStepUpWindow exercises RecordVerification + RecentlyVerified: a missing
-// row reads as not-verified, a just-recorded verification is fresh within the
-// window, and the same verification reads as stale against a zero window.
-func TestMFAStepUpWindow(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
-	tenantID := createTenant(t, ctx, uniqueSlug("step"))
-	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
-	svc.SetCipher(testEnvelope(t))
-
-	// No verification yet.
-	ok, at, err := svc.RecentlyVerified(ctx, userID, time.Minute)
-	if err != nil {
-		t.Fatalf("recently verified: %v", err)
-	}
-	if ok || at != nil {
-		t.Fatalf("a user with no verification must read (false, nil), got (%v, %v)", ok, at)
-	}
-
-	// Record one (within a tx, as the verify handlers do).
-	tx, _ := testPool.Begin(ctx)
-	if err := svc.RecordVerification(ctx, tx, userID, "totp"); err != nil {
-		t.Fatalf("record verification: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-
-	// Fresh within a generous window.
-	ok, at, err = svc.RecentlyVerified(ctx, userID, time.Minute)
-	if err != nil {
-		t.Fatalf("recently verified: %v", err)
-	}
-	if !ok || at == nil {
-		t.Fatalf("a just-recorded verification must be fresh, got (%v, %v)", ok, at)
-	}
-
-	// Stale against a zero window (any elapsed time exceeds it).
-	ok, _, err = svc.RecentlyVerified(ctx, userID, 0)
-	if err != nil {
-		t.Fatalf("recently verified: %v", err)
-	}
-	if ok {
-		t.Error("a verification must read stale against a zero window")
-	}
-
-	// UPSERT: a second verification overwrites, keeping a single row fresh.
-	tx, _ = testPool.Begin(ctx)
-	if err := svc.RecordVerification(ctx, tx, userID, "webauthn"); err != nil {
-		t.Fatalf("record verification 2: %v", err)
-	}
-	tx.Commit(ctx)
-	var count int
-	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM auth.mfa_verifications WHERE user_id = $1`, userID).Scan(&count); err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("expected exactly one verification row per user, got %d", count)
-	}
-}
-
 // withPrincipal injects an authenticated user principal, standing in for the
 // RequireAuth middleware the real router runs ahead of d.MFA.Mount.
 func withPrincipal(userID, tenantID uuid.UUID) func(http.Handler) http.Handler {
@@ -1210,149 +1086,6 @@ func withPrincipal(userID, tenantID uuid.UUID) func(http.Handler) http.Handler {
 			p := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: "user", Subject: uid.String()}
 			next.ServeHTTP(w, r.WithContext(httpx.WithPrincipal(r.Context(), p)))
 		})
-	}
-}
-
-// TestMFARequireRecentMFAMiddleware proves the gate: a stale (or absent)
-// verification 403s with the step_up_required envelope; after a verification
-// inside the window the same request passes through.
-func TestMFARequireRecentMFAMiddleware(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
-	tenantID := createTenant(t, ctx, uniqueSlug("gate"))
-	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
-	svc.SetCipher(testEnvelope(t))
-
-	hit := false
-	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hit = true; w.WriteHeader(http.StatusOK) })
-	gate := mfa.RequireRecentMFA(svc, time.Minute)(next)
-
-	serve := func() *httptest.ResponseRecorder {
-		hit = false
-		rr := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodDelete, "/v1/mfa/totp", nil)
-		withPrincipal(userID, tenantID)(gate).ServeHTTP(rr, req)
-		return rr
-	}
-
-	// No verification → 403 step_up_required.
-	rr := serve()
-	if hit {
-		t.Fatal("gate must block when no recent verification exists")
-	}
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rr.Code)
-	}
-	if !strings.Contains(rr.Body.String(), "step_up_required") {
-		t.Errorf("body should carry the step_up_required code, got %q", rr.Body.String())
-	}
-
-	// After a verification within the window → allowed.
-	tx, _ := testPool.Begin(ctx)
-	if err := svc.RecordVerification(ctx, tx, userID, "totp"); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-	tx.Commit(ctx)
-	rr = serve()
-	if !hit || rr.Code != http.StatusOK {
-		t.Fatalf("gate must allow after a recent verification: hit=%v status=%d", hit, rr.Code)
-	}
-
-	// Stale verification (push it past the window) → blocked again.
-	if _, err := testPool.Exec(ctx,
-		`UPDATE auth.mfa_verifications SET verified_at = NOW() - INTERVAL '10 minutes' WHERE user_id = $1`, userID); err != nil {
-		t.Fatalf("stale: %v", err)
-	}
-	rr = serve()
-	if hit || rr.Code != http.StatusForbidden {
-		t.Fatalf("gate must block when the verification is stale: hit=%v status=%d", hit, rr.Code)
-	}
-}
-
-// TestMFAGatedEndpointsRequireStepUp drives the gated routes end-to-end through
-// the real mfa.Handler.Mount router: DELETE /mfa/totp and POST
-// /mfa/recovery-codes/regenerate both 403 without a recent verification, and
-// succeed (well, get past the gate) once the step-up window is satisfied.
-func TestMFAGatedEndpointsRequireStepUp(t *testing.T) {
-	requireDB(t)
-	ctx := context.Background()
-	tenantID := createTenant(t, ctx, uniqueSlug("gated"))
-	userID := createUserInTenant(t, ctx, tenantID)
-	svc := mfa.NewService(testPool, "qeet-test", notifier.LogSender{}, "")
-	svc.SetCipher(testEnvelope(t))
-
-	// Enroll + confirm TOTP so the user has real factors to disable/regenerate.
-	tx, _ := testPool.Begin(ctx)
-	enr, err := svc.StartEnroll(ctx, tx, userID, "gate@example.com")
-	if err != nil {
-		t.Fatalf("start enroll: %v", err)
-	}
-	tx.Commit(ctx)
-	code, _ := totp.Code(enr.Secret, time.Now().UTC())
-	if _, err := mfaConfirmEnroll(ctx, svc, userID, code); err != nil {
-		t.Fatalf("confirm: %v", err)
-	}
-
-	// Enrollment now records a verification (QID-17 fix), which satisfies the
-	// step-up window. Clear it so the "without step-up" assertions below still
-	// genuinely exercise the gate (simulating a session whose last verification
-	// has aged out of the window).
-	if _, err := testPool.Exec(ctx, `DELETE FROM auth.mfa_verifications WHERE user_id = $1`, userID); err != nil {
-		t.Fatalf("clear verification: %v", err)
-	}
-
-	h := &mfa.Handler{Service: svc}
-	r := chi.NewRouter()
-	r.Group(func(r chi.Router) {
-		r.Use(withPrincipal(userID, tenantID))
-		h.Mount(r)
-	})
-	srv := httptest.NewServer(r)
-	defer srv.Close()
-	hc := srv.Client()
-
-	do := func(method, path string) int {
-		req, _ := http.NewRequest(method, srv.URL+path, bytes.NewReader([]byte(`{}`)))
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := hc.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, path, err)
-		}
-		defer resp.Body.Close()
-		return resp.StatusCode
-	}
-
-	// Without step-up: both gated endpoints are refused.
-	if got := do(http.MethodPost, "/mfa/recovery-codes/regenerate"); got != http.StatusForbidden {
-		t.Errorf("regenerate without step-up = %d, want 403", got)
-	}
-	if got := do(http.MethodDelete, "/mfa/totp"); got != http.StatusForbidden {
-		t.Errorf("disable without step-up = %d, want 403", got)
-	}
-
-	// Satisfy step-up via a real TOTP verify through the (ungated) verify route.
-	// Step +1 — enrollment above consumed the current step.
-	vcode := totpCodeAtStep(t, enr.Secret, 1)
-	body, _ := json.Marshal(map[string]string{"code": vcode})
-	vreq, _ := http.NewRequest(http.MethodPost, srv.URL+"/mfa/totp/verify", bytes.NewReader(body))
-	vreq.Header.Set("Content-Type", "application/json")
-	vresp, err := hc.Do(vreq)
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	vresp.Body.Close()
-	if vresp.StatusCode != http.StatusOK {
-		t.Fatalf("totp verify = %d, want 200", vresp.StatusCode)
-	}
-
-	// Now the gate lets the sensitive action through (regenerate returns 200).
-	if got := do(http.MethodPost, "/mfa/recovery-codes/regenerate"); got != http.StatusOK {
-		t.Errorf("regenerate after step-up = %d, want 200", got)
-	}
-	// And disabling MFA succeeds (204).
-	if got := do(http.MethodDelete, "/mfa/totp"); got != http.StatusNoContent {
-		t.Errorf("disable after step-up = %d, want 204", got)
 	}
 }
 

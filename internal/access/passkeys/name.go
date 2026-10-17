@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/useragent"
 )
 
 // MaxNameLength is the longest passkey name accepted, in characters.
@@ -67,49 +68,18 @@ func enrolmentName(name, userAgent string) (string, error) {
 	return validName(name)
 }
 
-// Browser and platform tokens of a user agent, most specific first: a browser
-// also names the ones it is built on (Edge and Opera say "Chrome", Chrome says
-// "Safari"), and iOS says "Mac OS X" and Android "Linux".
-var (
-	uaBrowsers = []struct{ token, name string }{
-		{"Edg/", "Edge"}, {"EdgA/", "Edge"}, {"EdgiOS/", "Edge"},
-		{"OPR/", "Opera"}, {"OPiOS/", "Opera"},
-		{"SamsungBrowser/", "Samsung Internet"},
-		{"Firefox/", "Firefox"}, {"FxiOS/", "Firefox"},
-		{"CriOS/", "Chrome"}, {"Chrome/", "Chrome"},
-		{"Safari/", "Safari"},
-	}
-	uaPlatforms = []struct{ token, name string }{
-		{"iPhone", "iPhone"}, {"iPad", "iPad"},
-		{"Android", "Android"},
-		{"CrOS", "ChromeOS"},
-		{"Windows", "Windows"},
-		{"Macintosh", "macOS"}, {"Mac OS X", "macOS"},
-		{"Linux", "Linux"},
-	}
-)
-
 // DefaultName names a passkey after the browser it was enrolled from, such as
 // "Chrome on macOS", so that no passkey is listed without a name. It gives
 // "Passkey on Android" when only the platform is known, and "Passkey" when
 // neither is.
 func DefaultName(userAgent string) string {
-	browser, platform := uaToken(userAgent, uaBrowsers), uaToken(userAgent, uaPlatforms)
+	d := useragent.Parse(userAgent)
 	switch {
-	case platform == "":
+	case d.Platform == "":
 		return fallbackName
-	case browser == "":
-		return fallbackName + " on " + platform
+	case d.Browser == "":
+		return fallbackName + " on " + d.Platform
 	default:
-		return browser + " on " + platform
+		return d.Browser + " on " + d.Platform
 	}
-}
-
-func uaToken(userAgent string, tokens []struct{ token, name string }) string {
-	for _, t := range tokens {
-		if strings.Contains(userAgent, t.token) {
-			return t.name
-		}
-	}
-	return ""
 }

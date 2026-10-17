@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/qeetgroup/qeet-id-server/internal/access/recovery/dbgen"
@@ -54,6 +53,10 @@ type Service struct {
 	// long they live (nil = allowed, the default lifetime). Set via
 	// SetMagicLinkPolicy.
 	magicLinks MagicLinkPolicy
+	// magicPerAddress and magicPerCaller bound magic-link requests (nil =
+	// unbounded). Set via SetMagicLinkLimits; see magiclink.go.
+	magicPerAddress Limiter
+	magicPerCaller  Limiter
 	// signals announces ended sessions (nil = announces nothing). Set via
 	// SetSessionSignals.
 	signals *sessionsignal.Signaller
@@ -84,9 +87,12 @@ func (s *Service) SetSessionSignals(sig *sessionsignal.Signaller) { s.signals = 
 func (s *Service) SetMagicLinkPolicy(p MagicLinkPolicy) { s.magicLinks = p }
 
 // magicLinkTTL is how long a magic link for tenantID lives, or
-// ErrAuthMethodDisabled when the tenant has switched magic links off.
+// ErrAuthMethodDisabled when the tenant has switched magic links off
+// (uuid.Nil: no organisation, the platform default).
 func (s *Service) magicLinkTTL(ctx context.Context, tenantID uuid.UUID) (time.Duration, error) {
-	if s.magicLinks == nil {
+	// No organisation, no organisation policy: the platform allows magic
+	// links, with the default lifetime.
+	if s.magicLinks == nil || tenantID == uuid.Nil {
 		return s.ttl, nil
 	}
 	enabled, ttl, err := s.magicLinks.MagicLinkPolicy(ctx, tenantID)
@@ -278,108 +284,4 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-// StartMagicLink emits a one-time login link.
-func (s *Service) StartMagicLink(ctx context.Context, tenantID uuid.UUID, email string) error {
-	ttl, err := s.magicLinkTTL(ctx, tenantID)
-	if err != nil {
-		return err
-	}
-	raw, hash, err := codes.URLToken()
-	if err != nil {
-		return err
-	}
-	if err := s.q.InsertMagicLink(ctx, dbgen.InsertMagicLinkParams{
-		TenantID:  tenantID,
-		Email:     email,
-		TokenHash: hash,
-		ExpiresAt: time.Now().UTC().Add(ttl),
-	}); err != nil {
-		return err
-	}
-	magicURL := fmt.Sprintf("%s/magic?token=%s", s.baseAppURL, raw)
-	return s.sender.Send(ctx, notifier.Message{
-		TemplateKey:       "magic_link",
-		TemplateVariables: map[string]string{"magic_url": magicURL},
-		TenantID:          tenantID.String(),
-		Channel:           "email",
-		To:                email,
-		Subject:           "Your login link",
-		Body:              fmt.Sprintf("Sign in to Qeet ID: %s", magicURL),
-		HTML: emailtmpl.Action(
-			"Sign in to Qeet ID",
-			"Click the button below to sign in. This link is single-use and expires shortly.",
-			"Sign in", magicURL,
-			"If you didn't request this link, you can safely ignore this email.",
-		),
-	})
-}
-
-type MagicLinkResult struct {
-	UserID   uuid.UUID
-	TenantID uuid.UUID
-}
-
-// ConsumeMagicLink marks the link used and returns the (user, tenant) pair
-// the caller should mint a session for. Returns ErrNotFound if no user
-// exists for the email (auto-provision is left to a higher layer).
-func (s *Service) ConsumeMagicLink(ctx context.Context, rawToken string, ac AuditCtx) (*MagicLinkResult, error) {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	qtx := s.q.WithTx(tx)
-	hash := codes.Hash(rawToken)
-	mlRow, err := qtx.GetMagicLinkByToken(ctx, hash)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrMagicLinkInvalid
-		}
-		return nil, err
-	}
-	if mlRow.UsedAt.Valid {
-		return nil, errs.ErrRecoveryLinkUsed
-	}
-	if time.Now().After(mlRow.ExpiresAt) {
-		return nil, errs.ErrRecoveryLinkExpired
-	}
-	// A link issued before the organisation switched magic links off stops
-	// working too; it stays unused.
-	if _, err := s.magicLinkTTL(ctx, mlRow.TenantID); err != nil {
-		return nil, err
-	}
-	tenantID := mlRow.TenantID
-	email := mlRow.Email
-	userID, err := qtx.GetUserIDByEmailForTenant(ctx, dbgen.GetUserIDByEmailForTenantParams{
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
-		Lower:    email,
-	})
-	if err != nil {
-		return nil, errs.ErrNotFound.WithDetail("no user for email")
-	}
-	if err := qtx.MarkMagicLinkUsed(ctx, mlRow.ID); err != nil {
-		return nil, err
-	}
-	tid := tenantID
-	target := userID
-	if err := audit.Record(ctx, tx, audit.Event{
-		TenantID:     &tid,
-		ActorUserID:  &target,
-		ActorType:    "system",
-		Action:       "auth.magic_link_consumed",
-		ResourceType: "user",
-		ResourceID:   &target,
-		IP:           ac.IP,
-		UserAgent:    ac.UserAgent,
-		RequestID:    ac.RequestID,
-	}); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	return &MagicLinkResult{UserID: userID, TenantID: tenantID}, nil
 }

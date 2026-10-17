@@ -92,17 +92,24 @@ func (q *Queries) CheckLogSinksCount(ctx context.Context, tenantID uuid.UUID) (i
 
 const checkMFAEnforcement = `-- name: CheckMFAEnforcement :one
 
-SELECT mfa_enforcement FROM tenant.security_policies WHERE tenant_id = $1
+SELECT mfa_enforcement, mfa_grace_days, mfa_enforced_since
+FROM tenant.security_policies WHERE tenant_id = $1
 `
+
+type CheckMFAEnforcementRow struct {
+	MfaEnforcement   string
+	MfaGraceDays     int32
+	MfaEnforcedSince pgtype.Timestamptz
+}
 
 // -----------------------------------------------------------------------
 // Control check queries — each check function has one query here.
 // -----------------------------------------------------------------------
-func (q *Queries) CheckMFAEnforcement(ctx context.Context, tenantID uuid.UUID) (string, error) {
+func (q *Queries) CheckMFAEnforcement(ctx context.Context, tenantID uuid.UUID) (CheckMFAEnforcementRow, error) {
 	row := q.db.QueryRow(ctx, checkMFAEnforcement, tenantID)
-	var mfa_enforcement string
-	err := row.Scan(&mfa_enforcement)
-	return mfa_enforcement, err
+	var i CheckMFAEnforcementRow
+	err := row.Scan(&i.MfaEnforcement, &i.MfaGraceDays, &i.MfaEnforcedSince)
+	return i, err
 }
 
 const checkPasswordComplexity = `-- name: CheckPasswordComplexity :one
@@ -259,6 +266,30 @@ func (q *Queries) CountEvidenceRuns(ctx context.Context, tenantID uuid.UUID) (in
 	return count, err
 }
 
+const countUsersWithoutSecondFactor = `-- name: CountUsersWithoutSecondFactor :one
+SELECT count(*)::int
+FROM "user".users u
+WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_totp t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = u.id AND f.verified_at IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = u.id)
+  AND NOT (
+      COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = u.tenant_id), TRUE)
+      AND EXISTS (SELECT 1 FROM auth.passkey_credentials p WHERE p.user_id = u.id)
+  )
+`
+
+// CountUsersWithoutSecondFactor counts the tenant's accounts holding no
+// factor a sign-in challenge can be met with (as auth.LoginFactors reads
+// them): they set one up at their next sign-in.
+func (q *Queries) CountUsersWithoutSecondFactor(ctx context.Context, tenantID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countUsersWithoutSecondFactor, tenantID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteMFARecoveryCodes = `-- name: DeleteMFARecoveryCodes :exec
 DELETE FROM auth.mfa_recovery_codes WHERE user_id = $1
 `
@@ -344,9 +375,21 @@ type GetExportRequestParams struct {
 	TenantID uuid.UUID
 }
 
-func (q *Queries) GetExportRequest(ctx context.Context, arg GetExportRequestParams) (UserExportRequest, error) {
+type GetExportRequestRow struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	UserID      uuid.UUID
+	RequestedBy pgtype.UUID
+	Status      string
+	Payload     []byte
+	Error       *string
+	CompletedAt pgtype.Timestamptz
+	CreatedAt   time.Time
+}
+
+func (q *Queries) GetExportRequest(ctx context.Context, arg GetExportRequestParams) (GetExportRequestRow, error) {
 	row := q.db.QueryRow(ctx, getExportRequest, arg.ID, arg.TenantID)
-	var i UserExportRequest
+	var i GetExportRequestRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -541,12 +584,24 @@ type InsertPurgeRequestParams struct {
 	GraceUntil  time.Time
 }
 
+type InsertPurgeRequestRow struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	UserID      uuid.UUID
+	RequestedBy pgtype.UUID
+	Reason      *string
+	Status      string
+	GraceUntil  time.Time
+	CompletedAt pgtype.Timestamptz
+	CreatedAt   time.Time
+}
+
 // -----------------------------------------------------------------------
 // GDPR purge requests
 // -----------------------------------------------------------------------
 // Queue a right-to-erasure request. grace_until is pre-computed in Go
 // (time.Now().UTC().Add(s.grace)) to avoid pgtype.Interval parameter type issues.
-func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequestParams) (UserPurgeRequest, error) {
+func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequestParams) (InsertPurgeRequestRow, error) {
 	row := q.db.QueryRow(ctx, insertPurgeRequest,
 		arg.TenantID,
 		arg.UserID,
@@ -554,7 +609,7 @@ func (q *Queries) InsertPurgeRequest(ctx context.Context, arg InsertPurgeRequest
 		arg.Reason,
 		arg.GraceUntil,
 	)
-	var i UserPurgeRequest
+	var i InsertPurgeRequestRow
 	err := row.Scan(
 		&i.ID,
 		&i.TenantID,
@@ -682,16 +737,28 @@ ORDER BY created_at DESC
 LIMIT 200
 `
 
+type ListPurgeRequestsRow struct {
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	UserID      uuid.UUID
+	RequestedBy pgtype.UUID
+	Reason      *string
+	Status      string
+	GraceUntil  time.Time
+	CompletedAt pgtype.Timestamptz
+	CreatedAt   time.Time
+}
+
 // List all purge requests for a tenant, most recent first.
-func (q *Queries) ListPurgeRequests(ctx context.Context, tenantID uuid.UUID) ([]UserPurgeRequest, error) {
+func (q *Queries) ListPurgeRequests(ctx context.Context, tenantID uuid.UUID) ([]ListPurgeRequestsRow, error) {
 	rows, err := q.db.Query(ctx, listPurgeRequests, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []UserPurgeRequest{}
+	items := []ListPurgeRequestsRow{}
 	for rows.Next() {
-		var i UserPurgeRequest
+		var i ListPurgeRequestsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TenantID,

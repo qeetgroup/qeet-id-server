@@ -40,9 +40,11 @@ func (h *Handler) MountAuthed(r chi.Router) {
 	r.Post("/me/invites/{id}/decline", h.declineMine)
 }
 
-// MountPublic mounts the invitee-facing accept endpoint.
+// MountPublic mounts the invitee-facing endpoints: accepting with a password,
+// and looking an invitation up to choose how to accept it.
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/invites/accept", h.accept)
+	r.Post("/invites/lookup", h.lookup)
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {

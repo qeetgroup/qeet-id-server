@@ -24,8 +24,35 @@ import (
 // is HttpOnly (never readable by JS) — distinct from API access/refresh tokens.
 const LoginSessionCookie = "qe_ls"
 
-// loginSessionTTL is the idle lifetime of a hosted SSO session.
+// loginSessionTTL is the lifetime of a hosted SSO session — shorter when the
+// account's organisation (or, with none, the platform) bounds sessions more
+// tightly; see loginSessionLifetime.
 const loginSessionTTL = 30 * time.Minute
+
+// loginSessionLifetime is how long a hosted SSO session opened now for userID
+// lasts: loginSessionTTL, or the idle timeout or maximum age of the sessions
+// of the user's organisation (the platform's for a user with none) when
+// either is shorter, so signing in through the hosted page never outlasts
+// what the organisation allows any session.
+func (s *Service) loginSessionLifetime(ctx context.Context, userID uuid.UUID) (time.Duration, error) {
+	maxAge, idle := s.sessionDefaults()
+	var orgMax, orgIdle *int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXTRACT(EPOCH FROM sp.session_max_age)::bigint, EXTRACT(EPOCH FROM sp.session_idle_timeout)::bigint
+		FROM "user".users u
+		JOIN tenant.security_policies sp ON sp.tenant_id = u.tenant_id
+		WHERE u.id = $1`, userID).Scan(&orgMax, &orgIdle)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return 0, err
+	}
+	if orgMax != nil {
+		maxAge = time.Duration(*orgMax) * time.Second
+	}
+	if orgIdle != nil {
+		idle = time.Duration(*orgIdle) * time.Second
+	}
+	return min(loginSessionTTL, maxAge, idle), nil
+}
 
 // CreateLoginSession mints a hosted SSO session for a user and returns the raw
 // cookie value. Only the hash is persisted (like refresh tokens).
@@ -34,10 +61,14 @@ func (s *Service) CreateLoginSession(ctx context.Context, userID uuid.UUID, ip, 
 	if err != nil {
 		return "", err
 	}
+	ttl, err := s.loginSessionLifetime(ctx, userID)
+	if err != nil {
+		return "", err
+	}
 	if err := s.q.InsertLoginSession(ctx, dbgen.InsertLoginSessionParams{
 		TokenHash: hash,
 		UserID:    userID,
-		ExpiresAt: time.Now().Add(loginSessionTTL),
+		ExpiresAt: time.Now().Add(ttl),
 		Ip:        ip,
 		UserAgent: &ua,
 	}); err != nil {
@@ -78,20 +109,27 @@ func (s *Service) ResolveLoginSessionWithID(ctx context.Context, raw string) (se
 // ErrUnauthorized when the session is unknown, expired or ended, or the user or
 // their organization is no longer active.
 func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (userID, tenantID uuid.UUID, err error) {
+	userID, tenantID, _, err = s.resolveLoginSession(ctx, raw)
+	return userID, tenantID, err
+}
+
+// resolveLoginSession is ResolveLoginSessionUser plus when the sign-in that
+// opened the session happened.
+func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, tenantID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	row, err := s.q.GetLoginSessionUser(ctx, tokens.HashRefresh(raw))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	if row.TenantID.Valid {
 		tenantID = uuid.UUID(row.TenantID.Bytes)
 	}
-	return row.UserID, tenantID, nil
+	return row.UserID, tenantID, row.CreatedAt, nil
 }
 
 // LoginSessionAuth lets the hosted login's own pages call a short list of
@@ -135,12 +173,12 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			userID, tenantID, err := s.ResolveLoginSessionUser(r.Context(), c.Value)
+			userID, tenantID, signedInAt, err := s.resolveLoginSession(r.Context(), c.Value)
 			if err != nil {
 				httpx.WriteError(w, r, err)
 				return
 			}
-			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID}
+			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID, SignedInAt: &signedInAt}
 			if tenantID != uuid.Nil {
 				p.TenantID = &tenantID
 			}

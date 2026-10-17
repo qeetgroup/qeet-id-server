@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
 func TestMaskDestination(t *testing.T) {
@@ -60,7 +63,8 @@ func TestRecoveryCodeCount(t *testing.T) {
 	}
 }
 
-// TestDefaultStepUpWindow documents the step-up freshness window.
+// TestDefaultStepUpWindow documents the step-up window used where no
+// organisation's own is known; the migration's column default matches it.
 func TestDefaultStepUpWindow(t *testing.T) {
 	if defaultStepUpWindow != 5*time.Minute {
 		t.Errorf("defaultStepUpWindow = %v, want 5m", defaultStepUpWindow)
@@ -81,8 +85,8 @@ func TestStepUpRequiredError(t *testing.T) {
 func TestRequireRecentMFAUnauthenticated(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
-	// No DB access on this path — RecentlyVerified is never reached.
-	h := RequireRecentMFA(&Service{}, defaultStepUpWindow)(next)
+	// No DB access on this path — the step-up is never read.
+	h := RequireRecentMFA(&Service{})(next)
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodDelete, "/v1/mfa/totp", nil)
@@ -93,6 +97,28 @@ func TestRequireRecentMFAUnauthenticated(t *testing.T) {
 	}
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rr.Code)
+	}
+}
+
+// TestRequireRecentMFAWithoutSession proves a principal that holds no session
+// (an API key, an agent, a hosted-login cookie) can never pass the gate: a
+// step-up belongs to a session, so there is nothing to have stepped up.
+func TestRequireRecentMFAWithoutSession(t *testing.T) {
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+	h := RequireRecentMFA(&Service{})(next)
+
+	uid := uuid.New()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/v1/mfa/totp", nil)
+	req = req.WithContext(httpx.WithPrincipal(req.Context(), &httpx.Principal{UserID: &uid, ActorType: "api_key"}))
+	h.ServeHTTP(rr, req)
+
+	if called {
+		t.Fatal("a principal without a session must not pass the step-up gate")
+	}
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "step_up_required") {
+		t.Errorf("got %d %q, want 403 step_up_required", rr.Code, rr.Body.String())
 	}
 }
 

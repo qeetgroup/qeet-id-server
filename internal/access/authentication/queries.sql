@@ -125,9 +125,10 @@ SELECT id, user_id, expires_at FROM auth.login_sessions WHERE token_hash = @toke
 
 -- name: GetLoginSessionUser :one
 -- The user behind a live hosted-login session, and their own organization (NULL
--- for a user without one). No row when the session is unknown or expired, or
--- the user or their organization is no longer active.
-SELECT s.user_id, u.tenant_id
+-- for a user without one), and when the sign-in happened. No row when the
+-- session is unknown or expired, or the user or their organization is no
+-- longer active.
+SELECT s.user_id, u.tenant_id, s.created_at
 FROM auth.login_sessions s
 JOIN "user".users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
@@ -172,10 +173,17 @@ SELECT COUNT(*)::bigint AS touched,
        COUNT(*) FILTER (WHERE used_at IS NULL AND expires_at > NOW())::bigint AS live
 FROM ended;
 
--- name: TouchTrustedDevice :execrows
--- Refreshes last_used_at and returns 1 when a live token was found, 0 otherwise.
+-- name: TouchTrustedDevice :one
+-- Refreshes last_used_at on the live device the token names for the user in
+-- the organisation that remembered it, and returns its id; no row otherwise.
 UPDATE auth.trusted_devices SET last_used_at = NOW()
-WHERE token_hash = @token_hash AND user_id = @user_id AND expires_at > NOW();
+WHERE token_hash = @token_hash AND user_id = @user_id AND tenant_id = @tenant_id AND expires_at > NOW()
+RETURNING id;
+
+-- PurgeExpiredTrustedDevices deletes remembered devices that expired before
+-- the cutoff; they no longer skip anything.
+-- name: PurgeExpiredTrustedDevices :execrows
+DELETE FROM auth.trusted_devices WHERE expires_at < @cutoff;
 
 -- name: CheckTenantMembership :one
 SELECT EXISTS (
@@ -194,20 +202,29 @@ WHERE user_id = @user_id;
 
 -- RevokeOtherSessionsForUser revokes all of a user's active sessions except the
 -- one they're currently on — used after a password change/set so a compromised
--- session can't survive the credential rotation.
+-- session can't survive the credential rotation. A session past its maximum age
+-- or idle timeout has already ended and is left as expired.
 -- name: RevokeOtherSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = @user_id AND id <> @keep_session_id AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING id, tenant_id;
 
 -- SupersedeSession ends the session a switch of organisation was made from —
--- only while it is live and the caller's own — and records the session that
--- replaced it. Ending it is what stops its refresh tokens. Returns the
--- organization it belonged to (NULL for none). No row: it had already ended.
+-- only while it is live (not revoked, not past its maximum age or idle timeout)
+-- and the caller's own — and records the session that replaced it. Ending it
+-- is what stops its refresh tokens. Returns the organization it belonged to
+-- (NULL for none). No row: it had already ended.
 -- name: SupersedeSession :one
 UPDATE auth.sessions SET revoked_at = NOW(), superseded_by = @new_session_id
 WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING tenant_id;
+
+-- SessionEnd is when one of the user's sessions ends however active it is.
+-- No row: not theirs.
+-- name: SessionEnd :one
+SELECT expires_at FROM auth.sessions WHERE id = @session_id AND user_id = @user_id;
 
 -- LockUserForSessionRevocation row-locks the account so bulk session
 -- revocations for one user (and password changes, which lock the same row FOR
@@ -218,11 +235,12 @@ RETURNING tenant_id;
 SELECT id FROM "user".users WHERE id = @user_id FOR NO KEY UPDATE;
 
 -- IsSessionLiveForUser reports whether the session exists, belongs to the
--- user and has not been revoked.
+-- user, has not been revoked and is not past its maximum age or idle timeout.
 -- name: IsSessionLiveForUser :one
 SELECT EXISTS (
     SELECT 1 FROM auth.sessions
     WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
+      AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 ) AS live;
 
 -- IsSessionOfUser reports whether the session is (or was) one of the user's
@@ -234,10 +252,12 @@ SELECT EXISTS (
 ) AS owned;
 
 -- RevokeAllSessionsForUser ends every live session of the user, the caller's
--- own included. Ending a session is what kills its refresh tokens.
+-- own included. Ending a session is what kills its refresh tokens. A session
+-- past its maximum age or idle timeout has already ended and is left as expired.
 -- name: RevokeAllSessionsForUser :many
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE user_id = @user_id AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING id, tenant_id;
 
 -- EndLoginSessionsForUser ends every hosted-login (browser) session of the
@@ -275,8 +295,11 @@ RETURNING id;
 -- name: MarkRefreshTokenUsed :exec
 UPDATE auth.refresh_tokens SET used_at = NOW(), replaced_by = @replaced_by WHERE id = @id;
 
--- name: UpdateSessionLastSeen :exec
-UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = @session_id;
+-- UpdateSessionLastSeen records a renewal as the session's latest use and
+-- returns when it now ends unless renewed again (never after it ends anyway).
+-- name: UpdateSessionLastSeen :one
+UPDATE auth.sessions SET last_seen_at = NOW() WHERE id = @session_id
+RETURNING LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at;
 
 -- name: RevokeSessionById :exec
 -- Idempotent: no-op on an already-revoked session.
@@ -286,9 +309,11 @@ WHERE id = @session_id AND revoked_at IS NULL;
 -- name: RevokeSessionForUser :one
 -- Revokes a session scoped to its owner and returns the (nullable) tenant for
 -- event emission. No row (pgx.ErrNoRows) means the session isn't the caller's
--- or was already revoked — a safe no-op, never a cross-user takedown.
+-- or has already ended (revoked, or past its maximum age or idle timeout) — a
+-- safe no-op, never a cross-user takedown.
 UPDATE auth.sessions SET revoked_at = NOW()
 WHERE id = @session_id AND user_id = @user_id AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING tenant_id;
 
 -- name: InsertPasswordCredential :exec
@@ -303,31 +328,47 @@ INSERT INTO "user".users (tenant_id, email, display_name)
 VALUES (NULL, @email, @display_name)
 RETURNING id, created_at, updated_at;
 
--- name: InsertTenantlessSession :exec
+-- name: InsertTenantlessSession :one
 -- Tenant-less session: tenant_id is a literal NULL (not a bind). ip goes through
 -- NULLIF so an empty string stores as SQL NULL, matching InsertLoginSession.
-INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent)
-VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent);
+-- With no organisation, the platform's session bounds apply. Returns when it
+-- ends however active, and when it ends unless renewed.
+INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, expires_at, idle_timeout, country)
+VALUES (@id, @user_id, NULL, NULLIF(@ip::text, '')::inet, @user_agent,
+        NOW() + make_interval(secs => @max_age_seconds::float8),
+        make_interval(secs => @idle_seconds::float8),
+        NULLIF(@country::text, ''))
+RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)::timestamptz AS idle_expires_at;
 
 -- name: DeleteMFALoginChallenge :exec
 DELETE FROM auth.mfa_login_challenges WHERE id = @id;
 
 -- PurgeEndedSessions deletes API and console sessions past retention: ended
--- (revoked) before the cutoff, or never ended but with every refresh token
--- expired before the cutoff (none was usable after it). A session opened after
--- the cutoff is always kept. Their refresh tokens go with them (cascade).
--- Returns what it deleted; expired marks the sessions that were never ended
--- (their refresh tokens expired), which are announced as expired.
+-- (revoked) before the cutoff, or never ended but past its maximum age or idle
+-- timeout before the cutoff, or with every refresh token expired before it
+-- (none was usable after it). A session opened after the cutoff is always kept.
+-- Their refresh tokens go with them (cascade). Returns what it deleted;
+-- expired marks the sessions that were never ended, which are announced as
+-- expired.
 -- name: PurgeEndedSessions :many
 DELETE FROM auth.sessions s
 WHERE s.created_at < @cutoff
   AND (
       (s.revoked_at IS NOT NULL AND s.revoked_at < @cutoff)
-      OR (s.revoked_at IS NULL AND NOT EXISTS (
-          SELECT 1 FROM auth.refresh_tokens rt
-          WHERE rt.session_id = s.id AND rt.expires_at >= @cutoff))
+      OR (s.revoked_at IS NULL AND (
+          s.expires_at < @cutoff
+          OR s.last_seen_at + s.idle_timeout < @cutoff
+          OR NOT EXISTS (
+              SELECT 1 FROM auth.refresh_tokens rt
+              WHERE rt.session_id = s.id AND rt.expires_at >= @cutoff)))
   )
 RETURNING s.id, s.user_id, s.tenant_id, (s.revoked_at IS NULL)::boolean AS expired;
+
+-- PurgeExpiredCeremonies deletes passkey ceremony state that has expired
+-- unfinished — every sign-in page now starts one in the background, and most
+-- are never completed. An expired ceremony can no longer be finished.
+-- name: PurgeExpiredCeremonies :execrows
+DELETE FROM auth.webauthn_sessions WHERE expires_at < NOW();
 
 -- PurgeExpiredLoginSessions deletes hosted-login sessions that expired before
 -- the cutoff. Their cookie stopped being sent when they expired.
@@ -358,3 +399,42 @@ WHERE user_id = @user_id AND consumed_at IS NULL AND status IN ('pending', 'auth
 -- name: DenyBackchannelRequestsForUser :execrows
 UPDATE auth.oidc_ciba_requests SET status = 'denied'
 WHERE user_id = @user_id AND consumed_at IS NULL AND status IN ('pending', 'authorized');
+
+-- TouchSession records a use of a live session: last_seen_at, from which its
+-- idle timeout counts, moves to now. A session that has ended — revoked, or
+-- past its maximum age or idle timeout — is never revived. Writes at most
+-- once a minute per session.
+-- name: TouchSession :exec
+UPDATE auth.sessions SET last_seen_at = NOW()
+WHERE id = @session_id AND revoked_at IS NULL
+  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
+  AND last_seen_at < NOW() - INTERVAL '1 minute';
+
+-- MFARequirement reads what decides whether an account must use a second
+-- factor to sign in to an organisation: the account's own flag, the
+-- organisation's requirement and grace period, and whether the account is an
+-- administrator there — holds a role, directly or through a group, granting
+-- any write permission.
+-- name: MFARequirement :one
+SELECT u.mfa_required,
+       u.created_at,
+       COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
+       COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
+       sp.mfa_enforced_since,
+       EXISTS (
+           SELECT 1
+           FROM rbac.user_roles ur
+           JOIN rbac.role_permissions rp ON rp.role_id = ur.role_id
+           JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id AND p.key LIKE '%.write'
+           UNION ALL
+           SELECT 1
+           FROM tenant.group_members gm
+           JOIN rbac.group_roles gr ON gr.group_id = gm.group_id AND gr.tenant_id = gm.tenant_id
+           JOIN rbac.role_permissions rp ON rp.role_id = gr.role_id
+           JOIN rbac.permissions p ON p.id = rp.permission_id
+           WHERE gm.user_id = u.id AND gm.tenant_id = @tenant_id AND p.key LIKE '%.write'
+       ) AS is_admin
+FROM "user".users u
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = @tenant_id
+WHERE u.id = @user_id;
