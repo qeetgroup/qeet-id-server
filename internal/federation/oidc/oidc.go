@@ -1153,6 +1153,7 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/authorize", h.authorize)
 	r.Post("/oauth/authorize/decision", h.decision)
+	r.Get("/oauth/authorize/request", h.consentRequest)
 	r.Post("/oauth/token-code", h.tokenCode)
 	r.Get("/oauth/login-context", h.loginContext)
 	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
@@ -1328,6 +1329,13 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	redirect := q.Get("redirect_uri")
 	scopes := strings.Fields(q.Get("scope"))
 
+	// Nothing about this request is trusted until its redirect_uri is one the
+	// client registered: until then the error is shown here, never sent there.
+	if !h.Service.RegisteredRedirect(r.Context(), clientID, redirect) {
+		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		return
+	}
+
 	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
 		ret := url.QueryEscape(currentURL(r))
@@ -1341,9 +1349,18 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !has {
-		// Hand off to the hosted consent screen, echoing the authorize params
-		// so it can post them back to the decision endpoint.
-		http.Redirect(w, r, h.LoginBaseURL+"/consent?"+r.URL.RawQuery, http.StatusFound)
+		// Hand off to the hosted consent screen with only the id of the request
+		// stored here; the decision acts on the stored values, not on anything
+		// the browser sends back.
+		id, err := h.Service.StartConsentRequest(r.Context(), loginSessionID, userID, ConsentRequest{
+			ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: q.Get("state"),
+			Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+		})
+		if err != nil {
+			h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
+			return
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/consent?request_id="+url.QueryEscape(id.String()), http.StatusFound)
 		return
 	}
 
@@ -1388,7 +1405,11 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 }
 
 type decisionInput struct {
-	Approve             bool   `json:"approve"`
+	RequestID string `json:"request_id"`
+	Approve   bool   `json:"approve"`
+	// The request's own values, as an older consent screen echoed them. They
+	// are optional and never used: one that is sent must match the stored
+	// request, or the decision is refused.
 	ClientID            string `json:"client_id"`
 	RedirectURI         string `json:"redirect_uri"`
 	Scope               string `json:"scope"`
@@ -1398,10 +1419,22 @@ type decisionInput struct {
 	CodeChallengeMethod string `json:"code_challenge_method"`
 }
 
+// matches reports whether every echoed value that was sent equals the stored
+// request's.
+func (in decisionInput) matches(req *ConsentRequest) bool {
+	same := func(sent, stored string) bool { return sent == "" || sent == stored }
+	return same(in.ClientID, req.ClientID) && same(in.RedirectURI, req.RedirectURI) &&
+		same(strings.Join(strings.Fields(in.Scope), " "), strings.Join(req.Scopes, " ")) &&
+		same(in.State, req.State) && same(in.Nonce, req.Nonce) &&
+		same(in.CodeChallenge, req.CodeChallenge) && same(in.CodeChallengeMethod, req.CodeChallengeMethod)
+}
+
 // decision records the consent decision from the hosted consent screen. The
-// user is identified by the SSO cookie. It returns (as JSON) the URL the
-// consent SPA should navigate to: a code on approval, or error=access_denied on
-// deny.
+// user is identified by the SSO cookie and the request by the id authorize
+// stored it under; the request's values come from storage, so neither answer
+// can be pointed at an address the client never registered. It returns (as
+// JSON) the URL the consent SPA should navigate to: a code on approval, or
+// error=access_denied on deny.
 func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
@@ -1413,25 +1446,68 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if !in.Approve {
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{
-			"redirect": appendQuery(in.RedirectURI, "error", "access_denied", "state", in.State, "iss", h.Service.issuer.JWTIssuer()),
-		})
+	id, err := uuid.Parse(in.RequestID)
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
 		return
 	}
-	scopes := strings.Fields(in.Scope)
-	if err := h.Service.GrantConsent(r.Context(), userID, in.ClientID, scopes); err != nil {
+	req, err := h.Service.TakeConsentRequest(r.Context(), id, loginSessionID)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, in.ClientID, in.RedirectURI,
-		scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod)
+	if req.UserID != userID || !in.matches(req) {
+		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		return
+	}
+	// The client may have dropped the address since the request was stored.
+	if !h.Service.RegisteredRedirect(r.Context(), req.ClientID, req.RedirectURI) {
+		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
+		return
+	}
+	if !in.Approve {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"redirect": appendQuery(req.RedirectURI, "error", "access_denied", "state", req.State, "iss", h.Service.issuer.JWTIssuer()),
+		})
+		return
+	}
+	if err := h.Service.GrantConsent(r.Context(), userID, req.ClientID, req.Scopes); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, req.ClientID, req.RedirectURI,
+		req.Scopes, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"redirect": appendQuery(in.RedirectURI, "code", code, "state", in.State, "iss", h.Service.issuer.JWTIssuer()),
+		"redirect": appendQuery(req.RedirectURI, "code", code, "state", req.State, "iss", h.Service.issuer.JWTIssuer()),
+	})
+}
+
+// consentRequest is what the hosted consent screen shows: the client and the
+// scopes of the stored request, for the browser that started it.
+func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
+	loginSessionID, _, ok := h.loginSession(r)
+	if !ok {
+		httpx.WriteError(w, r, errs.ErrUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.URL.Query().Get("request_id"))
+	if err != nil {
+		httpx.WriteError(w, r, errs.ErrOIDCConsentRequestInvalid)
+		return
+	}
+	req, err := h.Service.GetConsentRequest(r.Context(), id, loginSessionID)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"request_id": req.ID,
+		"client_id":  req.ClientID,
+		"scope":      strings.Join(req.Scopes, " "),
 	})
 }
 

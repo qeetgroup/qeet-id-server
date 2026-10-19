@@ -122,6 +122,23 @@ The changes below are the work staged for that first release.
   set an unsupported grant or a redirect URI that registration refuses (a fragment, userinfo, or
   plain `http` off loopback).
 
+**Hosted consent (2026-10-19)**
+
+* **oidc:** the hosted consent screen's Deny no longer sends people to an address the link chose.
+  `GET /v1/oauth/authorize` forwarded the whole query to the consent screen before checking
+  `redirect_uri`, and the decision (`POST /v1/oauth/authorize/decision`) built the denial redirect
+  from the `redirect_uri` the browser posted back. A link naming a real application with any
+  `redirect_uri` turned the genuine, branded consent page into an open redirect, and with a
+  `javascript:` URI the consent screen navigated to script on the hosted-login origin. Authorize
+  now refuses an unregistered `redirect_uri` before anything else
+  (`400 oidc.redirect_uri_not_registered`, shown, never redirected), stores the request
+  (migration `0138`, `auth.oidc_consent_requests`) and gives the consent screen only its
+  `request_id`; the decision names that id and acts on the stored values, once, for the
+  hosted-login session that started it. A decision with no stored request, another session's,
+  or one that tries to change it is `400 oidc.consent_request_invalid`. New
+  `GET /v1/oauth/authorize/request` lets the consent screen show the stored client and scopes.
+  **The hosted login's consent screen must send `request_id` (released with this).**
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

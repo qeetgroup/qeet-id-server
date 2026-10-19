@@ -1412,17 +1412,19 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// 3) Authorize with a session but no consent → redirect to the consent screen.
+	// 3) Authorize with a session but no consent → redirect to the consent
+	// screen, which is handed only the id of the request stored server-side.
 	resp = mustGet(authorizeURL())
-	if resp.StatusCode != http.StatusFound || !strings.Contains(resp.Header.Get("Location"), "login.test/consent") {
-		t.Fatalf("want redirect to consent, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	consentURL, _ := url.Parse(resp.Header.Get("Location"))
+	if resp.StatusCode != http.StatusFound || !strings.Contains(resp.Header.Get("Location"), "login.test/consent") ||
+		consentURL.Query().Get("request_id") == "" {
+		t.Fatalf("want redirect to consent with a request id, got %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	resp.Body.Close()
 
 	// 4) Approve the consent → JSON with the RP redirect carrying the code.
 	resp = mustPostJSON("/v1/oauth/authorize/decision", map[string]any{
-		"approve": true, "client_id": client.ClientID, "redirect_uri": redirectURI,
-		"scope": "openid", "state": "xyz",
+		"approve": true, "request_id": consentURL.Query().Get("request_id"),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("decision status %d", resp.StatusCode)
