@@ -15,10 +15,12 @@ const (
 	CodeOIDCClientAuthFailed = "oidc.client_auth_failed"
 
 	// Redirect URIs & scopes.
-	CodeOIDCRedirectURIInvalid  = "oidc.redirect_uri_invalid"
-	CodeOIDCRedirectURIMismatch = "oidc.redirect_uri_mismatch"
-	CodeOIDCScopeNotPermitted   = "oidc.scope_not_permitted"
-	CodeOIDCScopeExceedsSubject = "oidc.scope_exceeds_subject"
+	CodeOIDCRedirectURIInvalid       = "oidc.redirect_uri_invalid"
+	CodeOIDCRedirectURIMismatch      = "oidc.redirect_uri_mismatch"
+	CodeOIDCRedirectURINotRegistered = "oidc.redirect_uri_not_registered"
+	CodeOIDCConsentRequestInvalid    = "oidc.consent_request_invalid"
+	CodeOIDCScopeNotPermitted        = "oidc.scope_not_permitted"
+	CodeOIDCScopeExceedsSubject      = "oidc.scope_exceeds_subject"
 
 	// Grant types.
 	CodeOIDCGrantTypeUnsupported = "oidc.grant_type_unsupported"
@@ -93,8 +95,15 @@ var (
 	// Redirect URIs & scopes.
 	ErrOIDCRedirectURIInvalid  = New(CodeOIDCRedirectURIInvalid, "That redirect URI is not registered for this client.")
 	ErrOIDCRedirectURIMismatch = New(CodeOIDCRedirectURIMismatch, "The redirect URI doesn't match the one used to obtain this code.")
-	ErrOIDCScopeNotPermitted   = New(CodeOIDCScopeNotPermitted, "One or more requested scopes aren't permitted for this client.")
-	ErrOIDCScopeExceedsSubject = New(CodeOIDCScopeExceedsSubject, "The requested scope exceeds the subject token's scope.")
+	// ErrOIDCRedirectURINotRegistered: an authorize request names a redirect_uri
+	// the client never registered. It is shown where it happened, never sent to
+	// that address.
+	ErrOIDCRedirectURINotRegistered = New(CodeOIDCRedirectURINotRegistered, "This application didn't register that return address, so we can't send you back to it.")
+	// ErrOIDCConsentRequestInvalid: a consent decision names no stored request
+	// for this browser, one already decided or expired, or tries to change it.
+	ErrOIDCConsentRequestInvalid = New(CodeOIDCConsentRequestInvalid, "This sign-in request has expired or isn't valid. Start signing in again from the application.")
+	ErrOIDCScopeNotPermitted     = New(CodeOIDCScopeNotPermitted, "One or more requested scopes aren't permitted for this client.")
+	ErrOIDCScopeExceedsSubject   = New(CodeOIDCScopeExceedsSubject, "The requested scope exceeds the subject token's scope.")
 
 	// Grant types.
 	ErrOIDCGrantTypeUnsupported = New(CodeOIDCGrantTypeUnsupported, "That grant type isn't supported.")

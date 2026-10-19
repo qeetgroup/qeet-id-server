@@ -289,3 +289,29 @@ UPDATE auth.oidc_ciba_requests SET last_polled_at = NOW() WHERE id = @id;
 
 -- name: ConsumeCIBARequest :exec
 UPDATE auth.oidc_ciba_requests SET consumed_at = NOW() WHERE id = @id;
+
+-- InsertConsentRequest stores an authorization request that has passed the
+-- authorize checks and is waiting on the hosted consent screen.
+-- name: InsertConsentRequest :one
+INSERT INTO auth.oidc_consent_requests (
+    login_session_id, user_id, client_id, redirect_uri, scopes, state, nonce,
+    code_challenge, code_challenge_method, expires_at
+) VALUES (
+    @login_session_id, @user_id, @client_id, @redirect_uri, @scopes, @state, @nonce,
+    @code_challenge, @code_challenge_method, @expires_at
+)
+RETURNING id;
+
+-- GetConsentRequest reads an undecided, unexpired request for the hosted-login
+-- session that started it, for the consent screen to show.
+-- name: GetConsentRequest :one
+SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method
+FROM auth.oidc_consent_requests
+WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND expires_at > NOW();
+
+-- TakeConsentRequest claims an undecided, unexpired request for its own
+-- hosted-login session, once: a second decision finds nothing.
+-- name: TakeConsentRequest :one
+UPDATE auth.oidc_consent_requests SET used_at = NOW()
+WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND expires_at > NOW()
+RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method;

@@ -18,10 +18,12 @@ func init() {
 		errs.CodeOIDCClientAuthFailed: http.StatusUnauthorized,
 
 		// Redirect URIs & scopes.
-		errs.CodeOIDCRedirectURIInvalid:  http.StatusBadRequest,
-		errs.CodeOIDCRedirectURIMismatch: http.StatusBadRequest,
-		errs.CodeOIDCScopeNotPermitted:   http.StatusBadRequest,
-		errs.CodeOIDCScopeExceedsSubject: http.StatusForbidden,
+		errs.CodeOIDCRedirectURIInvalid:       http.StatusBadRequest,
+		errs.CodeOIDCRedirectURIMismatch:      http.StatusBadRequest,
+		errs.CodeOIDCRedirectURINotRegistered: http.StatusBadRequest,
+		errs.CodeOIDCConsentRequestInvalid:    http.StatusBadRequest,
+		errs.CodeOIDCScopeNotPermitted:        http.StatusBadRequest,
+		errs.CodeOIDCScopeExceedsSubject:      http.StatusForbidden,
 
 		// Grant types.
 		errs.CodeOIDCGrantTypeUnsupported: http.StatusBadRequest,

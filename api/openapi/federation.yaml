@@ -196,7 +196,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint.'
+      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id.'
       summary: Authorize
       tags:
         - OIDC
@@ -253,7 +253,7 @@ paths:
   /v1/oauth/authorize/decision:
     post:
       operationId: post_v1_oauth_authorize_decision
-      description: 'Records the end user''s allow or deny decision on the hosted consent screen for a pending authorization request, with the user identified by the SSO session cookie. On allow, consent is stored and an authorization code is issued for the client''s redirect_uri; on deny, the client is redirected with an access_denied error. Follows GET /v1/oauth/authorize and precedes the token-code exchange.'
+      description: 'Records the end user''s allow or deny decision on the hosted consent screen for the authorization request stored under request_id. The user is identified by the hosted-login session cookie, and the request must belong to that session, be undecided and unexpired; it can be decided once. Every protocol value (redirect_uri, scope, state, nonce, PKCE) comes from the stored request. Older consent screens may also echo those values: each one sent must match the stored request, or the decision is refused (400 oidc.consent_request_invalid). The answer is JSON naming where the browser goes next: the client''s registered redirect_uri with a code, or with error=access_denied and the original state.'
       summary: Authorize decision (consent)
       tags:
         - OIDC
@@ -267,18 +267,57 @@ paths:
               type: object
               required:
                 - request_id
-                - decision
+                - approve
               properties:
                 request_id:
                   type: string
-                decision:
-                  type: string
-                  enum:
-                    - allow
-                    - deny
+                  format: uuid
+                approve:
+                  type: boolean
       responses:
-        '302':
-          description: Redirect back to the client with code or error
+        '200':
+          description: Where the consent screen sends the browser next
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/oauth/authorize/request:
+    get:
+      operationId: get_v1_oauth_authorize_request
+      description: 'Returns the stored authorization request the hosted consent screen is showing: the client and the scopes it asks for. The request must belong to the caller''s hosted-login session and be undecided and unexpired; otherwise 400 oidc.consent_request_invalid.'
+      summary: Authorize request (consent)
+      tags:
+        - OIDC
+      parameters:
+        - in: query
+          name: request_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - ssoCookie: []
+      responses:
+        '200':
+          description: The stored request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                  client_id:
+                    type: string
+                  scope:
+                    type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':

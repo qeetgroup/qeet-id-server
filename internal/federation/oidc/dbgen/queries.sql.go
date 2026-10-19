@@ -285,6 +285,48 @@ func (q *Queries) GetConsent(ctx context.Context, arg GetConsentParams) ([]strin
 	return scopes, err
 }
 
+const getConsentRequest = `-- name: GetConsentRequest :one
+SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method
+FROM auth.oidc_consent_requests
+WHERE id = $1 AND login_session_id = $2 AND used_at IS NULL AND expires_at > NOW()
+`
+
+type GetConsentRequestParams struct {
+	ID             uuid.UUID
+	LoginSessionID uuid.UUID
+}
+
+type GetConsentRequestRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+}
+
+// GetConsentRequest reads an undecided, unexpired request for the hosted-login
+// session that started it, for the consent screen to show.
+func (q *Queries) GetConsentRequest(ctx context.Context, arg GetConsentRequestParams) (GetConsentRequestRow, error) {
+	row := q.db.QueryRow(ctx, getConsentRequest, arg.ID, arg.LoginSessionID)
+	var i GetConsentRequestRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ClientID,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.State,
+		&i.Nonce,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+	)
+	return i, err
+}
+
 const getDeviceByUserCode = `-- name: GetDeviceByUserCode :one
 SELECT client_id, scopes, status, expires_at
 FROM auth.oidc_device_codes WHERE user_code = $1
@@ -499,6 +541,50 @@ func (q *Queries) InsertCIBARequest(ctx context.Context, arg InsertCIBARequestPa
 		arg.IntervalSeconds,
 	)
 	return err
+}
+
+const insertConsentRequest = `-- name: InsertConsentRequest :one
+INSERT INTO auth.oidc_consent_requests (
+    login_session_id, user_id, client_id, redirect_uri, scopes, state, nonce,
+    code_challenge, code_challenge_method, expires_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10
+)
+RETURNING id
+`
+
+type InsertConsentRequestParams struct {
+	LoginSessionID      uuid.UUID
+	UserID              uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	ExpiresAt           time.Time
+}
+
+// InsertConsentRequest stores an authorization request that has passed the
+// authorize checks and is waiting on the hosted consent screen.
+func (q *Queries) InsertConsentRequest(ctx context.Context, arg InsertConsentRequestParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertConsentRequest,
+		arg.LoginSessionID,
+		arg.UserID,
+		arg.ClientID,
+		arg.RedirectUri,
+		arg.Scopes,
+		arg.State,
+		arg.Nonce,
+		arg.CodeChallenge,
+		arg.CodeChallengeMethod,
+		arg.ExpiresAt,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertDeviceCode = `-- name: InsertDeviceCode :exec
@@ -1255,6 +1341,48 @@ type RevokeRefreshTokenChainParams struct {
 func (q *Queries) RevokeRefreshTokenChain(ctx context.Context, arg RevokeRefreshTokenChainParams) error {
 	_, err := q.db.Exec(ctx, revokeRefreshTokenChain, arg.ClientID, arg.UserID)
 	return err
+}
+
+const takeConsentRequest = `-- name: TakeConsentRequest :one
+UPDATE auth.oidc_consent_requests SET used_at = NOW()
+WHERE id = $1 AND login_session_id = $2 AND used_at IS NULL AND expires_at > NOW()
+RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method
+`
+
+type TakeConsentRequestParams struct {
+	ID             uuid.UUID
+	LoginSessionID uuid.UUID
+}
+
+type TakeConsentRequestRow struct {
+	ID                  uuid.UUID
+	UserID              uuid.UUID
+	ClientID            string
+	RedirectUri         string
+	Scopes              []string
+	State               string
+	Nonce               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+}
+
+// TakeConsentRequest claims an undecided, unexpired request for its own
+// hosted-login session, once: a second decision finds nothing.
+func (q *Queries) TakeConsentRequest(ctx context.Context, arg TakeConsentRequestParams) (TakeConsentRequestRow, error) {
+	row := q.db.QueryRow(ctx, takeConsentRequest, arg.ID, arg.LoginSessionID)
+	var i TakeConsentRequestRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.ClientID,
+		&i.RedirectUri,
+		&i.Scopes,
+		&i.State,
+		&i.Nonce,
+		&i.CodeChallenge,
+		&i.CodeChallengeMethod,
+	)
+	return i, err
 }
 
 const touchCIBAPollTime = `-- name: TouchCIBAPollTime :exec
