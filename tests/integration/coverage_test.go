@@ -1272,17 +1272,17 @@ func TestVerificationEmailLifecycle(t *testing.T) {
 	rec := &recordSender{}
 	svc := verification.NewService(testPool, rec, 10*time.Minute)
 
-	if err := svc.StartEmail(ctx, userID, email); err != nil {
+	if err := svc.StartEmail(ctx, userID, email, verification.Requester{}); err != nil {
 		t.Fatalf("start email: %v", err)
 	}
 	code := extractCode(t, rec.last.Body)
 
 	// Wrong code is rejected.
-	if err := svc.ConfirmEmail(ctx, userID, "000000"); err == nil {
+	if err := svc.ConfirmEmail(ctx, userID, "000000", verification.Requester{}); err == nil {
 		t.Error("a wrong verification code must be rejected")
 	}
 	// Correct code verifies and stamps email_verified_at.
-	if err := svc.ConfirmEmail(ctx, userID, code); err != nil {
+	if err := svc.ConfirmEmail(ctx, userID, code, verification.Requester{}); err != nil {
 		t.Fatalf("confirm email: %v", err)
 	}
 	var verifiedAt *time.Time
@@ -1293,12 +1293,12 @@ func TestVerificationEmailLifecycle(t *testing.T) {
 		t.Error("email_verified_at should be set after confirmation")
 	}
 	// Single-use.
-	if err := svc.ConfirmEmail(ctx, userID, code); err == nil {
+	if err := svc.ConfirmEmail(ctx, userID, code, verification.Requester{}); err == nil {
 		t.Error("a used verification code must not be reusable")
 	}
 
 	// Expiry path.
-	if err := svc.StartEmail(ctx, userID, email); err != nil {
+	if err := svc.StartEmail(ctx, userID, email, verification.Requester{}); err != nil {
 		t.Fatalf("start email 2: %v", err)
 	}
 	code2 := extractCode(t, rec.last.Body)
@@ -1307,7 +1307,7 @@ func TestVerificationEmailLifecycle(t *testing.T) {
 		codes.Hash(code2)); err != nil {
 		t.Fatalf("expire code: %v", err)
 	}
-	if err := svc.ConfirmEmail(ctx, userID, code2); err == nil {
+	if err := svc.ConfirmEmail(ctx, userID, code2, verification.Requester{}); err == nil {
 		t.Error("an expired verification code must be rejected")
 	}
 }

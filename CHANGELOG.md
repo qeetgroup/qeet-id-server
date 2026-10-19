@@ -67,6 +67,26 @@ The changes below are the work staged for that first release.
   group, so moving a group erased its name and description, and renaming it detached it from its
   parent. `"parent_id": null` makes a group top-level.
 
+**Email verification and invitations (2026-10-19)**
+
+* **verification:** an email code now proves only the address and flow it was issued for. Verifying
+  the address on file and changing to a new address both wrote codes to `email_verifications`
+  with nothing telling them apart, and the verify step marked the account's current address
+  verified without checking where the code had gone. So someone who signed up with an address
+  they don't own could start an address change to their own inbox and submit that code to
+  verify the address on file. Migration `0137` adds a `purpose` column (`verify_email` or
+  `change_email`, backfilled from the address each code was sent to); each confirm reads only
+  its own purpose, verifying requires the code's address to be the one on the account, and
+  issuing a code expires the other flow's open codes. The flows are now audited
+  (`email.verification_started`, `email.verified`, `email.verification_failed`, `email.changed`
+  with both addresses), and the previous address is sent a notice after a change.
+* **invitations:** the in-app invitations inbox (`GET /v1/me/invites`, `POST
+  /v1/me/invites/{id}/accept` and `/decline`) now needs a verified address. It matched
+  invitations on the account's address alone, so anyone who signed up with an invited address
+  before its owner could see the invitation and join the organisation with its role. It answers
+  `403 invite.email_not_verified` until the address is verified; accepting through the emailed
+  link is unchanged.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

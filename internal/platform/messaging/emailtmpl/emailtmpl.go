@@ -51,6 +51,11 @@ func Code(heading, intro, code, expiry string) string {
 	return shell(inner)
 }
 
+// Notice renders an informational email with no code or button.
+func Notice(heading, intro, extraNote string) string {
+	return shell(heading1(heading) + paragraph(intro) + note(html.EscapeString(extraNote)))
+}
+
 // Action renders an email with a single primary button linking to url.
 func Action(heading, intro, buttonLabel, url, extraNote string) string {
 	safeURL := html.EscapeString(url)
