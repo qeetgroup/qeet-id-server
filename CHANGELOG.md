@@ -54,6 +54,18 @@ The changes below are the work staged for that first release.
   `0135` removes member rows that name no account and adds the missing foreign key to
   `"user".users`. Removing someone who isn't in the group no longer writes a `group.member_removed`
   audit entry.
+* **groups:** a group's parent must now be a group of the same organisation, and a move can't
+  make the hierarchy loop. `POST /v1/groups` and `PATCH /v1/groups/{id}` stored any `parent_id`,
+  so a group could be nested under another organisation's group (and deleting that group then
+  deleted this one's subgroups), made its own parent, or moved under its own subgroup. A parent
+  outside the organisation is `404 group.parent_not_found`, and a move into the group itself or
+  one of its subgroups is `400 group.cycle`. Migration `0136` detaches groups whose parent is in
+  another organisation (they become top-level; nothing is deleted) and replaces the parent key
+  with one on `(tenant_id, parent_id)`. `tools/scripts/group-hierarchy-check.sql` lists those
+  groups, and any existing loops, before it runs.
+* **groups:** `PATCH /v1/groups/{id}` now changes only the fields it is sent. It replaced the whole
+  group, so moving a group erased its name and description, and renaming it detached it from its
+  parent. `"parent_id": null` makes a group top-level.
 
 **Dependencies and toolchain (2026-10-16)**
 
