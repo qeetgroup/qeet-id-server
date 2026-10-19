@@ -13,6 +13,7 @@ func init() {
 	registerStatuses(map[string]int{
 		errs.CodeRBACRoleNameExists:      http.StatusConflict,
 		errs.CodeRBACGroupOrRoleNotFound: http.StatusNotFound,
+		errs.CodeRBACUserOrRoleNotFound:  http.StatusNotFound,
 		errs.CodeRBACPermissionDenied:    http.StatusForbidden,
 		errs.CodeRBACPermissionRequired:  http.StatusBadRequest,
 	})

@@ -33,6 +33,18 @@ The changes below are the work staged for that first release.
 
 ### Security
 
+**Tenant isolation (2026-10-19)**
+
+* **rbac:** role assignment now refuses users and roles from other organisations.
+  `POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}` checked only that the caller held
+  `role.write` in its own tenant, then inserted whatever user and role ids it was given. A
+  `user_roles` row is what makes someone a member, so any organisation admin could pull a user
+  from another organisation in, with permissions, or attach another organisation's role to one
+  of their own users. The insert now requires the role to be the tenant's own and the user to be
+  a live member (or have it as their home tenant), in the same statement. Every refusal is the
+  same `404 rbac.user_or_role_not_found` and is audited as `role.assign_refused`. A missing role
+  id, which used to fail as a database error, gets the same 404.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

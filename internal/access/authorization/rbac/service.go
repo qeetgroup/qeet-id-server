@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 
@@ -135,6 +136,12 @@ func (s *Service) AssignRole(ctx context.Context, userID, tenantID, roleID uuid.
 	defer tx.Rollback(ctx)
 
 	if err := s.repo.AssignRole(ctx, tx, userID, tenantID, roleID, grantedBy); err != nil {
+		if errors.Is(err, errs.ErrRBACUserOrRoleNotFound) {
+			_ = tx.Rollback(ctx)
+			if aerr := s.recordAssignRefused(ctx, userID, tenantID, roleID, actor); aerr != nil {
+				return aerr
+			}
+		}
 		return err
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.assigned", "user", userID,
@@ -152,6 +159,22 @@ func (s *Service) AssignRole(ctx context.Context, userID, tenantID, roleID uuid.
 		"user_id": userID, "role_id": roleID, "change": "role_assigned",
 	})
 	return nil
+}
+
+// recordAssignRefused audits a refused role assignment in its own transaction,
+// after the assignment's has rolled back, so repeated attempts with another
+// tenant's ids stay visible. The supplied ids are recorded as given.
+func (s *Service) recordAssignRefused(ctx context.Context, userID, tenantID, roleID uuid.UUID, actor audit.Actor) error {
+	tx, err := s.repo.Pool().Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := audit.Record(ctx, tx, actor.Event(tenantID, "role.assign_refused", "user", userID,
+		map[string]any{"role_id": roleID})); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) UnassignRole(ctx context.Context, userID, tenantID, roleID uuid.UUID, actor audit.Actor) error {

@@ -3191,7 +3191,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant, and the assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
+      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
       summary: Assign role to user
       tags:
         - RBAC
