@@ -315,3 +315,8 @@ WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND 
 UPDATE auth.oidc_consent_requests SET used_at = NOW()
 WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND expires_at > NOW()
 RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method;
+
+-- GetAccountStanding is what decides whether a user may still be issued tokens:
+-- the same suspended-or-deleted rule the first-party refresh applies.
+-- name: GetAccountStanding :one
+SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = @id;

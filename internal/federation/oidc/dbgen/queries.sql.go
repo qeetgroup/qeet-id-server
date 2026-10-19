@@ -162,6 +162,24 @@ func (q *Queries) DenyDevice(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const getAccountStanding = `-- name: GetAccountStanding :one
+SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = $1
+`
+
+type GetAccountStandingRow struct {
+	Status  string
+	Deleted bool
+}
+
+// GetAccountStanding is what decides whether a user may still be issued tokens:
+// the same suspended-or-deleted rule the first-party refresh applies.
+func (q *Queries) GetAccountStanding(ctx context.Context, id uuid.UUID) (GetAccountStandingRow, error) {
+	row := q.db.QueryRow(ctx, getAccountStanding, id)
+	var i GetAccountStandingRow
+	err := row.Scan(&i.Status, &i.Deleted)
+	return i, err
+}
+
 const getClientForAuth = `-- name: GetClientForAuth :one
 SELECT id, tenant_id, client_secret_hash, type, grant_types
 FROM auth.oidc_clients WHERE client_id = $1

@@ -148,6 +148,13 @@ The changes below are the work staged for that first release.
   `user.deleted` event, and records `deleted_by` (migration `0139`), which `GET /v1/users/deleted`
   returns. The answer is `200` with `id`, `deleted_at` and `deleted_by` instead of an empty `204`.
   Restoring the account clears `deleted_by` and brings none of the old sessions back.
+* **oidc:** an application can no longer renew or collect tokens for a suspended or deleted
+  account. The refresh grant rotated the stored token without reading the user, so suspending a
+  leaver didn't stop the applications they had signed in to, each renewing for up to 30 days. The
+  refresh, authorization-code, device and CIBA grants now refuse a suspended or deleted account
+  (`auth.account_suspended`, or `invalid_grant` `account_suspended` when polling), a refused
+  refresh revokes that application's refresh tokens for the user, and a code or approval from
+  before the suspension is spent rather than redeemed.
 
 **Dependencies and toolchain (2026-10-16)**
 

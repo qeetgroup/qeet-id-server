@@ -725,7 +725,7 @@ paths:
   /v1/oauth/token-code:
     post:
       operationId: post_v1_oauth_token_code
-      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens.'
+      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user.'
       summary: Token (authorization_code)
       tags:
         - OIDC
