@@ -535,15 +535,21 @@ func (r *Repository) update(ctx context.Context, db rowQuerier, id uuid.UUID, in
 	return scanUser(row)
 }
 
-func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	n, err := r.q.SoftDeleteUser(ctx, id)
+// SoftDeleteByTx soft-deletes a user in tx, recording deletedBy, and returns
+// the deletion. ErrNotFound if the user is missing or already deleted.
+func (r *Repository) SoftDeleteByTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, deletedBy *uuid.UUID) (*Deletion, error) {
+	row, err := r.q.WithTx(tx).SoftDeleteUserBy(ctx, dbgen.SoftDeleteUserByParams{ID: id, DeletedBy: uuidPtrToPgtype(deletedBy)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrNotFound
+	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if n == 0 {
-		return errs.ErrNotFound
+	d := &Deletion{ID: row.ID, DeletedBy: pgtypeToUUIDPtr(row.DeletedBy)}
+	if row.DeletedAt.Valid {
+		d.DeletedAt = row.DeletedAt.Time
 	}
-	return nil
+	return d, nil
 }
 
 // ListDeleted returns a tenant's soft-deleted users (most recent first).
@@ -564,6 +570,7 @@ func (r *Repository) ListDeleted(ctx context.Context, tenantID uuid.UUID, limit 
 			ID:          row.ID,
 			Email:       row.Email,
 			DisplayName: row.DisplayName,
+			DeletedBy:   pgtypeToUUIDPtr(row.DeletedBy),
 			CreatedAt:   row.CreatedAt,
 		}
 		// The query filters WHERE deleted_at IS NOT NULL, so the value is always valid.

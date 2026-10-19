@@ -139,6 +139,16 @@ The changes below are the work staged for that first release.
   `GET /v1/oauth/authorize/request` lets the consent screen show the stored client and scopes.
   **The hosted login's consent screen must send `request_id` (released with this).**
 
+**Cutting off someone who leaves (2026-10-19)**
+
+* **users:** soft-deleting a user now cuts them off and records it, like suspend. `DELETE
+  /v1/users/{id}` was a single UPDATE: the user's sessions kept working, nothing was audited, no
+  event was sent and nobody was recorded as the deleter. In one transaction it now ends every
+  session (announced as `deleted`), writes a `user.deleted` audit row naming the admin, queues a
+  `user.deleted` event, and records `deleted_by` (migration `0139`), which `GET /v1/users/deleted`
+  returns. The answer is `200` with `id`, `deleted_at` and `deleted_by` instead of an empty `204`.
+  Restoring the account clears `deleted_by` and brings none of the old sessions back.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

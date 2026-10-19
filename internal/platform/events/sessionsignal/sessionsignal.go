@@ -69,7 +69,8 @@ const (
 	// ReasonReactivated: the account was reactivated; sessions from before
 	// the suspension stay ended.
 	ReasonReactivated = "reactivated"
-	// ReasonDeleted: the account was erased.
+	// ReasonDeleted: the account was deleted (soft-deleted by an
+	// administrator, or erased).
 	ReasonDeleted = "deleted"
 	// ReasonExpired: every refresh token of the session expired without it
 	// being ended; announced when the cleanup removes it.
