@@ -172,6 +172,17 @@ The changes below are the work staged for that first release.
   audited as `user.removed_from_organization` (`409 user.managed_here` for the organisation's own
   accounts). The access view now describes the organisation being viewed, not the person's home.
 
+**Assistant reads and explains only (2026-10-20)**
+
+* **qeetai:** the model is no longer offered the assistant's change tools. The console stopped
+  running them for 1.0 (it answers "can't make changes in this version"), but the orchestrator
+  still sent all 21 tools from `api/qeetai/tools.manifest.json` to the model, and its system prompt
+  said the assistant could manage roles and create OIDC clients, so the model kept asking for
+  changes. Every tool in the manifest now declares `mutates` (14 of the 21 do); while change tools
+  are switched off, the model is offered only the 7 that read or explain, and a tool that doesn't
+  declare `mutates` is a manifest error. The system prompt describes a read-only assistant that
+  explains the steps and names the console screen that makes a change.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
