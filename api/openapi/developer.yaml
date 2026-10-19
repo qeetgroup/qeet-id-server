@@ -56,7 +56,7 @@ paths:
   /v1/api-keys:
     post:
       operationId: post_v1_api_keys
-      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`.'
+      description: 'Creates a long-lived API key for machine access. The plaintext key is returned only once at creation and is never retrievable again, so store it securely. Callers present it as `Authorization: ApiKey <key>` and resolve to actor_type `api_key`. A user_id, if sent, must be the caller''s own: a key can act only for the person who creates it (403 apikey.user_not_self otherwise). Creating and revoking keys is audited.'
       summary: Create API key
       tags:
         - API Keys
@@ -1552,7 +1552,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: The "agent-safe" fetch — transparently refreshes the token if it's expired (or about to be) and hands back only a short-lived access token, never the refresh token. Requires a vault:<provider> or vault:read scope; every access is audited. userID is resolved from the caller's own token subject, so an agent holding a token delegated (RFC 8693) from a user gets that user's connected account.
+      description: 'Hands a connected account''s short-lived access token (never the refresh token) to the person who connected it, signed in to their own session, refreshing it first if it has expired. Requires a vault:<provider> or vault:read scope. API keys, service principals, agents and tokens issued to applications are refused with 403 tokenvault.people_only: they carry a user id they were given, not one they proved. Every access, and every refused attempt, is audited under the caller''s own credential.'
       responses:
         '200':
           description: OK

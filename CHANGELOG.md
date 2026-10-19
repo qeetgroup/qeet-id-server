@@ -87,6 +87,22 @@ The changes below are the work staged for that first release.
   `403 invite.email_not_verified` until the address is verified; accepting through the emailed
   link is unchanged.
 
+**API keys and the token vault (2026-10-19)**
+
+* **api-keys:** an API key can now act only for the person who creates it. `POST /v1/api-keys`
+  stored any `user_id` it was sent, and the key then presented itself as that person on every
+  call, so anyone allowed to create keys could make one act for a colleague, or for someone in
+  another organisation. A `user_id` other than the caller's is `403 apikey.user_not_self`; a key
+  with no `user_id` is unchanged. Creating and revoking a key is now audited (`apikey.created`,
+  with the key's user and scopes, and `apikey.revoked`): the table records no creator.
+  `tools/scripts/api-keys-acting-for-people.sql` lists live keys that act for a person for review.
+* **token vault:** `GET /v1/vault/tokens/{provider}/access-token` hands a connected account's token
+  only to the person who connected it, signed in to their own session. It admitted any key with a
+  vault scope and resolved the grant from the user id the key carried, so a key made to act for a
+  colleague received that colleague's live third-party token, and the access was audited under
+  the colleague's name. API keys, service principals, agents and application tokens are now
+  `403 tokenvault.people_only`, recorded as `vault.tokens.access_refused` under the credential's
+  own id. Vault secret reads by a machine credential record its `credential_id`.
 **OAuth client authentication (2026-10-19)**
 
 * **oidc:** a public client's `client_id` no longer stands in for client authentication. The

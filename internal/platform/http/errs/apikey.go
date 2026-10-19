@@ -11,6 +11,7 @@ const (
 	CodeAPIKeyExpired      = "apikey.expired"
 	CodeAPIKeyNameRequired = "apikey.name_required"
 	CodeAPIKeyInvalidID    = "apikey.invalid_id"
+	CodeAPIKeyUserNotSelf  = "apikey.user_not_self"
 )
 
 // API-key errors. The Message is what the end user sees — edit wording here, in
@@ -22,4 +23,8 @@ var (
 	ErrAPIKeyExpired      = New(CodeAPIKeyExpired, "This API key has expired.")
 	ErrAPIKeyNameRequired = New(CodeAPIKeyNameRequired, "Enter a name for the API key.")
 	ErrAPIKeyInvalidID    = New(CodeAPIKeyInvalidID, "That identifier isn't valid.")
+	// ErrAPIKeyUserNotSelf: a key may act for the person creating it, or for
+	// no one; naming anyone else (a colleague, or someone in another
+	// organization) would let the key act as them.
+	ErrAPIKeyUserNotSelf = New(CodeAPIKeyUserNotSelf, "An API key can act only for the person who creates it.")
 )
