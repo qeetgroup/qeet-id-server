@@ -84,6 +84,28 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		scopes = *in.Scopes
 	}
 	q := s.q.WithTx(tx)
+	// Hold the edited client to the same rules as registration, checked on the
+	// result of the edit (unset fields keep their stored values).
+	cur, err := q.GetOIDCClient(ctx, dbgen.GetOIDCClientParams{ID: id, TenantID: tenantID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errs.ErrOIDCClientNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	merged := CreateClientInput{Type: cur.Type, RedirectURIs: cur.RedirectUris, PostLogoutURIs: cur.PostLogoutUris, GrantTypes: cur.GrantTypes}
+	if in.RedirectURIs != nil {
+		merged.RedirectURIs = redirectUris
+	}
+	if in.PostLogoutURIs != nil {
+		merged.PostLogoutURIs = postLogoutUris
+	}
+	if in.GrantTypes != nil {
+		merged.GrantTypes = grantTypes
+	}
+	if err := validateClientInput(merged); err != nil {
+		return nil, err
+	}
 	r, err := q.UpdateOIDCClient(ctx, dbgen.UpdateOIDCClientParams{
 		Name:           in.Name,
 		RedirectUris:   redirectUris,

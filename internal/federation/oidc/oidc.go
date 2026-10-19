@@ -192,6 +192,9 @@ func validateClientInput(in CreateClientInput) error {
 			return errs.ErrOIDCGrantTypeUnsupported.WithDetail("unsupported grant_type: " + grantType)
 		}
 	}
+	if in.Type == "public" && containsAny(in.GrantTypes, "token_exchange", grantTypeTokenExchange, grantTypeCIBA) {
+		return errs.ErrOIDCUnsupportedFlow
+	}
 	if contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
 		return errs.ErrOIDCRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
 	}
@@ -563,21 +566,67 @@ const (
 	tokenTypeAccessToken   = "urn:ietf:params:oauth:token-type:access_token"
 )
 
-// authenticateClient verifies a confidential client's secret and returns its grant types.
-func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) ([]string, error) {
+// authedClient is the client a request identified itself as. For a public
+// client that identity is only claimed: its client_id is in every sign-in link
+// and it has no secret, so an endpoint that needs proof calls
+// requireConfidential.
+type authedClient struct {
+	ID         uuid.UUID
+	TenantID   uuid.UUID
+	ClientID   string
+	Type       string
+	GrantTypes []string
+}
+
+// authenticateClient identifies the calling client: a confidential client must
+// present its secret, a public one presents none. A wrong secret is audited
+// against the client's tenant. Unknown client ids are refused without an audit
+// row, so an unauthenticated caller can't fill the audit trail.
+func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret string) (authedClient, error) {
 	row, err := s.q.GetClientForAuth(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, errs.ErrOIDCClientAuthFailed
+		return authedClient{}, errs.ErrOIDCClientAuthFailed
 	}
 	if err != nil {
-		return nil, err
+		return authedClient{}, err
 	}
+	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes}
 	if row.Type == "confidential" {
 		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
-			return nil, errs.ErrOIDCClientAuthFailed
+			s.auditClientAuthFailure(ctx, c, "invalid_secret")
+			return authedClient{}, errs.ErrOIDCClientAuthFailed
 		}
 	}
-	return row.GrantTypes, nil
+	return c, nil
+}
+
+// requireConfidential refuses a public client at an endpoint that relies on
+// client authentication (introspection, token exchange, backchannel sign-in):
+// for a public client, presenting its client_id proves nothing.
+func (s *Service) requireConfidential(ctx context.Context, c authedClient) error {
+	if c.Type == "confidential" {
+		return nil
+	}
+	s.auditClientAuthFailure(ctx, c, "public_client")
+	return errs.ErrOIDCClientAuthFailed
+}
+
+// auditClientAuthFailure records a refused client authentication. Best-effort:
+// the refusal stands whether or not the row is written.
+func (s *Service) auditClientAuthFailure(ctx context.Context, c authedClient, reason string) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	tenantID, id := c.TenantID, c.ID
+	if audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorType: "client", Action: "oidc.client_auth_failed",
+		ResourceType: "oidc_client", ResourceID: &id,
+		Metadata: map[string]any{"client_id": c.ClientID, "reason": reason},
+	}) == nil {
+		_ = tx.Commit(ctx)
+	}
 }
 
 // TokenExchange implements RFC 8693 in its downscoping form: a confidential
@@ -588,11 +637,14 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 // granted "token_exchange". Only access tokens are supported as subject and
 // requested token type.
 func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, subjectToken, subjectTokenType, requestedTokenType, scope, actorToken, actorTokenType, resource string) (*TokenResponse, error) {
-	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
 	}
-	if !containsAny(grantTypes, "token_exchange", grantTypeTokenExchange) {
+	if err := s.requireConfidential(ctx, client); err != nil {
+		return nil, err
+	}
+	if !containsAny(client.GrantTypes, "token_exchange", grantTypeTokenExchange) {
 		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
 	if subjectToken == "" {
@@ -708,7 +760,7 @@ func containsAny(set []string, vs ...string) bool {
 
 // ExchangeCode swaps an authorization_code for tokens.
 func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code, redirectURI, codeVerifier, resource string) (*TokenResponse, error) {
-	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -772,7 +824,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	// the hosted-login session the code came from either spends the code first
 	// (and this redemption fails) or waits and then ends the grant.
 	refresh := ""
-	if contains(grantTypes, "refresh_token") {
+	if contains(client.GrantTypes, "refresh_token") {
 		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID)
 		if err != nil {
 			return nil, err
@@ -1640,6 +1692,11 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"backchannel_authentication_endpoint":        base + "/v1/oauth/bc-authorize",
 		"backchannel_user_code_parameter_supported":  false,
 		"code_challenge_methods_supported":           []string{"S256"},
+		// Client authentication: a secret by Basic or form everywhere; "none"
+		// (a public client) only where it may call, and introspection never.
+		"token_endpoint_auth_methods_supported":         []string{"client_secret_basic", "client_secret_post", "none"},
+		"revocation_endpoint_auth_methods_supported":    []string{"client_secret_basic", "client_secret_post", "none"},
+		"introspection_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
 		// RFC 9728 — Protected Resource Metadata discovery link
 		"protected_resource_metadata": base + "/.well-known/oauth-protected-resource",
 		// RFC 8707 — Resource Indicators
@@ -1705,7 +1762,11 @@ func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token
 // ES256 access tokens (verified statelessly) and stored OIDC refresh tokens.
 // token_type_hint, when given, picks which check to run first/only.
 func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token, hint string) (map[string]any, error) {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireConfidential(ctx, client); err != nil {
 		return nil, err
 	}
 	inactive := map[string]any{"active": false}

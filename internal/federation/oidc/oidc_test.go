@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/tokens"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
@@ -270,6 +272,54 @@ func TestValidateRegisteredRedirectURI(t *testing.T) {
 	for _, uri := range invalid {
 		if err := validateRegisteredRedirectURI(uri); err == nil {
 			t.Errorf("validateRegisteredRedirectURI(%q) = nil, want error", uri)
+		}
+	}
+}
+
+// A public client authenticates with a client_id alone, which is in every
+// sign-in link, so it can't hold the flows that rely on client authentication.
+func TestPublicClientsCantHoldConfidentialFlows(t *testing.T) {
+	base := CreateClientInput{Type: "public", RedirectURIs: []string{"https://spa.example/cb"}}
+	for _, grant := range []string{"token_exchange", grantTypeTokenExchange, grantTypeCIBA} {
+		in := base
+		in.GrantTypes = []string{"authorization_code", grant}
+		if err := validateClientInput(in); !errors.Is(err, errs.ErrOIDCUnsupportedFlow) {
+			t.Errorf("public + %s: err = %v, want %v", grant, err, errs.ErrOIDCUnsupportedFlow)
+		}
+		in.Type = "confidential"
+		if err := validateClientInput(in); err != nil {
+			t.Errorf("confidential + %s rejected: %v", grant, err)
+		}
+	}
+}
+
+// Discovery states which client authentication each endpoint accepts: a secret
+// (Basic or form) everywhere, and none only where a public client may call.
+func TestDiscovery_AdvertisesClientAuthMethods(t *testing.T) {
+	h := &Handler{Service: NewService(nil, testIssuer(t))}
+	r := chi.NewRouter()
+	h.MountPublic(r)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/openid-configuration", nil))
+	var disc map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &disc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := map[string][]string{
+		"token_endpoint_auth_methods_supported":         {"client_secret_basic", "client_secret_post", "none"},
+		"revocation_endpoint_auth_methods_supported":    {"client_secret_basic", "client_secret_post", "none"},
+		"introspection_endpoint_auth_methods_supported": {"client_secret_basic", "client_secret_post"},
+	}
+	for key, methods := range want {
+		got, _ := disc[key].([]any)
+		if len(got) != len(methods) {
+			t.Errorf("%s = %v, want %v", key, got, methods)
+			continue
+		}
+		for i := range methods {
+			if got[i] != methods[i] {
+				t.Errorf("%s = %v, want %v", key, got, methods)
+			}
 		}
 	}
 }

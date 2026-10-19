@@ -163,11 +163,13 @@ func (q *Queries) DenyDevice(ctx context.Context, id uuid.UUID) error {
 }
 
 const getClientForAuth = `-- name: GetClientForAuth :one
-SELECT client_secret_hash, type, grant_types
+SELECT id, tenant_id, client_secret_hash, type, grant_types
 FROM auth.oidc_clients WHERE client_id = $1
 `
 
 type GetClientForAuthRow struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
 	ClientSecretHash *string
 	Type             string
 	GrantTypes       []string
@@ -176,7 +178,13 @@ type GetClientForAuthRow struct {
 func (q *Queries) GetClientForAuth(ctx context.Context, clientID string) (GetClientForAuthRow, error) {
 	row := q.db.QueryRow(ctx, getClientForAuth, clientID)
 	var i GetClientForAuthRow
-	err := row.Scan(&i.ClientSecretHash, &i.Type, &i.GrantTypes)
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.ClientSecretHash,
+		&i.Type,
+		&i.GrantTypes,
+	)
 	return i, err
 }
 

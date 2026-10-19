@@ -23,6 +23,7 @@ const (
 	// Grant types.
 	CodeOIDCGrantTypeUnsupported = "oidc.grant_type_unsupported"
 	CodeOIDCGrantTypeNotAllowed  = "oidc.grant_type_not_allowed"
+	CodeOIDCUnsupportedFlow      = "oidc.unsupported_flow"
 
 	// Authorization code + PKCE.
 	CodeOIDCAuthCodeInvalid                = "oidc.auth_code_invalid"
@@ -98,6 +99,9 @@ var (
 	// Grant types.
 	ErrOIDCGrantTypeUnsupported = New(CodeOIDCGrantTypeUnsupported, "That grant type isn't supported.")
 	ErrOIDCGrantTypeNotAllowed  = New(CodeOIDCGrantTypeNotAllowed, "This client isn't permitted to use that grant type.")
+	// ErrOIDCUnsupportedFlow: a public client authenticates with a client_id
+	// alone, so it can't hold token exchange or backchannel sign-in.
+	ErrOIDCUnsupportedFlow = New(CodeOIDCUnsupportedFlow, "A public application can't use token exchange or backchannel sign-in. Register it as confidential.")
 
 	// Authorization code + PKCE.
 	ErrOIDCAuthCodeInvalid                = New(CodeOIDCAuthCodeInvalid, "That authorization code is invalid.")
