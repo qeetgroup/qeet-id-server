@@ -284,6 +284,18 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	if err := q.ConsumeCIBARequest(ctx, cr.ID); err != nil {
 		return nil, err
 	}
+	// An approval given before the account was suspended or deleted issues
+	// nothing; the request is spent either way.
+	active, err := accountActive(ctx, q, cr.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, oauthErr("invalid_grant", "account_suspended")
+	}
 	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
 	if err != nil {
 		return nil, err

@@ -346,6 +346,18 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 	if err := q.ConsumeDeviceCode(ctx, dc.ID); err != nil {
 		return nil, err
 	}
+	// An approval given before the account was suspended or deleted issues
+	// nothing; the code is spent either way.
+	active, err := accountActive(ctx, q, *userID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, oauthErr("invalid_grant", "account_suspended")
+	}
 	// The client's grant_types tell us whether to mint a refresh token, the same
 	// way ExchangeCode does.
 	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)

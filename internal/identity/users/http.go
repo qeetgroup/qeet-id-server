@@ -488,16 +488,51 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, tenantID, err := h.scopedID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Repo.SoftDelete(r.Context(), id); err != nil {
+	d, err := h.softDeleteWithEvidence(r, tenantID, id)
+	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	httpx.WriteJSON(w, http.StatusOK, d)
+}
+
+// softDeleteWithEvidence soft-deletes a user the way suspend suspends one, in
+// one transaction: the deletion (recording who did it), every session ended and
+// announced, an audit row and a user.deleted event. A deleted user is cut off at
+// once, not when their access token runs out; restoring the account brings none
+// of those sessions back.
+func (h *Handler) softDeleteWithEvidence(r *http.Request, tenantID, userID uuid.UUID) (*Deletion, error) {
+	ctx := r.Context()
+	tx, err := h.Repo.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var actor *uuid.UUID
+	if p := httpx.PrincipalFromCtx(ctx); p != nil {
+		actor = p.UserID
+	}
+	d, err := h.Repo.SoftDeleteByTx(ctx, tx, userID, actor)
+	if err != nil {
+		return nil, err
+	}
+	ended, err := sessionsignal.EndUserSessions(ctx, tx, userID)
+	if err != nil {
+		return nil, err
+	}
+	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonDeleted, ended...)
+	if err := recordSuspensionEvidence(ctx, tx, r, tenantID, userID, "user.deleted"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 type setPasswordInput struct {
