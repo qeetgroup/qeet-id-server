@@ -72,6 +72,9 @@ const (
 	// ReasonDeleted: the account was deleted (soft-deleted by an
 	// administrator, or erased).
 	ReasonDeleted = "deleted"
+	// ReasonRemovedFromOrganization: the user was removed from the
+	// organisation the session was in; their sessions elsewhere stay.
+	ReasonRemovedFromOrganization = "removed_from_organization"
 	// ReasonExpired: every refresh token of the session expired without it
 	// being ended; announced when the cleanup removes it.
 	ReasonExpired = "expired"
@@ -175,6 +178,25 @@ func EndUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]Sessio
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Session, error) {
 		sess := Session{UserID: userID}
 		err := row.Scan(&sess.ID, &sess.TenantID)
+		return sess, err
+	})
+}
+
+// EndUserSessionsInTenant revokes userID's live sessions in one organisation
+// only, for removing them from it, and returns them for Revoked. Their sessions
+// elsewhere are left alone.
+func EndUserSessionsInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) ([]Session, error) {
+	rows, err := tx.Query(ctx, `
+		UPDATE auth.sessions SET revoked_at = NOW()
+		WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL
+		  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
+		RETURNING id`, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Session, error) {
+		sess := Session{UserID: userID, TenantID: tenantID}
+		err := row.Scan(&sess.ID)
 		return sess, err
 	})
 }

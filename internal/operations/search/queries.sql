@@ -7,13 +7,24 @@
 -- pg_trgm is not enabled in this database, so fuzzy matching is ILIKE;
 -- prefix/exact scoring is computed in Go after the rows are fetched.
 
+-- SearchUsers finds the tenant's members: a role in the tenant whose role is
+-- the tenant's own, or the tenant being their home, the rule the member list
+-- and admin actions use, so members who joined by invitation are found too.
 -- name: SearchUsers :many
-SELECT id, email, display_name, status, updated_at
-FROM "user".users
-WHERE tenant_id = @tenant_id
-  AND deleted_at IS NULL
-  AND (email ILIKE @q OR display_name ILIKE @q)
-ORDER BY updated_at DESC, id
+SELECT u.id, u.email, u.display_name, u.status, u.updated_at
+FROM "user".users u
+WHERE u.deleted_at IS NULL
+  AND (
+      u.tenant_id = @tenant_id::uuid
+      OR EXISTS (
+          SELECT 1 FROM rbac.user_roles membership
+          JOIN rbac.roles member_role
+            ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
+          WHERE membership.user_id = u.id AND membership.tenant_id = @tenant_id::uuid
+      )
+  )
+  AND (u.email ILIKE @q OR u.display_name ILIKE @q)
+ORDER BY u.updated_at DESC, u.id
 LIMIT @row_limit;
 
 -- name: SearchOrganization :many

@@ -11,6 +11,11 @@ const (
 	CodeUserImportFileTooLarge  = "user.import_file_too_large"
 	CodeUserImportEmpty         = "user.import_empty"
 	CodeUserImportBatchTooLarge = "user.import_batch_too_large"
+
+	// Who manages an account: a change to the whole account belongs to the
+	// organization the account belongs to.
+	CodeUserManagedElsewhere = "user.managed_elsewhere"
+	CodeUserManagedHere      = "user.managed_here"
 )
 
 // User errors. The Message is what the end user sees — edit wording here, in
@@ -21,4 +26,12 @@ var (
 	ErrUserImportFileTooLarge  = New(CodeUserImportFileTooLarge, "That export file is too large. The maximum is 10 MB.")
 	ErrUserImportEmpty         = New(CodeUserImportEmpty, "We couldn't find any user records in that export.")
 	ErrUserImportBatchTooLarge = New(CodeUserImportBatchTooLarge, "That import is too large. Import at most 1000 users per request.")
+
+	// ErrUserManagedElsewhere: an account-wide action (status, password, MFA,
+	// deletion, signing out everywhere) on a member whose account belongs to
+	// another organization, or to no organization.
+	ErrUserManagedElsewhere = New(CodeUserManagedElsewhere, "This person's account is managed outside this organization. Remove them from this organization instead.")
+	// ErrUserManagedHere: removing a member whose account this organization
+	// manages; that account is suspended or deleted instead.
+	ErrUserManagedHere = New(CodeUserManagedHere, "This organization manages this person's account. Suspend or delete the account instead.")
 )

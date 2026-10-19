@@ -156,6 +156,22 @@ The changes below are the work staged for that first release.
   refresh revokes that application's refresh tokens for the user, and a code or approval from
   before the suspension is spent rather than redeemed.
 
+**Members who joined by invitation (2026-10-19)**
+
+* **users:** an organisation can now open and remove the members who joined it by invitation, and
+  can't change an account another organisation manages. Every by-id admin action checked the
+  user's home-organisation column, so a person who already had an account and then accepted an
+  invitation was listed but answered 404 when opened, suspended, reset or signed out, and search
+  didn't find them. Viewing (`GET /v1/users/{id}`, `/security`, `/sessions`, `/access`) and search
+  now use membership: a role in the organisation, or it being the person's home. Actions on the whole
+  account (status, profile, password, MFA, deletion, restore, purge, signing out everywhere) stay
+  with the organisation the account belongs to; another one gets `403 user.managed_elsewhere`
+  instead of 404, because those actions reach the person's other organisations too. New
+  `DELETE /v1/users/{id}/membership` removes such a member from this organisation only: their roles
+  and groups here, their sessions here, and the application grants and API keys they hold here,
+  audited as `user.removed_from_organization` (`409 user.managed_here` for the organisation's own
+  accounts). The access view now describes the organisation being viewed, not the person's home.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

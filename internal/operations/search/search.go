@@ -223,10 +223,7 @@ func (s *Service) fetchType(ctx context.Context, tenantID uuid.UUID, pattern, ra
 
 func (s *Service) fetchUsers(ctx context.Context, tenantID uuid.UUID, pattern, rawQ string) ([]Result, error) {
 	rows, err := s.q.SearchUsers(ctx, dbgen.SearchUsersParams{
-		// The "user".users.tenant_id column allows NULL in older migrations
-		// but is always non-null in practice; pgtype.UUID is what sqlc infers
-		// for this particular cross-schema reference.
-		TenantID: pgtype.UUID{Bytes: tenantID, Valid: true},
+		TenantID: tenantID,
 		Q:        pattern,
 		RowLimit: perTypeLimit,
 	})
