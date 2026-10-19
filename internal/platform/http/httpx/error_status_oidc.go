@@ -25,6 +25,7 @@ func init() {
 
 		// Grant types.
 		errs.CodeOIDCGrantTypeUnsupported: http.StatusBadRequest,
+		errs.CodeOIDCUnsupportedFlow:      http.StatusBadRequest,
 		errs.CodeOIDCGrantTypeNotAllowed:  http.StatusForbidden,
 
 		// Authorization code + PKCE.

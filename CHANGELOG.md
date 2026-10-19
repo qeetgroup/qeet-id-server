@@ -87,6 +87,25 @@ The changes below are the work staged for that first release.
   `403 invite.email_not_verified` until the address is verified; accepting through the emailed
   link is unchanged.
 
+**OAuth client authentication (2026-10-19)**
+
+* **oidc:** a public client's `client_id` no longer stands in for client authentication. The
+  shared client check passed a public client with no secret at all, and a public client's id is
+  in every sign-in link, so anyone could call `/oauth/introspect` as it, learning whether any
+  token in that organisation was live and whose it was, and could use token exchange or CIBA if
+  the client had been given those flows. Introspection, token exchange and
+  `/v1/oauth/bc-authorize` now refuse public clients (`401 oidc.client_auth_failed`), and a public
+  client can't be registered or edited to hold token exchange or CIBA
+  (`400 oidc.unsupported_flow`). Public clients keep the flows built for them: code with PKCE,
+  refresh, device, and revoking their own tokens (RFC 7009). A confidential client's wrong secret,
+  and a public client at a confidential-only endpoint, are audited as `oidc.client_auth_failed`.
+  Discovery now publishes `token_endpoint_auth_methods_supported`,
+  `revocation_endpoint_auth_methods_supported` and `introspection_endpoint_auth_methods_supported`.
+* **oidc:** editing a client (`PATCH /v1/tenants/{tenantID}/oidc/clients/{id}`) is now held to the
+  same rules as registration. It wrote grant types and redirect URIs unchecked, so an edit could
+  set an unsupported grant or a redirect URI that registration refuses (a fragment, userinfo, or
+  plain `http` off loopback).
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

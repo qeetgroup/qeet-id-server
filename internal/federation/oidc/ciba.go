@@ -56,11 +56,14 @@ type CIBAAuthResponse struct {
 // error vocabulary (OpenID CIBA §13) via oauthError, matching how the device
 // grant's polling errors are rendered.
 func (s *Service) BackchannelAuthorize(ctx context.Context, clientID, clientSecret, loginHint, scope, bindingMessage string) (*CIBAAuthResponse, error) {
-	grantTypes, err := s.authenticateClient(ctx, clientID, clientSecret)
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
 	if err != nil {
 		return nil, err
 	}
-	if !contains(grantTypes, grantTypeCIBA) {
+	if err := s.requireConfidential(ctx, client); err != nil {
+		return nil, err
+	}
+	if !contains(client.GrantTypes, grantTypeCIBA) {
 		return nil, oauthErr("unauthorized_client", "client is not permitted the CIBA grant")
 	}
 	if strings.TrimSpace(loginHint) == "" {

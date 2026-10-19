@@ -131,7 +131,7 @@ paths:
   /oauth/introspect:
     post:
       operationId: post_oauth_introspect
-      description: 'Reports whether a supplied access or refresh token is currently active and returns its associated claims when it is (RFC 7662), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials supplied as form parameters or via HTTP Basic. Mounted at the root, not under /v1; it pairs with the revocation endpoint for token lifecycle management.'
+      description: 'Reports whether a supplied access or refresh token is currently active and returns its associated claims when it is (RFC 7662), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials supplied as form parameters or via HTTP Basic. Mounted at the root, not under /v1; it pairs with the revocation endpoint for token lifecycle management. A public client can''t call it: its client_id is in every sign-in link and proves nothing, so the call answers 401 oidc.client_auth_failed. Wrong secrets are audited.'
       summary: Token introspect (RFC 7662)
       tags:
         - OIDC
@@ -164,7 +164,7 @@ paths:
   /oauth/revoke:
     post:
       operationId: post_oauth_revoke
-      description: 'Revokes an access or refresh token so it can no longer be used (RFC 7009), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials; per the RFC the endpoint returns 200 even for an unknown or already-invalid token. Mounted at the root, not under /v1; use the introspection endpoint to confirm a token''s state.'
+      description: 'Revokes an access or refresh token so it can no longer be used (RFC 7009), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials; per the RFC the endpoint returns 200 even for an unknown or already-invalid token. Mounted at the root, not under /v1; use the introspection endpoint to confirm a token''s state. A public client may revoke its own tokens with its client_id alone (RFC 7009); a refresh token is only ever revoked for the client it was issued to.'
       summary: Token revoke (RFC 7009)
       tags:
         - OIDC
@@ -411,6 +411,8 @@ paths:
         (in-app), then returns auth_req_id; the client polls
         /v1/oauth/token-code with grant_type=urn:openid:params:grant-type:ciba
         while the user approves/denies via GET/POST /v1/oauth/bc-authorize/{pending,decision}.
+        Only a confidential client may call it; a public client is refused with 401
+        oidc.client_auth_failed and can't be registered with the CIBA grant.
       tags:
         - OIDC
       security:
@@ -748,7 +750,7 @@ paths:
   /v1/oidc/clients:
     post:
       operationId: post_v1_oidc_clients
-      description: 'Registers an OIDC relying-party client in the caller''s tenant, derived from the authenticating principal, so it can drive the authorization-code and related flows. A confidential client''s secret is returned exactly once in the response and cannot be retrieved later; roll it afterward with the rotate-secret endpoint. Registration is audited.'
+      description: 'Registers an OIDC relying-party client in the caller''s tenant, derived from the authenticating principal, so it can drive the authorization-code and related flows. A confidential client''s secret is returned exactly once in the response and cannot be retrieved later; roll it afterward with the rotate-secret endpoint. Registration is audited. A public client can''t hold token exchange or CIBA (400 oidc.unsupported_flow).'
       summary: Register OIDC client
       tags:
         - OIDC
@@ -1000,7 +1002,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_tenants_ByTenantID_oidc_clients
-      description: 'Registers an OIDC relying-party client under the tenant in the path, the admin-UI counterpart to POST /v1/oidc/clients. A confidential client''s secret is returned once at creation and is not recoverable afterward; roll it later with the rotate-secret endpoint. Creation is audited.'
+      description: 'Registers an OIDC relying-party client under the tenant in the path, the admin-UI counterpart to POST /v1/oidc/clients. A confidential client''s secret is returned once at creation and is not recoverable afterward; roll it later with the rotate-secret endpoint. Creation is audited. A public client can''t hold token exchange or CIBA (400 oidc.unsupported_flow).'
       summary: Create OIDC client
       tags:
         - OIDC
@@ -1080,7 +1082,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_oidc_clients_ById
-      description: 'Applies a partial update to an OIDC client in the tenant; omitted fields are left unchanged. Changes are confined to the tenant in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return.'
+      description: 'Applies a partial update to an OIDC client in the tenant; omitted fields are left unchanged. Changes are confined to the tenant in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return. The edited client is held to the same rules as registration: supported grant types, valid redirect URIs, and no token exchange or CIBA for a public client.'
       summary: Update OIDC client
       tags:
         - OIDC
