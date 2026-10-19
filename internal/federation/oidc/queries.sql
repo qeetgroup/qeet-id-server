@@ -15,7 +15,7 @@ RETURNING id, tenant_id, client_id, type, name, redirect_uris,
           post_logout_uris, grant_types, scopes, created_at;
 
 -- name: GetClientForAuth :one
-SELECT client_secret_hash, type, grant_types
+SELECT id, tenant_id, client_secret_hash, type, grant_types
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientTenantAndScopes :one
