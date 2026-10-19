@@ -162,8 +162,13 @@ func (q *Queries) GetUserPhone(ctx context.Context, id uuid.UUID) (*string, erro
 }
 
 const insertEmailVerification = `-- name: InsertEmailVerification :exec
-INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at)
-VALUES ($1, $2, $3, $4)
+WITH retired AS (
+    UPDATE "user".email_verifications
+    SET expires_at = LEAST(expires_at, NOW())
+    WHERE user_id = $1 AND purpose <> $5 AND used_at IS NULL
+)
+INSERT INTO "user".email_verifications (user_id, email, code_hash, expires_at, purpose)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertEmailVerificationParams struct {
@@ -171,14 +176,19 @@ type InsertEmailVerificationParams struct {
 	Email     string
 	CodeHash  string
 	ExpiresAt time.Time
+	Purpose   string
 }
 
+// InsertEmailVerification issues a code for one purpose (verify_email or
+// change_email) and expires the user's open codes for the other, so the two
+// flows can't both be pending; each confirm reads only codes of its own purpose.
 func (q *Queries) InsertEmailVerification(ctx context.Context, arg InsertEmailVerificationParams) error {
 	_, err := q.db.Exec(ctx, insertEmailVerification,
 		arg.UserID,
 		arg.Email,
 		arg.CodeHash,
 		arg.ExpiresAt,
+		arg.Purpose,
 	)
 	return err
 }
@@ -223,15 +233,25 @@ func (q *Queries) MarkPhoneVerificationUsed(ctx context.Context, id uuid.UUID) e
 	return err
 }
 
-const markUserEmailVerified = `-- name: MarkUserEmailVerified :exec
+const markUserEmailVerified = `-- name: MarkUserEmailVerified :execrows
 UPDATE "user".users
 SET email_verified_at = COALESCE(email_verified_at, NOW()), updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND lower(email) = lower($2)
 `
 
-func (q *Queries) MarkUserEmailVerified(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markUserEmailVerified, id)
-	return err
+type MarkUserEmailVerifiedParams struct {
+	UserID uuid.UUID
+	Email  string
+}
+
+// MarkUserEmailVerified marks the account's address verified only when it is
+// the address the code was sent to; zero rows means it isn't.
+func (q *Queries) MarkUserEmailVerified(ctx context.Context, arg MarkUserEmailVerifiedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markUserEmailVerified, arg.UserID, arg.Email)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markUserPhoneVerified = `-- name: MarkUserPhoneVerified :exec

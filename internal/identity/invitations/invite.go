@@ -377,11 +377,8 @@ type ReceivedInvite struct {
 
 // ListForUser returns the pending invitations addressed to the caller's email.
 func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]ReceivedInvite, error) {
-	email, err := s.q.GetUserEmailByID(ctx, userID)
+	email, err := inboxEmail(ctx, s.q, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, errs.ErrUnauthorized
-		}
 		return nil, err
 	}
 	rows, err := s.q.ListInvitesForEmail(ctx, email)
@@ -406,11 +403,8 @@ func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]Received
 
 // DeclineForUser dismisses a pending invitation addressed to the caller's email.
 func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID) error {
-	email, err := s.q.GetUserEmailByID(ctx, userID)
+	email, err := inboxEmail(ctx, s.q, userID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errs.ErrUnauthorized
-		}
 		return err
 	}
 	n, err := s.q.DeclineInviteForEmail(ctx, dbgen.DeclineInviteForEmailParams{
@@ -424,6 +418,23 @@ func (s *Service) DeclineForUser(ctx context.Context, userID, inviteID uuid.UUID
 		return errs.ErrInviteInvalid
 	}
 	return nil
+}
+
+// inboxEmail returns the caller's address for the in-app invitations inbox, or
+// ErrInviteEmailNotVerified until they have proven it. The emailed invitation
+// link needs no such check: having the link is the proof.
+func inboxEmail(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (string, error) {
+	row, err := q.GetInboxEmail(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errs.ErrUnauthorized
+		}
+		return "", err
+	}
+	if !row.Verified {
+		return "", errs.ErrInviteEmailNotVerified
+	}
+	return row.Email, nil
 }
 
 // pendingInvite is the minimal invite shape the authed-accept helper needs, fed
@@ -468,6 +479,9 @@ func (s *Service) AcceptAuthenticatedByID(ctx context.Context, userID, inviteID 
 	}
 	defer tx.Rollback(ctx)
 	qtx := s.q.WithTx(tx)
+	if _, err := inboxEmail(ctx, qtx, userID); err != nil {
+		return nil, err
+	}
 	inv, err := qtx.GetInviteByIDForAccept(ctx, inviteID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

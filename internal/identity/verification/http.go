@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -50,7 +51,7 @@ func (h *Handler) startEmailChange(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.StartEmailChange(r.Context(), *p.UserID, in.Email); err != nil {
+	if err := h.Service.StartEmailChange(r.Context(), *p.UserID, in.Email, requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -70,7 +71,7 @@ func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	email, err := h.Service.ConfirmEmailChange(r.Context(), *p.UserID, in.Code)
+	email, err := h.Service.ConfirmEmailChange(r.Context(), *p.UserID, in.Code, requesterOf(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -79,6 +80,21 @@ func (h *Handler) confirmEmailChange(w http.ResponseWriter, r *http.Request) {
 		"message": "Your email address has been updated.",
 		"email":   email,
 	})
+}
+
+// requesterOf is the signed-in caller, for the audit rows the service writes.
+func requesterOf(r *http.Request) Requester {
+	who := Requester{Actor: audit.Actor{
+		Type: "user", IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
+	}}
+	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
+		who.Actor.UserID = p.UserID
+		if p.ActorType != "" {
+			who.Actor.Type = p.ActorType
+		}
+		who.TenantID = p.TenantID
+	}
+	return who
 }
 
 // selfID resolves the target user from the path and enforces that it's the
@@ -108,8 +124,8 @@ func (h *Handler) startEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	// Always verify the address on file — never a body-supplied one. Trusting a
 	// request body here would let a user mint a "verified" state for an address
-	// they don't own; there is no self-service email-change flow yet.
-	if err := h.Service.StartEmail(r.Context(), uid, ""); err != nil {
+	// they don't own; moving to another address is the email-change flow.
+	if err := h.Service.StartEmail(r.Context(), uid, "", requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -133,7 +149,7 @@ func (h *Handler) confirmEmail(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.Service.ConfirmEmail(r.Context(), uid, in.Code); err != nil {
+	if err := h.Service.ConfirmEmail(r.Context(), uid, in.Code, requesterOf(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

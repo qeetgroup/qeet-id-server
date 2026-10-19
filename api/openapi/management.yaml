@@ -1564,7 +1564,7 @@ paths:
   /v1/users/{id}/verify/email/confirm:
     post:
       operationId: post_v1_users_ById_verify_email_confirm
-      description: 'Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested. Request the code with the start-email-verification call before invoking this.'
+      description: 'Confirms email verification by validating the code delivered by the start-email-verification call and marking the address verified. Codes are single-use, expire after a short window, and are retired after a small number of wrong attempts, at which point a new code must be requested. Request the code with the start-email-verification call before invoking this. Only a code sent by the start-email-verification call to the address now on the account counts; a code sent for an email change is the invalid-code error.'
       summary: Confirm email verification
       tags:
         - Verification
@@ -1652,7 +1652,7 @@ paths:
     post:
       operationId: post_v1_me_email_change_confirm
       summary: Confirm my email change
-      description: Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email.
+      description: 'Verifies the code sent to the new address and swaps it onto the account (marking it verified). Returns the new email. Only a code from the start-email-change call counts. The previous address is sent a notice of the change.'
       tags:
         - Verification
       security:
@@ -2521,7 +2521,7 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Pending, unexpired invitations addressed to the signed-in user's email, each with the inviting organization's name — the in-app inbox for a user who may not belong to any org yet.
+      description: 'Pending, unexpired invitations addressed to the signed-in user''s email, each with the inviting organization''s name — the in-app inbox for a user who may not belong to any org yet. Answers 403 invite.email_not_verified until the account''s address is verified: anyone can sign up with any address.'
       responses:
         '200':
           description: OK
@@ -2532,6 +2532,8 @@ paths:
                 additionalProperties: true
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/me/invites/accept:
@@ -2589,7 +2591,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair.
+      description: 'Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair. Answers 403 invite.email_not_verified until the account''s address is verified.'
       responses:
         '200':
           description: OK
@@ -2622,7 +2624,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: Dismisses a pending invitation addressed to the caller's email (marks it declined). Scoped by email, so one user can't decline another's.
+      description: 'Dismisses a pending invitation addressed to the caller''s email (marks it declined). Scoped by email, so one user can''t decline another''s. Answers 403 invite.email_not_verified until the account''s address is verified.'
       responses:
         '200':
           description: OK
@@ -2635,6 +2637,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/invites/{id}:
