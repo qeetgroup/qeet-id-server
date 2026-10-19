@@ -2232,15 +2232,10 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Adds a user to one of the caller''s groups. The user must be a live member of the caller''s tenant, or have it as their home tenant; otherwise the call answers 404 group.user_not_found, the same for a missing id as for another tenant''s user. Adding someone already in the group is a no-op.'
       responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+        '204':
+          description: Added
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

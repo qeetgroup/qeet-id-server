@@ -12,6 +12,7 @@ import (
 func init() {
 	registerStatuses(map[string]int{
 		errs.CodeGroupNotFound:            http.StatusNotFound,
+		errs.CodeGroupUserNotFound:        http.StatusNotFound,
 		errs.CodeGroupNameExists:          http.StatusConflict,
 		errs.CodeGroupTemplateNameExists:  http.StatusConflict,
 		errs.CodeGroupTemplateUnnamed:     http.StatusUnprocessableEntity,
