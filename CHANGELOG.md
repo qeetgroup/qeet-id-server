@@ -44,6 +44,16 @@ The changes below are the work staged for that first release.
   a live member (or have it as their home tenant), in the same statement. Every refusal is the
   same `404 rbac.user_or_role_not_found` and is audited as `role.assign_refused`. A missing role
   id, which used to fail as a database error, gets the same 404.
+* **groups:** adding a group member now refuses anyone outside the organisation.
+  `POST /v1/groups/{id}/members/{userID}` checked only that the group was the caller's, then
+  wrote whatever user id it was given, and the member list returned that user's email and display
+  name. So any organisation admin could read the email and name behind any user id, add people
+  from other organisations to their groups, or add ids with no account. The insert now requires a
+  live member of the organisation, in the same statement, and every refusal is the same
+  `404 group.user_not_found`. The member list shows only members of the organisation. Migration
+  `0135` removes member rows that name no account and adds the missing foreign key to
+  `"user".users`. Removing someone who isn't in the group no longer writes a `group.member_removed`
+  audit entry.
 
 **Dependencies and toolchain (2026-10-16)**
 

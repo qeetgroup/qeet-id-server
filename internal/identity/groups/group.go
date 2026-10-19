@@ -245,10 +245,15 @@ func (s *Service) AddMember(ctx context.Context, groupID, userID, tenantID uuid.
 	if !exists {
 		return errs.ErrGroupNotFound
 	}
-	if err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
+	// Only add someone who is a live member of this tenant; the insert checks it.
+	valid, err := s.q.WithTx(tx).InsertGroupMember(ctx, dbgen.InsertGroupMemberParams{
 		GroupID: groupID, UserID: userID, TenantID: tenantID,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	if !valid {
+		return errs.ErrGroupUserNotFound
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_added", "group", groupID,
 		map[string]any{"user_id": userID})); err != nil {
@@ -267,10 +272,15 @@ func (s *Service) RemoveMember(ctx context.Context, groupID, userID, tenantID uu
 	}
 	defer tx.Rollback(ctx)
 
-	if err := s.q.WithTx(tx).DeleteGroupMember(ctx, dbgen.DeleteGroupMemberParams{
+	n, err := s.q.WithTx(tx).DeleteGroupMember(ctx, dbgen.DeleteGroupMemberParams{
 		GroupID: groupID, UserID: userID, TenantID: tenantID,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	// Nothing was removed, so there is nothing to audit or announce.
+	if n == 0 {
+		return nil
 	}
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.member_removed", "group", groupID,
 		map[string]any{"user_id": userID})); err != nil {
