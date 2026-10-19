@@ -113,7 +113,7 @@ paths:
   /v1/auth/login:
     post:
       operationId: post_v1_auth_login
-      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address.'
+      description: 'Authenticates a user by email and password and, on success, returns an access and refresh token pair. If the account has a second factor enrolled, tokens are withheld and a short-lived mfa_token with the available methods is returned instead; exchange it for tokens at the complete-MFA call. Passwordless accounts authenticate through passkey login rather than this endpoint, and a registered passkey satisfies MFA on its own. Requests are rate limited to slow credential stuffing. Failed sign-ins are counted per account and source network, per account across networks, and per source network across accounts (see the sign-in lockout on the create-SSO-session call); a locked account answers 429 auth.account_locked whatever the password, a throttled source 429 too_many_requests, and an address with no account answers exactly like a wrong password. When the account''s own organisation has switched password sign-in off, a correct password is refused with 403 auth.method_disabled. Every sign-in is assessed for risk (bot-like clients, and impossible travel and new devices where the organisation turns them on), and its country and device are kept 90 days for later sign-ins to be compared against. A risky sign-in by someone with no second factor answers an mfa_token challenge met by a code sent to their verified email address (methods [email], the factor named by the challenge''s own id), or 403 auth.risk_verification_unavailable when they have no verified address. While the organisation''s address rules are on, a sign-in from an address they refuse is refused with 403 auth.address_not_allowed before any session is issued; the same holds on every other way of signing in to the organisation (passkey, magic link, social, SAML, LDAP, invitation, organisation switch, application authorization and the device flow).'
       summary: Sign in
       tags:
         - Auth
@@ -622,7 +622,7 @@ paths:
   /v1/auth/refresh:
     post:
       operationId: post_v1_auth_refresh
-      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired.'
+      description: 'Exchanges a valid refresh token for a new access and refresh token pair. The presented refresh token is rotated and invalidated, so each token may be redeemed only once; persist the returned refresh token for the next rotation. A revoked or already-rotated token is rejected and forces a fresh sign-in. A session ends by itself at its maximum age however active it is, and once it goes longer than its idle timeout without a renewal; each renewal restarts the idle timeout, and the response says when the session ends either way (session_expires_at, idle_expires_at). A renewal after either is refused with 401 auth.session_timed_out and the session ends, recorded as an expiry and announced to session.revoked subscribers with the reason expired. A renewal from an address the organisation''s address rules refuse answers 403 auth.address_not_allowed; the session stays, and renews again from an allowed address.'
       summary: Refresh
       tags:
         - Auth
@@ -642,6 +642,8 @@ paths:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/auth/reset-password:
@@ -1378,7 +1380,7 @@ paths:
   /v1/auth/switch-tenant:
     post:
       operationId: post_v1_auth_switch_tenant
-      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, or an access token whose session has already ended (401). Confirm the active scope afterward with the current-principal call.'
+      description: 'Replaces the caller''s session with one scoped to another tenant they belong to and returns its token pair. The new access token carries the claims the target tenant''s authentication hook adds, and renewals keep them; the hook may also refuse the switch. The session the presented access token belongs to ends: its refresh token is refused from now on, its access token stays valid only until it expires, and the tenant''s session.revoked subscribers are notified with reason tenant_switch. Use the returned pair from now on. The caller''s session list shows the one sign-in, not one entry per switch. Refused, with nothing changed: a tenant the caller does not belong to (403), a refusal by the tenant''s hook, an address the tenant''s address rules refuse (403 auth.address_not_allowed), or an access token whose session has already ended (401). Confirm the active scope afterward with the current-principal call.'
       summary: Switch tenant
       tags:
         - Auth
@@ -3947,7 +3949,11 @@ paths:
       description: >-
         Replaces the organisation's security policy. Session bounds apply to
         sessions and application grants started afterwards. A value out of
-        range is refused with 422 validation_failed naming the field.
+        range is refused with 422 validation_failed naming the field. The
+        policy holds no IP lists: which addresses may sign in is the address
+        rules (/v1/tenants/{tenantID}/ip-rules). ip_allowlist and ip_denylist
+        are still accepted empty, for older consoles; entries are refused with
+        422 validation_failed, code retired.
       responses:
         '200':
           description: OK
@@ -4063,7 +4069,10 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Says what the address rules make of an address ({"ip": "…"}): enabled,
+        allowed, and the reason. The same decision every sign-in gets while the
+        rules are on; an address that can't be read is refused.
       responses:
         '201':
           description: Created
@@ -4105,7 +4114,18 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: >-
+        Turns the organisation's address rules on or off ({"enabled": bool}).
+        While they are on, every sign-in to the organisation (password,
+        passkey, magic link, social, SAML, LDAP, invitation, organisation
+        switch, application authorization, device approval and the device's
+        token collection) and every session renewal asks them first. An address
+        is refused when a deny rule matches it, or when allow rules exist and
+        none matches; deny wins. An address that can't be read is refused. A
+        refusal answers 403 auth.address_not_allowed (access_denied to an
+        application), names no rule, and is audited as auth.address_refused
+        with the rule responsible, the address and the path. Off, nothing is
+        checked.
       responses:
         '200':
           description: OK
@@ -4742,14 +4762,6 @@ components:
         tenant_id:
           type: string
           format: uuid
-        ip_allowlist:
-          type: array
-          items:
-            type: string
-        ip_denylist:
-          type: array
-          items:
-            type: string
         password_min_length:
           type: integer
           minimum: 8

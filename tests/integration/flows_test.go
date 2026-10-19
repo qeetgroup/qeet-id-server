@@ -29,6 +29,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
+	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
 	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
 	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
@@ -70,8 +71,9 @@ func newAuth() (*auth.Service, *user.Repository) {
 	issuer := mustIssuer()
 	svc := auth.NewService(testPool, users, issuer)
 	policy := authpolicy.NewService(testPool)
-	svc.SetRegistrationPolicy(policy) // the password check, as bootstrap wires it
-	svc.SetMethodPolicy(policy)       // which sign-in methods an organisation allows
+	svc.SetRegistrationPolicy(policy)                  // the password check, as bootstrap wires it
+	svc.SetMethodPolicy(policy)                        // which sign-in methods an organisation allows
+	svc.SetAddressPolicy(ipallow.NewService(testPool)) // the organisation's address rules
 	return svc, users
 }
 

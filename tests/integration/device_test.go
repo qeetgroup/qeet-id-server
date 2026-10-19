@@ -85,7 +85,7 @@ func TestDeviceGrantHappyPath(t *testing.T) {
 	}
 
 	// Poll before approval → authorization_pending.
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "authorization_pending") {
 		t.Fatalf("pre-approval poll = %v, want authorization_pending", err)
 	}
@@ -95,7 +95,7 @@ func TestDeviceGrantHappyPath(t *testing.T) {
 	approveDevice(t, ctx, userCode, userID)
 	resetPollClock(t, ctx, userCode)
 
-	issued, err := svc.DeviceToken(ctx, client.ClientID, deviceCode)
+	issued, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, "")
 	if err != nil {
 		t.Fatalf("post-approval poll: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestDeviceGrantHappyPath(t *testing.T) {
 
 	// Single-use: a second poll with the consumed device_code is rejected.
 	resetPollClock(t, ctx, userCode)
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "invalid_grant") {
 		t.Fatalf("reused device_code = %v, want invalid_grant", err)
 	}
@@ -143,12 +143,12 @@ func TestDeviceGrantSlowDown(t *testing.T) {
 	}
 
 	// First poll establishes last_polled_at (pending).
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "authorization_pending") {
 		t.Fatalf("first poll = %v, want authorization_pending", err)
 	}
 	// Immediate second poll is faster than the interval → slow_down.
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "slow_down") {
 		t.Fatalf("rapid second poll = %v, want slow_down", err)
 	}
@@ -167,10 +167,10 @@ func TestDeviceGrantDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device authorize: %v", err)
 	}
-	if err := svc.DecideDevice(ctx, userID, userCode, false); err != nil {
+	if err := svc.DecideDevice(ctx, userID, userCode, false, ""); err != nil {
 		t.Fatalf("deny: %v", err)
 	}
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "access_denied") {
 		t.Fatalf("poll after denial = %v, want access_denied", err)
 	}
@@ -194,7 +194,7 @@ func TestDeviceGrantExpired(t *testing.T) {
 		userCode); err != nil {
 		t.Fatalf("expire device: %v", err)
 	}
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "expired_token") {
 		t.Fatalf("poll after expiry = %v, want expired_token", err)
 	}
@@ -214,7 +214,7 @@ func TestDeviceGrantClientMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device authorize: %v", err)
 	}
-	if _, err := svc.DeviceToken(ctx, clientB.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, clientB.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "invalid_grant") {
 		t.Fatalf("cross-client poll = %v, want invalid_grant", err)
 	}
@@ -229,7 +229,7 @@ func TestDeviceGrantUnknownDeviceCode(t *testing.T) {
 	svc := oidc.NewService(testPool, mustIssuer())
 	client, _ := registerOIDCClient(t, ctx, svc, tenantID, "https://app.example/cb")
 
-	if _, err := svc.DeviceToken(ctx, client.ClientID, "not-a-real-device-code"); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, "not-a-real-device-code", ""); err == nil ||
 		!strings.Contains(err.Error(), "invalid_grant") {
 		t.Fatalf("unknown device_code = %v, want invalid_grant", err)
 	}
@@ -295,7 +295,7 @@ func TestDeviceDecisionForeignTenantUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("device authorize: %v", err)
 	}
-	if err := svc.DecideDevice(ctx, foreignUser, userCode, true); err == nil {
+	if err := svc.DecideDevice(ctx, foreignUser, userCode, true, ""); err == nil {
 		t.Fatal("a user outside the client's tenant must not approve the device request")
 	}
 	// The row stays pending after the rejected approval.

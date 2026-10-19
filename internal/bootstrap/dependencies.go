@@ -514,6 +514,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	scimService.SetProfileMapper(directoryService)
 	ldapService.SetProfileMapper(directoryService)
 	ipAllowService := ipallow.NewService(pool)
+	authService.SetAddressPolicy(ipAllowService) // address rules: every sign-in to an organisation, and every renewal
+	oidcService.SetAddressPolicy(ipAllowService) // address rules: application authorize, device approval and collection
 
 	// Plan enforcement: inject the entitlement checker into every gated create
 	// path. Numeric limits (seats/apps/api keys/custom roles) use SetPlanLimiter;

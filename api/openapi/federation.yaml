@@ -196,7 +196,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id.'
+      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused).'
       summary: Authorize
       tags:
         - OIDC
@@ -362,7 +362,7 @@ paths:
     post:
       operationId: post_v1_oauth_device_decision
       summary: Device decision (approve)
-      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant) is bound and the device can complete its token poll.
+      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant, and approve from an address its address rules allow, else 403 auth.address_not_allowed) is bound and the device can complete its token poll.
       tags:
         - OIDC
       security:
@@ -725,7 +725,7 @@ paths:
   /v1/oauth/token-code:
     post:
       operationId: post_v1_oauth_token_code
-      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user.'
+      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user. Device polling from an address the organisation''s address rules refuse answers access_denied address_not_allowed and spends the device code; code redemption and refresh come from the application''s server, so the address rules are asked at authorization instead.'
       summary: Token (authorization_code)
       tags:
         - OIDC

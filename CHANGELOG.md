@@ -183,6 +183,27 @@ The changes below are the work staged for that first release.
   declare `mutates` is a manifest error. The system prompt describes a read-only assistant that
   explains the steps and names the console screen that makes a change.
 
+**Address rules (2026-10-20)**
+
+* **ipallow:** address rules now decide every sign-in. Admins could turn rules on and add allow and
+  deny ranges, and the check endpoint reported "denied", but no sign-in ever asked them: a deny rule
+  blocked nothing and an allow list let everyone in. While an organisation's rules are on, every
+  session in it is now refused from an address they refuse (a deny rule matches, or allow rules
+  exist and none matches; deny wins), before anything is written: password, passkey, magic link,
+  social, SAML, LDAP, invitation, organisation creation and switch, and the MFA step. So are its
+  sessions' renewals (the session stays, and renews again from an allowed address), an
+  application's authorization in the browser, a device approval, and a device collecting its
+  tokens. A refusal answers `403 auth.address_not_allowed` (`access_denied` to an application),
+  names no rule, and is audited as `auth.address_refused` with the rule responsible, the address
+  and the path. An address that can't be read is refused while rules are on (the check endpoint
+  said "allowed" for one). Rules judge the address the platform derives, so behind a proxy
+  `TRUSTED_PROXY_HOPS` must be set. Code redemption and refresh at the token endpoint come from the
+  application's server and are not asked.
+* **policy:** the security policy's own `ip_allowlist` and `ip_denylist` are gone (migration 0140).
+  Nothing ever read them; address rules are the one address control. The policy no longer reports
+  them; a save that still sends them empty is accepted, and one with entries is refused with
+  `422 validation_failed` (code `retired`).
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
