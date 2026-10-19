@@ -122,11 +122,11 @@ func TestApplicationGrantsStopWhenTheAccountDoes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("device authorize: %v", err)
 		}
-		if err := svc.DecideDevice(ctx, uma, userCode, true); err != nil {
+		if err := svc.DecideDevice(ctx, uma, userCode, true, ""); err != nil {
 			t.Fatalf("approve device: %v", err)
 		}
 		suspend(t, uma)
-		_, err = svc.DeviceToken(ctx, client.ClientID, device)
+		_, err = svc.DeviceToken(ctx, client.ClientID, device, "")
 		if err == nil || !strings.Contains(err.Error(), "account_suspended") {
 			t.Fatalf("device token after suspend: err = %v, want account_suspended", err)
 		}

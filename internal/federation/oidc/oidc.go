@@ -55,6 +55,9 @@ type Service struct {
 	// grantMaxAge ends a grant that long after it starts however often it is
 	// renewed, where its organisation sets no maximum session age of its own.
 	grantMaxAge time.Duration
+	// addresses is the organisations' address rules (nil = no rules). See
+	// address.go.
+	addresses AddressPolicy
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
@@ -330,15 +333,18 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 // user and mints a one-time authorization code. The client's tenant is derived
 // from the client itself (the browser-facing flow has no user JWT to carry it).
 // Returns the raw code and the resolved tenant id. The code is tied to no
-// hosted-login session; the browser flow uses AuthorizeInLoginSession.
+// hosted-login session, and no address is known, so an organisation with its
+// address rules on refuses it; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
-	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod)
+	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod, "")
 }
 
 // AuthorizeInLoginSession is Authorize for a user signed in to the hosted
 // login: the code records loginSessionID (uuid.Nil for none), and so does the
-// grant redeemed from it, so that signing out of that session ends both.
-func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
+// grant redeemed from it, so that signing out of that session ends both. ip is
+// the browser's address (httpx.ClientIP), which the organisation's address
+// rules must allow.
+func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod, ip string) (string, uuid.UUID, error) {
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrOIDCClientUnknown
@@ -362,6 +368,10 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 		}
 	}
 	if err := validatePKCEAuthorization(info.Type, challenge, challengeMethod); err != nil {
+		return "", uuid.Nil, err
+	}
+	// This is where the person signs in to the application, from the browser.
+	if err := s.checkAddress(ctx, info.TenantID, userID, ip, "oidc_authorize"); err != nil {
 		return "", uuid.Nil, err
 	}
 	raw, hash, err := codes.URLToken()
@@ -1406,7 +1416,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, clientID, redirect,
-		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"))
+		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"), httpx.ClientIP(r))
 	if err != nil {
 		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
 		return
@@ -1427,7 +1437,8 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 	}
 	oauthCode := "server_error"
 	switch {
-	case errors.Is(err, errs.ErrOIDCUserTenantMismatch):
+	case errors.Is(err, errs.ErrOIDCUserTenantMismatch),
+		errors.Is(err, errs.ErrAuthAddressNotAllowed):
 		oauthCode = "access_denied"
 	case errors.Is(err, errs.ErrOIDCScopeNotPermitted):
 		oauthCode = "invalid_scope"
@@ -1517,7 +1528,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, req.ClientID, req.RedirectURI,
-		req.Scopes, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod)
+		req.Scopes, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod, httpx.ClientIP(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1694,7 +1705,7 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		// not required (device clients are typically public). Errors here use the
 		// RFC 6749 §5.2 flat {"error","error_description"} shape OAuth clients
 		// parse, rendered by writeOAuthError.
-		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"))
+		resp, err = h.Service.DeviceToken(r.Context(), clientID, r.Form.Get("device_code"), httpx.ClientIP(r))
 		if err != nil {
 			var oe *oauthError
 			if errors.As(err, &oe) {

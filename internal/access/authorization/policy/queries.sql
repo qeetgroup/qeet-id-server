@@ -2,10 +2,8 @@
 -- Both queries use complex Postgres-specific type casts that sqlc cannot
 -- cleanly model:
 --
---   Get:    ip_allowlist::text[], ip_denylist::text[]        — cidr[] cast to text[]
---           EXTRACT(EPOCH FROM session_max_age / session_idle_timeout) — intervals read
+--   Get:    EXTRACT(EPOCH FROM session_max_age / session_idle_timeout) — intervals read
 --                                                              as seconds for Duration
---   Upsert: $2::cidr[], $3::cidr[]                          — cidr[] parameter
---           make_interval(secs => $6 / $7)                   — intervals built from seconds
+--   Upsert: make_interval(secs => $4 / $5)                   — intervals built from seconds
 --
 -- All SQL therefore remains hand-written in policy.go.

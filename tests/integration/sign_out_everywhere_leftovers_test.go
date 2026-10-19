@@ -49,7 +49,7 @@ func (f *signOutEverywhereFixture) leaveWaysBackIn(t *testing.T, ctx context.Con
 	if err != nil {
 		t.Fatalf("device authorize: %v", err)
 	}
-	if err := f.oidc.DecideDevice(ctx, userID, userCode, true); err != nil {
+	if err := f.oidc.DecideDevice(ctx, userID, userCode, true, ""); err != nil {
 		t.Fatalf("approve device: %v", err)
 	}
 	l.deviceCode = deviceCode
@@ -75,7 +75,7 @@ func (f *signOutEverywhereFixture) stillOpen(t *testing.T, ctx context.Context, 
 	if err != nil && !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {
 		t.Errorf("redeeming the code failed with %v, want it refused as already used", err)
 	}
-	_, err = f.oidc.DeviceToken(ctx, f.clientID, l.deviceCode)
+	_, err = f.oidc.DeviceToken(ctx, f.clientID, l.deviceCode, "")
 	open["device sign-in"] = err == nil
 	pending, err := f.oidc.ListPendingCIBA(ctx, userID)
 	if err != nil {

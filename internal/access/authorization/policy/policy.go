@@ -1,5 +1,5 @@
-// Package policy stores per-tenant security policy and offers an IP
-// allow/deny middleware.
+// Package policy stores per-tenant security policy. Which addresses may sign
+// in is not part of it: that is the address rules (internal/access/risk/ipallow).
 package policy
 
 import (
@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
@@ -25,8 +24,6 @@ import (
 
 type Policy struct {
 	TenantID           uuid.UUID `json:"tenant_id"`
-	IPAllowlist        []string  `json:"ip_allowlist"`
-	IPDenylist         []string  `json:"ip_denylist"`
 	PasswordMinLength  int       `json:"password_min_length"`
 	PasswordComplexity string    `json:"password_complexity"`
 	// SessionMaxAge ends a session that long after sign-in however active it
@@ -133,16 +130,10 @@ func (r *Repository) SetSessionDefaults(maxAge, idle time.Duration) {
 	r.sessionMaxAge, r.sessionIdle = maxAge, idle
 }
 
-// normalize fills what an update left out — no IP lists, session bounds left
-// zero (the platform defaults, the idle timeout no longer than the maximum
-// age) — and reports the fields that are out of range.
+// normalize fills what an update left out — session bounds left zero (the
+// platform defaults, the idle timeout no longer than the maximum age) — and
+// reports the fields that are out of range.
 func (r *Repository) normalize(p *Policy) []errs.FieldError {
-	if p.IPAllowlist == nil {
-		p.IPAllowlist = []string{}
-	}
-	if p.IPDenylist == nil {
-		p.IPDenylist = []string{}
-	}
 	if p.SessionLimitAction == "" {
 		p.SessionLimitAction = "evict_oldest"
 	}
@@ -205,11 +196,10 @@ func (r *Repository) Pool() *pgxpool.Pool { return r.pool }
 
 func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, error) {
 	var p Policy
-	var allow, deny []string
 	var settings []byte
 	var sessionAge, sessionIdle, stepUpWindow int64
 	err := r.pool.QueryRow(ctx, `
-		SELECT tenant_id, ip_allowlist::text[], ip_denylist::text[],
+		SELECT tenant_id,
 		       password_min_length, password_complexity,
 		       EXTRACT(EPOCH FROM session_max_age)::bigint,
 		       EXTRACT(EPOCH FROM session_idle_timeout)::bigint,
@@ -217,14 +207,12 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 		       mfa_enforcement, mfa_grace_days, mfa_enforced_since,
 		       EXTRACT(EPOCH FROM step_up_window)::bigint, step_up_methods, settings
 		FROM tenant.security_policies WHERE tenant_id = $1
-	`, tenantID).Scan(&p.TenantID, &allow, &deny, &p.PasswordMinLength,
+	`, tenantID).Scan(&p.TenantID, &p.PasswordMinLength,
 		&p.PasswordComplexity, &sessionAge, &sessionIdle, &p.MaxSessions, &p.SessionLimitAction, &p.MFAEnforcement,
 		&p.MFAGraceDays, &p.MFAEnforcedSince, &stepUpWindow, &p.StepUpMethods, &settings)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return &Policy{
 			TenantID:           tenantID,
-			IPAllowlist:        []string{},
-			IPDenylist:         []string{},
 			PasswordMinLength:  8,
 			PasswordComplexity: "standard",
 			SessionMaxAge:      Duration(r.sessionMaxAge),
@@ -238,8 +226,6 @@ func (r *Repository) Get(ctx context.Context, tenantID uuid.UUID) (*Policy, erro
 	if err != nil {
 		return nil, err
 	}
-	p.IPAllowlist = allow
-	p.IPDenylist = deny
 	p.SessionMaxAge = Duration(time.Duration(sessionAge) * time.Second)
 	p.SessionIdleTimeout = Duration(time.Duration(sessionIdle) * time.Second)
 	p.StepUpWindow = Duration(time.Duration(stepUpWindow) * time.Second)
@@ -260,19 +246,17 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 	var enforcedSince *time.Time
 	err := tx.QueryRow(ctx, `
 		INSERT INTO tenant.security_policies (
-			tenant_id, ip_allowlist, ip_denylist,
+			tenant_id,
 			password_min_length, password_complexity,
 			session_max_age, session_idle_timeout, mfa_enforcement, settings,
 			max_sessions, session_limit_action, mfa_grace_days, mfa_enforced_since,
 			step_up_window, step_up_methods
-		) VALUES ($1, $2::cidr[], $3::cidr[], $4, $5, make_interval(secs => $6::bigint),
-		         make_interval(secs => $7::bigint), $8,
-		         COALESCE(NULLIF($9::jsonb,'null'::jsonb), '{}'::jsonb), $10, COALESCE(NULLIF($11, ''), 'evict_oldest'),
-		         $12, CASE WHEN $8 = 'optional' THEN NULL ELSE NOW() END,
-		         make_interval(secs => $13::bigint), $14::text[])
+		) VALUES ($1, $2, $3, make_interval(secs => $4::bigint),
+		         make_interval(secs => $5::bigint), $6,
+		         COALESCE(NULLIF($7::jsonb,'null'::jsonb), '{}'::jsonb), $8, COALESCE(NULLIF($9, ''), 'evict_oldest'),
+		         $10, CASE WHEN $6 = 'optional' THEN NULL ELSE NOW() END,
+		         make_interval(secs => $11::bigint), $12::text[])
 		ON CONFLICT (tenant_id) DO UPDATE SET
-			ip_allowlist = EXCLUDED.ip_allowlist,
-			ip_denylist = EXCLUDED.ip_denylist,
 			password_min_length = EXCLUDED.password_min_length,
 			password_complexity = EXCLUDED.password_complexity,
 			session_max_age = EXCLUDED.session_max_age,
@@ -291,7 +275,7 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 			settings = EXCLUDED.settings,
 			updated_at = NOW()
 		RETURNING mfa_enforced_since
-	`, p.TenantID, p.IPAllowlist, p.IPDenylist, p.PasswordMinLength,
+	`, p.TenantID, p.PasswordMinLength,
 		p.PasswordComplexity, int64(time.Duration(p.SessionMaxAge).Seconds()),
 		int64(time.Duration(p.SessionIdleTimeout).Seconds()), p.MFAEnforcement, settings,
 		p.MaxSessions, p.SessionLimitAction, p.MFAGraceDays,
@@ -299,36 +283,25 @@ func (r *Repository) Upsert(ctx context.Context, tx pgx.Tx, p Policy) (*time.Tim
 	return enforcedSince, err
 }
 
-// Allowed returns true if the IP is permitted by the policy. Empty
-// allowlist means "everything except denylist".
-func (p *Policy) Allowed(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	for _, cidr := range p.IPDenylist {
-		if cidrContains(cidr, ip) {
-			return false
-		}
-	}
-	if len(p.IPAllowlist) == 0 {
-		return true
-	}
-	for _, cidr := range p.IPAllowlist {
-		if cidrContains(cidr, ip) {
-			return true
-		}
-	}
-	return false
+// policyUpdate is the body of PUT /tenants/{id}/policy. The policy's own IP
+// allow and deny lists were never enforced and are gone; address rules are the
+// one address control. A console that still sends them empty is accepted;
+// entries are refused, so nobody believes a list protects them.
+type policyUpdate struct {
+	Policy
+	IPAllowlist []string `json:"ip_allowlist"`
+	IPDenylist  []string `json:"ip_denylist"`
 }
 
-func cidrContains(cidr string, ip net.IP) bool {
-	if cidr == "" {
-		return false
+func (u policyUpdate) retiredFields() []errs.FieldError {
+	var bad []errs.FieldError
+	for name, list := range map[string][]string{"ip_allowlist": u.IPAllowlist, "ip_denylist": u.IPDenylist} {
+		if len(list) > 0 {
+			bad = append(bad, errs.FieldError{Field: name, Code: "retired",
+				Message: "The security policy no longer holds IP lists. Add address rules instead (Security → Address rules)."})
+		}
 	}
-	if _, ipnet, err := net.ParseCIDR(cidr); err == nil {
-		return ipnet.Contains(ip)
-	}
-	return cidr == ip.String()
+	return bad
 }
 
 type Handler struct {
@@ -372,11 +345,16 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrBadRequest.WithDetail("invalid tenantID"))
 		return
 	}
-	var in Policy
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	var body policyUpdate
+	if err := httpx.DecodeJSON(r, &body); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if bad := body.retiredFields(); len(bad) > 0 {
+		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
+		return
+	}
+	in := body.Policy
 	in.TenantID = tid
 	if bad := h.Repo.normalize(&in); len(bad) > 0 {
 		httpx.WriteError(w, r, errs.ErrValidationFailed.WithFields(bad))
@@ -406,8 +384,6 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
 		Metadata: map[string]any{
-			"ip_allowlist_count":   len(in.IPAllowlist),
-			"ip_denylist_count":    len(in.IPDenylist),
 			"mfa_enforcement":      in.MFAEnforcement,
 			"mfa_grace_days":       in.MFAGraceDays,
 			"password_min_length":  in.PasswordMinLength,

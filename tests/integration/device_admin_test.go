@@ -92,7 +92,7 @@ func TestDeviceAdminListAndRevoke(t *testing.T) {
 
 	// A subsequent token poll fails (access_denied for a denied row).
 	resetPollClock(t, ctx, userCode)
-	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode); err == nil ||
+	if _, err := svc.DeviceToken(ctx, client.ClientID, deviceCode, ""); err == nil ||
 		!strings.Contains(err.Error(), "access_denied") {
 		t.Fatalf("poll after revoke = %v, want access_denied", err)
 	}
