@@ -155,6 +155,34 @@ func (q *Queries) InsertGroupMember(ctx context.Context, arg InsertGroupMemberPa
 	return valid, err
 }
 
+const isGroupOrDescendant = `-- name: IsGroupOrDescendant :one
+WITH RECURSIVE subtree (id) AS (
+    SELECT g.id FROM tenant.groups g
+    WHERE g.id = $2 AND g.tenant_id = $3
+    UNION
+    SELECT child.id FROM tenant.groups child
+    JOIN subtree AS above ON child.parent_id = above.id
+    WHERE child.tenant_id = $3
+)
+SELECT (count(*) > 0)::boolean AS is_descendant FROM subtree WHERE subtree.id = $1::uuid
+`
+
+type IsGroupOrDescendantParams struct {
+	CandidateID uuid.UUID
+	GroupID     uuid.UUID
+	TenantID    uuid.UUID
+}
+
+// IsGroupOrDescendant reports whether candidate is the group itself or one of
+// its subgroups, at any depth: making it the group's parent would loop. UNION
+// (not UNION ALL) keeps the walk finite even over a loop already in the data.
+func (q *Queries) IsGroupOrDescendant(ctx context.Context, arg IsGroupOrDescendantParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isGroupOrDescendant, arg.CandidateID, arg.GroupID, arg.TenantID)
+	var is_descendant bool
+	err := row.Scan(&is_descendant)
+	return is_descendant, err
+}
+
 const listGroupMembers = `-- name: ListGroupMembers :many
 SELECT gm.user_id, u.email, u.display_name
 FROM tenant.group_members gm
@@ -249,14 +277,17 @@ func (q *Queries) ListGroups(ctx context.Context, tenantID uuid.UUID) ([]ListGro
 
 const updateGroup = `-- name: UpdateGroup :one
 UPDATE tenant.groups
-SET name = $1, description = $2, parent_id = $3
-WHERE id = $4 AND tenant_id = $5
+SET name        = COALESCE($1, name),
+    description = COALESCE($2, description),
+    parent_id   = CASE WHEN $3::boolean THEN $4::uuid ELSE parent_id END
+WHERE id = $5 AND tenant_id = $6
 RETURNING id, tenant_id, parent_id, name, description, created_at
 `
 
 type UpdateGroupParams struct {
-	Name        string
-	Description string
+	Name        *string
+	Description *string
+	SetParent   bool
 	ParentID    pgtype.UUID
 	ID          uuid.UUID
 	TenantID    uuid.UUID
@@ -271,10 +302,14 @@ type UpdateGroupRow struct {
 	CreatedAt   time.Time
 }
 
+// UpdateGroup changes only what the caller sent: a NULL name or description
+// keeps the current one, and the parent changes only when set_parent is true
+// (a NULL parent_id then makes the group top-level).
 func (q *Queries) UpdateGroup(ctx context.Context, arg UpdateGroupParams) (UpdateGroupRow, error) {
 	row := q.db.QueryRow(ctx, updateGroup,
 		arg.Name,
 		arg.Description,
+		arg.SetParent,
 		arg.ParentID,
 		arg.ID,
 		arg.TenantID,

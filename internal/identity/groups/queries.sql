@@ -14,11 +14,30 @@ FROM tenant.groups WHERE tenant_id = $1 ORDER BY name;
 -- name: DeleteGroup :one
 DELETE FROM tenant.groups WHERE id = $1 AND tenant_id = $2 RETURNING name;
 
+-- UpdateGroup changes only what the caller sent: a NULL name or description
+-- keeps the current one, and the parent changes only when set_parent is true
+-- (a NULL parent_id then makes the group top-level).
 -- name: UpdateGroup :one
 UPDATE tenant.groups
-SET name = $1, description = $2, parent_id = $3
-WHERE id = $4 AND tenant_id = $5
+SET name        = COALESCE(sqlc.narg('name'), name),
+    description = COALESCE(sqlc.narg('description'), description),
+    parent_id   = CASE WHEN sqlc.arg('set_parent')::boolean THEN sqlc.narg('parent_id')::uuid ELSE parent_id END
+WHERE id = sqlc.arg('id') AND tenant_id = sqlc.arg('tenant_id')
 RETURNING id, tenant_id, parent_id, name, description, created_at;
+
+-- IsGroupOrDescendant reports whether candidate is the group itself or one of
+-- its subgroups, at any depth: making it the group's parent would loop. UNION
+-- (not UNION ALL) keeps the walk finite even over a loop already in the data.
+-- name: IsGroupOrDescendant :one
+WITH RECURSIVE subtree (id) AS (
+    SELECT g.id FROM tenant.groups g
+    WHERE g.id = sqlc.arg('group_id') AND g.tenant_id = sqlc.arg('tenant_id')
+    UNION
+    SELECT child.id FROM tenant.groups child
+    JOIN subtree AS above ON child.parent_id = above.id
+    WHERE child.tenant_id = sqlc.arg('tenant_id')
+)
+SELECT (count(*) > 0)::boolean AS is_descendant FROM subtree WHERE subtree.id = sqlc.arg('candidate_id')::uuid;
 
 -- name: GroupExists :one
 SELECT EXISTS(SELECT 1 FROM tenant.groups WHERE id = $1 AND tenant_id = $2);

@@ -1844,7 +1844,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Creates a group in the caller''s tenant. A parent_id must name one of the tenant''s own groups; otherwise the call answers 404 group.parent_not_found, the same for a missing id as for another tenant''s group.'
       responses:
         '201':
           description: Created
@@ -1886,7 +1886,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Changes only the fields sent: an omitted name, description or parent_id keeps its value, and "parent_id": null makes the group top-level. A new parent must be one of the tenant''s own groups (404 group.parent_not_found otherwise) and not the group itself or one of its subgroups (400 group.cycle).'
       responses:
         '200':
           description: Updated
@@ -1895,6 +1895,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

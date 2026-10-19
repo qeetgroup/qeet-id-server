@@ -6,6 +6,7 @@ package group
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -52,10 +53,33 @@ type CreateInput struct {
 	Description string     `json:"description"`
 }
 
+// UpdateInput is a partial update: a field left out of the request keeps its
+// current value. "parent_id": null makes the group top-level.
 type UpdateInput struct {
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	ParentID    *uuid.UUID `json:"parent_id"`
+	Name        *string      `json:"name"`
+	Description *string      `json:"description"`
+	ParentID    OptionalUUID `json:"parent_id"`
+}
+
+// OptionalUUID is a JSON field that can be left out, null, or a UUID. Set
+// reports whether the request named it at all; ID is nil for null.
+type OptionalUUID struct {
+	Set bool
+	ID  *uuid.UUID
+}
+
+func (o *OptionalUUID) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.ID = nil
+		return nil
+	}
+	var id uuid.UUID
+	if err := json.Unmarshal(b, &id); err != nil {
+		return err
+	}
+	o.ID = &id
+	return nil
 }
 
 // uuidPtrToPgtype converts a *uuid.UUID to the pgtype.UUID used by generated code.
@@ -115,6 +139,16 @@ func (s *Service) Create(ctx context.Context, in CreateInput, actor audit.Actor)
 	}
 	defer tx.Rollback(ctx)
 
+	// The parent is caller-supplied and must be one of this tenant's groups.
+	if in.ParentID != nil {
+		ok, err := s.q.WithTx(tx).GroupExists(ctx, dbgen.GroupExistsParams{ID: *in.ParentID, TenantID: in.TenantID})
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrGroupParentNotFound
+		}
+	}
 	row, err := s.q.WithTx(tx).InsertGroup(ctx, dbgen.InsertGroupParams{
 		TenantID:    in.TenantID,
 		ParentID:    uuidPtrToPgtype(in.ParentID),
@@ -206,10 +240,33 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	}
 	defer tx.Rollback(ctx)
 
-	row, err := s.q.WithTx(tx).UpdateGroup(ctx, dbgen.UpdateGroupParams{
+	q := s.q.WithTx(tx)
+	// A new parent must be one of this tenant's groups, and not the group
+	// itself or one of its subgroups, which would make the hierarchy loop.
+	if in.ParentID.Set && in.ParentID.ID != nil {
+		parent := *in.ParentID.ID
+		ok, err := q.GroupExists(ctx, dbgen.GroupExistsParams{ID: parent, TenantID: tenantID})
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errs.ErrGroupParentNotFound
+		}
+		loops, err := q.IsGroupOrDescendant(ctx, dbgen.IsGroupOrDescendantParams{
+			GroupID: id, TenantID: tenantID, CandidateID: parent,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if loops {
+			return nil, errs.ErrGroupCycle
+		}
+	}
+	row, err := q.UpdateGroup(ctx, dbgen.UpdateGroupParams{
 		Name:        in.Name,
 		Description: in.Description,
-		ParentID:    uuidPtrToPgtype(in.ParentID),
+		SetParent:   in.ParentID.Set,
+		ParentID:    uuidPtrToPgtype(in.ParentID.ID),
 		ID:          id,
 		TenantID:    tenantID,
 	})
@@ -221,7 +278,7 @@ func (s *Service) Update(ctx context.Context, id, tenantID uuid.UUID, in UpdateI
 	}
 	g := groupFromUpdateRow(row)
 	if err := audit.Record(ctx, tx, actor.Event(tenantID, "group.updated", "group", id,
-		map[string]any{"name": in.Name, "parent_id": in.ParentID})); err != nil {
+		map[string]any{"name": g.Name, "parent_id": g.ParentID})); err != nil {
 		return nil, err
 	}
 	if err := outbox.Enqueue(ctx, tx, outbox.Event{AggregateID: id, Topic: "group.events", EventType: "group.updated", Payload: g}); err != nil {

@@ -13,6 +13,8 @@ func init() {
 	registerStatuses(map[string]int{
 		errs.CodeGroupNotFound:            http.StatusNotFound,
 		errs.CodeGroupUserNotFound:        http.StatusNotFound,
+		errs.CodeGroupParentNotFound:      http.StatusNotFound,
+		errs.CodeGroupCycle:               http.StatusBadRequest,
 		errs.CodeGroupNameExists:          http.StatusConflict,
 		errs.CodeGroupTemplateNameExists:  http.StatusConflict,
 		errs.CodeGroupTemplateUnnamed:     http.StatusUnprocessableEntity,

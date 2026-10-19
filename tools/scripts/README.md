@@ -8,6 +8,7 @@ Utility scripts for common development and operations tasks.
 | `smoke-test.sh` | Lightweight post-deploy verification (login + token refresh) |
 | `db-dump.sh` | Dump the dev database schema for review |
 | `gen-secret.sh` | Generate a random secret value (JWT_SECRET, CSRF_KEY, etc.) |
+| `group-hierarchy-check.sql` | List groups nested under another organization's group, or in a loop (read-only; run before migration 0136) |
 
 ## Usage
 
