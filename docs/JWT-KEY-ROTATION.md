@@ -10,8 +10,28 @@ key; retired rows retain public material only and carry an explicit
 the first configured key becomes active automatically. On a populated registry,
 `JWT_ACTIVATE_SIGNING_KEY=true` is required to promote a different candidate.
 This prevents a stale replica from reverting the active key during a rolling
-deployment. Replicas refresh the registry every
+deployment, and nothing else activates a configured key: not an ephemeral vault
+key, not a restart. Replicas refresh the registry every
 `JWT_SIGNING_KEY_REFRESH_INTERVAL` (default 5 seconds).
+
+## Watching the keyring
+
+- `/readyz` reports `jwt-keyring` failing once the last 3 refreshes in a row
+  failed (for example, this replica's vault key can't open the active key), so
+  the replica is taken out of rotation instead of signing with a key the others
+  have retired.
+- `jwt_signing_key_active{kid}` is 1 for the kid a replica signs with;
+  `time() - jwt_signing_key_snapshot_timestamp_seconds` is the age of its last
+  successful refresh; `jwt_signing_key_sync_failures_total` counts failures.
+
+## A workstation without a key
+
+`SERVICE_ENV` has no default. Only with `SERVICE_ENV=dev` may `JWT_SIGNING_KEY`
+be left blank: the replica then signs with the database's active key, and makes
+a key only when the database has none. It never replaces the active key, so
+restarts add nothing to JWKS and instances sharing the database agree on one
+key. If its vault key (`SECRETS_KEY`) can't open the active key, it refuses to
+start. `make dev` sets a persistent key from `.secrets/`.
 
 ## Zero-downtime rotation
 

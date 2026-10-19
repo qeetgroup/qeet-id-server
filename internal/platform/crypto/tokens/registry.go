@@ -10,11 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 )
@@ -22,6 +25,30 @@ import (
 const (
 	DefaultSigningKeyRetireGrace = 30 * 24 * time.Hour
 	signingKeyAdvisoryLock       = int64(0x514545544A5754)
+	// SyncFailuresUntilNotReady is how many refreshes of the keyring in a row
+	// may fail before readiness reports the instance not ready: it may be
+	// signing with a key the others have dropped, or unable to verify theirs.
+	SyncFailuresUntilNotReady = 3
+)
+
+// ErrActiveKeySealedElsewhere: the database's active signing key was sealed
+// with a different vault key, so this instance can't sign with it.
+var ErrActiveKeySealedElsewhere = errors.New("the active JWT signing key in the database was sealed with a different vault key (SECRETS_KEY / KMS data key)")
+
+//nolint:gochecknoglobals // Prometheus collectors are process-wide by design.
+var (
+	activeKeyInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "jwt_signing_key_active",
+		Help: "1 for the kid this instance signs with.",
+	}, []string{"kid"})
+	snapshotTimestamp = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "jwt_signing_key_snapshot_timestamp_seconds",
+		Help: "When this instance last loaded the keyring (Unix seconds); its age is time() minus this.",
+	})
+	syncFailures = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "jwt_signing_key_sync_failures_total",
+		Help: "Keyring refreshes that failed.",
+	})
 )
 
 var signingKeyEncryptionNamespace = uuid.MustParse("00000000-0000-5000-8000-000000000017")
@@ -33,6 +60,12 @@ var signingKeyEncryptionNamespace = uuid.MustParse("00000000-0000-5000-8000-0000
 type SigningKeyRegistry struct {
 	pool *pgxpool.Pool
 	box  *envelope.Cipher
+
+	// health is how the keyring's refreshes have gone; see Ready.
+	mu           sync.Mutex
+	failedInARow int
+	lastErr      error
+	activeKID    string
 }
 
 func NewSigningKeyRegistry(pool *pgxpool.Pool, box *envelope.Cipher) (*SigningKeyRegistry, error) {
@@ -119,6 +152,60 @@ func (r *SigningKeyRegistry) Reconcile(ctx context.Context, configuredKeyPEM, le
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// EnsureDevelopmentKey gives a developer workstation (SERVICE_ENV=dev) with no
+// JWT_SIGNING_KEY a signing key without making up a new one at every start.
+// The database's active key is used when this instance's vault key opens it;
+// only a database with no active key gets a new one, which becomes active as
+// the first key. Under the registry's lock, so instances starting together
+// agree on one key. An active key this instance can't open is
+// ErrActiveKeySealedElsewhere, and nothing changes: it is never retired in
+// favour of a key of this instance's own. generated reports a new key.
+func (r *SigningKeyRegistry) EnsureDevelopmentKey(ctx context.Context) (generated bool, err error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, signingKeyAdvisoryLock); err != nil {
+		return false, err
+	}
+	var activeKID string
+	var ciphertext, nonce []byte
+	err = tx.QueryRow(ctx, `
+		SELECT kid, private_key_ct, private_key_nonce
+		FROM platform.jwt_signing_keys WHERE state = 'active'
+	`).Scan(&activeKID, &ciphertext, &nonce)
+	switch {
+	case err == nil:
+		if _, err := r.box.Open(signingKeyEncryptionNamespace, "jwt-signing-key", activeKID, ciphertext, nonce); err != nil {
+			return false, fmt.Errorf("%w: kid %s", ErrActiveKeySealedElsewhere, activeKID)
+		}
+		return false, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return false, err
+	}
+	keyPEM, err := GenerateES256KeyPEM()
+	if err != nil {
+		return false, err
+	}
+	kid, publicPEM, err := signingKeyMaterial(keyPEM)
+	if err != nil {
+		return false, err
+	}
+	ciphertext, nonce, err = r.box.Seal(signingKeyEncryptionNamespace, "jwt-signing-key", kid, []byte(keyPEM))
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform.jwt_signing_keys
+		    (kid, algorithm, state, public_key_pem, private_key_ct, private_key_nonce, activated_at)
+		VALUES ($1, 'ES256', 'active', $2, $3, $4, NOW())
+	`, kid, publicPEM, ciphertext, nonce); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }
 
 func promoteSigningKey(ctx context.Context, tx pgx.Tx, kid, publicPEM string, ciphertext, nonce []byte) error {
@@ -252,15 +339,57 @@ func (r *SigningKeyRegistry) NewIssuer(ctx context.Context, issuer, audience str
 	if err := result.replaceKeyring(activePEM, keys); err != nil {
 		return nil, err
 	}
+	r.recordSync(result.KID(), nil)
 	return result, nil
 }
 
+// Sync reloads the keyring from the database into issuer, and records how it
+// went (see Ready).
 func (r *SigningKeyRegistry) Sync(ctx context.Context, issuer *Issuer) error {
+	err := r.sync(ctx, issuer)
+	r.recordSync(issuer.KID(), err)
+	return err
+}
+
+func (r *SigningKeyRegistry) sync(ctx context.Context, issuer *Issuer) error {
 	activePEM, keys, err := r.loadSnapshot(ctx)
 	if err != nil {
 		return err
 	}
 	return issuer.replaceKeyring(activePEM, keys)
+}
+
+// recordSync notes a refresh's outcome for readiness and the metrics.
+func (r *SigningKeyRegistry) recordSync(kid string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.failedInARow++
+		r.lastErr = err
+		syncFailures.Inc()
+		return
+	}
+	r.failedInARow, r.lastErr = 0, nil
+	snapshotTimestamp.SetToCurrentTime()
+	if kid != r.activeKID {
+		if r.activeKID != "" {
+			activeKeyInfo.DeleteLabelValues(r.activeKID)
+		}
+		r.activeKID = kid
+		activeKeyInfo.WithLabelValues(kid).Set(1)
+	}
+}
+
+// Ready is the keyring's readiness check: an instance whose last
+// SyncFailuresUntilNotReady refreshes all failed is not ready, since it may be
+// signing with a key the others have retired, or unable to verify theirs.
+func (r *SigningKeyRegistry) Ready(context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failedInARow >= SyncFailuresUntilNotReady {
+		return fmt.Errorf("the last %d keyring refreshes failed: %w", r.failedInARow, r.lastErr)
+	}
+	return nil
 }
 
 func (r *SigningKeyRegistry) Run(ctx context.Context, issuer *Issuer, interval time.Duration) {

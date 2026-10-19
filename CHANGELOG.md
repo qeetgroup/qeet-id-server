@@ -204,6 +204,25 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Signing keys at startup (2026-10-20)**
+
+* **config:** `SERVICE_ENV` has no default. Left unset it meant `dev`, which switches the production
+  gates off and makes up keys, so a deployment that forgot it ran as a workstation. Startup now
+  refuses, naming the setting. `.env.example`, the kit (`local`) and the production deployment
+  (`prod`) already set it.
+* **tokens:** an instance no longer mints a signing key at every start. With `SERVICE_ENV=dev` and
+  no `JWT_SIGNING_KEY`, it generated a key and promoted it, retiring the last one with a 30-day
+  grace: two instances on one database each signed with their own key (one's tokens refused by the
+  other) and every restart added a key to JWKS. It now signs with the database's active key, and
+  makes one only when the database has none, under the registry lock so instances starting together
+  agree on it. If its vault key can't open the active key, it refuses to start and changes nothing.
+  A configured key is no longer activated just because the vault key is ephemeral: only
+  `JWT_ACTIVATE_SIGNING_KEY` activates one.
+* **health:** `/readyz` reports `jwt-keyring` failing after 3 keyring refreshes in a row fail (it
+  stayed green while an instance logged a failure every 5 seconds). New metrics:
+  `jwt_signing_key_active{kid}`, `jwt_signing_key_snapshot_timestamp_seconds` (age = `time()` minus
+  it) and `jwt_signing_key_sync_failures_total`.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

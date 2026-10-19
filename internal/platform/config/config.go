@@ -35,8 +35,10 @@ var serviceProfiles = map[string]bool{"dev": true, "test": true, "staging": true
 type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
 	// ServiceEnv is one of EnvDev, EnvLocal or EnvProd (L0 QEET_ENV mapping:
-	// dev and local are the Local tier, prod is Production).
-	ServiceEnv string `envconfig:"SERVICE_ENV" default:"dev"`
+	// dev and local are the Local tier, prod is Production). It has no
+	// default: dev switches the production gates off, so a deployment that
+	// forgot the setting must not start as one.
+	ServiceEnv string `envconfig:"SERVICE_ENV"`
 	// ServiceProfile names the local environment ("dev", "test" or "staging"). It
 	// is only valid with SERVICE_ENV=local, and is reported on /healthz and in logs.
 	ServiceProfile string `envconfig:"SERVICE_PROFILE" default:""`
@@ -429,11 +431,13 @@ func (c *Config) checkSignInLockout() error {
 // only environment in which the production gates and Secure cookies are off.
 func (c *Config) IsDev() bool { return c.ServiceEnv == EnvDev }
 
-// checkEnvironment rejects an unrecognised SERVICE_ENV, and a SERVICE_PROFILE
-// that is unknown or used outside SERVICE_ENV=local.
+// checkEnvironment rejects a missing or unrecognised SERVICE_ENV, and a
+// SERVICE_PROFILE that is unknown or used outside SERVICE_ENV=local.
 func (c *Config) checkEnvironment() error {
 	switch c.ServiceEnv {
 	case EnvDev, EnvLocal, EnvProd:
+	case "":
+		return fmt.Errorf("SERVICE_ENV is not set: set it to %q (a developer workstation), %q (the Qeet ID Kit) or %q", EnvDev, EnvLocal, EnvProd)
 	default:
 		return fmt.Errorf("SERVICE_ENV %q is not recognised (want %q, %q or %q)", c.ServiceEnv, EnvDev, EnvLocal, EnvProd)
 	}
