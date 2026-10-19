@@ -817,8 +817,20 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 			return nil, errs.ErrOIDCCodeVerifierInvalid
 		}
 	}
+	// A code issued before the account was suspended or deleted is spent, not
+	// redeemed.
+	active, err := accountActive(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
 	if err := q.MarkAuthorizationCodeUsed(ctx, hash); err != nil {
 		return nil, err
+	}
+	if !active {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, errs.ErrAuthAccountSuspended
 	}
 	// The grant is written while the code is still locked, so a sign-out of
 	// the hosted-login session the code came from either spends the code first
@@ -922,6 +934,21 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	if rt.RevokedAt.Valid {
 		return nil, errs.ErrOIDCRefreshTokenRevoked
 	}
+	// A suspended or deleted account renews nothing, and the application's
+	// grants for it end, so reactivating the account doesn't revive them.
+	active, err := accountActive(ctx, q, rt.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if !active {
+		if err := q.RevokeRefreshTokenChain(ctx, dbgen.RevokeRefreshTokenChainParams{ClientID: clientID, UserID: rt.UserID}); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, errs.ErrAuthAccountSuspended
+	}
 	if rt.UsedAt.Valid {
 		// Reuse — assume theft: revoke every live token for this (client, user) and audit it.
 		if err := s.handleRefreshReuse(ctx, tx, clientID, rt.UserID, rt.TenantID, rt.ID); err != nil {
@@ -994,6 +1021,20 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 }
 
 // handleRefreshReuse revokes every live refresh token for a (client, user) on replay and audits it.
+// accountActive reports whether a user may still be issued tokens by any
+// application grant: not suspended and not deleted, the rule the first-party
+// refresh applies. A user who no longer exists is not active.
+func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (bool, error) {
+	row, err := q.GetAccountStanding(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !row.Deleted && row.Status != "suspended", nil
+}
+
 func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID string, userID, tenantID, tokenID uuid.UUID) error {
 	q := s.q.WithTx(tx)
 	if err := q.RevokeRefreshTokenChain(ctx, dbgen.RevokeRefreshTokenChainParams{

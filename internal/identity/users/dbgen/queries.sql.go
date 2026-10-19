@@ -580,7 +580,7 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (InsertU
 }
 
 const listDeletedUsers = `-- name: ListDeletedUsers :many
-SELECT id, email, display_name, deleted_at, created_at
+SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM "user".users
 WHERE tenant_id = $1 AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC
@@ -598,6 +598,7 @@ type ListDeletedUsersRow struct {
 	DisplayName *string
 	DeletedAt   pgtype.Timestamptz
 	CreatedAt   time.Time
+	DeletedBy   pgtype.UUID
 }
 
 func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersParams) ([]ListDeletedUsersRow, error) {
@@ -615,6 +616,7 @@ func (q *Queries) ListDeletedUsers(ctx context.Context, arg ListDeletedUsersPara
 			&i.DisplayName,
 			&i.DeletedAt,
 			&i.CreatedAt,
+			&i.DeletedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -814,7 +816,7 @@ func (q *Queries) RemoveUserRolesInTenant(ctx context.Context, arg RemoveUserRol
 
 const restoreUser = `-- name: RestoreUser :execrows
 UPDATE "user".users
-SET deleted_at = NULL, status = 'active', updated_at = NOW()
+SET deleted_at = NULL, deleted_by = NULL, status = 'active', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NOT NULL
 `
 
@@ -910,4 +912,32 @@ func (q *Queries) SoftDeleteUser(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const softDeleteUserBy = `-- name: SoftDeleteUserBy :one
+UPDATE "user".users
+SET deleted_at = NOW(), status = 'deleted', deleted_by = $1, updated_at = NOW()
+WHERE id = $2 AND deleted_at IS NULL
+RETURNING id, deleted_at, deleted_by
+`
+
+type SoftDeleteUserByParams struct {
+	DeletedBy pgtype.UUID
+	ID        uuid.UUID
+}
+
+type SoftDeleteUserByRow struct {
+	ID        uuid.UUID
+	DeletedAt pgtype.Timestamptz
+	DeletedBy pgtype.UUID
+}
+
+// SoftDeleteUserBy is an admin's soft delete: it records who deleted the user
+// and returns what was deleted. The row is locked, so it runs in the same
+// transaction as the session revocation and audit row.
+func (q *Queries) SoftDeleteUserBy(ctx context.Context, arg SoftDeleteUserByParams) (SoftDeleteUserByRow, error) {
+	row := q.db.QueryRow(ctx, softDeleteUserBy, arg.DeletedBy, arg.ID)
+	var i SoftDeleteUserByRow
+	err := row.Scan(&i.ID, &i.DeletedAt, &i.DeletedBy)
+	return i, err
 }

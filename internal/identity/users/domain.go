@@ -37,7 +37,17 @@ type DeletedUser struct {
 	Email       string    `json:"email"`
 	DisplayName *string   `json:"display_name"`
 	DeletedAt   time.Time `json:"deleted_at"`
-	CreatedAt   time.Time `json:"created_at"`
+	// DeletedBy is the admin who deleted the user (nil for a deletion that
+	// wasn't recorded, or a system one).
+	DeletedBy *uuid.UUID `json:"deleted_by"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// Deletion is what an admin's soft delete removed: the user, when, and by whom.
+type Deletion struct {
+	ID        uuid.UUID  `json:"id"`
+	DeletedAt time.Time  `json:"deleted_at"`
+	DeletedBy *uuid.UUID `json:"deleted_by"`
 }
 
 type CreateInput struct {

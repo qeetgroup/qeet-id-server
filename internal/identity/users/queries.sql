@@ -49,8 +49,17 @@ UPDATE "user".users
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- SoftDeleteUserBy is an admin's soft delete: it records who deleted the user
+-- and returns what was deleted. The row is locked, so it runs in the same
+-- transaction as the session revocation and audit row.
+-- name: SoftDeleteUserBy :one
+UPDATE "user".users
+SET deleted_at = NOW(), status = 'deleted', deleted_by = sqlc.narg('deleted_by'), updated_at = NOW()
+WHERE id = @id AND deleted_at IS NULL
+RETURNING id, deleted_at, deleted_by;
+
 -- name: ListDeletedUsers :many
-SELECT id, email, display_name, deleted_at, created_at
+SELECT id, email, display_name, deleted_at, created_at, deleted_by
 FROM "user".users
 WHERE tenant_id = $1 AND deleted_at IS NOT NULL
 ORDER BY deleted_at DESC
@@ -58,7 +67,7 @@ LIMIT $2;
 
 -- name: RestoreUser :execrows
 UPDATE "user".users
-SET deleted_at = NULL, status = 'active', updated_at = NOW()
+SET deleted_at = NULL, deleted_by = NULL, status = 'active', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NOT NULL;
 
 -- name: PurgeUser :execrows
