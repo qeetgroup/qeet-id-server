@@ -47,27 +47,62 @@ func (q *Queries) AssignRoleToGroup(ctx context.Context, arg AssignRoleToGroupPa
 	return valid, err
 }
 
-const assignUserRole = `-- name: AssignUserRole :exec
-INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT DO NOTHING
+const assignUserRole = `-- name: AssignUserRole :one
+WITH allowed AS (
+    SELECT (
+        EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = $1 AND ro.tenant_id = $2)
+        AND EXISTS (
+            SELECT 1 FROM "user".users account
+            WHERE account.id = $3 AND account.deleted_at IS NULL
+              AND (
+                  account.tenant_id = $2
+                  OR EXISTS (
+                      SELECT 1 FROM rbac.user_roles membership
+                      JOIN rbac.roles member_role
+                        ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
+                      WHERE membership.user_id = $3 AND membership.tenant_id = $2
+                  )
+              )
+        )
+    ) AS ok
+),
+ins AS (
+    INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
+    SELECT $3, $2, $1, $4
+    FROM allowed
+    WHERE allowed.ok
+    ON CONFLICT DO NOTHING
+)
+SELECT allowed.ok AS valid FROM allowed
 `
 
 type AssignUserRoleParams struct {
-	UserID    uuid.UUID
-	TenantID  uuid.UUID
 	RoleID    uuid.UUID
+	TenantID  uuid.UUID
+	UserID    uuid.UUID
 	GrantedBy pgtype.UUID
 }
 
-func (q *Queries) AssignUserRole(ctx context.Context, arg AssignUserRoleParams) error {
-	_, err := q.db.Exec(ctx, assignUserRole,
-		arg.UserID,
-		arg.TenantID,
+// AssignUserRole grants a role to a user only when the role belongs to the
+// tenant and the user is a live member of it, checked in the same statement as
+// the write. A user_roles row is what makes someone a member, so without the
+// membership check one insert could pull a user from another tenant in.
+// Membership is a user_roles row in the tenant whose role is the tenant's own
+// (as CheckTenantMembership reads it), or the tenant being the account's home:
+// an admin-created account has no membership row until its first role, and
+// that first assignment must still work. valid is false for a missing,
+// deleted or foreign user and for a missing or foreign role alike, and true
+// for a role the user already holds (the insert is then a no-op).
+func (q *Queries) AssignUserRole(ctx context.Context, arg AssignUserRoleParams) (*bool, error) {
+	row := q.db.QueryRow(ctx, assignUserRole,
 		arg.RoleID,
+		arg.TenantID,
+		arg.UserID,
 		arg.GrantedBy,
 	)
-	return err
+	var valid *bool
+	err := row.Scan(&valid)
+	return valid, err
 }
 
 const checkPermission = `-- name: CheckPermission :one
@@ -437,6 +472,9 @@ type UnassignUserRoleParams struct {
 	RoleID   uuid.UUID
 }
 
+// UnassignUserRole deletes only within the given tenant, and deliberately does
+// not require the role to be the tenant's own: a row attaching another
+// tenant's role must stay removable by the tenant it was written into.
 func (q *Queries) UnassignUserRole(ctx context.Context, arg UnassignUserRoleParams) error {
 	_, err := q.db.Exec(ctx, unassignUserRole, arg.UserID, arg.TenantID, arg.RoleID)
 	return err

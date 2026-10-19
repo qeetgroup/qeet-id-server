@@ -47,11 +47,47 @@ ON CONFLICT DO NOTHING;
 -- name: RevokePermission :exec
 DELETE FROM rbac.role_permissions WHERE role_id = @role_id AND permission_id = @permission_id;
 
--- name: AssignUserRole :exec
-INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
-VALUES (@user_id, @tenant_id, @role_id, @granted_by)
-ON CONFLICT DO NOTHING;
+-- AssignUserRole grants a role to a user only when the role belongs to the
+-- tenant and the user is a live member of it, checked in the same statement as
+-- the write. A user_roles row is what makes someone a member, so without the
+-- membership check one insert could pull a user from another tenant in.
+-- Membership is a user_roles row in the tenant whose role is the tenant's own
+-- (as CheckTenantMembership reads it), or the tenant being the account's home:
+-- an admin-created account has no membership row until its first role, and
+-- that first assignment must still work. valid is false for a missing,
+-- deleted or foreign user and for a missing or foreign role alike, and true
+-- for a role the user already holds (the insert is then a no-op).
+-- name: AssignUserRole :one
+WITH allowed AS (
+    SELECT (
+        EXISTS (SELECT 1 FROM rbac.roles ro WHERE ro.id = @role_id AND ro.tenant_id = @tenant_id)
+        AND EXISTS (
+            SELECT 1 FROM "user".users account
+            WHERE account.id = @user_id AND account.deleted_at IS NULL
+              AND (
+                  account.tenant_id = @tenant_id
+                  OR EXISTS (
+                      SELECT 1 FROM rbac.user_roles membership
+                      JOIN rbac.roles member_role
+                        ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
+                      WHERE membership.user_id = @user_id AND membership.tenant_id = @tenant_id
+                  )
+              )
+        )
+    ) AS ok
+),
+ins AS (
+    INSERT INTO rbac.user_roles (user_id, tenant_id, role_id, granted_by)
+    SELECT @user_id, @tenant_id, @role_id, @granted_by
+    FROM allowed
+    WHERE allowed.ok
+    ON CONFLICT DO NOTHING
+)
+SELECT allowed.ok AS valid FROM allowed;
 
+-- UnassignUserRole deletes only within the given tenant, and deliberately does
+-- not require the role to be the tenant's own: a row attaching another
+-- tenant's role must stay removable by the tenant it was written into.
 -- name: UnassignUserRole :exec
 DELETE FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id AND role_id = @role_id;
 

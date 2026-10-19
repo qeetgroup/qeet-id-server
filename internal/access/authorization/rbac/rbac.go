@@ -216,13 +216,25 @@ func (r *Repository) RevokePermission(ctx context.Context, tx pgx.Tx, roleID, pe
 	return r.q.WithTx(tx).RevokePermission(ctx, dbgen.RevokePermissionParams{RoleID: roleID, PermissionID: permID})
 }
 
+// AssignRole grants a role to a user within tenantID. The role must belong to
+// tenantID and the user must already be a live member of it; both are checked
+// in the INSERT itself, so a caller can never pull a user from another tenant
+// in or attach another tenant's role. Re-assigning a held role is a no-op.
+// Every refusal is ErrRBACUserOrRoleNotFound, whichever id was wrong.
 func (r *Repository) AssignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID, grantedBy *uuid.UUID) error {
-	return r.q.WithTx(tx).AssignUserRole(ctx, dbgen.AssignUserRoleParams{
+	valid, err := r.q.WithTx(tx).AssignUserRole(ctx, dbgen.AssignUserRoleParams{
 		UserID:    userID,
 		TenantID:  tenantID,
 		RoleID:    roleID,
 		GrantedBy: uuidPtrToPgtype(grantedBy),
 	})
+	if err != nil {
+		return err
+	}
+	if valid == nil || !*valid {
+		return errs.ErrRBACUserOrRoleNotFound
+	}
+	return nil
 }
 
 func (r *Repository) UnassignRole(ctx context.Context, tx pgx.Tx, userID, tenantID, roleID uuid.UUID) error {
