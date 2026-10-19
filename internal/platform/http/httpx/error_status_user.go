@@ -15,5 +15,7 @@ func init() {
 		errs.CodeUserImportFileTooLarge:  http.StatusUnprocessableEntity,
 		errs.CodeUserImportEmpty:         http.StatusUnprocessableEntity,
 		errs.CodeUserImportBatchTooLarge: http.StatusUnprocessableEntity,
+		errs.CodeUserManagedElsewhere:    http.StatusForbidden,
+		errs.CodeUserManagedHere:         http.StatusConflict,
 	})
 }

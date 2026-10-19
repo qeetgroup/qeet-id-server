@@ -25,11 +25,6 @@ SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at, avatar_url
 FROM "user".users WHERE id = $1 AND deleted_at IS NULL;
 
--- GetUserTenantOf returns the tenant a user belongs to regardless of soft-delete
--- (used to enforce that admin by-id operations never cross tenant boundaries).
--- name: GetUserTenantOf :one
-SELECT tenant_id FROM "user".users WHERE id = $1;
-
 -- name: GetUserByEmail :one
 SELECT id, tenant_id, email, email_verified_at, phone, phone_verified_at,
        display_name, status, metadata, created_at, updated_at
@@ -156,11 +151,10 @@ ORDER BY g.name;
 
 -- GetUserOrganization returns the tenant (a.k.a. organization) a user belongs to.
 -- Each user belongs to exactly one tenant (users.tenant_id is NOT NULL).
--- name: GetUserOrganization :one
-SELECT t.id, t.name, t.slug
-FROM "user".users u
-JOIN tenant.tenants t ON t.id = u.tenant_id
-WHERE u.id = $1;
+-- GetAccessOrganization is the organization an access view is about: the one
+-- the admin is viewing the user from, never the user's home elsewhere.
+-- name: GetAccessOrganization :one
+SELECT id, name, slug FROM tenant.tenants WHERE id = $1;
 
 -- CountUserApplications counts the OIDC applications a user has consented to,
 -- scoped to the applications registered in the given tenant.
@@ -272,3 +266,36 @@ SELECT
   (SELECT count(*) FROM members m WHERE m.mfa_at IS NOT NULL AND m.mfa_at < days.day + interval '1 day')::int AS mfa
 FROM days
 ORDER BY days.day;
+
+-- GetUserStandingIn is how a user relates to a tenant: whether the tenant is
+-- their home, the one that manages the account, and whether they hold one of
+-- its roles. A user who is neither isn't the tenant's to see. Soft-deleted
+-- users are included so the home tenant can restore or purge them.
+-- name: GetUserStandingIn :one
+SELECT COALESCE(u.tenant_id = @tenant_id::uuid, false)::boolean AS home,
+       EXISTS (
+           SELECT 1 FROM rbac.user_roles membership
+           JOIN rbac.roles member_role
+             ON member_role.id = membership.role_id AND member_role.tenant_id = membership.tenant_id
+           WHERE membership.user_id = u.id AND membership.tenant_id = @tenant_id::uuid
+       )::boolean AS member
+FROM "user".users u
+WHERE u.id = @id;
+
+-- The writes that remove a member from one tenant, leaving their account and
+-- every other tenant alone: their roles and groups there, and the application
+-- grants and API keys they hold there.
+
+-- name: RemoveUserRolesInTenant :execrows
+DELETE FROM rbac.user_roles WHERE user_id = @user_id AND tenant_id = @tenant_id;
+
+-- name: RemoveUserGroupsInTenant :exec
+DELETE FROM tenant.group_members WHERE user_id = @user_id AND tenant_id = @tenant_id;
+
+-- name: RevokeUserAppGrantsInTenant :exec
+UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+WHERE user_id = @user_id AND tenant_id = @tenant_id AND revoked_at IS NULL;
+
+-- name: RevokeUserAPIKeysInTenant :exec
+UPDATE auth.api_keys SET revoked_at = NOW()
+WHERE user_id = @user_id AND tenant_id = @tenant_id AND revoked_at IS NULL;

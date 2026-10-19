@@ -112,6 +112,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Post("/users/{id}/password", h.setPassword)
 	r.Delete("/users/{id}/mfa", h.resetMFA)
 	r.Post("/users/{id}/restore", h.restore)
+	r.Delete("/users/{id}/membership", h.removeMembership)
 	r.Delete("/users/{id}/purge", h.purge)
 
 	// User 360 — admin read surfaces (+ one force-sign-out mutation). See user360.go.
@@ -122,29 +123,117 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Put("/users/{id}/mfa-required", h.setMfaRequired)
 }
 
-// scopedID parses the {id} path param AND enforces that the target user belongs
-// to the caller's own tenant, returning ErrNotFound on any cross-tenant access
-// (QID-18 — previously every by-id user handler operated on the raw id with no
-// tenant scoping, so a tenant admin could read/modify/delete another tenant's
-// users by id). ErrNotFound (not Forbidden) is deliberate: it doesn't leak
-// whether the id exists in some other tenant.
-func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) {
+// standing parses the {id} path param and reports how that user relates to
+// the caller's tenant: whether the tenant is their home (it manages the
+// account) and whether they hold one of its roles.
+func (h *Handler) standing(r *http.Request) (id, tenantID uuid.UUID, home, member bool, err error) {
 	id, err = uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errs.ErrBadRequest.WithDetail("invalid id")
+		return uuid.Nil, uuid.Nil, false, false, errs.ErrBadRequest.WithDetail("invalid id")
 	}
 	tenantID, err = httpx.RequireTenant(r)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, false, false, err
 	}
-	owner, err := h.Repo.TenantOf(r.Context(), id)
+	home, member, err = h.Repo.StandingIn(r.Context(), id, tenantID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, false, false, err
+	}
+	return id, tenantID, home, member, nil
+}
+
+// memberID resolves {id} for reading a user: anyone who belongs to the
+// caller's tenant, by a role there or by it being their home. Anyone else is
+// ErrNotFound, which doesn't leak whether the id exists in another tenant.
+func (h *Handler) memberID(r *http.Request) (id, tenantID uuid.UUID, err error) {
+	id, tenantID, home, member, err := h.standing(r)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
-	if owner != tenantID {
+	if !home && !member {
 		return uuid.Nil, uuid.Nil, errs.ErrNotFound
 	}
 	return id, tenantID, nil
+}
+
+// scopedID resolves {id} for an action on the whole account (status,
+// password, MFA, deletion, signing out everywhere): only the tenant the
+// account belongs to may take one. A member whose account belongs elsewhere
+// is ErrUserManagedElsewhere (the tenant removes them instead); anyone else is
+// ErrNotFound.
+func (h *Handler) scopedID(r *http.Request) (id, tenantID uuid.UUID, err error) {
+	id, tenantID, home, member, err := h.standing(r)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
+	switch {
+	case home:
+		return id, tenantID, nil
+	case member:
+		return uuid.Nil, uuid.Nil, errs.ErrUserManagedElsewhere
+	default:
+		return uuid.Nil, uuid.Nil, errs.ErrNotFound
+	}
+}
+
+// removeMembership removes a member whose account belongs elsewhere from the
+// caller's tenant, in one transaction: their roles and groups here, their
+// sessions here (announced), the application grants and API keys they hold
+// here, an audit row and an event. Their account and their other tenants are
+// left alone. The tenant's own accounts are suspended or deleted instead
+// (ErrUserManagedHere).
+func (h *Handler) removeMembership(w http.ResponseWriter, r *http.Request) {
+	id, tenantID, home, member, err := h.standing(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	switch {
+	case home:
+		httpx.WriteError(w, r, errs.ErrUserManagedHere)
+		return
+	case !member:
+		httpx.WriteError(w, r, errs.ErrNotFound)
+		return
+	}
+	out, err := h.removeMembershipWithEvidence(r, tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// Removal is what removing a member from a tenant took away.
+type Removal struct {
+	ID            uuid.UUID `json:"id"`
+	RolesRemoved  int64     `json:"roles_removed"`
+	SessionsEnded int       `json:"sessions_ended"`
+}
+
+func (h *Handler) removeMembershipWithEvidence(r *http.Request, tenantID, userID uuid.UUID) (*Removal, error) {
+	ctx := r.Context()
+	tx, err := h.Repo.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	roles, err := h.Repo.RemoveFromTenantTx(ctx, tx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	ended, err := sessionsignal.EndUserSessionsInTenant(ctx, tx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonRemovedFromOrganization, ended...)
+	if err := recordSuspensionEvidence(ctx, tx, r, tenantID, userID, "user.removed_from_organization"); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &Removal{ID: userID, RolesRemoved: roles, SessionsEnded: len(ended)}, nil
 }
 
 // resetMFA clears a user's MFA factors so a locked-out user can re-enroll.
@@ -385,7 +474,7 @@ func (h *Handler) createWithEvidence(r *http.Request, in CreateInput, passwordHa
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
-	id, _, err := h.scopedID(r)
+	id, _, err := h.memberID(r)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

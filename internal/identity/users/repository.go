@@ -269,22 +269,40 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*User, error) {
 	return userFromGetRow(row), nil
 }
 
-// TenantOf returns the tenant a user belongs to, regardless of soft-delete
-// state (so it also guards restore/purge). Returns ErrNotFound for a missing
-// user or a tenant-less one. Used to enforce that admin by-id operations never
-// cross tenants (QID-18) — callers compare it to the requester's own tenant.
-func (r *Repository) TenantOf(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
-	raw, err := r.q.GetUserTenantOf(ctx, id)
+// StandingIn reports how a user relates to a tenant: home (the tenant manages
+// the account) and member (they hold one of its roles). ErrNotFound for a
+// user that doesn't exist.
+func (r *Repository) StandingIn(ctx context.Context, id, tenantID uuid.UUID) (home, member bool, err error) {
+	row, err := r.q.GetUserStandingIn(ctx, dbgen.GetUserStandingInParams{ID: id, TenantID: tenantID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, errs.ErrNotFound
+		return false, false, errs.ErrNotFound
 	}
 	if err != nil {
-		return uuid.Nil, err
+		return false, false, err
 	}
-	if !raw.Valid {
-		return uuid.Nil, errs.ErrNotFound
+	return row.Home, row.Member, nil
+}
+
+// RemoveFromTenantTx removes a user from one tenant in tx: their roles and
+// groups there, and the application grants and API keys they hold there. It
+// returns how many roles were removed. Their account and other tenants are
+// untouched.
+func (r *Repository) RemoveFromTenantTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID) (int64, error) {
+	q := r.q.WithTx(tx)
+	roles, err := q.RemoveUserRolesInTenant(ctx, dbgen.RemoveUserRolesInTenantParams{UserID: userID, TenantID: tenantID})
+	if err != nil {
+		return 0, err
 	}
-	return uuid.UUID(raw.Bytes), nil
+	if err := q.RemoveUserGroupsInTenant(ctx, dbgen.RemoveUserGroupsInTenantParams{UserID: userID, TenantID: tenantID}); err != nil {
+		return 0, err
+	}
+	if err := q.RevokeUserAppGrantsInTenant(ctx, dbgen.RevokeUserAppGrantsInTenantParams{UserID: userID, TenantID: tenantID}); err != nil {
+		return 0, err
+	}
+	if err := q.RevokeUserAPIKeysInTenant(ctx, dbgen.RevokeUserAPIKeysInTenantParams{UserID: uuidToPgtype(userID), TenantID: tenantID}); err != nil {
+		return 0, err
+	}
+	return roles, nil
 }
 
 func (r *Repository) GetByEmail(ctx context.Context, tenantID uuid.UUID, email string) (*User, error) {
