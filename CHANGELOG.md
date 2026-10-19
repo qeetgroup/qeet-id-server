@@ -223,6 +223,23 @@ The changes below are the work staged for that first release.
   `jwt_signing_key_active{kid}`, `jwt_signing_key_snapshot_timestamp_seconds` (age = `time()` minus
   it) and `jwt_signing_key_sync_failures_total`.
 
+**Proof key for every application (2026-10-20)**
+
+* **oidc:** every application must send a PKCE `code_challenge` (S256), and a `nonce` with
+  `openid`. Only public applications needed PKCE: a confidential one that left it out got a working
+  flow with nothing tying the code or the ID token to the browser that started it (OAuth 2.1 and
+  RFC 9700 require PKCE for every client type). Authorize now refuses such a request with
+  `invalid_request` (`oidc.code_challenge_required`, `oidc.nonce_required`), before any consent is
+  asked; the nonce comes back in the ID token. A confidential application can be exempted from both
+  until a date within 90 days (`pkce_exempt_until` on `PATCH /v1/tenants/{tenantID}/oidc/clients/{id}`,
+  shown on the application, audited); a code issued under an exemption redeems only while it lasts.
+  No application is exempt by default. **Breaking** for a relying party that sends no proof key or
+  nonce.
+* **oidc:** an authorization code presented a second time now also revokes the grant its first
+  redemption issued, every renewal of it included (RFC 6749 §4.1.2), and is audited as
+  `oidc.authorization_code_reused`; other grants of the application stay. Migration 0141 records
+  the code a grant came from.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

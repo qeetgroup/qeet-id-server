@@ -12,10 +12,12 @@ INSERT INTO auth.oidc_clients (
 ) VALUES (@tenant_id, @client_id, sqlc.narg('client_secret_hash'), @type, @name,
           @redirect_uris, @post_logout_uris, @grant_types, @scopes)
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at;
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until;
 
+-- pkce_exempt is whether the client's PKCE exemption is in force now.
 -- name: GetClientForAuth :one
-SELECT id, tenant_id, client_secret_hash, type, grant_types
+SELECT id, tenant_id, client_secret_hash, type, grant_types,
+       (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
 FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientTenantAndScopes :one
@@ -25,7 +27,9 @@ SELECT tenant_id, scopes FROM auth.oidc_clients WHERE client_id = @client_id;
 SELECT name, tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientRedirectInfo :one
-SELECT tenant_id, type, scopes, redirect_uris FROM auth.oidc_clients WHERE client_id = @client_id;
+SELECT tenant_id, type, scopes, redirect_uris,
+       (pkce_exempt_until IS NOT NULL AND pkce_exempt_until > NOW())::bool AS pkce_exempt
+FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: GetClientPostLogoutURIs :one
 SELECT post_logout_uris FROM auth.oidc_clients WHERE client_id = @client_id;
@@ -54,7 +58,7 @@ WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListOIDCClients :many
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until
 FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
 
 -- CountOIDCClientsByTenant counts a tenant's registered applications (relying
@@ -64,7 +68,7 @@ SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
 
 -- name: GetOIDCClient :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until
 FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: UpdateOIDCClient :one
@@ -73,17 +77,20 @@ UPDATE auth.oidc_clients SET
     redirect_uris    = COALESCE(sqlc.narg('redirect_uris'), redirect_uris),
     post_logout_uris = COALESCE(sqlc.narg('post_logout_uris'), post_logout_uris),
     grant_types      = COALESCE(sqlc.narg('grant_types'), grant_types),
-    scopes           = COALESCE(sqlc.narg('scopes'), scopes)
+    scopes           = COALESCE(sqlc.narg('scopes'), scopes),
+    pkce_exempt_until = CASE WHEN @set_pkce_exempt_until::bool
+                             THEN sqlc.narg('pkce_exempt_until')::timestamptz
+                             ELSE pkce_exempt_until END
 WHERE id = @id AND tenant_id = @tenant_id
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at;
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until;
 
 -- name: DeleteOIDCClient :one
 DELETE FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id RETURNING client_id;
 
 -- name: LockOIDCClientForUpdate :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until
 FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
 
 -- name: UpdateOIDCClientSecret :exec
@@ -137,9 +144,10 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- platform's when the organisation sets none. No token outlives the grant.
 -- name: InsertRefreshToken :exec
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
+     authorization_code_hash)
 SELECT @token_hash, @client_id, @user_id, @tenant_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
-       sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends
+       sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash')
 FROM (
     SELECT NOW() + COALESCE(
         (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = @tenant_id),
@@ -148,17 +156,19 @@ FROM (
 
 -- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 
 -- InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
 -- the new token expires no later than it.
 -- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at)
+    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
+     authorization_code_hash)
 VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes,
         LEAST(@expires_at::timestamptz, @grant_expires_at::timestamptz),
-        sqlc.narg('resource'), sqlc.narg('login_session_id'), @grant_expires_at::timestamptz)
+        sqlc.narg('resource'), sqlc.narg('login_session_id'), @grant_expires_at::timestamptz,
+        sqlc.narg('authorization_code_hash'))
 RETURNING id;
 
 -- name: MarkRefreshTokenUsed :exec
@@ -167,6 +177,12 @@ UPDATE auth.oidc_refresh_tokens SET used_at = NOW(), replaced_by = @new_id WHERE
 -- name: RevokeRefreshTokenChain :exec
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
 WHERE client_id = @client_id AND user_id = @user_id AND revoked_at IS NULL;
+
+-- RevokeGrantFromCode ends the grant redeemed from an authorization code,
+-- every rotation of it included: the code was presented a second time.
+-- name: RevokeGrantFromCode :execrows
+UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
+WHERE client_id = @client_id AND authorization_code_hash = @authorization_code_hash AND revoked_at IS NULL;
 
 -- name: RevokeRefreshTokenByHash :exec
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()

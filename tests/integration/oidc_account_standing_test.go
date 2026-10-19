@@ -49,7 +49,7 @@ func TestApplicationGrantsStopWhenTheAccountDoes(t *testing.T) {
 	}
 	code := func(t *testing.T, userID uuid.UUID) string {
 		t.Helper()
-		c, _, err := svc.Authorize(ctx, userID, client.ClientID, redirect, []string{"openid"}, "", "", "")
+		c, _, err := svc.Authorize(ctx, userID, client.ClientID, redirect, []string{"openid"}, testNonce, testChallenge, "S256")
 		if err != nil {
 			t.Fatalf("authorize: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestApplicationGrantsStopWhenTheAccountDoes(t *testing.T) {
 	}
 	signIn := func(t *testing.T, userID uuid.UUID) *oidc.TokenResponse {
 		t.Helper()
-		out, err := svc.ExchangeCode(ctx, client.ClientID, secret, code(t, userID), redirect, "", "")
+		out, err := svc.ExchangeCode(ctx, client.ClientID, secret, code(t, userID), redirect, testVerifier, "")
 		if err != nil {
 			t.Fatalf("exchange: %v", err)
 		}
@@ -111,7 +111,7 @@ func TestApplicationGrantsStopWhenTheAccountDoes(t *testing.T) {
 		uma := member(t)
 		c := code(t, uma)
 		suspend(t, uma)
-		if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, c, redirect, "", ""); !errors.Is(err, errs.ErrAuthAccountSuspended) {
+		if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, c, redirect, testVerifier, ""); !errors.Is(err, errs.ErrAuthAccountSuspended) {
 			t.Fatalf("exchange after suspend: err = %v, want %v", err, errs.ErrAuthAccountSuspended)
 		}
 	})

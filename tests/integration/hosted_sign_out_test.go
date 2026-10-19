@@ -107,7 +107,7 @@ func (f *hostedSignOutFixture) signIn(t *testing.T, ctx context.Context, userID 
 // code the application receives.
 func (f *hostedSignOutFixture) authorize(t *testing.T, cookie string) string {
 	t.Helper()
-	q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}}
+	q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?"+q.Encode(), nil)
 	req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
 	rr := httptest.NewRecorder()
@@ -123,7 +123,7 @@ func (f *hostedSignOutFixture) authorize(t *testing.T, cookie string) string {
 // refresh grant.
 func (f *hostedSignOutFixture) appSignIn(t *testing.T, ctx context.Context, cookie string) *oidc.TokenResponse {
 	t.Helper()
-	issued, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, f.authorize(t, cookie), f.redirectURI, "", "")
+	issued, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, f.authorize(t, cookie), f.redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestSignOutEndsTheSessionAndWhatItStarted(t *testing.T) {
 			if _, err := f.oidc.RefreshToken(ctx, f.clientID, f.secret, refresh, ""); !errors.Is(err, errs.ErrOIDCRefreshTokenRevoked) {
 				t.Fatalf("the application's grant still renews after sign-out: err = %v", err)
 			}
-			if _, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, pendingCode, f.redirectURI, "", ""); !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {
+			if _, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, pendingCode, f.redirectURI, testVerifier, ""); !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {
 				t.Fatalf("a code minted before sign-out can still be redeemed: err = %v", err)
 			}
 		})

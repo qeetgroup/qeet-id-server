@@ -4822,7 +4822,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/v1/oauth/authorize?response_type=code&client_id={{oidcClientId}}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile%20email&state=xyz&code_challenge=REPLACE&code_challenge_method=S256",
+              "raw": "{{baseUrl}}/v1/oauth/authorize?response_type=code&client_id={{oidcClientId}}&redirect_uri=http://localhost:3000/callback&scope=openid%20profile%20email&state=xyz&code_challenge=REPLACE&code_challenge_method=S256&nonce=REPLACE_WITH_NONCE",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -4859,6 +4859,10 @@
                 {
                   "key": "code_challenge_method",
                   "value": "S256"
+                },
+                {
+                  "key": "nonce",
+                  "value": "REPLACE_WITH_NONCE"
                 }
               ]
             }

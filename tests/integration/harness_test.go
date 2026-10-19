@@ -130,6 +130,15 @@ func testEnvelope(t *testing.T) *envelope.Cipher {
 	return box
 }
 
+// The proof key and nonce the tests' authorization requests carry: every
+// application sends a PKCE code_challenge (S256), and a nonce with openid.
+// The verifier and challenge are RFC 7636 appendix B's.
+const (
+	testVerifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	testChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	testNonce     = "n-0S6_WzA2Mj"
+)
+
 // uniqueSlug returns a short, collision-resistant identifier for test data.
 func uniqueSlug(prefix string) string {
 	return prefix + "-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:10]

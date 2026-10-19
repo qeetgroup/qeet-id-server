@@ -39,6 +39,9 @@ func init() {
 		errs.CodeOIDCCodeVerifierRequired:           http.StatusBadRequest,
 		errs.CodeOIDCCodeVerifierInvalid:            http.StatusBadRequest,
 		errs.CodeOIDCCodeChallengeMethodUnsupported: http.StatusBadRequest,
+		errs.CodeOIDCNonceRequired:                  http.StatusBadRequest,
+		errs.CodeOIDCNonceInvalid:                   http.StatusBadRequest,
+		errs.CodeOIDCPKCEExemptionInvalid:           http.StatusUnprocessableEntity,
 
 		// Token exchange (RFC 8693) subject/actor tokens.
 		errs.CodeOIDCSubjectTokenRequired:          http.StatusBadRequest,
