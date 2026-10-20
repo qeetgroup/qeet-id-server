@@ -427,6 +427,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 func ApplicationTokenRoutes() []string {
 	return []string{
 		"GET /v1/oauth/userinfo",
+		"POST /v1/oauth/userinfo",
 	}
 }
 

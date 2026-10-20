@@ -217,6 +217,16 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**UserInfo and the ID token say who signed in (2026-10-20)**
+
+* **oidc:** `/v1/oauth/userinfo` returned only `sub` and the tenant id, so no application could
+  learn a person's email or name over standard OIDC though discovery advertised the scopes. It now
+  returns the standard claims the token's scopes grant (`email` → `email`, `email_verified`;
+  `profile` → `name`, `picture`, `locale`, `updated_at`; `phone` → `phone_number`,
+  `phone_number_verified`), and the ID token carries the same; discovery lists them in
+  `claims_supported`. A token without `openid` gets `403 oidc.insufficient_scope`; POST works as
+  well as GET. Bearer 401s now carry `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750).
+
 **Token exchange can't extend a credential (2026-10-20)**
 
 * **oidc:** every token exchange issued a fresh, full-lifetime token, the result could be exchanged

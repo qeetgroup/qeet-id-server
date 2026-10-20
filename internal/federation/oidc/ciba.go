@@ -314,7 +314,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, "")
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}

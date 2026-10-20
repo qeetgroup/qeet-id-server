@@ -417,3 +417,10 @@ SELECT EXISTS (
     SELECT 1 FROM auth.oidc_resources
     WHERE tenant_id = @tenant_id AND server_client_id = @client_id AND identifier = ANY(@identifiers::text[])
 )::bool;
+
+-- GetUserinfo is what userinfo and the ID token may say about a live account
+-- (QTID-165). locale is read from the profile metadata when set.
+-- name: GetUserinfo :one
+SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
+       COALESCE(metadata->>'locale', '')::text AS locale
+FROM "user".users WHERE id = @id AND deleted_at IS NULL AND status = 'active';

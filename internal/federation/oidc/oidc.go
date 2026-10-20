@@ -937,7 +937,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, derefStr(nonce))
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Nonce: derefStr(nonce), Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}
@@ -1090,7 +1090,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, "")
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}
@@ -1269,19 +1269,36 @@ func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID st
 	})
 }
 
-func (s *Service) signIDToken(userID, tenantID uuid.UUID, audience, nonce string) (string, error) {
+// idToken is what an ID token is minted from.
+type idToken struct {
+	UserID, TenantID uuid.UUID
+	// Audience is the client the token is for; Nonce the one the
+	// authorization request sent ("" for none).
+	Audience, Nonce string
+	// Scopes decide which standard claims it carries (see userClaims).
+	Scopes []string
+}
+
+func (s *Service) signIDToken(ctx context.Context, in idToken) (string, error) {
 	now := time.Now().UTC()
 	exp := now.Add(s.issuer.AccessTTL())
 	claims := jwt.MapClaims{
 		"iss":       s.issuer.JWTIssuer(),
-		"sub":       userID.String(),
-		"aud":       audience,
+		"sub":       in.UserID.String(),
+		"aud":       in.Audience,
 		"exp":       exp.Unix(),
 		"iat":       now.Unix(),
-		"tenant_id": tenantID.String(),
+		"tenant_id": in.TenantID.String(),
 	}
-	if nonce != "" {
-		claims["nonce"] = nonce
+	if in.Nonce != "" {
+		claims["nonce"] = in.Nonce
+	}
+	user, err := s.userClaims(ctx, in.UserID, in.Scopes)
+	if err != nil {
+		return "", err
+	}
+	for k, v := range user {
+		claims[k] = v
 	}
 	return s.issuer.Sign(claims)
 }
@@ -1368,6 +1385,7 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/oidc/clients", h.registerClient)
 	r.Get("/oauth/userinfo", h.userinfo)
+	r.Post("/oauth/userinfo", h.userinfo) // OIDC Core §5.3.1 allows both
 	r.Get("/oauth/bc-authorize/pending", h.pendingBackchannel)
 	r.Post("/oauth/bc-authorize/decision", h.backchannelDecision)
 	r.Get("/tenants/{tenantID}/oauth/grants", h.listGrants)
@@ -2013,18 +2031,6 @@ func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) userinfo(w http.ResponseWriter, r *http.Request) {
-	p := httpx.PrincipalFromCtx(r.Context())
-	if p == nil || p.UserID == nil {
-		httpx.WriteError(w, r, errs.ErrUnauthorized)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"sub":       p.UserID,
-		"tenant_id": p.TenantID,
-	})
-}
-
 func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 	base := externalScheme(r) + "://" + r.Host
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
@@ -2040,7 +2046,8 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
-		"scopes_supported":                      []string{"openid", "profile", "email"},
+		"scopes_supported":                      []string{"openid", "profile", "email", "phone"},
+		"claims_supported":                      claimsSupported(),
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
 		"backchannel_token_delivery_modes_supported": []string{"poll"},

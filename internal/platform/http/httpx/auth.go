@@ -55,6 +55,7 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 			}
 			auth := r.Header.Get("Authorization")
 			if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="qeet"`)
 				WriteError(w, r, errs.ErrUnauthorized)
 				return
 			}
@@ -67,6 +68,7 @@ func RequireAuth(v *AuthVerifier) func(http.Handler) http.Handler {
 				// "expired" / "issuer mismatch" — an oracle that maps our key
 				// rotation state for an unauthenticated caller. The cause is
 				// logged by WriteError; the client gets a bare 401.
+				w.Header().Set("WWW-Authenticate", `Bearer realm="qeet", error="invalid_token"`)
 				WriteError(w, r, errs.ErrUnauthorized.Wrap(err))
 				return
 			}

@@ -41,6 +41,7 @@ const (
 	CodeOIDCPKCEExemptionInvalid           = "oidc.pkce_exemption_invalid"
 	CodeOIDCResourceInvalid                = "oidc.resource_invalid"
 	CodeOIDCExchangeDepthExceeded          = "oidc.exchange_depth_exceeded"
+	CodeOIDCInsufficientScope              = "oidc.insufficient_scope"
 	CodeOIDCResourceExists                 = "oidc.resource_exists"
 	CodeOIDCResourceNotFound               = "oidc.resource_not_found"
 
@@ -134,6 +135,7 @@ var (
 	ErrOIDCNonceInvalid  = New(CodeOIDCNonceInvalid, "The nonce is too long (at most 255 characters).")
 	// ErrOIDCPKCEExemptionInvalid: a PKCE exemption must be for a confidential
 	// application, and end in the future and within 90 days.
+	ErrOIDCInsufficientScope     = New(CodeOIDCInsufficientScope, "This token wasn't issued with the openid scope.")
 	ErrOIDCExchangeDepthExceeded = New(CodeOIDCExchangeDepthExceeded, "This token was already exchanged as many times as allowed.")
 	ErrOIDCResourceInvalid       = New(CodeOIDCResourceInvalid, "A resource identifier is an absolute URI without a fragment, such as https://api.example.com.")
 	ErrOIDCResourceExists        = New(CodeOIDCResourceExists, "That resource is already registered.")
