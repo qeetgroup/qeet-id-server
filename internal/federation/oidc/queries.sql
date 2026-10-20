@@ -142,11 +142,12 @@ ON CONFLICT (user_id, client_id) DO UPDATE SET scopes = EXCLUDED.scopes, granted
 -- InsertRefreshToken starts a grant. However often it is renewed, it ends at
 -- grant_expires_at: the organisation's maximum session age from now, or the
 -- platform's when the organisation sets none. No token outlives the grant.
+-- A new grant's first token: its id names the grant (grant_id).
 -- name: InsertRefreshToken :exec
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash)
-SELECT @token_hash, @client_id, @user_id, @tenant_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
+    (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
+     grant_expires_at, authorization_code_hash)
+SELECT @id, @id, @token_hash, @client_id, @user_id, @tenant_id, @scopes, LEAST(@expires_at::timestamptz, g.ends),
        sqlc.narg('resource'), sqlc.narg('login_session_id'), g.ends, sqlc.narg('authorization_code_hash')
 FROM (
     SELECT NOW() + COALESCE(
@@ -156,7 +157,7 @@ FROM (
 
 -- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id
 FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 
 -- InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -164,11 +165,11 @@ FROM auth.oidc_refresh_tokens WHERE token_hash = @token_hash FOR UPDATE;
 -- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
     (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash)
+     authorization_code_hash, grant_id)
 VALUES (@token_hash, @client_id, @user_id, @tenant_id, @scopes,
         LEAST(@expires_at::timestamptz, @grant_expires_at::timestamptz),
         sqlc.narg('resource'), sqlc.narg('login_session_id'), @grant_expires_at::timestamptz,
-        sqlc.narg('authorization_code_hash'))
+        sqlc.narg('authorization_code_hash'), sqlc.narg('grant_id'))
 RETURNING id;
 
 -- name: MarkRefreshTokenUsed :exec
@@ -184,9 +185,15 @@ WHERE client_id = @client_id AND user_id = @user_id AND revoked_at IS NULL;
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
 WHERE client_id = @client_id AND authorization_code_hash = @authorization_code_hash AND revoked_at IS NULL;
 
--- name: RevokeRefreshTokenByHash :exec
-UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE token_hash = @token_hash AND client_id = @client_id AND revoked_at IS NULL;
+-- RevokeRefreshTokenGrant ends the whole grant (every rotation) the
+-- presented token belongs to, when it was issued to the calling client, and
+-- returns the rows it ended (none: unknown, another client's, or already ended).
+-- name: RevokeRefreshTokenGrant :many
+UPDATE auth.oidc_refresh_tokens t SET revoked_at = NOW()
+FROM (SELECT p.grant_id FROM auth.oidc_refresh_tokens p
+      WHERE p.token_hash = @token_hash AND p.client_id = @client_id) g
+WHERE t.grant_id = g.grant_id AND t.client_id = @client_id AND t.revoked_at IS NULL
+RETURNING t.id, t.user_id, t.tenant_id, t.grant_id;
 
 -- name: GetRefreshTokenForIntrospect :one
 SELECT client_id, user_id, tenant_id, scopes, issued_at, expires_at, used_at, revoked_at

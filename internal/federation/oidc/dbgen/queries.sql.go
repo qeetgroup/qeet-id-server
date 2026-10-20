@@ -751,18 +751,19 @@ func (q *Queries) InsertOIDCClient(ctx context.Context, arg InsertOIDCClientPara
 const insertRefreshToken = `-- name: InsertRefreshToken :exec
 
 INSERT INTO auth.oidc_refresh_tokens
-    (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash)
-SELECT $1, $2, $3, $4, $5, LEAST($6::timestamptz, g.ends),
-       $7, $8, g.ends, $9
+    (id, grant_id, token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id,
+     grant_expires_at, authorization_code_hash)
+SELECT $1, $1, $2, $3, $4, $5, $6, LEAST($7::timestamptz, g.ends),
+       $8, $9, g.ends, $10
 FROM (
     SELECT NOW() + COALESCE(
-        (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = $4),
-        make_interval(secs => $10::float8)) AS ends
+        (SELECT sp.session_max_age FROM tenant.security_policies sp WHERE sp.tenant_id = $5),
+        make_interval(secs => $11::float8)) AS ends
 ) g
 `
 
 type InsertRefreshTokenParams struct {
+	ID                    uuid.UUID
 	TokenHash             string
 	ClientID              string
 	UserID                uuid.UUID
@@ -783,8 +784,10 @@ type InsertRefreshTokenParams struct {
 // InsertRefreshToken starts a grant. However often it is renewed, it ends at
 // grant_expires_at: the organisation's maximum session age from now, or the
 // platform's when the organisation sets none. No token outlives the grant.
+// A new grant's first token: its id names the grant (grant_id).
 func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshTokenParams) error {
 	_, err := q.db.Exec(ctx, insertRefreshToken,
+		arg.ID,
 		arg.TokenHash,
 		arg.ClientID,
 		arg.UserID,
@@ -802,11 +805,11 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 const insertRotatedRefreshToken = `-- name: InsertRotatedRefreshToken :one
 INSERT INTO auth.oidc_refresh_tokens
     (token_hash, client_id, user_id, tenant_id, scopes, expires_at, resource, login_session_id, grant_expires_at,
-     authorization_code_hash)
+     authorization_code_hash, grant_id)
 VALUES ($1, $2, $3, $4, $5,
         LEAST($6::timestamptz, $7::timestamptz),
         $8, $9, $7::timestamptz,
-        $10)
+        $10, $11)
 RETURNING id
 `
 
@@ -821,6 +824,7 @@ type InsertRotatedRefreshTokenParams struct {
 	Resource              *string
 	LoginSessionID        pgtype.UUID
 	AuthorizationCodeHash *string
+	GrantID               pgtype.UUID
 }
 
 // InsertRotatedRefreshToken continues a grant: it keeps the grant's end, and
@@ -837,6 +841,7 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 		arg.Resource,
 		arg.LoginSessionID,
 		arg.AuthorizationCodeHash,
+		arg.GrantID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -1327,7 +1332,7 @@ func (q *Queries) LockOIDCClientForUpdate(ctx context.Context, arg LockOIDCClien
 
 const lockRefreshToken = `-- name: LockRefreshToken :one
 SELECT id, client_id, user_id, tenant_id, scopes, expires_at,
-       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash
+       used_at, revoked_at, resource, login_session_id, grant_expires_at, authorization_code_hash, grant_id
 FROM auth.oidc_refresh_tokens WHERE token_hash = $1 FOR UPDATE
 `
 
@@ -1344,6 +1349,7 @@ type LockRefreshTokenRow struct {
 	LoginSessionID        pgtype.UUID
 	GrantExpiresAt        time.Time
 	AuthorizationCodeHash *string
+	GrantID               pgtype.UUID
 }
 
 func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockRefreshTokenRow, error) {
@@ -1362,6 +1368,7 @@ func (q *Queries) LockRefreshToken(ctx context.Context, tokenHash string) (LockR
 		&i.LoginSessionID,
 		&i.GrantExpiresAt,
 		&i.AuthorizationCodeHash,
+		&i.GrantID,
 	)
 	return i, err
 }
@@ -1494,21 +1501,6 @@ func (q *Queries) RevokeGrantFromCode(ctx context.Context, arg RevokeGrantFromCo
 	return result.RowsAffected(), nil
 }
 
-const revokeRefreshTokenByHash = `-- name: RevokeRefreshTokenByHash :exec
-UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
-WHERE token_hash = $1 AND client_id = $2 AND revoked_at IS NULL
-`
-
-type RevokeRefreshTokenByHashParams struct {
-	TokenHash string
-	ClientID  string
-}
-
-func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, arg RevokeRefreshTokenByHashParams) error {
-	_, err := q.db.Exec(ctx, revokeRefreshTokenByHash, arg.TokenHash, arg.ClientID)
-	return err
-}
-
 const revokeRefreshTokenChain = `-- name: RevokeRefreshTokenChain :exec
 UPDATE auth.oidc_refresh_tokens SET revoked_at = NOW()
 WHERE client_id = $1 AND user_id = $2 AND revoked_at IS NULL
@@ -1522,6 +1514,54 @@ type RevokeRefreshTokenChainParams struct {
 func (q *Queries) RevokeRefreshTokenChain(ctx context.Context, arg RevokeRefreshTokenChainParams) error {
 	_, err := q.db.Exec(ctx, revokeRefreshTokenChain, arg.ClientID, arg.UserID)
 	return err
+}
+
+const revokeRefreshTokenGrant = `-- name: RevokeRefreshTokenGrant :many
+UPDATE auth.oidc_refresh_tokens t SET revoked_at = NOW()
+FROM (SELECT p.grant_id FROM auth.oidc_refresh_tokens p
+      WHERE p.token_hash = $2 AND p.client_id = $1) g
+WHERE t.grant_id = g.grant_id AND t.client_id = $1 AND t.revoked_at IS NULL
+RETURNING t.id, t.user_id, t.tenant_id, t.grant_id
+`
+
+type RevokeRefreshTokenGrantParams struct {
+	ClientID  string
+	TokenHash string
+}
+
+type RevokeRefreshTokenGrantRow struct {
+	ID       uuid.UUID
+	UserID   uuid.UUID
+	TenantID uuid.UUID
+	GrantID  pgtype.UUID
+}
+
+// RevokeRefreshTokenGrant ends the whole grant (every rotation) the
+// presented token belongs to, when it was issued to the calling client, and
+// returns the rows it ended (none: unknown, another client's, or already ended).
+func (q *Queries) RevokeRefreshTokenGrant(ctx context.Context, arg RevokeRefreshTokenGrantParams) ([]RevokeRefreshTokenGrantRow, error) {
+	rows, err := q.db.Query(ctx, revokeRefreshTokenGrant, arg.ClientID, arg.TokenHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RevokeRefreshTokenGrantRow{}
+	for rows.Next() {
+		var i RevokeRefreshTokenGrantRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TenantID,
+			&i.GrantID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const takeConsentRequest = `-- name: TakeConsentRequest :one

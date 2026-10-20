@@ -164,7 +164,7 @@ paths:
   /oauth/revoke:
     post:
       operationId: post_oauth_revoke
-      description: 'Revokes an access or refresh token so it can no longer be used (RFC 7009), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials; per the RFC the endpoint returns 200 even for an unknown or already-invalid token. Mounted at the root, not under /v1; use the introspection endpoint to confirm a token''s state. A public client may revoke its own tokens with its client_id alone (RFC 7009); a refresh token is only ever revoked for the client it was issued to.'
+      description: 'Revokes a refresh token (RFC 7009), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials. Revoking a refresh token ends the whole grant it belongs to, every earlier and later rotation of it, so no link of the chain stays usable; introspection then reports every link inactive, the grant leaves the admin grant list, and the revocation is audited as oidc.grant_revoked. An access token can''t be revoked (it is stateless and lasts out its short lifetime): presenting one answers 400 unsupported_token_type. Per the RFC the endpoint returns 200 for an unknown or already-invalid token, and for another client''s token, which it leaves untouched. Mounted at the root, not under /v1. A public client may revoke its own tokens with its client_id alone.'
       summary: Token revoke (RFC 7009)
       tags:
         - OIDC
