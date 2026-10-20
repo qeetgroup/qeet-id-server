@@ -11,6 +11,7 @@ import (
 // error_status.go table.
 func init() {
 	registerStatuses(map[string]int{
-		errs.CodeRiskCIDRInvalid: http.StatusUnprocessableEntity,
+		errs.CodeRiskCIDRInvalid:        http.StatusUnprocessableEntity,
+		errs.CodeRiskRulesLockOutCaller: http.StatusConflict,
 	})
 }
