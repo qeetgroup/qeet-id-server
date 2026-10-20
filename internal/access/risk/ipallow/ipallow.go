@@ -279,6 +279,18 @@ func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, i
 	return errs.ErrAuthAddressNotAllowed
 }
 
+// refusesCaller reports whether rules, enforced, would refuse the caller's own
+// address. A change to enforced rules that does is refused: the organisation
+// would lock its admins out, with no way back in to undo it. The console calls
+// from its own server, so there it is the console's address that must stay
+// allowed.
+func refusesCaller(rules []Rule, r *http.Request) error {
+	if d := Decide(rules, httpx.ClientIP(r)); !d.Allowed {
+		return errs.ErrRiskRulesLockOutCaller.WithDetail("your address as the API sees it: " + httpx.ClientIP(r))
+	}
+	return nil
+}
+
 type Handler struct {
 	Service *Service
 }
@@ -329,6 +341,28 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 	})
 }
 
+// guardEnforced refuses a rule change, inside its transaction, when the rules
+// are enforced and the rule set it leaves would refuse the caller.
+func (h *Handler) guardEnforced(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID) error {
+	q := h.Service.q.WithTx(tx)
+	enabled, err := q.GetIPRulesEnabled(ctx, tenantID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !enabled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := q.ListIPRules(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	rules := make([]Rule, len(rows))
+	for i, row := range rows {
+		rules[i] = ruleFromModel(row)
+	}
+	return refusesCaller(rules, r)
+}
+
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
@@ -362,6 +396,17 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if in.Enabled {
+		rules, err := h.Service.ListRules(ctx, tenantID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if err := refusesCaller(rules, r); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -410,6 +455,10 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if err := h.guardEnforced(ctx, tx, r, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.recordAudit(ctx, tx, r, tenantID, "ip_rules.rule_added", map[string]any{"cidr": rule.CIDR, "action": rule.Action}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -440,6 +489,10 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	if err := h.Service.DeleteRule(ctx, tx, tenantID, ruleID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.guardEnforced(ctx, tx, r, tenantID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

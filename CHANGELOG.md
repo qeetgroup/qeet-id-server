@@ -206,6 +206,12 @@ The changes below are the work staged for that first release.
   password get the same answer), magic link (the link's organisation), sign-up (no account is
   created) and social (the browser goes back to the hosted login with `error=address_not_allowed`
   and its `return_to`). No hosted-login session is opened.
+* **ipallow:** an admin can no longer lock themselves out. Switching enforcement on, or adding or
+  removing a rule while it is on, is refused with `409 risk.rules_lock_out_caller` when the result
+  would refuse the address the change comes from; switching it off always works. The console signs
+  people in from its own server, so the API sees that server's address for console sign-ins (until
+  the console forwards the person's address, QTID-592 / QTID-828): it is the address that must stay
+  allowed, and an office-only allow list would otherwise have refused every console sign-in.
 * **policy:** the security policy's own `ip_allowlist` and `ip_denylist` are gone (migration 0140).
   Nothing ever read them; address rules are the one address control. The policy no longer reports
   them; a save that still sends them empty is accepted, and one with entries is refused with

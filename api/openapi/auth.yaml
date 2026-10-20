@@ -4130,7 +4130,12 @@ paths:
         refusal answers 403 auth.address_not_allowed (access_denied to an
         application), names no rule, and is audited as auth.address_refused
         with the rule responsible, the address and the path. Off, nothing is
-        checked.
+        checked. Switching them on is refused with 409
+        risk.rules_lock_out_caller when they would refuse the address the
+        request comes from (as are adding or removing a rule while they are on,
+        when the result would), so an admin can't lock themselves out; the
+        console calls from its own server, so its address must stay allowed.
+        Switching them off always works.
       responses:
         '200':
           description: OK

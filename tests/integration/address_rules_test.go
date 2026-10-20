@@ -398,3 +398,75 @@ func TestTheHostedLoginRefusesAnAddressAtSignIn(t *testing.T) {
 		}
 	})
 }
+
+// TestAddressRulesNeverLockOutTheAdminChangingThem pins the guard on enforced
+// rules: a change that would refuse the address it comes from (switching
+// enforcement on, adding a deny rule, removing the allow rule that covers it)
+// is refused, and nothing changes; switching enforcement off always works.
+func TestAddressRulesNeverLockOutTheAdminChangingThem(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	tenantID := createTenant(t, ctx, uniqueSlug("addr-guard"))
+	admin := createUserInTenant(t, ctx, tenantID)
+	addTenantMembership(t, ctx, admin, tenantID)
+	r := chi.NewRouter()
+	r.Use(withPrincipal(admin, tenantID))
+	(&ipallow.Handler{Service: ipallow.NewService(testPool)}).Mount(r)
+	// httptest requests come from 192.0.2.1.
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/tenants/"+tenantID.String()+"/ip-rules"+path, strings.NewReader(body))
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		return rr
+	}
+	lockedOut := func(t *testing.T, what string, rr *httptest.ResponseRecorder) {
+		t.Helper()
+		if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), errs.CodeRiskRulesLockOutCaller) {
+			t.Fatalf("%s: %d %s; want 409 %s", what, rr.Code, rr.Body.String(), errs.CodeRiskRulesLockOutCaller)
+		}
+	}
+	state := func(t *testing.T) (bool, []ipallow.Rule) {
+		t.Helper()
+		svc := ipallow.NewService(testPool)
+		on, err := svc.Enabled(ctx, tenantID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rules, err := svc.ListRules(ctx, tenantID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return on, rules
+	}
+
+	if rr := do(http.MethodPost, "", `{"cidr":"203.0.113.0/24","action":"allow"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("add an office rule while off: %d %s", rr.Code, rr.Body.String())
+	}
+	lockedOut(t, "switching on rules that leave the admin out", do(http.MethodPut, "/config", `{"enabled":true}`))
+	if on, _ := state(t); on {
+		t.Fatal("refused switch-on left the rules enforced")
+	}
+
+	rr := do(http.MethodPost, "", `{"cidr":"192.0.2.0/24","action":"allow","label":"admins"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("allow the admin's network: %d %s", rr.Code, rr.Body.String())
+	}
+	var own ipallow.Rule
+	_ = json.Unmarshal(rr.Body.Bytes(), &own)
+	if rr := do(http.MethodPut, "/config", `{"enabled":true}`); rr.Code != http.StatusOK {
+		t.Fatalf("switch on with the admin allowed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	lockedOut(t, "removing the rule that allows the admin", do(http.MethodDelete, "/"+own.ID.String(), ""))
+	lockedOut(t, "denying the admin's own address", do(http.MethodPost, "", `{"cidr":"192.0.2.1/32","action":"deny"}`))
+	if on, rules := state(t); !on || len(rules) != 2 {
+		t.Fatalf("refused changes altered the rules: enabled=%v, %d rule(s), want 2", on, len(rules))
+	}
+
+	if rr := do(http.MethodPut, "/config", `{"enabled":false}`); rr.Code != http.StatusOK {
+		t.Fatalf("switching the rules off: %d %s", rr.Code, rr.Body.String())
+	}
+}
