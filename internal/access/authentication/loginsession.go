@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -231,7 +232,23 @@ type LoginSessionEnded struct {
 	SessionID                 uuid.UUID
 	AppGrants                 int64
 	ExpiredAuthorizationCodes int64
+	// FrontChannelLogoutURIs are the pages of the applications in the session
+	// that the hosted signed-out page loads to sign the browser out of them
+	// (with iss and sid), as the SignOutNotifier returned them.
+	FrontChannelLogoutURIs []string
 }
+
+// SignOutNotifier tells the applications in an ended hosted-login session
+// (back-channel notices) and returns their front-channel sign-out pages.
+// Satisfied by *oidc.Service; an interface so auth doesn't import it. Wired
+// via SetSignOutNotifier.
+type SignOutNotifier interface {
+	NotifySignOut(ctx context.Context, sessionID, userID uuid.UUID, initiatedBy string) ([]string, error)
+}
+
+// SetSignOutNotifier wires the sign-out notices. Called from
+// internal/bootstrap/dependencies.go.
+func (s *Service) SetSignOutNotifier(n SignOutNotifier) { s.signOutNotifier = n }
 
 // EndLoginSession signs a browser out of the hosted login. In one transaction
 // it deletes the session behind the cookie, spends the authorization codes
@@ -303,6 +320,15 @@ func (s *Service) EndLoginSession(ctx context.Context, in EndLoginSessionInput) 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return LoginSessionEnded{}, err
+	}
+	// The session has ended whatever happens next; telling the applications
+	// is best effort (a failure is logged, and back-channel notices retry).
+	if s.signOutNotifier != nil {
+		uris, err := s.signOutNotifier.NotifySignOut(ctx, row.ID, row.UserID, in.ClientID)
+		if err != nil {
+			slog.Warn("auth: tell applications of a sign-out", "session_id", row.ID, "err", err)
+		}
+		ended.FrontChannelLogoutURIs = uris
 	}
 	return ended, nil
 }

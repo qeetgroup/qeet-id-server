@@ -65,6 +65,8 @@ type Service struct {
 	// addresses is the organisations' address rules, asked before any session
 	// in an organisation is issued or renewed (nil = no rules). See address.go.
 	addresses AddressPolicy
+	// signOutNotifier tells applications of a hosted sign-out (nil = none).
+	signOutNotifier SignOutNotifier
 	// signals announces ended sessions to subscribed applications (nil =
 	// announces nothing). Set via SetSessionSignals.
 	signals *sessionsignal.Signaller

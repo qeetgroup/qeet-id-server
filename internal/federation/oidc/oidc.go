@@ -29,6 +29,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/codes"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
 type Client struct {
@@ -45,6 +46,11 @@ type Client struct {
 	// PKCEExemptUntil is when this confidential application's exemption from
 	// sending a PKCE code_challenge (and a nonce) ends; nil: no exemption.
 	PKCEExemptUntil *time.Time `json:"pkce_exempt_until"`
+	// BackchannelLogoutURI receives a signed logout token, server to server,
+	// when someone it signed in signs out; FrontchannelLogoutURI is loaded by
+	// the hosted signed-out page. "" for none.
+	BackchannelLogoutURI  string `json:"backchannel_logout_uri"`
+	FrontchannelLogoutURI string `json:"frontchannel_logout_uri"`
 }
 
 type Service struct {
@@ -64,6 +70,10 @@ type Service struct {
 	addresses AddressPolicy
 	// lockout bounds wrong application secrets. See client_lockout.go.
 	lockout ClientLockout
+	// logoutClient sends back-channel sign-out notices under logoutEgress
+	// (the SSRF guard); nil sends none. See logout.go.
+	logoutClient *http.Client
+	logoutEgress *egress.Policy
 	// exchangeMaxDepth bounds a chain of token exchanges (config
 	// TOKEN_EXCHANGE_MAX_DEPTH).
 	exchangeMaxDepth int
@@ -112,6 +122,9 @@ type CreateClientInput struct {
 	PostLogoutURIs []string  `json:"post_logout_uris"`
 	GrantTypes     []string  `json:"grant_types"`
 	Scopes         []string  `json:"scopes"`
+	// Where the application hears of a sign-out (see Client).
+	BackchannelLogoutURI  string `json:"backchannel_logout_uri"`
+	FrontchannelLogoutURI string `json:"frontchannel_logout_uri"`
 }
 
 // Pool exposes the connection pool so handlers can begin their own
@@ -172,15 +185,17 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 	}
 	q := s.q.WithTx(tx)
 	row, err := q.InsertOIDCClient(ctx, dbgen.InsertOIDCClientParams{
-		TenantID:         in.TenantID,
-		ClientID:         clientID,
-		ClientSecretHash: secretHash,
-		Type:             in.Type,
-		Name:             in.Name,
-		RedirectUris:     in.RedirectURIs,
-		PostLogoutUris:   in.PostLogoutURIs,
-		GrantTypes:       in.GrantTypes,
-		Scopes:           in.Scopes,
+		TenantID:              in.TenantID,
+		ClientID:              clientID,
+		ClientSecretHash:      secretHash,
+		Type:                  in.Type,
+		Name:                  in.Name,
+		RedirectUris:          in.RedirectURIs,
+		PostLogoutUris:        in.PostLogoutURIs,
+		GrantTypes:            in.GrantTypes,
+		Scopes:                in.Scopes,
+		BackchannelLogoutUri:  in.BackchannelLogoutURI,
+		FrontchannelLogoutUri: in.FrontchannelLogoutURI,
 	})
 	if err != nil {
 		return nil, "", err
@@ -190,7 +205,8 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		Type: row.Type, Name: row.Name,
 		RedirectURIs: row.RedirectUris, PostLogoutURIs: row.PostLogoutUris,
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
-		PKCEExemptUntil: timePtr(row.PkceExemptUntil),
+		PKCEExemptUntil:      timePtr(row.PkceExemptUntil),
+		BackchannelLogoutURI: derefStr(row.BackchannelLogoutUri), FrontchannelLogoutURI: derefStr(row.FrontchannelLogoutUri),
 	}
 	return &c, raw, nil
 }
@@ -216,6 +232,9 @@ func validateClientInput(in CreateClientInput) error {
 	}
 	if in.Type == "public" && containsAny(in.GrantTypes, "token_exchange", grantTypeTokenExchange, grantTypeCIBA) {
 		return errs.ErrOIDCUnsupportedFlow
+	}
+	if !validLogoutURI(in.BackchannelLogoutURI) || !validLogoutURI(in.FrontchannelLogoutURI) {
+		return errs.ErrBadRequest.WithDetail("logout URIs must be absolute http(s) URLs without a fragment")
 	}
 	if contains(in.GrantTypes, "authorization_code") && len(in.RedirectURIs) == 0 {
 		return errs.ErrOIDCRedirectURIInvalid.WithDetail("authorization_code clients require a redirect URI")
@@ -1470,6 +1489,7 @@ func (h *Handler) MountBrowser(r chi.Router) {
 	r.Get("/oauth/login-context", h.loginContext)
 	r.Get("/oauth/logout", h.endSession)  // RP-Initiated Logout
 	r.Post("/oauth/logout", h.endSession) // (some RPs POST)
+	r.Get("/oauth/logout/continue", h.endSessionContinue)
 	// Device Authorization Grant (RFC 8628). device_authorization is
 	// client-authenticated M2M (CSRF-exempt in the router, like token-code);
 	// the device context + decision endpoints are SSO-cookie gated like
@@ -1868,9 +1888,51 @@ func (h *Handler) consentRequest(w http.ResponseWriter, r *http.Request) {
 // application. If the sign-out cannot be completed the error is shown and the
 // cookie kept, rather than telling the application the person signed out.
 func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	redirect := q.Get("post_logout_redirect_uri")
-	clientID := q.Get("client_id")
+	if err := r.ParseForm(); err != nil {
+		httpx.WriteError(w, r, errs.ErrBadRequest)
+		return
+	}
+	redirect := r.Form.Get("post_logout_redirect_uri")
+	clientID := r.Form.Get("client_id")
+	state := r.Form.Get("state")
+	hint := r.Form.Get("id_token_hint")
+	sessionID, userID, _, hasSession := h.loginSessionAt(r)
+
+	switch {
+	case hint != "":
+		// The hint names whose sign-in this is: it must be this one.
+		lh, err := h.Service.checkLogoutHint(hint, clientID, sessionID, userID)
+		if err != nil {
+			var oe *oauthError
+			if errors.As(err, &oe) {
+				writeOAuthError(w, oe)
+				return
+			}
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if clientID == "" {
+			clientID = lh.ClientID
+		}
+	case hasSession && !h.Service.confirmedFor(r.Form.Get("logout_confirmation"), sessionID):
+		// No hint and no confirmation: a plain link or image must not sign
+		// anyone out. The hosted login asks, then comes back with the ticket.
+		ticket, err := h.Service.logoutConfirmation(sessionID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		q := url.Values{"logout_confirmation": {ticket}}
+		for _, k := range []string{"client_id", "post_logout_redirect_uri", "state"} {
+			if v := r.Form.Get(k); v != "" {
+				q.Set(k, v)
+			}
+		}
+		http.Redirect(w, r, h.LoginBaseURL+"/logout?"+q.Encode(), http.StatusFound)
+		return
+	}
+
+	var frontchannel []string
 	if c, err := r.Cookie(auth.LoginSessionCookie); err == nil {
 		in := auth.EndLoginSessionInput{
 			Cookie: c.Value, InitiatedBy: auth.SignOutByApplication,
@@ -1879,18 +1941,51 @@ func (h *Handler) endSession(w http.ResponseWriter, r *http.Request) {
 		if clientID != "" && h.Service.RegisteredClient(r.Context(), clientID) {
 			in.ClientID = clientID
 		}
-		if _, err := h.Sessions.EndLoginSession(r.Context(), in); err != nil {
+		ended, err := h.Sessions.EndLoginSession(r.Context(), in)
+		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
+		frontchannel = ended.FrontChannelLogoutURIs
 	}
 	auth.ClearLoginSessionCookie(w, h.CookieSecure)
 
+	next := ""
 	if redirect != "" && clientID != "" {
 		if ok, err := h.Service.ValidatePostLogoutRedirect(r.Context(), clientID, redirect); err == nil && ok {
-			http.Redirect(w, r, appendQuery(redirect, "state", q.Get("state")), http.StatusFound)
+			next = appendQuery(redirect, "state", state)
+		}
+	}
+	if len(frontchannel) == 0 {
+		if next != "" {
+			http.Redirect(w, r, next, http.StatusFound)
 			return
 		}
+		http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+		return
+	}
+	// The hosted signed-out page loads each application's front-channel page,
+	// then continues to the validated address through a signed ticket (never
+	// a plain URL it would have to trust).
+	q := url.Values{"frontchannel_logout": frontchannel}
+	if next != "" {
+		ticket, err := h.Service.logoutContinuation(next)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		q.Set("continue", ticket)
+	}
+	http.Redirect(w, r, h.LoginBaseURL+"/logged-out?"+q.Encode(), http.StatusFound)
+}
+
+// endSessionContinue (GET /v1/oauth/logout/continue) sends the browser on to
+// the post-logout address a sign-out validated, from the signed ticket the
+// hosted signed-out page was given; anything else goes to the signed-out page.
+func (h *Handler) endSessionContinue(w http.ResponseWriter, r *http.Request) {
+	if next, ok := h.Service.continuationTarget(r.URL.Query().Get("ticket")); ok {
+		http.Redirect(w, r, next, http.StatusFound)
+		return
 	}
 	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
 }
@@ -2130,6 +2225,10 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"prompt_values_supported":               promptValuesSupported,
 		"response_modes_supported":              responseModesSupported,
 		"request_parameter_supported":           false,
+		"backchannel_logout_supported":          true,
+		"backchannel_logout_session_supported":  true,
+		"frontchannel_logout_supported":         true,
+		"frontchannel_logout_session_supported": true,
 		"request_uri_parameter_supported":       false,
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
