@@ -1,37 +1,25 @@
-// Command scheduler runs the Qeet ID scheduled maintenance jobs — low-frequency,
-// tenant-wide housekeeping. Replicas coordinate via Postgres advisory locks, so
-// running more than one is safe (only the lock winner executes each job).
+// Command scheduler runs the Qeet ID scheduled maintenance jobs (audit-chain
+// verification and the cleanups) standalone. The API normally runs them as
+// its embedded "scheduler" worker; either way each job runs once per interval
+// across every instance, so running this beside the API is safe (QTID-326).
 package main
 
 import (
 	"context"
-	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
-	auth "github.com/qeetgroup/qeet-id-server/internal/access/authentication"
-	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
-	"github.com/qeetgroup/qeet-id-server/internal/access/threat/risk"
+	"github.com/qeetgroup/qeet-id-server/internal/bootstrap"
 	webhook "github.com/qeetgroup/qeet-id-server/internal/developer/webhooks"
-	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
+	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
 	logger "github.com/qeetgroup/qeet-id-server/internal/platform/observability/logging"
 )
-
-type scheduledJob struct {
-	name     string
-	interval time.Duration
-	run      func(ctx context.Context) error
-}
 
 func main() {
 	cfg, err := config.Load()
@@ -63,153 +51,15 @@ func main() {
 		slog.Error("connect db", "err", err)
 		os.Exit(1)
 	}
+	defer pool.Close()
 	// Sessions the cleanup removes that were never ended are announced
 	// (session.revoked, reason expired) to the organisations' subscribers.
 	sessionSignals := sessionsignal.New(webhook.NewService(pool).EnqueueTx)
-	defer pool.Close()
 
-	auditVerifier := audit.NewVerifier(pool)
-
-	jobs := []scheduledJob{
-		{
-			name:     "audit-chain-verify",
-			interval: 6 * time.Hour,
-			run: func(ctx context.Context) error {
-				res, err := auditVerifier.Verify(ctx, nil) // nil = all tenants
-				if err != nil {
-					return err
-				}
-				if !res.OK {
-					return fmt.Errorf("audit chain integrity failure at row %s", res.LastVerifiedID)
-				}
-				slog.Info("audit chain OK", "rows_checked", res.RowsChecked)
-				return nil
-			},
-		},
-		{
-			name:     "session-expiry-cleanup",
-			interval: 15 * time.Minute,
-			run: func(ctx context.Context) error {
-				purged, err := auth.PurgeEndedSessions(ctx, pool, auth.SessionRetention, sessionSignals)
-				if err != nil {
-					return err
-				}
-				slog.Info("sessions cleaned", "sessions", purged.Sessions, "login_sessions", purged.LoginSessions,
-					"ceremonies", purged.Ceremonies, "trusted_devices", purged.TrustedDevices)
-				return nil
-			},
-		},
-		{
-			name:     "mfa-cleanup",
-			interval: 1 * time.Hour,
-			run: func(ctx context.Context) error {
-				codes, err := mfa.PurgeExpiredOTPCodes(ctx, pool, mfa.OTPCodeRetention)
-				if err != nil {
-					return err
-				}
-				push, err := mfa.PurgeExpiredPushChallenges(ctx, pool, mfa.OTPCodeRetention)
-				if err != nil {
-					return err
-				}
-				pairings, err := mfa.PurgeExpiredPushPairings(ctx, pool, mfa.OTPCodeRetention)
-				if err != nil {
-					return err
-				}
-				slog.Info("expired MFA codes and push requests cleaned", "codes", codes, "push_requests", push,
-					"pairing_codes", pairings)
-				return nil
-			},
-		},
-		{
-			name:     "sign-in-history-cleanup",
-			interval: 24 * time.Hour,
-			run: func(ctx context.Context) error {
-				n, err := risk.PurgeSignInHistory(ctx, pool, risk.SignInHistoryRetention)
-				if err != nil {
-					return err
-				}
-				slog.Info("sign-in history cleaned", "deleted", n)
-				return nil
-			},
-		},
-		{
-			name:     "outbox-dlq-cleanup",
-			interval: 1 * time.Hour,
-			run: func(ctx context.Context) error {
-				tag, err := pool.Exec(ctx,
-					`DELETE FROM platform.outbox_dead_letter WHERE dead_lettered_at < now() - interval '30 days'`)
-				if err != nil {
-					return err
-				}
-				slog.Info("outbox DLQ cleaned", "deleted", tag.RowsAffected())
-				return nil
-			},
-		},
-	}
-
-	var tickers []*time.Ticker
+	jobs := bootstrap.MaintenanceJobs(pool, sessionSignals)
 	for _, j := range jobs {
-		j := j
-		t := time.NewTicker(j.interval)
-		tickers = append(tickers, t)
-		go func() {
-			for {
-				select {
-				case <-t.C:
-					start := time.Now()
-					if err := runWithLock(rootCtx, pool, j); err != nil {
-						slog.Error("scheduled job failed",
-							"job", j.name,
-							"err", err,
-							"duration_ms", time.Since(start).Milliseconds())
-					} else {
-						slog.Info("scheduled job complete",
-							"job", j.name,
-							"duration_ms", time.Since(start).Milliseconds())
-					}
-				case <-rootCtx.Done():
-					return
-				}
-			}
-		}()
-		slog.Info("job registered", "name", j.name, "interval", j.interval)
+		slog.Info("job registered", "name", j.Name, "interval", j.Interval)
 	}
-
-	<-rootCtx.Done()
-	for _, t := range tickers {
-		t.Stop()
-	}
+	worker.RunScheduled(rootCtx, pool, jobs, worker.SchedulerTick)
 	slog.Info("scheduler shutdown complete")
-}
-
-// runWithLock executes a job while holding a Postgres session-level advisory lock
-// keyed on the job name — a cross-process mutex, so with multiple scheduler
-// replicas only the lock winner runs the job on a given tick.
-func runWithLock(ctx context.Context, pool *pgxpool.Pool, j scheduledJob) error {
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire conn: %w", err)
-	}
-	defer conn.Release()
-
-	key := lockKey(j.name)
-	var locked bool
-	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&locked); err != nil {
-		return fmt.Errorf("advisory lock: %w", err)
-	}
-	if !locked {
-		slog.Info("scheduled job skipped — lock held by another replica", "job", j.name)
-		return nil
-	}
-	// Unlock on a background context so a cancelled ctx can't leak the session lock.
-	defer func() { _, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", key) }()
-
-	return j.run(ctx)
-}
-
-// lockKey derives a stable 64-bit advisory-lock key from a job name.
-func lockKey(name string) int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte("qeetid-scheduler:" + name))
-	return int64(h.Sum64())
 }

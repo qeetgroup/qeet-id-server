@@ -21,6 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
 	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
@@ -103,6 +104,11 @@ func main() {
 	sup.Register("retention", retentionService.Run)
 	sup.Register("siem", siemService.Run)
 	sup.Register("audit-anomaly", auditAnomalyService.Run)
+	// Once per interval across instances, beside the API's own (QTID-326).
+	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
+	sup.Register("scheduler", func(ctx context.Context) {
+		worker.RunScheduled(ctx, pool, bootstrap.MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+	})
 
 	wait := sup.Start(rootCtx)
 

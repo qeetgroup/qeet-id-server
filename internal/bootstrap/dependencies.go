@@ -692,7 +692,13 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		{name: "retention", run: retentionService.Run},
 		{name: "siem", run: siemService.Run},
 		{name: "audit-anomaly", run: auditAnomalyService.Run},
+		// Audit-chain verification and the cleanups, once per interval across
+		// instances (QTID-326).
+		{name: "scheduler", run: func(ctx context.Context) {
+			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+		}},
 	}
+	RegisterMaintenanceMetrics(pool)
 	return deps, workers
 }
 

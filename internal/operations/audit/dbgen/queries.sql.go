@@ -94,6 +94,87 @@ func (q *Queries) InsertAuditEvent(ctx context.Context, arg InsertAuditEventPara
 	return err
 }
 
+const insertAuditVerificationRun = `-- name: InsertAuditVerificationRun :exec
+INSERT INTO platform.audit_verification_runs (
+    id, started_at, finished_at, tenants_walked, rows_checked, outcome,
+    broken_tenant_id, first_broken_link, broken_reason, error
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9, $10
+)
+`
+
+type InsertAuditVerificationRunParams struct {
+	ID              uuid.UUID
+	StartedAt       time.Time
+	FinishedAt      time.Time
+	TenantsWalked   int32
+	RowsChecked     int64
+	Outcome         string
+	BrokenTenantID  pgtype.UUID
+	FirstBrokenLink pgtype.UUID
+	BrokenReason    *string
+	Error           *string
+}
+
+// Store one scheduled verification of every chain, as evidence.
+func (q *Queries) InsertAuditVerificationRun(ctx context.Context, arg InsertAuditVerificationRunParams) error {
+	_, err := q.db.Exec(ctx, insertAuditVerificationRun,
+		arg.ID,
+		arg.StartedAt,
+		arg.FinishedAt,
+		arg.TenantsWalked,
+		arg.RowsChecked,
+		arg.Outcome,
+		arg.BrokenTenantID,
+		arg.FirstBrokenLink,
+		arg.BrokenReason,
+		arg.Error,
+	)
+	return err
+}
+
+const lastIntactAuditVerification = `-- name: LastIntactAuditVerification :one
+SELECT COALESCE(extract(epoch FROM max(finished_at)), 0)::float8 AS at
+FROM platform.audit_verification_runs WHERE outcome = 'intact'
+`
+
+// When a scheduled verification last found every chain intact (0: never).
+func (q *Queries) LastIntactAuditVerification(ctx context.Context) (float64, error) {
+	row := q.db.QueryRow(ctx, lastIntactAuditVerification)
+	var at float64
+	err := row.Scan(&at)
+	return at, err
+}
+
+const listAuditChainTenants = `-- name: ListAuditChainTenants :many
+SELECT DISTINCT tenant_id FROM audit.events
+WHERE tenant_id IS NOT NULL AND row_hash IS NOT NULL
+ORDER BY tenant_id
+`
+
+// Every organisation with a hash chain, for the scheduled verification of all
+// of them (the platform chain, NULL tenant_id, is verified separately).
+func (q *Queries) ListAuditChainTenants(ctx context.Context) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listAuditChainTenants)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var tenant_id pgtype.UUID
+		if err := rows.Scan(&tenant_id); err != nil {
+			return nil, err
+		}
+		items = append(items, tenant_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAuditEventsForVerify = `-- name: ListAuditEventsForVerify :many
 SELECT id, tenant_id, actor_user_id, actor_type, action,
        resource_type, resource_id,
