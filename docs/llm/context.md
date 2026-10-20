@@ -249,7 +249,7 @@ violated the pattern and will usually break R1 or R2.
 |---|---|---|
 | `cmd/api` | HTTP API server | Body is `bootstrap.Run()`. Workers run embedded by default |
 | `cmd/worker` | Background workers standalone | Run to scale workers independently of API replicas |
-| `cmd/scheduler` | Scheduled maintenance | Replicas coordinate via **PostgreSQL advisory locks** — safe to run more than one |
+| `cmd/scheduler` | Scheduled maintenance, standalone (the API also runs it embedded) | Each job claimed in `platform.scheduled_job_runs` — once per interval across instances |
 | `cmd/migrate` | golang-migrate wrapper | Structured exit codes for init containers |
 | `cmd/seed` | Demo data | **Development only.** Drives real services, so hashes and audit chains are real |
 
@@ -470,8 +470,12 @@ runs them standalone. Webhook, outbox, and GDPR queues use durable PostgreSQL le
 owner-conditional finalization; retries retain stable event/delivery IDs. Registered workers:
 webhooks, audit anomaly, GDPR, retention, SIEM, outbox dispatch.
 
-`cmd/scheduler` runs low-frequency tenant-wide maintenance, coordinated by PostgreSQL advisory locks
-so multiple replicas are safe.
+Scheduled maintenance (audit-chain verification of every organisation, session, MFA, sign-in
+history and dead-letter cleanup) is `bootstrap.MaintenanceJobs`, run by `worker.RunScheduled`: the
+API runs it as its embedded `scheduler` worker, and `cmd/scheduler` or `cmd/worker` can run it
+standalone. Each job is claimed in `platform.scheduled_job_runs` before it runs, so it runs once per
+interval however many instances run it; each verification is stored in
+`platform.audit_verification_runs`.
 
 **Choose async when** the work is retryable, slow, or must survive a request; **sync when** the
 caller needs the result or the operation must be atomic with the response.

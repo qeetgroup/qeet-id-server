@@ -161,7 +161,7 @@ its own decision.
 2  existing pattern                internal/platform/jobs/worker.go
 3  event-driven?                   write to the outbox in the SAME transaction as the state change
 4  register it                     cmd/worker/main.go and/or embedded in the API
-5  scheduled instead?              cmd/scheduler — advisory-lock coordinated, safe on N replicas
+5  scheduled instead?              add it to bootstrap.MaintenanceJobs — once per interval across instances
 6  retry + dead-letter             follow internal/developer/webhooks/
 7  observability                   metrics and structured logs — no PII
 8  tests

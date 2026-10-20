@@ -295,6 +295,25 @@ The changes below are the work staged for that first release.
   backchannel flows refuse a `resource` instead of dropping it. `tokens.Issuer.VerifyAccessFor`
   checks a token for a given audience, as a downstream service does.
 
+**Scheduled maintenance actually runs (2026-10-20)**
+
+* **audit / ops:** audit-chain verification and the session, MFA, sign-in-history and dead-letter
+  cleanups had never run: they lived only in `cmd/scheduler`, which the image didn't include and
+  nothing started. The API now runs them as its embedded `scheduler` worker (`EMBEDDED_WORKERS`),
+  and the image also ships `/qeet-id-scheduler`; `cmd/worker` runs them too. Each job is claimed in
+  `platform.scheduled_job_runs` before it runs (migration 0147), so it runs once per interval however
+  many instances run the scheduler (the old advisory lock let each replica run it on its own tick),
+  and at start when it is due. A failing or panicking job is recorded and the others still run.
+* **audit:** the verification walked only the platform chain (`Verify(nil)`), never an
+  organisation's, so a tampered organisation chain read as intact with 0 rows checked. It now walks
+  every organisation's chain, stores each run in `platform.audit_verification_runs` (outcome,
+  organisations walked, rows, first broken organisation and row), and logs each broken chain at
+  ERROR with its organisation and row.
+* **metrics:** `scheduled_job_last_success_timestamp_seconds{job}` and
+  `audit_verify_last_success_timestamp_seconds`, read from the database at scrape time so they hold
+  whichever instance ran the job; `scheduled_job_failures_total{job}`,
+  `scheduled_job_duration_seconds{job}` and `audit_verify_failures_total`.
+
 **Revocation ends the whole grant (2026-10-20)**
 
 * **oidc:** revoking a refresh token at `/oauth/revoke` now ends every rotation of its grant. Each
