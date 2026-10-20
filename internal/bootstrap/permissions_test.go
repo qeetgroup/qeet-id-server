@@ -185,7 +185,7 @@ func TestLoginSessionRoutesStayNarrow(t *testing.T) {
 // accept a token issued to an application: only the endpoint returning the
 // signed-in user's own claims. Every one must be a mounted authenticated route.
 func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
-	want := []string{"GET /v1/oauth/userinfo"}
+	want := []string{"GET /v1/oauth/userinfo", "POST /v1/oauth/userinfo"}
 	got := ApplicationTokenRoutes()
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("application-token routes = %v, want %v", got, want)

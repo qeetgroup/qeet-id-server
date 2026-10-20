@@ -44,6 +44,7 @@ func init() {
 		errs.CodeOIDCPKCEExemptionInvalid:           http.StatusUnprocessableEntity,
 		errs.CodeOIDCResourceInvalid:                http.StatusUnprocessableEntity,
 		errs.CodeOIDCExchangeDepthExceeded:          http.StatusBadRequest,
+		errs.CodeOIDCInsufficientScope:              http.StatusForbidden,
 		errs.CodeOIDCResourceExists:                 http.StatusConflict,
 		errs.CodeOIDCResourceNotFound:               http.StatusNotFound,
 

@@ -544,6 +544,41 @@ func (q *Queries) GetUserByEmailInTenant(ctx context.Context, arg GetUserByEmail
 	return id, err
 }
 
+const getUserinfo = `-- name: GetUserinfo :one
+SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
+       COALESCE(metadata->>'locale', '')::text AS locale
+FROM "user".users WHERE id = $1 AND deleted_at IS NULL AND status = 'active'
+`
+
+type GetUserinfoRow struct {
+	Email           string
+	EmailVerifiedAt pgtype.Timestamptz
+	Phone           *string
+	PhoneVerifiedAt pgtype.Timestamptz
+	DisplayName     *string
+	AvatarUrl       *string
+	UpdatedAt       time.Time
+	Locale          string
+}
+
+// GetUserinfo is what userinfo and the ID token may say about a live account
+// (QTID-165). locale is read from the profile metadata when set.
+func (q *Queries) GetUserinfo(ctx context.Context, id uuid.UUID) (GetUserinfoRow, error) {
+	row := q.db.QueryRow(ctx, getUserinfo, id)
+	var i GetUserinfoRow
+	err := row.Scan(
+		&i.Email,
+		&i.EmailVerifiedAt,
+		&i.Phone,
+		&i.PhoneVerifiedAt,
+		&i.DisplayName,
+		&i.AvatarUrl,
+		&i.UpdatedAt,
+		&i.Locale,
+	)
+	return i, err
+}
+
 const insertAuthorizationCode = `-- name: InsertAuthorizationCode :exec
 
 INSERT INTO auth.oidc_authorization_codes (
