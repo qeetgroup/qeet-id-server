@@ -380,8 +380,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	healthHandler.AddReadiness("jwt-keyring", signingKeyRegistry.Ready) // not ready after repeated keyring refresh failures
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
-	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)    // grant bound where the organisation sets none
-	oidcService.SetClientLockout(oidc.ClientLockout{ // wrong application secrets
+	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
+	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
+	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
 		Threshold: cfg.ClientAuthLockoutThreshold, Window: cfg.ClientAuthLockoutWindow, Duration: cfg.ClientAuthLockoutDuration,
 	})
 	oidcService.SetNotifier(notificationService) // CIBA async consent prompts

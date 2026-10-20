@@ -217,6 +217,17 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Token exchange can't extend a credential (2026-10-20)**
+
+* **oidc:** every token exchange issued a fresh, full-lifetime token, the result could be exchanged
+  again without limit, nobody re-checked the person, and any application allowed to exchange could
+  exchange any token passing through it. One captured ten-minute token could be renewed forever.
+  Now the caller must be entitled to the subject (issued to it, issued for a resource it serves, or
+  the person consented to it); a suspended person or closed organisation is refused; the result
+  expires no later than the subject token, gets its own session id, and carries a new
+  `exchange_depth` claim, refused past `TOKEN_EXCHANGE_MAX_DEPTH` (2); every exchange is audited as
+  `oidc.token_exchanged` (caller, subject, actor, scopes, resource, originating session).
+
 **Introspection answers only for the owner (2026-10-20)**
 
 * **oidc:** `/oauth/introspect` answered for any access token of the caller's organisation, so any
