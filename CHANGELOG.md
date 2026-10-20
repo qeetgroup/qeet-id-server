@@ -217,6 +217,15 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**OAuth-only clients can configure themselves (2026-10-20)**
+
+* **oidc:** `/.well-known/oauth-authorization-server` (RFC 8414) answered 404, so a client that
+  speaks only OAuth, or a model-context-protocol client following the protected-resource document
+  to the authorization server it names, could not configure itself. It now serves the same metadata
+  as the OpenID configuration, so the two always agree. The protected-resource document emits
+  `scopes_supported` (its schema said `scopes_provided`, now corrected), and the OpenID configuration
+  no longer carries the invented `protected_resource_metadata` key.
+
 **Sign-out tells the applications (2026-10-20)**
 
 * **oidc:** signing out ended the hosted session and its grants and told no application, so a
