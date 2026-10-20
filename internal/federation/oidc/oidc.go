@@ -909,6 +909,7 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 	}
 	exp := time.Now().UTC().Add(s.issuer.RefreshTTL())
 	if err := q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
+		ID:        uuid.New(),
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
 		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
 		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(), AuthorizationCodeHash: optionalString(codeHash),
@@ -999,6 +1000,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
 		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
 		GrantExpiresAt: rt.GrantExpiresAt, AuthorizationCodeHash: rt.AuthorizationCodeHash,
+		GrantID: rt.GrantID,
 	})
 	if err != nil {
 		return nil, err
@@ -1810,6 +1812,11 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Service.RevokeToken(r.Context(), clientID, clientSecret, r.Form.Get("token"), r.Form.Get("token_type_hint")); err != nil {
+		var oe *oauthError
+		if errors.As(err, &oe) {
+			writeOAuthError(w, oe)
+			return
+		}
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1917,17 +1924,57 @@ func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 // are stateless ES256 JWTs and can't be revoked individually, so they're a
 // no-op. Per the RFC, an unknown or already-revoked token is still a success —
 // the only error paths are bad client auth or a DB failure.
+//
+// A refresh token ends the whole grant it belongs to, every rotation of it, so
+// no earlier link stays usable, and is audited. An access token can't be
+// revoked (it is stateless and lasts out its short lifetime, QTID-52), so it
+// is refused with unsupported_token_type rather than answered with a success
+// that revokes nothing. An unknown token, or another client's, is a 200 no-op
+// (RFC 7009 §2.2), whatever the hint says.
 func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token, hint string) error {
-	if _, err := s.authenticateClient(ctx, clientID, clientSecret); err != nil {
+	client, err := s.authenticateClient(ctx, clientID, clientSecret)
+	if err != nil {
 		return err
 	}
-	if token == "" || hint == "access_token" {
+	if token == "" {
 		return nil
 	}
-	return s.q.RevokeRefreshTokenByHash(ctx, dbgen.RevokeRefreshTokenByHashParams{
+	if _, err := s.issuer.VerifyAccess(token); err == nil {
+		return oauthErr("unsupported_token_type", "access tokens can't be revoked; they expire on their own")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	ended, err := s.q.WithTx(tx).RevokeRefreshTokenGrant(ctx, dbgen.RevokeRefreshTokenGrantParams{
 		TokenHash: tokens.HashRefresh(token),
 		ClientID:  clientID,
 	})
+	if err != nil {
+		return err
+	}
+	if len(ended) == 0 {
+		return nil
+	}
+	first := ended[0]
+	tenantID, userID := first.TenantID, first.UserID
+	var grantID *uuid.UUID
+	if first.GrantID.Valid {
+		g := uuid.UUID(first.GrantID.Bytes)
+		grantID = &g
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "client",
+		Action: "oidc.grant_revoked", ResourceType: "oidc_grant", ResourceID: grantID,
+		IP: httpx.ClientIPFromContext(ctx),
+		Metadata: map[string]any{
+			"client_id": client.ClientID, "tokens_revoked": len(ended), "via": "revocation_endpoint",
+		},
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Introspect implements RFC 7662. After client authentication it reports

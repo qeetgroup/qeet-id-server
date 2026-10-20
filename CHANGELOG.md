@@ -217,6 +217,16 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Revocation ends the whole grant (2026-10-20)**
+
+* **oidc:** revoking a refresh token at `/oauth/revoke` now ends every rotation of its grant. Each
+  rotation inserted a new row, and revocation ended only the row presented, so revoking an older
+  link left the live one usable (and the admin path, which ended the whole chain, disagreed). Every
+  refresh token now records its grant (`grant_id`, migration 0143, backfilled for existing chains);
+  revocation ends them all and is audited as `oidc.grant_revoked`. An access token presented for
+  revocation is refused with `unsupported_token_type` instead of a 200 that revoked nothing; an
+  unknown or another client's token is still a 200 no-op.
+
 **Application secret lockout (2026-10-20)**
 
 * **oidc:** wrong application secrets are counted and lock the application out. Nothing counted a
