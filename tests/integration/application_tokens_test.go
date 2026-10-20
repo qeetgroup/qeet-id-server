@@ -63,11 +63,11 @@ func newAppTokenFixture(t *testing.T, ctx context.Context) *appTokenFixture {
 // authorization code flow and returns the access token it receives.
 func (f *appTokenFixture) appToken(t *testing.T, ctx context.Context, userID uuid.UUID, scopes ...string) *oidc.TokenResponse {
 	t.Helper()
-	code, _, err := f.oidc.Authorize(ctx, userID, f.clientID, "https://app.example/cb", scopes, "", "", "")
+	code, _, err := f.oidc.Authorize(ctx, userID, f.clientID, "https://app.example/cb", scopes, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, code, "https://app.example/cb", "", "")
+	issued, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, code, "https://app.example/cb", testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}

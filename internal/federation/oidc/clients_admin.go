@@ -1,6 +1,8 @@
 package oidc
 
 import (
+	"time"
+
 	"context"
 	"errors"
 	"net/http"
@@ -33,6 +35,7 @@ func (s *Service) ListClients(ctx context.Context, tenantID uuid.UUID) ([]Client
 			ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 			RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 			GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+			PKCEExemptUntil: timePtr(r.PkceExemptUntil),
 		}
 	}
 	return out, nil
@@ -51,6 +54,7 @@ func (s *Service) GetClient(ctx context.Context, tenantID, id uuid.UUID) (*Clien
 		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+		PKCEExemptUntil: timePtr(r.PkceExemptUntil),
 	}
 	return &c, nil
 }
@@ -63,6 +67,10 @@ type UpdateClientInput struct {
 	PostLogoutURIs *[]string `json:"post_logout_uris"`
 	GrantTypes     *[]string `json:"grant_types"`
 	Scopes         *[]string `json:"scopes"`
+	// PKCEExemptUntil sets (a time) or clears (null) a confidential
+	// application's exemption from sending a PKCE code_challenge and a nonce,
+	// ending within 90 days.
+	PKCEExemptUntil OptionalTime `json:"pkce_exempt_until"`
 }
 
 // UpdateClient applies a partial update to a tenant's client and returns the
@@ -106,14 +114,21 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 	if err := validateClientInput(merged); err != nil {
 		return nil, err
 	}
+	if in.PKCEExemptUntil.Set {
+		if err := validPKCEExemption(cur.Type, in.PKCEExemptUntil.At, time.Now()); err != nil {
+			return nil, err
+		}
+	}
 	r, err := q.UpdateOIDCClient(ctx, dbgen.UpdateOIDCClientParams{
-		Name:           in.Name,
-		RedirectUris:   redirectUris,
-		PostLogoutUris: postLogoutUris,
-		GrantTypes:     grantTypes,
-		Scopes:         scopes,
-		ID:             id,
-		TenantID:       tenantID,
+		Name:               in.Name,
+		RedirectUris:       redirectUris,
+		PostLogoutUris:     postLogoutUris,
+		GrantTypes:         grantTypes,
+		Scopes:             scopes,
+		SetPkceExemptUntil: in.PKCEExemptUntil.Set,
+		PkceExemptUntil:    pgTime(in.PKCEExemptUntil.At),
+		ID:                 id,
+		TenantID:           tenantID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errs.ErrOIDCClientNotFound
@@ -125,6 +140,7 @@ func (s *Service) UpdateClient(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+		PKCEExemptUntil: timePtr(r.PkceExemptUntil),
 	}
 	return &c, nil
 }
@@ -176,6 +192,7 @@ func (s *Service) RotateClientSecret(ctx context.Context, tx pgx.Tx, tenantID, i
 		ID: r.ID, TenantID: r.TenantID, ClientID: r.ClientID, Type: r.Type, Name: r.Name,
 		RedirectURIs: r.RedirectUris, PostLogoutURIs: r.PostLogoutUris,
 		GrantTypes: r.GrantTypes, Scopes: r.Scopes, CreatedAt: r.CreatedAt,
+		PKCEExemptUntil: timePtr(r.PkceExemptUntil),
 	}
 	return secret, &c, nil
 }
@@ -326,7 +343,7 @@ func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 		TenantID: &tid, ActorUserID: actorID, ActorType: actorType,
 		Action: "oidc.client_updated", ResourceType: "oidc_client", ResourceID: &resourceID,
 		IP: httpx.ClientIP(r), UserAgent: r.UserAgent(), RequestID: httpx.RequestID(r),
-		Metadata: map[string]any{"client_id": c.ClientID, "name": c.Name},
+		Metadata: clientUpdatedMeta(c, in),
 	}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -490,4 +507,14 @@ func (h *Handler) reviewShadowAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// clientUpdatedMeta is the oidc.client_updated audit metadata; a change to the
+// PKCE exemption is recorded with its new end (nil: cleared).
+func clientUpdatedMeta(c *Client, in UpdateClientInput) map[string]any {
+	meta := map[string]any{"client_id": c.ClientID, "name": c.Name}
+	if in.PKCEExemptUntil.Set {
+		meta["pkce_exempt_until"] = c.PKCEExemptUntil
+	}
+	return meta
 }

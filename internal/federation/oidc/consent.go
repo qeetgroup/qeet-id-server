@@ -39,6 +39,15 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 	if !s.RegisteredRedirect(ctx, in.ClientID, in.RedirectURI) {
 		return uuid.Nil, errs.ErrOIDCRedirectURINotRegistered
 	}
+	// A request the authorization would refuse (no proof key, no nonce) is
+	// refused now, not after the person has been asked to consent to it.
+	info, err := s.q.GetClientRedirectInfo(ctx, in.ClientID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := validateSignInRequest(info.Type, info.PkceExempt, in.Scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod); err != nil {
+		return uuid.Nil, err
+	}
 	scopes := in.Scopes
 	if scopes == nil {
 		scopes = []string{}

@@ -322,7 +322,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	refresh := ""
 	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{})
+		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "")
 		if err != nil {
 			return nil, err
 		}

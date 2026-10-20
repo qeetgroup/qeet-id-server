@@ -41,6 +41,9 @@ type Client struct {
 	GrantTypes     []string  `json:"grant_types"`
 	Scopes         []string  `json:"scopes"`
 	CreatedAt      time.Time `json:"created_at"`
+	// PKCEExemptUntil is when this confidential application's exemption from
+	// sending a PKCE code_challenge (and a nonce) ends; nil: no exemption.
+	PKCEExemptUntil *time.Time `json:"pkce_exempt_until"`
 }
 
 type Service struct {
@@ -172,6 +175,7 @@ func (s *Service) RegisterClient(ctx context.Context, tx pgx.Tx, in CreateClient
 		Type: row.Type, Name: row.Name,
 		RedirectURIs: row.RedirectUris, PostLogoutURIs: row.PostLogoutUris,
 		GrantTypes: row.GrantTypes, Scopes: row.Scopes, CreatedAt: row.CreatedAt,
+		PKCEExemptUntil: timePtr(row.PkceExemptUntil),
 	}
 	return &c, raw, nil
 }
@@ -367,7 +371,7 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 			return "", uuid.Nil, errs.ErrOIDCScopeNotPermitted
 		}
 	}
-	if err := validatePKCEAuthorization(info.Type, challenge, challengeMethod); err != nil {
+	if err := validateSignInRequest(info.Type, info.PkceExempt, scopes, nonce, challenge, challengeMethod); err != nil {
 		return "", uuid.Nil, err
 	}
 	// This is where the person signs in to the application, from the browser.
@@ -394,25 +398,6 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 		return "", uuid.Nil, err
 	}
 	return raw, info.TenantID, nil
-}
-
-func validatePKCEAuthorization(clientType, challenge, method string) error {
-	if challenge == "" {
-		if method != "" {
-			return errs.ErrOIDCCodeChallengeInvalid
-		}
-		if clientType == "public" {
-			return errs.ErrOIDCCodeChallengeRequired
-		}
-		return nil
-	}
-	if method != "S256" {
-		return errs.ErrOIDCCodeChallengeMethodUnsupported
-	}
-	if !validPKCEValue(challenge, 43, 43) {
-		return errs.ErrOIDCCodeChallengeInvalid
-	}
-	return nil
 }
 
 func validPKCEValue(value string, minLength, maxLength int) bool {
@@ -800,6 +785,14 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	challenge := ac.CodeChallenge
 	method := ac.CodeChallengeMethod
 	if ac.UsedAt.Valid {
+		// A code presented twice was seen by someone else: end what its first
+		// redemption issued (RFC 6749 §4.1.2), then refuse.
+		if err := s.revokeGrantFromCode(ctx, tx, clientID, hash, userID, tenantID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
 		return nil, errs.ErrOIDCAuthCodeUsed
 	}
 	if time.Now().After(ac.ExpiresAt) {
@@ -808,7 +801,9 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	if ac.RedirectUri != redirectURI {
 		return nil, errs.ErrOIDCRedirectURIMismatch
 	}
-	if clientInfo.Type == "public" && (challenge == nil || *challenge == "") {
+	// A code issued with no challenge redeems only while its confidential
+	// application's exemption is still in force.
+	if (challenge == nil || *challenge == "") && (clientInfo.Type != "confidential" || !clientInfo.PkceExempt) {
 		return nil, errs.ErrOIDCCodeChallengeRequired
 	}
 	if challenge != nil && *challenge != "" {
@@ -847,7 +842,7 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	// (and this redemption fails) or waits and then ends the grant.
 	refresh := ""
 	if contains(client.GrantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID)
+		refresh, err = s.issueRefreshToken(ctx, q, clientID, userID, tenantID, scopes, resource, ac.LoginSessionID, hash)
 		if err != nil {
 			return nil, err
 		}
@@ -887,8 +882,9 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 // indicator, if any, bound to the access token this refresh token accompanies
 // — persisted so a later rotation can re-bind the same resource.
 // loginSessionID is the hosted-login session the grant was started through
-// (NULL for none). q is the caller's querier, so it can run in its transaction.
-func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID) (string, error) {
+// (NULL for none), and codeHash the authorization code it was redeemed from
+// ("" for none). q is the caller's querier, so it can run in its transaction.
+func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clientID string, userID, tenantID uuid.UUID, scopes []string, resource string, loginSessionID pgtype.UUID, codeHash string) (string, error) {
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -901,7 +897,7 @@ func (s *Service) issueRefreshToken(ctx context.Context, q *dbgen.Queries, clien
 	if err := q.InsertRefreshToken(ctx, dbgen.InsertRefreshTokenParams{
 		TokenHash: hash, ClientID: clientID, UserID: userID, TenantID: tenantID,
 		Scopes: scopes, ExpiresAt: exp, Resource: res, LoginSessionID: loginSessionID,
-		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(),
+		DefaultMaxAgeSeconds: s.grantMaxAge.Seconds(), AuthorizationCodeHash: optionalString(codeHash),
 	}); err != nil {
 		return "", err
 	}
@@ -988,7 +984,7 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	newID, err := q.InsertRotatedRefreshToken(ctx, dbgen.InsertRotatedRefreshTokenParams{
 		TokenHash: newHash, ClientID: clientID, UserID: rt.UserID, TenantID: rt.TenantID,
 		Scopes: rt.Scopes, ExpiresAt: newExp, Resource: newRes, LoginSessionID: rt.LoginSessionID,
-		GrantExpiresAt: rt.GrantExpiresAt,
+		GrantExpiresAt: rt.GrantExpiresAt, AuthorizationCodeHash: rt.AuthorizationCodeHash,
 	})
 	if err != nil {
 		return nil, err
@@ -1043,6 +1039,38 @@ func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (boo
 		return false, err
 	}
 	return !row.Deleted && row.Status != "suspended", nil
+}
+
+// revokeGrantFromCode ends the grant redeemed from the authorization code
+// with this hash, after the code was presented again, and records it.
+func (s *Service) revokeGrantFromCode(ctx context.Context, tx pgx.Tx, clientID, codeHash string, userID, tenantID uuid.UUID) error {
+	n, err := s.q.WithTx(tx).RevokeGrantFromCode(ctx, dbgen.RevokeGrantFromCodeParams{
+		ClientID: clientID, AuthorizationCodeHash: &codeHash,
+	})
+	if err != nil {
+		return err
+	}
+	tid, uid := tenantID, userID
+	return audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  &uid,
+		ActorType:    "system",
+		Action:       "oidc.authorization_code_reused",
+		ResourceType: "oidc_client",
+		Metadata: map[string]any{
+			"client_id":      clientID,
+			"grants_revoked": n,
+			"reason":         "authorization_code_reuse",
+		},
+	})
+}
+
+// optionalString is s for a nullable column, nil for "".
+func optionalString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func (s *Service) handleRefreshReuse(ctx context.Context, tx pgx.Tx, clientID string, userID, tenantID, tokenID uuid.UUID) error {
@@ -1444,7 +1472,9 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		oauthCode = "invalid_scope"
 	case errors.Is(err, errs.ErrOIDCCodeChallengeRequired),
 		errors.Is(err, errs.ErrOIDCCodeChallengeInvalid),
-		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported):
+		errors.Is(err, errs.ErrOIDCCodeChallengeMethodUnsupported),
+		errors.Is(err, errs.ErrOIDCNonceRequired),
+		errors.Is(err, errs.ErrOIDCNonceInvalid):
 		oauthCode = "invalid_request"
 	case errors.Is(err, errs.ErrOIDCRedirectURIInvalid):
 		// The URI validated as registered above, so this is some other

@@ -76,7 +76,7 @@ func TestConsentDecisionsComeFromTheStoredRequest(t *testing.T) {
 	}
 	authorizeURL := func(redirectURI, scope, state string) string {
 		q := url.Values{"client_id": {client.ClientID}, "redirect_uri": {redirectURI}, "scope": {scope},
-			"state": {state}, "response_type": {"code"}}
+			"state": {state}, "response_type": {"code"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
 		return "/v1/oauth/authorize?" + q.Encode()
 	}
 	// startConsent runs authorize for a user who hasn't consented and returns the
@@ -192,7 +192,7 @@ func TestConsentDecisionsComeFromTheStoredRequest(t *testing.T) {
 		if rr.Code != http.StatusOK || err != nil || !strings.HasPrefix(loc.String(), redirect+"?") || loc.Query().Get("state") != "s5" {
 			t.Fatalf("approve: status %d, body %s", rr.Code, rr.Body.String())
 		}
-		if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, loc.Query().Get("code"), redirect, "", ""); err != nil {
+		if _, err := svc.ExchangeCode(ctx, client.ClientID, secret, loc.Query().Get("code"), redirect, testVerifier, ""); err != nil {
 			t.Fatalf("the delivered code doesn't redeem: %v", err)
 		}
 	})

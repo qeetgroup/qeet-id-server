@@ -42,7 +42,7 @@ func (f *signOutEverywhereFixture) leaveWaysBackIn(t *testing.T, ctx context.Con
 	if l.device, err = f.svc.CreateTrustedDevice(ctx, userID, f.tenantID, "laptop", 30*24*time.Hour); err != nil {
 		t.Fatalf("remember device: %v", err)
 	}
-	if l.code, _, err = f.oidc.Authorize(ctx, userID, f.clientID, f.redirectURI, []string{"openid"}, "", "", ""); err != nil {
+	if l.code, _, err = f.oidc.Authorize(ctx, userID, f.clientID, f.redirectURI, []string{"openid"}, testNonce, testChallenge, "S256"); err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
 	deviceCode, userCode, _, err := f.oidc.DeviceAuthorize(ctx, f.clientID, []string{"openid"})
@@ -70,7 +70,7 @@ func (f *signOutEverywhereFixture) stillOpen(t *testing.T, ctx context.Context, 
 	t.Helper()
 	open := map[string]bool{}
 	open["remembered device"] = f.svc.IsTrustedDevice(ctx, userID, f.tenantID, l.device)
-	_, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, l.code, f.redirectURI, "", "")
+	_, err := f.oidc.ExchangeCode(ctx, f.clientID, f.secret, l.code, f.redirectURI, testVerifier, "")
 	open["authorisation code"] = err == nil
 	if err != nil && !errors.Is(err, errs.ErrOIDCAuthCodeUsed) {
 		t.Errorf("redeeming the code failed with %v, want it refused as already used", err)

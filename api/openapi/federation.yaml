@@ -196,7 +196,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused).'
+      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused). Every application, confidential ones included, must send a PKCE code_challenge with code_challenge_method S256, and a nonce whenever scope includes openid; the nonce comes back in the ID token. A request without them gets invalid_request at the redirect_uri (oidc.code_challenge_required, oidc.nonce_required) before any consent is asked. A confidential application whose pkce_exempt_until is still ahead is excused both until then.'
       summary: Authorize
       tags:
         - OIDC
@@ -229,18 +229,22 @@ paths:
             type: string
         - in: query
           name: code_challenge
+          description: Required (43 characters, base64url of the SHA-256 of the code_verifier), unless the confidential application is exempt (pkce_exempt_until).
           schema:
             type: string
         - in: query
           name: code_challenge_method
+          description: Required with code_challenge; only S256.
           schema:
             type: string
             enum:
               - S256
         - in: query
           name: nonce
+          description: Required when scope includes openid (at most 255 characters), unless the confidential application is exempt; echoed in the ID token.
           schema:
             type: string
+            maxLength: 255
       security:
         - ssoCookie: []
       responses:
@@ -725,7 +729,7 @@ paths:
   /v1/oauth/token-code:
     post:
       operationId: post_v1_oauth_token_code
-      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user. Device polling from an address the organisation''s address rules refuse answers access_denied address_not_allowed and spends the device code; code redemption and refresh come from the application''s server, so the address rules are asked at authorization instead.'
+      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user. Device polling from an address the organisation''s address rules refuse answers access_denied address_not_allowed and spends the device code; code redemption and refresh come from the application''s server, so the address rules are asked at authorization instead. An authorization code redeems once, with the code_verifier of its challenge; a code issued under a PKCE exemption redeems only while the exemption lasts. A code presented a second time is refused (oidc.auth_code_used) and the grant its first redemption issued is revoked, every renewal of it included (audited as oidc.authorization_code_reused).'
       summary: Token (authorization_code)
       tags:
         - OIDC
@@ -1121,7 +1125,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_oidc_clients_ById
-      description: 'Applies a partial update to an OIDC client in the tenant; omitted fields are left unchanged. Changes are confined to the tenant in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return. The edited client is held to the same rules as registration: supported grant types, valid redirect URIs, and no token exchange or CIBA for a public client.'
+      description: 'Applies a partial update to an OIDC client in the tenant; omitted fields are left unchanged. Changes are confined to the tenant in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return. The edited client is held to the same rules as registration: supported grant types, valid redirect URIs, and no token exchange or CIBA for a public client. pkce_exempt_until sets (a date-time) or clears (null) a confidential application''s exemption from sending a PKCE code_challenge and a nonce; it must end in the future and within 90 days, else 422 oidc.pkce_exemption_invalid, and a public application can''t have one.'
       summary: Update OIDC client
       tags:
         - OIDC
@@ -4300,6 +4304,11 @@ components:
         created_at:
           type: string
           format: date-time
+        pkce_exempt_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: When this confidential application's exemption from sending a PKCE code_challenge and a nonce ends; null for none.
     OIDCClientCreate:
       type: object
       required:
@@ -4359,6 +4368,11 @@ components:
           type: array
           items:
             type: string
+        pkce_exempt_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Sets (a date-time, within 90 days) or clears (null) a confidential application's PKCE exemption; omitted, unchanged.
     OAuthDeviceAuthorization:
       type: object
       description: Admin view of an RFC 8628 device-authorization row. Never includes the device_code or its hash.
