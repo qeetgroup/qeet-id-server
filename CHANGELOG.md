@@ -199,6 +199,13 @@ The changes below are the work staged for that first release.
   said "allowed" for one). Rules judge the address the platform derives, so behind a proxy
   `TRUSTED_PROXY_HOPS` must be set. Code redemption and refresh at the token endpoint come from the
   application's server and are not asked.
+* **hosted login:** the hosted login opens a session for the browser, not for one organisation, so a
+  refused address only surfaced at authorize, as `access_denied` sent to the application. The
+  organisation of the application being signed in to now refuses at the sign-in itself: password
+  (`POST /v1/auth/session` with `client_id`, before the password is checked, so a right and a wrong
+  password get the same answer), magic link (the link's organisation), sign-up (no account is
+  created) and social (the browser goes back to the hosted login with `error=address_not_allowed`
+  and its `return_to`). No hosted-login session is opened.
 * **policy:** the security policy's own `ip_allowlist` and `ip_denylist` are gone (migration 0140).
   Nothing ever read them; address rules are the one address control. The policy no longer reports
   them; a save that still sends them empty is accepted, and one with entries is refused with

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
+	"github.com/qeetgroup/qeet-id-server/internal/federation/social"
 	password "github.com/qeetgroup/qeet-id-server/internal/platform/crypto/encryption"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
@@ -302,4 +304,97 @@ func TestSecurityPolicyHasNoIPLists(t *testing.T) {
 	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), "ip_allowlist") || strings.Contains(rr.Body.String(), "ip_denylist") {
 		t.Fatalf("read policy: %d %s; want no IP lists", rr.Code, rr.Body.String())
 	}
+}
+
+// TestTheHostedLoginRefusesAnAddressAtSignIn pins the address rules to the
+// hosted login, where the sign-in opens a session for the browser rather than
+// for an organisation: the organisation of the application being signed in to
+// (or of the magic link, or being joined) refuses there, so the person is told
+// on the hosted login, not sent to the application with access_denied. The
+// password answer is the same whether the password is right or wrong.
+func TestTheHostedLoginRefusesAnAddressAtSignIn(t *testing.T) {
+	requireDB(t)
+	ctx := context.Background()
+	f := newClosedRegFixture(t, ctx, true)
+	setSelfRegistration(t, ctx, f.tenantID, true)
+	addressRules(t, ctx, f.tenantID, true, [2]string{"192.0.2.0/24", "deny"})
+	authSvc, _ := newAuth()
+	refused := func(t *testing.T, what string, err error) {
+		t.Helper()
+		if !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+			t.Fatalf("%s: err = %v, want %v", what, err, errs.ErrAuthAddressNotAllowed)
+		}
+	}
+
+	t.Run("a social sign-in goes back to the hosted login with the address error", func(t *testing.T) {
+		h := &social.Handler{Service: f.svc, LoginBaseURL: "http://login.test"}
+		r := chi.NewRouter()
+		r.Route("/v1", h.MountPublic)
+		req := httptest.NewRequest(http.MethodGet, "/v1/social/"+f.provider+"/callback?state="+url.QueryEscape(f.begin(t, ctx))+"&code=upstream-code", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		loc, err := url.Parse(rr.Header().Get("Location"))
+		if rr.Code != http.StatusFound || err != nil || loc.Host != "login.test" || loc.Path != "/login" ||
+			loc.Query().Get("error") != "address_not_allowed" || loc.Query().Get("return_to") != closedRegReturnTo {
+			t.Fatalf("callback = %d %q, want the hosted login with error=address_not_allowed and the return_to", rr.Code, rr.Header().Get("Location"))
+		}
+		if strings.Contains(rr.Header().Get("Set-Cookie"), auth.LoginSessionCookie) {
+			t.Fatal("a refused social sign-in opened a hosted-login session")
+		}
+	})
+
+	t.Run("a password sign-in for the organisation's application is refused, right password or wrong", func(t *testing.T) {
+		email := uniqueSlug("hosted") + "@example.com"
+		uma := createTenantUser(t, ctx, f.tenantID, email)
+		addTenantMembership(t, ctx, uma, f.tenantID)
+		hash, err := password.Hash(factorPassword)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := testPool.Exec(ctx,
+			`INSERT INTO auth.password_credentials (user_id, password_hash) VALUES ($1, $2)`, uma, hash); err != nil {
+			t.Fatal(err)
+		}
+		svc := oidc.NewService(testPool, mustIssuer())
+		client, _ := registerOIDCClient(t, ctx, svc, f.tenantID, "https://app.example/cb")
+		r := chi.NewRouter()
+		(&auth.Handler{Service: authSvc, Validate: validator.New()}).Mount(r)
+		signIn := func(pw, from string) *httptest.ResponseRecorder {
+			body, _ := json.Marshal(map[string]string{"email": email, "password": pw, "client_id": client.ClientID})
+			req := httptest.NewRequest(http.MethodPost, "/auth/session", strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = from + ":1234"
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+			return rr
+		}
+		for _, pw := range []string{factorPassword, "not-the-password"} {
+			rr := signIn(pw, deniedAddr)
+			if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), errs.CodeAuthAddressNotAllowed) {
+				t.Fatalf("hosted sign-in: %d %s; want 403 %s", rr.Code, rr.Body.String(), errs.CodeAuthAddressNotAllowed)
+			}
+			if strings.Contains(rr.Header().Get("Set-Cookie"), auth.LoginSessionCookie) {
+				t.Fatal("a refused hosted sign-in opened a hosted-login session")
+			}
+		}
+		if rr := signIn(factorPassword, allowedAddr); rr.Code != http.StatusOK {
+			t.Fatalf("hosted sign-in from an allowed address: %d %s", rr.Code, rr.Body.String())
+		}
+	})
+
+	t.Run("a magic link for the organisation is refused", func(t *testing.T) {
+		uma := createUserInTenant(t, ctx, f.tenantID)
+		_, err := authSvc.BeginMagicLinkSession(ctx, uma, f.tenantID, deniedAddr, "browser", "", "")
+		refused(t, "magic link", err)
+	})
+
+	t.Run("nobody joins the organisation from a refused address", func(t *testing.T) {
+		email := uniqueSlug("joiner") + "@example.com"
+		_, _, err := authSvc.RegisterInTenant(ctx, f.tenantID, email, "Kx7mQ2vLp9Wz!", "", deniedAddr, "browser")
+		refused(t, "sign-up", err)
+		var n int
+		if err := testPool.QueryRow(ctx, `SELECT count(*) FROM "user".users WHERE email = $1`, email).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("a refused sign-up created %d account(s) (%v)", n, err)
+		}
+	})
 }
