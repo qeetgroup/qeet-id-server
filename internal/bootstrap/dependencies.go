@@ -381,6 +381,9 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
 	oidcService.SetGrantMaxAge(cfg.SessionMaxAge) // grant bound where the organisation sets none
+	oidcService.SetClientLockout(oidc.ClientLockout{ // wrong application secrets
+		Threshold: cfg.ClientAuthLockoutThreshold, Window: cfg.ClientAuthLockoutWindow, Duration: cfg.ClientAuthLockoutDuration,
+	})
 	oidcService.SetNotifier(notificationService)  // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
 	// UserVerification: Required is load-bearing, not a preference.

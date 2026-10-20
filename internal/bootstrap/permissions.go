@@ -132,6 +132,7 @@ func userPermissionMap() map[string]string {
 		"POST /v1/tenants/{tenantID}/oidc/clients":                    "connection.write",
 		"GET /v1/tenants/{tenantID}/oidc/clients/{id}":                "connection.read",
 		"PATCH /v1/tenants/{tenantID}/oidc/clients/{id}":              "connection.write",
+		"GET /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures":  "connection.read",
 		"DELETE /v1/tenants/{tenantID}/oidc/clients/{id}":             "connection.write",
 		"POST /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret": "connection.write",
 		"GET /v1/tenants/{tenantID}/oidc/clients/shadow-ai":           "connection.read",

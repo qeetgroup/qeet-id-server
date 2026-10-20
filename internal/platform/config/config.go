@@ -287,6 +287,14 @@ type Config struct {
 	// self-hosted mirrors). Empty uses the public api.pwnedpasswords.com.
 	BreachedPasswordAPIURL string `envconfig:"BREACHED_PASSWORD_API_URL" default:""`
 
+	// Application secret lockout (internal/federation/oidc/client_lockout.go).
+	// After CLIENT_AUTH_LOCKOUT_THRESHOLD wrong secrets for one confidential
+	// application within CLIENT_AUTH_LOCKOUT_WINDOW, on any endpoint that takes
+	// one, the application is refused for CLIENT_AUTH_LOCKOUT_DURATION.
+	ClientAuthLockoutThreshold int           `envconfig:"CLIENT_AUTH_LOCKOUT_THRESHOLD" default:"10"`
+	ClientAuthLockoutWindow    time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_WINDOW" default:"15m"`
+	ClientAuthLockoutDuration  time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_DURATION" default:"15m"`
+
 	// Sign-in lockout (internal/access/authentication/lockout.go). After
 	// LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to one account from one
 	// network, each within LOGIN_LOCKOUT_WINDOW of the last, the account is
@@ -426,6 +434,9 @@ func (c *Config) checkSignInLockout() error {
 	}
 	if c.LoginSprayAccounts < 2 || c.LoginSprayWindow <= 0 || c.LoginSprayBlock <= 0 {
 		problems = append(problems, "LOGIN_SPRAY_ACCOUNTS must be at least 2, and LOGIN_SPRAY_WINDOW and LOGIN_SPRAY_BLOCK positive")
+	}
+	if c.ClientAuthLockoutThreshold < 1 || c.ClientAuthLockoutWindow < time.Minute || c.ClientAuthLockoutDuration < time.Minute {
+		problems = append(problems, "CLIENT_AUTH_LOCKOUT_THRESHOLD must be at least 1, and CLIENT_AUTH_LOCKOUT_WINDOW and CLIENT_AUTH_LOCKOUT_DURATION at least 1m")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid sign-in lockout configuration:\n  - %s", strings.Join(problems, "\n  - "))

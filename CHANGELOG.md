@@ -217,6 +217,21 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Application secret lockout (2026-10-20)**
+
+* **oidc:** wrong application secrets are counted and lock the application out. Nothing counted a
+  failed client authentication, so a secret could be guessed at volume, invisibly, on any of the
+  endpoints that take one. Failures now count against the application in one durable budget shared
+  by every such endpoint (code exchange, refresh, token exchange, device and backchannel requests,
+  revocation, introspection). Past `CLIENT_AUTH_LOCKOUT_THRESHOLD` within
+  `CLIENT_AUTH_LOCKOUT_WINDOW` (10 in 15 minutes) every authentication is refused for
+  `CLIENT_AUTH_LOCKOUT_DURATION` (15 minutes) before the secret is even compared, with the same
+  `401 oidc.client_auth_failed` as a wrong secret or an unknown application. Each failure is audited
+  with the caller's address and no secret; a lockout is audited (`oidc.client_locked_out`) and
+  announced (`oidc.client.locked_out`) once. A success resets the count. New
+  `GET /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures` shows the lockout and recent
+  failures (migration 0142).
+
 **Relayed sign-ins (2026-10-20)**
 
 * **httpx:** a first-party relay can name the person's address. The console signs people in, and the

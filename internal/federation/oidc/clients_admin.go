@@ -308,6 +308,27 @@ func (h *Handler) getClient(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
+// clientAuthFailures is an application's lockout in force (if any) and its
+// recent wrong-secret attempts, with time and address, never the secret.
+func (h *Handler) clientAuthFailures(w http.ResponseWriter, r *http.Request) {
+	tenantID, err := requirePathTenant(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	id, err := pathID(r)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	out, err := h.Service.RecentClientAuthFailures(r.Context(), tenantID, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h *Handler) patchClient(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {

@@ -61,10 +61,12 @@ type Service struct {
 	// addresses is the organisations' address rules (nil = no rules). See
 	// address.go.
 	addresses AddressPolicy
+	// lockout bounds wrong application secrets. See client_lockout.go.
+	lockout ClientLockout
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour, lockout: DefaultClientLockout()}
 }
 
 // SetGrantMaxAge sets how long an application's grant lasts however often it
@@ -587,9 +589,21 @@ func (s *Service) authenticateClient(ctx context.Context, clientID, clientSecret
 	}
 	c := authedClient{ID: row.ID, TenantID: row.TenantID, ClientID: clientID, Type: row.Type, GrantTypes: row.GrantTypes}
 	if row.Type == "confidential" {
-		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
-			s.auditClientAuthFailure(ctx, c, "invalid_secret")
+		// A locked-out application is refused before its secret is compared
+		// (a memory-hard hash per guess), with the same answer as a wrong one.
+		locked, err := s.clientLocked(ctx, row.ID)
+		if err != nil {
+			return authedClient{}, err
+		}
+		if locked {
 			return authedClient{}, errs.ErrOIDCClientAuthFailed
+		}
+		if row.ClientSecretHash == nil || !password.Verify(*row.ClientSecretHash, clientSecret) {
+			s.clientAuthFailed(ctx, c)
+			return authedClient{}, errs.ErrOIDCClientAuthFailed
+		}
+		if err := s.q.ClearClientAuthFailures(ctx, row.ID); err != nil {
+			return authedClient{}, err
 		}
 	}
 	return c, nil
@@ -617,7 +631,7 @@ func (s *Service) auditClientAuthFailure(ctx context.Context, c authedClient, re
 	tenantID, id := c.TenantID, c.ID
 	if audit.Record(ctx, tx, audit.Event{
 		TenantID: &tenantID, ActorType: "client", Action: "oidc.client_auth_failed",
-		ResourceType: "oidc_client", ResourceID: &id,
+		ResourceType: "oidc_client", ResourceID: &id, IP: httpx.ClientIPFromContext(ctx),
 		Metadata: map[string]any{"client_id": c.ClientID, "reason": reason},
 	}) == nil {
 		_ = tx.Commit(ctx)
@@ -1206,6 +1220,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/oidc/clients", h.listClients)
 	r.Get("/tenants/{tenantID}/oidc/clients/{id}", h.getClient)
 	r.Patch("/tenants/{tenantID}/oidc/clients/{id}", h.patchClient)
+	r.Get("/tenants/{tenantID}/oidc/clients/{id}/auth-failures", h.clientAuthFailures)
 	r.Delete("/tenants/{tenantID}/oidc/clients/{id}", h.deleteClient)
 	r.Post("/tenants/{tenantID}/oidc/clients/{id}/rotate-secret", h.rotateClientSecret)
 	r.Get("/tenants/{tenantID}/oidc/clients/shadow-ai", h.shadowAI)

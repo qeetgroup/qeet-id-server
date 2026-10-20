@@ -1199,6 +1199,59 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_clients_ById_auth_failures
+      summary: Application secret failures
+      description: 'An application''s wrong-secret lockout and its last 20 failed authentications, newest first, each with its time and address (no secret material is ever recorded). Wrong secrets count against a confidential application on every endpoint that takes one (code exchange, refresh, token exchange, device and backchannel requests, revocation, introspection); past the threshold (CLIENT_AUTH_LOCKOUT_THRESHOLD in CLIENT_AUTH_LOCKOUT_WINDOW, 10 in 15 minutes by default) every authentication is refused for CLIENT_AUTH_LOCKOUT_DURATION (15 minutes), the right secret included, with the same 401 oidc.client_auth_failed as a wrong secret or an unknown application. Each failure is audited as oidc.client_auth_failed; a lockout as oidc.client_locked_out, and announced as the oidc.client.locked_out event. A successful authentication resets the count. locked_until is null when no lockout is in force.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The lockout in force (if any) and recent failures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locked_until:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at:
+                          type: string
+                          format: date-time
+                        ip:
+                          type: string
+                        reason:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /v1/tenants/{tenantID}/oidc/clients/{id}/rotate-secret:
     post:
       operationId: post_v1_tenants_ByTenantID_oidc_clients_ById_rotate_secret
