@@ -53,6 +53,17 @@ func (q *Queries) CheckUserInDeviceTenant(ctx context.Context, arg CheckUserInDe
 	return exists, err
 }
 
+const clearClientAuthFailures = `-- name: ClearClientAuthFailures :exec
+DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = $1
+`
+
+// ClearClientAuthFailures forgets an application's failures after it
+// authenticates.
+func (q *Queries) ClearClientAuthFailures(ctx context.Context, clientRowID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearClientAuthFailures, clientRowID)
+	return err
+}
+
 const consumeAuthorizationCode = `-- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
        nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id
@@ -219,6 +230,23 @@ func (q *Queries) GetClientGrantTypes(ctx context.Context, clientID string) ([]s
 	var grant_types []string
 	err := row.Scan(&grant_types)
 	return grant_types, err
+}
+
+const getClientLockedUntil = `-- name: GetClientLockedUntil :one
+
+SELECT locked_until FROM auth.oidc_client_auth_lockouts
+WHERE client_row_id = $1 AND locked_until > NOW()
+`
+
+// ==========================================================================
+// Application secret lockout (QTID-215)
+// ==========================================================================
+// GetClientLockedUntil reports a lockout still in force for an application.
+func (q *Queries) GetClientLockedUntil(ctx context.Context, clientRowID uuid.UUID) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getClientLockedUntil, clientRowID)
+	var locked_until pgtype.Timestamptz
+	err := row.Scan(&locked_until)
+	return locked_until, err
 }
 
 const getClientName = `-- name: GetClientName :one
@@ -815,6 +843,48 @@ func (q *Queries) InsertRotatedRefreshToken(ctx context.Context, arg InsertRotat
 	return id, err
 }
 
+const listClientAuthFailures = `-- name: ListClientAuthFailures :many
+SELECT created_at, COALESCE(host(ip), '')::text AS ip, COALESCE(metadata->>'reason', '')::text AS reason
+FROM audit.events
+WHERE tenant_id = $1 AND action = 'oidc.client_auth_failed' AND resource_id = $2
+ORDER BY created_at DESC
+LIMIT $3
+`
+
+type ListClientAuthFailuresParams struct {
+	TenantID    pgtype.UUID
+	ClientRowID pgtype.UUID
+	MaxRows     int32
+}
+
+type ListClientAuthFailuresRow struct {
+	CreatedAt time.Time
+	Ip        string
+	Reason    string
+}
+
+// ListClientAuthFailures is an application's recent wrong-secret attempts,
+// newest first, from the audit log (which never holds the secret).
+func (q *Queries) ListClientAuthFailures(ctx context.Context, arg ListClientAuthFailuresParams) ([]ListClientAuthFailuresRow, error) {
+	rows, err := q.db.Query(ctx, listClientAuthFailures, arg.TenantID, arg.ClientRowID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListClientAuthFailuresRow{}
+	for rows.Next() {
+		var i ListClientAuthFailuresRow
+		if err := rows.Scan(&i.CreatedAt, &i.Ip, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDevices = `-- name: ListDevices :many
 SELECT d.id, d.client_id, d.user_code, d.status, d.user_id,
        COALESCE(u.email, '') AS user_email, d.scopes,
@@ -1124,6 +1194,28 @@ func (q *Queries) LockCIBARequestByHash(ctx context.Context, authReqIDHash strin
 	return i, err
 }
 
+const lockClient = `-- name: LockClient :one
+UPDATE auth.oidc_client_auth_lockouts
+SET locked_until = NOW() + make_interval(secs => $1::float8),
+    failures = 0, window_started_at = NOW()
+WHERE client_row_id = $2 AND (locked_until IS NULL OR locked_until <= NOW())
+RETURNING locked_until
+`
+
+type LockClientParams struct {
+	DurationSeconds float64
+	ClientRowID     uuid.UUID
+}
+
+// LockClient starts a lockout and restarts the count, unless one is already
+// in force: only the attempt that starts it gets a row back.
+func (q *Queries) LockClient(ctx context.Context, arg LockClientParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lockClient, arg.DurationSeconds, arg.ClientRowID)
+	var locked_until pgtype.Timestamptz
+	err := row.Scan(&locked_until)
+	return locked_until, err
+}
+
 const lockDeviceByCode = `-- name: LockDeviceByCode :one
 SELECT id, client_id, tenant_id, user_id, scopes, status,
        interval_seconds, last_polled_at, expires_at, consumed_at
@@ -1295,6 +1387,32 @@ type MarkRefreshTokenUsedParams struct {
 func (q *Queries) MarkRefreshTokenUsed(ctx context.Context, arg MarkRefreshTokenUsedParams) error {
 	_, err := q.db.Exec(ctx, markRefreshTokenUsed, arg.NewID, arg.ID)
 	return err
+}
+
+const recordClientAuthFailure = `-- name: RecordClientAuthFailure :one
+INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, failures, window_started_at, last_failure_at)
+VALUES ($1, 1, NOW(), NOW())
+ON CONFLICT (client_row_id) DO UPDATE SET
+    failures = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $2::float8)
+                    THEN 1 ELSE l.failures + 1 END,
+    window_started_at = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => $2::float8)
+                             THEN NOW() ELSE l.window_started_at END,
+    last_failure_at = NOW()
+RETURNING failures
+`
+
+type RecordClientAuthFailureParams struct {
+	ClientRowID   uuid.UUID
+	WindowSeconds float64
+}
+
+// RecordClientAuthFailure counts one wrong secret, restarting the count when
+// the window it started has passed, and returns the count.
+func (q *Queries) RecordClientAuthFailure(ctx context.Context, arg RecordClientAuthFailureParams) (int32, error) {
+	row := q.db.QueryRow(ctx, recordClientAuthFailure, arg.ClientRowID, arg.WindowSeconds)
+	var failures int32
+	err := row.Scan(&failures)
+	return failures, err
 }
 
 const reviewOIDCClient = `-- name: ReviewOIDCClient :execrows

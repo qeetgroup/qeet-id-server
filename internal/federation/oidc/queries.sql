@@ -336,3 +336,48 @@ RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_chall
 -- the same suspended-or-deleted rule the first-party refresh applies.
 -- name: GetAccountStanding :one
 SELECT status, (deleted_at IS NOT NULL)::boolean AS deleted FROM "user".users WHERE id = @id;
+
+-- ==========================================================================
+-- Application secret lockout (QTID-215)
+-- ==========================================================================
+
+-- GetClientLockedUntil reports a lockout still in force for an application.
+-- name: GetClientLockedUntil :one
+SELECT locked_until FROM auth.oidc_client_auth_lockouts
+WHERE client_row_id = @client_row_id AND locked_until > NOW();
+
+-- RecordClientAuthFailure counts one wrong secret, restarting the count when
+-- the window it started has passed, and returns the count.
+-- name: RecordClientAuthFailure :one
+INSERT INTO auth.oidc_client_auth_lockouts AS l (client_row_id, failures, window_started_at, last_failure_at)
+VALUES (@client_row_id, 1, NOW(), NOW())
+ON CONFLICT (client_row_id) DO UPDATE SET
+    failures = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => @window_seconds::float8)
+                    THEN 1 ELSE l.failures + 1 END,
+    window_started_at = CASE WHEN l.window_started_at <= NOW() - make_interval(secs => @window_seconds::float8)
+                             THEN NOW() ELSE l.window_started_at END,
+    last_failure_at = NOW()
+RETURNING failures;
+
+-- LockClient starts a lockout and restarts the count, unless one is already
+-- in force: only the attempt that starts it gets a row back.
+-- name: LockClient :one
+UPDATE auth.oidc_client_auth_lockouts
+SET locked_until = NOW() + make_interval(secs => @duration_seconds::float8),
+    failures = 0, window_started_at = NOW()
+WHERE client_row_id = @client_row_id AND (locked_until IS NULL OR locked_until <= NOW())
+RETURNING locked_until;
+
+-- ClearClientAuthFailures forgets an application's failures after it
+-- authenticates.
+-- name: ClearClientAuthFailures :exec
+DELETE FROM auth.oidc_client_auth_lockouts WHERE client_row_id = @client_row_id;
+
+-- ListClientAuthFailures is an application's recent wrong-secret attempts,
+-- newest first, from the audit log (which never holds the secret).
+-- name: ListClientAuthFailures :many
+SELECT created_at, COALESCE(host(ip), '')::text AS ip, COALESCE(metadata->>'reason', '')::text AS reason
+FROM audit.events
+WHERE tenant_id = @tenant_id AND action = 'oidc.client_auth_failed' AND resource_id = @client_row_id
+ORDER BY created_at DESC
+LIMIT @max_rows;

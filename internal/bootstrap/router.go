@@ -145,6 +145,7 @@ func NewRouter(d Deps) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
+	r.Use(httpx.ClientIPContext) // the client address, for audit records written below a handler
 	// NOTE: chimw.RealIP is deliberately NOT used. It rewrites r.RemoteAddr from
 	// X-Forwarded-For / X-Real-IP unconditionally, with no notion of a trusted
 	// proxy — which would re-introduce the spoofing that httpx.ClientIP now

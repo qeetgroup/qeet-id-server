@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
@@ -72,3 +73,20 @@ func relayedClientIP(r *http.Request) string {
 // ViaTrustedRelay reports whether the request came from a trusted relay that
 // named the person's address.
 func ViaTrustedRelay(r *http.Request) bool { return relayedClientIP(r) != "" }
+
+const ctxKeyClientIP ctxKey = "qeet.client_ip"
+
+// ClientIPContext puts the request's client address (ClientIP) in its context,
+// for code that has the context but not the request, such as an audit record
+// written deep in a service.
+func ClientIPContext(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyClientIP, ClientIP(r))))
+	})
+}
+
+// ClientIPFromContext is the address ClientIPContext stored ("" when none).
+func ClientIPFromContext(ctx context.Context) string {
+	ip, _ := ctx.Value(ctxKeyClientIP).(string)
+	return ip
+}
