@@ -563,6 +563,11 @@ func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if r.Form.Get("resource") != "" {
+		// Explicitly refused, never silently dropped: this flow binds no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
+	}
 	scopes := strings.Fields(r.Form.Get("scope"))
 	rawDeviceCode, userCode, _, err := h.Service.DeviceAuthorize(r.Context(), clientID, scopes)
 	if err != nil {

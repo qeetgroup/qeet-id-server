@@ -217,6 +217,18 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Resource indicators confine tokens (2026-10-20)**
+
+* **oidc:** a token issued for a resource is for that resource alone. A client could name any
+  `resource` and get a Qeet-signed token with it added to the audience next to the platform's, so a
+  token minted for one service was accepted by any other and by the platform API. Organisations now
+  register resources (`/v1/tenants/{tenantID}/oidc/resources`, migration 0144); an unregistered one
+  is `invalid_target` at authorize and at the token endpoint. A token for a resource names it as its
+  only audience, so the platform API refuses it. `resource` is accepted at authorize (and through
+  consent), carried by the code, and a token request may not name another one. The device and
+  backchannel flows refuse a `resource` instead of dropping it. `tokens.Issuer.VerifyAccessFor`
+  checks a token for a given audience, as a downstream service does.
+
 **Revocation ends the whole grant (2026-10-20)**
 
 * **oidc:** revoking a refresh token at `/oauth/revoke` now ends every rotation of its grant. Each

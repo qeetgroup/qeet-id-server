@@ -200,7 +200,7 @@ func TestAddressRulesDecideEverySignIn(t *testing.T) {
 
 		authorize := func(addr string) error {
 			_, _, err := svc.AuthorizeInLoginSession(ctx, uuid.Nil, uma, client.ClientID, redirect, []string{"openid"},
-				"n-0S6_WzA2Mj", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "S256", addr)
+				"n-0S6_WzA2Mj", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "S256", addr, "")
 			return err
 		}
 		refused(t, "authorize", authorize(deniedAddr))

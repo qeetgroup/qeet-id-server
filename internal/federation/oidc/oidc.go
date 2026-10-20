@@ -342,15 +342,16 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 // hosted-login session, and no address is known, so an organisation with its
 // address rules on refuses it; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
-	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod, "")
+	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod, "", "")
 }
 
 // AuthorizeInLoginSession is Authorize for a user signed in to the hosted
 // login: the code records loginSessionID (uuid.Nil for none), and so does the
 // grant redeemed from it, so that signing out of that session ends both. ip is
 // the browser's address (httpx.ClientIP), which the organisation's address
-// rules must allow.
-func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod, ip string) (string, uuid.UUID, error) {
+// rules must allow. resource ("" for none) is the RFC 8707 resource the token
+// is for, which the organisation must have registered; the code carries it.
+func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod, ip, resource string) (string, uuid.UUID, error) {
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrOIDCClientUnknown
@@ -376,6 +377,9 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 	if err := validateSignInRequest(info.Type, info.PkceExempt, scopes, nonce, challenge, challengeMethod); err != nil {
 		return "", uuid.Nil, err
 	}
+	if err := s.checkResource(ctx, info.TenantID, resource); err != nil {
+		return "", uuid.Nil, err
+	}
 	// This is where the person signs in to the application, from the browser.
 	if err := s.checkAddress(ctx, info.TenantID, userID, ip, "oidc_authorize"); err != nil {
 		return "", uuid.Nil, err
@@ -395,6 +399,7 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 		CodeChallenge:       challenge,
 		CodeChallengeMethod: challengeMethod,
 		LoginSessionID:      optionalUUID(loginSessionID),
+		Resource:            resource,
 	})
 	if err != nil {
 		return "", uuid.Nil, err
@@ -653,6 +658,9 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if err := s.requireConfidential(ctx, client); err != nil {
 		return nil, err
 	}
+	if err := s.checkResource(ctx, client.TenantID, resource); err != nil {
+		return nil, err
+	}
 	if !containsAny(client.GrantTypes, "token_exchange", grantTypeTokenExchange) {
 		return nil, errs.ErrOIDCGrantTypeNotAllowed
 	}
@@ -814,6 +822,17 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 	if ac.RedirectUri != redirectURI {
 		return nil, errs.ErrOIDCRedirectURIMismatch
+	}
+	// The token is for the resource the authorization named; a token request
+	// may repeat it but not name another.
+	if ac.Resource != nil && *ac.Resource != "" {
+		if resource != "" && resource != *ac.Resource {
+			return nil, oauthErr("invalid_target", "resource differs from the one the authorization was for")
+		}
+		resource = *ac.Resource
+	}
+	if err := s.checkResource(ctx, tenantID, resource); err != nil {
+		return nil, err
 	}
 	// A code issued with no challenge redeems only while its confidential
 	// application's exemption is still in force.
@@ -985,6 +1004,8 @@ func (s *Service) RefreshToken(ctx context.Context, clientID, clientSecret, rawR
 	}
 	if resource == "" && rt.Resource != nil {
 		resource = *rt.Resource
+	} else if err := s.checkResource(ctx, rt.TenantID, resource); err != nil {
+		return nil, err
 	}
 
 	newRaw, newHash, err := tokens.NewRefreshToken()
@@ -1223,6 +1244,9 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Get("/tenants/{tenantID}/oidc/clients/{id}", h.getClient)
 	r.Patch("/tenants/{tenantID}/oidc/clients/{id}", h.patchClient)
 	r.Get("/tenants/{tenantID}/oidc/clients/{id}/auth-failures", h.clientAuthFailures)
+	r.Get("/tenants/{tenantID}/oidc/resources", h.listResources)
+	r.Post("/tenants/{tenantID}/oidc/resources", h.createResource)
+	r.Delete("/tenants/{tenantID}/oidc/resources/{id}", h.deleteResource)
 	r.Delete("/tenants/{tenantID}/oidc/clients/{id}", h.deleteClient)
 	r.Post("/tenants/{tenantID}/oidc/clients/{id}/rotate-secret", h.rotateClientSecret)
 	r.Get("/tenants/{tenantID}/oidc/clients/shadow-ai", h.shadowAI)
@@ -1451,6 +1475,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		id, err := h.Service.StartConsentRequest(r.Context(), loginSessionID, userID, ConsentRequest{
 			ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: q.Get("state"),
 			Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+			Resource: q.Get("resource"),
 		})
 		if err != nil {
 			h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
@@ -1461,7 +1486,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, clientID, redirect,
-		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"), httpx.ClientIP(r))
+		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"), httpx.ClientIP(r), q.Get("resource"))
 	if err != nil {
 		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
 		return
@@ -1481,7 +1506,10 @@ func (h *Handler) authorizeError(w http.ResponseWriter, r *http.Request, clientI
 		return
 	}
 	oauthCode := "server_error"
+	var oe *oauthError
 	switch {
+	case errors.As(err, &oe):
+		oauthCode = oe.Code
 	case errors.Is(err, errs.ErrOIDCUserTenantMismatch),
 		errors.Is(err, errs.ErrAuthAddressNotAllowed):
 		oauthCode = "access_denied"
@@ -1575,7 +1603,7 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, req.ClientID, req.RedirectURI,
-		req.Scopes, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod, httpx.ClientIP(r))
+		req.Scopes, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod, httpx.ClientIP(r), req.Resource)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1732,6 +1760,12 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 	}
 	var resp *TokenResponse
 	var err error
+	switch gt := r.Form.Get("grant_type"); {
+	case resource != "" && (gt == "urn:ietf:params:oauth:grant-type:device_code" || gt == grantTypeCIBA):
+		// Explicitly refused, never silently dropped: these flows bind no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
+	}
 	switch r.Form.Get("grant_type") {
 	case "authorization_code":
 		resp, err = h.Service.ExchangeCode(r.Context(),
@@ -1783,6 +1817,11 @@ func (h *Handler) tokenCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		var oe *oauthError
+		if errors.As(err, &oe) {
+			writeOAuthError(w, oe)
+			return
+		}
 		httpx.WriteError(w, r, err)
 		return
 	}
