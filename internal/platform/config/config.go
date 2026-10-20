@@ -53,6 +53,12 @@ type Config struct {
 	// every audit record. A deployment behind exactly one proxy must set 1, or
 	// every request will be attributed to the proxy's own address.
 	TrustedProxyHops int    `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
+	// RelayKeysRaw is a comma-separated list of keys that first-party relays
+	// (the console's and hosted login's servers) present to have the client
+	// address they forward trusted (see httpx.SetRelayKeys). Empty: no relay is
+	// trusted, and relayed requests are judged by the relay's own address. More
+	// than one lets a key be rotated without downtime.
+	RelayKeysRaw string `envconfig:"RELAY_KEYS" default:""`
 	LogLevel         string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
 	// for structured log ingestion and dev with jq). "text" forces the colored
@@ -508,6 +514,12 @@ func (c *Config) Validate() error {
 	default:
 		problems = append(problems, fmt.Sprintf("SECRETS_PROVIDER %q is invalid (want \"static\" or \"aws-kms\")", c.SecretsProvider))
 	}
+	for _, k := range c.RelayKeys() {
+		if isWeakSecret(k) {
+			problems = append(problems, "RELAY_KEYS: every key must be at least 32 characters and not a placeholder (`openssl rand -base64 32`)")
+			break
+		}
+	}
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
 	}
@@ -563,6 +575,18 @@ func isLocalHost(h string) bool {
 func isLoopbackName(h string) bool {
 	h = strings.TrimSuffix(strings.ToLower(h), ".")
 	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
+// RelayKeys returns the configured relay keys (RELAY_KEYS), trimmed, empty
+// ones dropped.
+func (c *Config) RelayKeys() []string {
+	var out []string
+	for _, k := range strings.Split(c.RelayKeysRaw, ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func (c *Config) AllowedOrigins() []string {
