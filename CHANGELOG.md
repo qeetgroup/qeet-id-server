@@ -303,7 +303,8 @@ The changes below are the work staged for that first release.
   refresh token now records its grant (`grant_id`, migration 0143, backfilled for existing chains);
   revocation ends them all and is audited as `oidc.grant_revoked`. An access token presented for
   revocation is refused with `unsupported_token_type` instead of a 200 that revoked nothing; an
-  unknown or another client's token is still a 200 no-op.
+  unknown or another client's token is still a 200 no-op. This holds for an access token issued for
+  a registered resource too, which first slipped through as a 200 no-op.
 
 **Application secret lockout (2026-10-20)**
 
