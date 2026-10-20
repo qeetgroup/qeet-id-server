@@ -419,8 +419,6 @@ func main() {
 	inTx("policy", func(tx pgx.Tx) error {
 		_, err := policyRepo.Upsert(ctx, tx, policy.Policy{
 			TenantID:           qeet.ID,
-			IPAllowlist:        []string{},
-			IPDenylist:         []string{},
 			PasswordMinLength:  12,
 			PasswordComplexity: "standard",
 			SessionMaxAge:      policy.Duration(12 * time.Hour),

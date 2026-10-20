@@ -36,6 +36,14 @@ const (
 	CodeOIDCCodeVerifierRequired           = "oidc.code_verifier_required"
 	CodeOIDCCodeVerifierInvalid            = "oidc.code_verifier_invalid"
 	CodeOIDCCodeChallengeMethodUnsupported = "oidc.code_challenge_method_unsupported"
+	CodeOIDCNonceRequired                  = "oidc.nonce_required"
+	CodeOIDCNonceInvalid                   = "oidc.nonce_invalid"
+	CodeOIDCPKCEExemptionInvalid           = "oidc.pkce_exemption_invalid"
+	CodeOIDCResourceInvalid                = "oidc.resource_invalid"
+	CodeOIDCExchangeDepthExceeded          = "oidc.exchange_depth_exceeded"
+	CodeOIDCInsufficientScope              = "oidc.insufficient_scope"
+	CodeOIDCResourceExists                 = "oidc.resource_exists"
+	CodeOIDCResourceNotFound               = "oidc.resource_not_found"
 
 	// Token exchange (RFC 8693) subject/actor tokens.
 	CodeOIDCSubjectTokenRequired          = "oidc.subject_token_required"
@@ -116,11 +124,23 @@ var (
 	ErrOIDCAuthCodeInvalid                = New(CodeOIDCAuthCodeInvalid, "That authorization code is invalid.")
 	ErrOIDCAuthCodeUsed                   = New(CodeOIDCAuthCodeUsed, "That authorization code has already been used.")
 	ErrOIDCAuthCodeExpired                = New(CodeOIDCAuthCodeExpired, "That authorization code has expired. Start again to get a new one.")
-	ErrOIDCCodeChallengeRequired          = New(CodeOIDCCodeChallengeRequired, "A PKCE code_challenge is required for this client.")
+	ErrOIDCCodeChallengeRequired          = New(CodeOIDCCodeChallengeRequired, "A PKCE code_challenge (S256) is required.")
 	ErrOIDCCodeChallengeInvalid           = New(CodeOIDCCodeChallengeInvalid, "The PKCE code_challenge is invalid.")
 	ErrOIDCCodeVerifierRequired           = New(CodeOIDCCodeVerifierRequired, "A PKCE code_verifier is required.")
 	ErrOIDCCodeVerifierInvalid            = New(CodeOIDCCodeVerifierInvalid, "The PKCE code_verifier is invalid.")
 	ErrOIDCCodeChallengeMethodUnsupported = New(CodeOIDCCodeChallengeMethodUnsupported, "That PKCE code_challenge_method isn't supported.")
+	// ErrOIDCNonceRequired: an OpenID Connect request (scope openid) carries no
+	// nonce, which ties the ID token to the browser that started the sign-in.
+	ErrOIDCNonceRequired = New(CodeOIDCNonceRequired, "A nonce is required when the openid scope is requested.")
+	ErrOIDCNonceInvalid  = New(CodeOIDCNonceInvalid, "The nonce is too long (at most 255 characters).")
+	// ErrOIDCPKCEExemptionInvalid: a PKCE exemption must be for a confidential
+	// application, and end in the future and within 90 days.
+	ErrOIDCInsufficientScope     = New(CodeOIDCInsufficientScope, "This token wasn't issued with the openid scope.")
+	ErrOIDCExchangeDepthExceeded = New(CodeOIDCExchangeDepthExceeded, "This token was already exchanged as many times as allowed.")
+	ErrOIDCResourceInvalid       = New(CodeOIDCResourceInvalid, "A resource identifier is an absolute URI without a fragment, such as https://api.example.com.")
+	ErrOIDCResourceExists        = New(CodeOIDCResourceExists, "That resource is already registered.")
+	ErrOIDCResourceNotFound      = New(CodeOIDCResourceNotFound, "We couldn't find that resource.")
+	ErrOIDCPKCEExemptionInvalid  = New(CodeOIDCPKCEExemptionInvalid, "A PKCE exemption is for a confidential application, and must end in the future and within 90 days.")
 
 	// Token exchange (RFC 8693) subject/actor tokens.
 	ErrOIDCSubjectTokenRequired          = New(CodeOIDCSubjectTokenRequired, "A subject_token is required.")

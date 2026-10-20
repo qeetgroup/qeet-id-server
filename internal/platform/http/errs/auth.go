@@ -26,6 +26,7 @@ const (
 	CodeAuthSessionLimit                = "auth.session_limit"
 	CodeAuthAccountSuspended            = "auth.account_suspended"
 	CodeAuthSignInUnavailable           = "auth.sign_in_unavailable"
+	CodeAuthAddressNotAllowed           = "auth.address_not_allowed"
 )
 
 var (
@@ -70,4 +71,8 @@ var (
 	// counters could not be read or written: the lockout fails closed. The same
 	// answer whatever the password and whether the address has an account.
 	ErrAuthSignInUnavailable = New(CodeAuthSignInUnavailable, "Sign-in is temporarily unavailable. Please try again in a moment.").AsRetryable()
+	// ErrAuthAddressNotAllowed refuses a sign-in, or a session's renewal, from
+	// an address the organisation's address rules don't allow. It never says
+	// which rule matched.
+	ErrAuthAddressNotAllowed = New(CodeAuthAddressNotAllowed, "Your organisation doesn't allow sign-in from this network. Contact your administrator.")
 )

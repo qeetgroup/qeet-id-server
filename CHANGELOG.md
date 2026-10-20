@@ -183,6 +183,190 @@ The changes below are the work staged for that first release.
   declare `mutates` is a manifest error. The system prompt describes a read-only assistant that
   explains the steps and names the console screen that makes a change.
 
+**Address rules (2026-10-20)**
+
+* **ipallow:** address rules now decide every sign-in. Admins could turn rules on and add allow and
+  deny ranges, and the check endpoint reported "denied", but no sign-in ever asked them: a deny rule
+  blocked nothing and an allow list let everyone in. While an organisation's rules are on, every
+  session in it is now refused from an address they refuse (a deny rule matches, or allow rules
+  exist and none matches; deny wins), before anything is written: password, passkey, magic link,
+  social, SAML, LDAP, invitation, organisation creation and switch, and the MFA step. So are its
+  sessions' renewals (the session stays, and renews again from an allowed address), an
+  application's authorization in the browser, a device approval, and a device collecting its
+  tokens. A refusal answers `403 auth.address_not_allowed` (`access_denied` to an application),
+  names no rule, and is audited as `auth.address_refused` with the rule responsible, the address
+  and the path. An address that can't be read is refused while rules are on (the check endpoint
+  said "allowed" for one). Rules judge the address the platform derives, so behind a proxy
+  `TRUSTED_PROXY_HOPS` must be set. Code redemption and refresh at the token endpoint come from the
+  application's server and are not asked.
+* **hosted login:** the hosted login opens a session for the browser, not for one organisation, so a
+  refused address only surfaced at authorize, as `access_denied` sent to the application. The
+  organisation of the application being signed in to now refuses at the sign-in itself: password
+  (`POST /v1/auth/session` with `client_id`, before the password is checked, so a right and a wrong
+  password get the same answer), magic link (the link's organisation), sign-up (no account is
+  created) and social (the browser goes back to the hosted login with `error=address_not_allowed`
+  and its `return_to`). No hosted-login session is opened.
+* **ipallow:** an admin can no longer lock themselves out. Switching enforcement on, or adding or
+  removing a rule while it is on, is refused with `409 risk.rules_lock_out_caller` when the result
+  would refuse the address the change comes from; switching it off always works. The console signs
+  people in from its own server, so the API sees that server's address for console sign-ins (until
+  the console forwards the person's address, QTID-592 / QTID-828): it is the address that must stay
+  allowed, and an office-only allow list would otherwise have refused every console sign-in.
+* **policy:** the security policy's own `ip_allowlist` and `ip_denylist` are gone (migration 0140).
+  Nothing ever read them; address rules are the one address control. The policy no longer reports
+  them; a save that still sends them empty is accepted, and one with entries is refused with
+  `422 validation_failed` (code `retired`).
+
+**OAuth-only clients can configure themselves (2026-10-20)**
+
+* **oidc:** `/.well-known/oauth-authorization-server` (RFC 8414) answered 404, so a client that
+  speaks only OAuth, or a model-context-protocol client following the protected-resource document
+  to the authorization server it names, could not configure itself. It now serves the same metadata
+  as the OpenID configuration, so the two always agree. The protected-resource document emits
+  `scopes_supported` (its schema said `scopes_provided`, now corrected), and the OpenID configuration
+  no longer carries the invented `protected_resource_metadata` key.
+
+**Sign-out tells the applications (2026-10-20)**
+
+* **oidc:** signing out ended the hosted session and its grants and told no application, so a
+  person stayed signed in wherever an application keeps its own session, and a plain link or image
+  could sign anyone out. Applications can now register a `backchannel_logout_uri` (a signed logout
+  token naming the session, OpenID Connect Back-Channel Logout, POSTed and retried with backoff; a
+  final failure audited as `oidc.backchannel_logout_failed`) and a `frontchannel_logout_uri` (loaded
+  by the hosted signed-out page, which continues to the post-logout address through a signed ticket
+  at `/v1/oauth/logout/continue`); migration 0146. Every application with a code or grant from the
+  ended session is told, whether the sign-out came from an application or the hosted login itself
+  (`DELETE /v1/auth/session` now returns the front-channel pages). `/v1/oauth/logout` verifies an
+  `id_token_hint` (another sign-in's is refused) and, without one, asks the person first on the
+  hosted login with a confirmation ticket. Audited as `oidc.sign_out_notified`; discovery advertises
+  both logout profiles.
+
+**Authorize honours the OIDC directives (2026-10-20)**
+
+* **oidc:** `/v1/oauth/authorize` read four parameters and the proof key and ignored the rest:
+  `response_type` was never read (a request for an unsupported flow got a code), and `prompt` and
+  `max_age` were accepted and discarded. Now `response_type` is required and only `code` served
+  (`invalid_request`, `unsupported_response_type`); `prompt=none` answers `login_required` or
+  `consent_required` instead of showing a page; `prompt=login`, and a sign-in older than `max_age`,
+  send the browser to sign in again before the code is issued; `prompt=consent` asks again;
+  `request`, `request_uri` and response modes other than `query` are refused. The ID token carries
+  `auth_time` and `sid` (migration 0145), and discovery lists the prompts, response modes and types
+  honoured.
+
+**UserInfo and the ID token say who signed in (2026-10-20)**
+
+* **oidc:** `/v1/oauth/userinfo` returned only `sub` and the tenant id, so no application could
+  learn a person's email or name over standard OIDC though discovery advertised the scopes. It now
+  returns the standard claims the token's scopes grant (`email` → `email`, `email_verified`;
+  `profile` → `name`, `picture`, `locale`, `updated_at`; `phone` → `phone_number`,
+  `phone_number_verified`), and the ID token carries the same; discovery lists them in
+  `claims_supported`. A token without `openid` gets `403 oidc.insufficient_scope`; POST works as
+  well as GET. Bearer 401s now carry `WWW-Authenticate: Bearer error="invalid_token"` (RFC 6750).
+
+**Token exchange can't extend a credential (2026-10-20)**
+
+* **oidc:** every token exchange issued a fresh, full-lifetime token, the result could be exchanged
+  again without limit, nobody re-checked the person, and any application allowed to exchange could
+  exchange any token passing through it. One captured ten-minute token could be renewed forever.
+  Now the caller must be entitled to the subject (issued to it, issued for a resource it serves, or
+  the person consented to it); a suspended person or closed organisation is refused; the result
+  expires no later than the subject token, gets its own session id, and carries a new
+  `exchange_depth` claim, refused past `TOKEN_EXCHANGE_MAX_DEPTH` (2); every exchange is audited as
+  `oidc.token_exchanged` (caller, subject, actor, scopes, resource, originating session).
+
+**Introspection answers only for the owner (2026-10-20)**
+
+* **oidc:** `/oauth/introspect` answered for any access token of the caller's organisation, so any
+  application could read the live state, subject and scopes of every other application's tokens,
+  and it reported the fixed platform audience. An application now learns only about access tokens
+  issued to it, or issued for a registered resource it serves; anything else is `{"active": false}`,
+  and asking about another application's token is audited (`oidc.introspection_refused`). An active
+  token reports its real `aud`, its `client_id`, and `resource` when it was issued for one.
+
+**Resource indicators confine tokens (2026-10-20)**
+
+* **oidc:** a token issued for a resource is for that resource alone. A client could name any
+  `resource` and get a Qeet-signed token with it added to the audience next to the platform's, so a
+  token minted for one service was accepted by any other and by the platform API. Organisations now
+  register resources (`/v1/tenants/{tenantID}/oidc/resources`, migration 0144); an unregistered one
+  is `invalid_target` at authorize and at the token endpoint. A token for a resource names it as its
+  only audience, so the platform API refuses it. `resource` is accepted at authorize (and through
+  consent), carried by the code, and a token request may not name another one. The device and
+  backchannel flows refuse a `resource` instead of dropping it. `tokens.Issuer.VerifyAccessFor`
+  checks a token for a given audience, as a downstream service does.
+
+**Revocation ends the whole grant (2026-10-20)**
+
+* **oidc:** revoking a refresh token at `/oauth/revoke` now ends every rotation of its grant. Each
+  rotation inserted a new row, and revocation ended only the row presented, so revoking an older
+  link left the live one usable (and the admin path, which ended the whole chain, disagreed). Every
+  refresh token now records its grant (`grant_id`, migration 0143, backfilled for existing chains);
+  revocation ends them all and is audited as `oidc.grant_revoked`. An access token presented for
+  revocation is refused with `unsupported_token_type` instead of a 200 that revoked nothing; an
+  unknown or another client's token is still a 200 no-op.
+
+**Application secret lockout (2026-10-20)**
+
+* **oidc:** wrong application secrets are counted and lock the application out. Nothing counted a
+  failed client authentication, so a secret could be guessed at volume, invisibly, on any of the
+  endpoints that take one. Failures now count against the application in one durable budget shared
+  by every such endpoint (code exchange, refresh, token exchange, device and backchannel requests,
+  revocation, introspection). Past `CLIENT_AUTH_LOCKOUT_THRESHOLD` within
+  `CLIENT_AUTH_LOCKOUT_WINDOW` (10 in 15 minutes) every authentication is refused for
+  `CLIENT_AUTH_LOCKOUT_DURATION` (15 minutes) before the secret is even compared, with the same
+  `401 oidc.client_auth_failed` as a wrong secret or an unknown application. Each failure is audited
+  with the caller's address and no secret; a lockout is audited (`oidc.client_locked_out`) and
+  announced (`oidc.client.locked_out`) once. A success resets the count. New
+  `GET /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures` shows the lockout and recent
+  failures (migration 0142).
+
+**Relayed sign-ins (2026-10-20)**
+
+* **httpx:** a first-party relay can name the person's address. The console signs people in, and the
+  hosted login fetches application details, from their own servers, so the API saw one address for
+  everyone behind them: one shared per-address allowance (twenty people signing in at once got 429),
+  one network for sign-in lockout and spraying, one address in every audit record and session, and
+  address rules that could neither allow nor refuse a console user by their own network. A relay
+  that sends a key from the new `RELAY_KEYS` in `X-Qeet-Relay-Key` may name the person's address in
+  `X-Qeet-Client-IP`, and limits, lockout, risk, address rules, sessions and audit use it. A claimed
+  address without a valid key is ignored. Several keys may be configured, so one can be rotated.
+
+**Signing keys at startup (2026-10-20)**
+
+* **config:** `SERVICE_ENV` has no default. Left unset it meant `dev`, which switches the production
+  gates off and makes up keys, so a deployment that forgot it ran as a workstation. Startup now
+  refuses, naming the setting. `.env.example`, the kit (`local`) and the production deployment
+  (`prod`) already set it.
+* **tokens:** an instance no longer mints a signing key at every start. With `SERVICE_ENV=dev` and
+  no `JWT_SIGNING_KEY`, it generated a key and promoted it, retiring the last one with a 30-day
+  grace: two instances on one database each signed with their own key (one's tokens refused by the
+  other) and every restart added a key to JWKS. It now signs with the database's active key, and
+  makes one only when the database has none, under the registry lock so instances starting together
+  agree on it. If its vault key can't open the active key, it refuses to start and changes nothing.
+  A configured key is no longer activated just because the vault key is ephemeral: only
+  `JWT_ACTIVATE_SIGNING_KEY` activates one.
+* **health:** `/readyz` reports `jwt-keyring` failing after 3 keyring refreshes in a row fail (it
+  stayed green while an instance logged a failure every 5 seconds). New metrics:
+  `jwt_signing_key_active{kid}`, `jwt_signing_key_snapshot_timestamp_seconds` (age = `time()` minus
+  it) and `jwt_signing_key_sync_failures_total`.
+
+**Proof key for every application (2026-10-20)**
+
+* **oidc:** every application must send a PKCE `code_challenge` (S256), and a `nonce` with
+  `openid`. Only public applications needed PKCE: a confidential one that left it out got a working
+  flow with nothing tying the code or the ID token to the browser that started it (OAuth 2.1 and
+  RFC 9700 require PKCE for every client type). Authorize now refuses such a request with
+  `invalid_request` (`oidc.code_challenge_required`, `oidc.nonce_required`), before any consent is
+  asked; the nonce comes back in the ID token. A confidential application can be exempted from both
+  until a date within 90 days (`pkce_exempt_until` on `PATCH /v1/tenants/{tenantID}/oidc/clients/{id}`,
+  shown on the application, audited); a code issued under an exemption redeems only while it lasts.
+  No application is exempt by default. **Breaking** for a relying party that sends no proof key or
+  nonce.
+* **oidc:** an authorization code presented a second time now also revokes the grant its first
+  redemption issued, every renewal of it included (RFC 6749 §4.1.2), and is audited as
+  `oidc.authorization_code_reused`; other grants of the application stay. Migration 0141 records
+  the code a grant came from.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

@@ -3,3 +3,18 @@
 //   sqlc v1.31.1
 
 package dbgen
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type AuthOidcResource struct {
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	Identifier     string
+	Name           string
+	ServerClientID *string
+	CreatedAt      time.Time
+}

@@ -186,8 +186,9 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 
 // DecideDevice records the user's approve/deny decision against a pending device
 // row identified by user_code. On approval it binds the user (who must belong to
-// the row's tenant) and marks it authorized; on denial it marks it denied.
-func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode string, approve bool) error {
+// the row's tenant, and approve from an address its rules allow: ip) and marks
+// it authorized; on denial it marks it denied.
+func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode string, approve bool, ip string) error {
 	userCode = normalizeUserCode(userCode)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -240,6 +241,10 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 	if !live {
 		return errs.ErrOIDCUserTenantMismatch
 	}
+	// Approving is the person's sign-in to the application.
+	if err := s.checkAddress(ctx, row.TenantID, userID, ip, "device_approval"); err != nil {
+		return err
+	}
 
 	// Record consent for the requested scopes so the grant is consistent with
 	// the authorization_code flow (skips re-consent on later flows).
@@ -261,8 +266,10 @@ func (s *Service) DecideDevice(ctx context.Context, userID uuid.UUID, userCode s
 // grant_type=urn:ietf:params:oauth:grant-type:device_code. It enforces the poll
 // interval (slow_down) via last_polled_at, surfaces the pending/denied/expired
 // states as RFC errors, and on success consumes the device_code one-time and
-// issues the SAME token pair the authorization_code flow does.
-func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode string) (*TokenResponse, error) {
+// issues the SAME token pair the authorization_code flow does. ip is the
+// device's address: the tokens go there, so the organisation's address rules
+// must allow it as well as the approver's.
+func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode, ip string) (*TokenResponse, error) {
 	if rawDeviceCode == "" {
 		return nil, oauthErr("invalid_request", "device_code required")
 	}
@@ -358,6 +365,17 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 		}
 		return nil, oauthErr("invalid_grant", "account_suspended")
 	}
+	// A device on an address the organisation doesn't allow gets nothing; the
+	// code is spent, so the flow starts again from an allowed one.
+	if err := s.checkAddress(ctx, dc.TenantID, *userID, ip, "device"); err != nil {
+		if !errors.Is(err, errs.ErrAuthAddressNotAllowed) {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, oauthErr("access_denied", "address_not_allowed")
+	}
 	// The client's grant_types tell us whether to mint a refresh token, the same
 	// way ExchangeCode does.
 	grantTypes, err := q.GetClientGrantTypes(ctx, clientID)
@@ -377,7 +395,7 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(*userID, tenantID, clientID, "")
+		t, err := s.signIDToken(ctx, idToken{UserID: *userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}
@@ -387,7 +405,7 @@ func (s *Service) DeviceToken(ctx context.Context, clientID, rawDeviceCode strin
 	if contains(grantTypes, "refresh_token") {
 		// Device grant doesn't collect a resource indicator today (RFC 8707
 		// support there is unscoped work) — issued with no bound resource.
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, *userID, tenantID, scopes, "", pgtype.UUID{})
+		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, *userID, tenantID, scopes, "", pgtype.UUID{}, "")
 		if err != nil {
 			return nil, err
 		}
@@ -545,6 +563,11 @@ func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if r.Form.Get("resource") != "" {
+		// Explicitly refused, never silently dropped: this flow binds no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
+	}
 	scopes := strings.Fields(r.Form.Get("scope"))
 	rawDeviceCode, userCode, _, err := h.Service.DeviceAuthorize(r.Context(), clientID, scopes)
 	if err != nil {
@@ -606,7 +629,7 @@ func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrOIDCUserCodeRequired)
 		return
 	}
-	if err := h.Service.DecideDevice(r.Context(), userID, in.UserCode, in.Approve); err != nil {
+	if err := h.Service.DecideDevice(r.Context(), userID, in.UserCode, in.Approve, httpx.ClientIP(r)); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

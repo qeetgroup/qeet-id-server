@@ -29,6 +29,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	passkey "github.com/qeetgroup/qeet-id-server/internal/access/passkeys"
+	"github.com/qeetgroup/qeet-id-server/internal/access/risk/ipallow"
 	authhook "github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks"
 	secret "github.com/qeetgroup/qeet-id-server/internal/developer/credentials/secrets"
 	"github.com/qeetgroup/qeet-id-server/internal/developer/credentials/tokenvault"
@@ -70,8 +71,9 @@ func newAuth() (*auth.Service, *user.Repository) {
 	issuer := mustIssuer()
 	svc := auth.NewService(testPool, users, issuer)
 	policy := authpolicy.NewService(testPool)
-	svc.SetRegistrationPolicy(policy) // the password check, as bootstrap wires it
-	svc.SetMethodPolicy(policy)       // which sign-in methods an organisation allows
+	svc.SetRegistrationPolicy(policy)                  // the password check, as bootstrap wires it
+	svc.SetMethodPolicy(policy)                        // which sign-in methods an organisation allows
+	svc.SetAddressPolicy(ipallow.NewService(testPool)) // the organisation's address rules
 	return svc, users
 }
 
@@ -850,12 +852,12 @@ func TestOIDCRefreshTokenRotateReuse(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
 
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -922,15 +924,18 @@ func TestOIDCRefreshTokenPreservesResourceBinding(t *testing.T) {
 	}
 
 	const mcpResource = "https://mcp.example.com"
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	const otherResource = "https://other.example.com"
+	registerResource(t, ctx, svc, tenantID, mcpResource, "")
+	registerResource(t, ctx, svc, tenantID, otherResource, "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", mcpResource)
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, mcpResource)
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
-	claims, err := issuer.VerifyAccess(issued.AccessToken)
+	claims, err := issuer.VerifyAccessFor(issued.AccessToken, mcpResource)
 	if err != nil || !slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("initial access token audience = %v (err %v), want to include %q", claims, err, mcpResource)
 	}
@@ -940,18 +945,17 @@ func TestOIDCRefreshTokenPreservesResourceBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	claims, err = issuer.VerifyAccess(rotated.AccessToken)
+	claims, err = issuer.VerifyAccessFor(rotated.AccessToken, mcpResource)
 	if err != nil || !slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("rotated access token audience = %v (err %v), want to still include %q", claims, err, mcpResource)
 	}
 
 	// An explicit resource on the refresh call switches the bound resource.
-	const otherResource = "https://other.example.com"
 	rotated2, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken, otherResource)
 	if err != nil {
 		t.Fatalf("refresh (explicit resource): %v", err)
 	}
-	claims, err = issuer.VerifyAccess(rotated2.AccessToken)
+	claims, err = issuer.VerifyAccessFor(rotated2.AccessToken, otherResource)
 	if err != nil || !slices.Contains([]string(claims.Audience), otherResource) || slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("re-refreshed access token audience = %v (err %v), want only %q", claims, err, otherResource)
 	}
@@ -1133,6 +1137,7 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	issuer := mustIssuer()
 	svc := oidc.NewService(testPool, issuer)
@@ -1158,6 +1163,11 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue subject token: %v", err)
 	}
+	// The person delegated to this application (consented), so it may
+	// exchange their token.
+	if err := svc.GrantConsent(ctx, userID, client.ClientID, []string{"doc.read"}); err != nil {
+		t.Fatalf("grant consent: %v", err)
+	}
 
 	// RFC 8693 delegation: the actor_token is a real, verifiable access token
 	// representing the acting party (the agent). Its subject flows into the
@@ -1171,11 +1181,12 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	}
 
 	const mcpResource = "https://mcp.example.com"
+	registerResource(t, ctx, svc, tenantID, mcpResource, "")
 	resp, err := svc.TokenExchange(ctx, client.ClientID, secret, subjectAccess, "", "", "", actorAccess, "", mcpResource)
 	if err != nil {
 		t.Fatalf("token exchange: %v", err)
 	}
-	claims, err := issuer.VerifyAccess(resp.AccessToken)
+	claims, err := issuer.VerifyAccessFor(resp.AccessToken, mcpResource)
 	if err != nil {
 		t.Fatalf("verify exchanged token: %v", err)
 	}
@@ -1218,11 +1229,11 @@ func TestOIDCRevokeAndIntrospect(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 
-	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
+	issued, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -1309,7 +1320,7 @@ func TestOIDCConsentAndAuthorize(t *testing.T) {
 	}
 
 	// Authorize derives the tenant from the client and mints a code.
-	code, gotTenant, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, "", "", "")
+	code, gotTenant, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
@@ -1375,10 +1386,14 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 
 	authorizeURL := func() string {
 		q := url.Values{
-			"client_id":    {client.ClientID},
-			"redirect_uri": {redirectURI},
-			"scope":        {"openid"},
-			"state":        {"xyz"},
+			"client_id":             {client.ClientID},
+			"redirect_uri":          {redirectURI},
+			"scope":                 {"openid"},
+			"state":                 {"xyz"},
+			"response_type":         {"code"},
+			"code_challenge":        {testChallenge},
+			"code_challenge_method": {"S256"},
+			"nonce":                 {testNonce},
 		}
 		return srv.URL + "/v1/oauth/authorize?" + q.Encode()
 	}
@@ -1441,7 +1456,7 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 	}
 
 	// 5) The code exchanges for tokens — proves the hosted flow produced a valid one.
-	issued, err := oidcSvc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, "", "")
+	issued, err := oidcSvc.ExchangeCode(ctx, client.ClientID, secret, code, redirectURI, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
@@ -1512,11 +1527,21 @@ func TestEndSessionLogout(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Logout with a registered post_logout_redirect_uri → redirected there.
+	// Logout with a registered post_logout_redirect_uri → the hosted login asks
+	// first (no id_token_hint), then the confirmed request redirects there.
 	q := url.Values{"client_id": {client.ClientID}, "post_logout_redirect_uri": {postLogout}, "state": {"s1"}}
 	resp, err = hc.Get(srv.URL + "/v1/oauth/logout?" + q.Encode())
 	if err != nil {
 		t.Fatalf("logout: %v", err)
+	}
+	confirm, _ := url.Parse(resp.Header.Get("Location"))
+	resp.Body.Close()
+	if confirm == nil || confirm.Path != "/logout" || confirm.Query().Get("logout_confirmation") == "" {
+		t.Fatalf("logout without a hint = %q, want the hosted confirmation page", resp.Header.Get("Location"))
+	}
+	resp, err = hc.Get(srv.URL + "/v1/oauth/logout?" + confirm.Query().Encode())
+	if err != nil {
+		t.Fatalf("confirmed logout: %v", err)
 	}
 	loc := resp.Header.Get("Location")
 	resp.Body.Close()
@@ -1525,7 +1550,7 @@ func TestEndSessionLogout(t *testing.T) {
 	}
 
 	// Session cleared: authorize now bounces back to the hosted login.
-	aq := url.Values{"client_id": {client.ClientID}, "redirect_uri": {redirectURI}, "scope": {"openid"}}
+	aq := url.Values{"client_id": {client.ClientID}, "redirect_uri": {redirectURI}, "scope": {"openid"}, "response_type": {"code"}}
 	resp, err = hc.Get(srv.URL + "/v1/oauth/authorize?" + aq.Encode())
 	if err != nil {
 		t.Fatalf("authorize after logout: %v", err)

@@ -1,9 +1,9 @@
 // Package ipallow manages per-tenant IP allow/deny rules (CIDR) and evaluates
 // an address against them. Deny rules win; if any allow rule exists, an address
-// must match one to pass. Enforcement in the request path is gated by an
-// explicit per-tenant flag (avoids accidental lockout) and is exposed here as a
-// pure Evaluate + a /check endpoint; wiring it as edge/middleware enforcement
-// (with caching) is a deployment step.
+// must match one to pass. Enforcement is gated by an explicit per-tenant flag
+// (avoids accidental lockout). While it is on, every sign-in to the
+// organisation and every renewal of a session in it asks CheckSignIn first; the
+// /check endpoint answers the same question for an admin.
 package ipallow
 
 import (
@@ -48,22 +48,41 @@ func parsePrefix(cidr string) (netip.Prefix, error) {
 	return addr.Prefix(addr.BitLen())
 }
 
-// Evaluate decides whether ipStr is permitted by the rule set. Pure, so it is
-// unit-tested without a database. An unparseable address fails open.
-func Evaluate(rules []Rule, ipStr string) (bool, string) {
+// Decision is what the rules make of one address. Rule is the deny rule that
+// matched, nil when no single rule is responsible (allowed, outside every
+// allow rule, or no address to judge).
+type Decision struct {
+	Allowed bool
+	Rule    *Rule
+	Reason  string
+}
+
+// Why a decision refused an address, as recorded in auth.address_refused.
+const (
+	ReasonDenyRule     = "deny_rule"
+	ReasonNotAllowed   = "not_in_allow_rules"
+	ReasonUnknownAddr  = "address_unknown"
+	reasonAllowed      = "allowed"
+	reasonEnforcingOff = "enforcement disabled"
+)
+
+// Decide judges ipStr against the rule set. Pure, so it is unit-tested without
+// a database. An address that can't be read is refused: while rules are on, a
+// sign-in from an unknown address must not get past them.
+func Decide(rules []Rule, ipStr string) Decision {
 	ip, err := netip.ParseAddr(strings.TrimSpace(ipStr))
 	if err != nil {
-		return true, "allowed (unparseable address — not enforced)"
+		return Decision{Reason: ReasonUnknownAddr}
 	}
 	hasAllow, inAllow := false, false
-	for _, r := range rules {
+	for i, r := range rules {
 		pfx, perr := parsePrefix(r.CIDR)
 		if perr != nil {
 			continue
 		}
-		match := pfx.Contains(ip)
+		match := pfx.Contains(ip.Unmap())
 		if r.Action == "deny" && match {
-			return false, "blocked by deny rule " + r.CIDR
+			return Decision{Rule: &rules[i], Reason: ReasonDenyRule}
 		}
 		if r.Action == "allow" {
 			hasAllow = true
@@ -73,7 +92,21 @@ func Evaluate(rules []Rule, ipStr string) (bool, string) {
 		}
 	}
 	if hasAllow && !inAllow {
+		return Decision{Reason: ReasonNotAllowed}
+	}
+	return Decision{Allowed: true, Reason: reasonAllowed}
+}
+
+// Evaluate is Decide as (allowed, a sentence for an admin).
+func Evaluate(rules []Rule, ipStr string) (bool, string) {
+	d := Decide(rules, ipStr)
+	switch d.Reason {
+	case ReasonDenyRule:
+		return false, "blocked by deny rule " + d.Rule.CIDR
+	case ReasonNotAllowed:
 		return false, "not in any allow rule"
+	case ReasonUnknownAddr:
+		return false, "refused: not a readable address"
 	}
 	return true, "allowed"
 }
@@ -168,7 +201,7 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (ena
 		return false, true, "", err
 	}
 	if !enabled {
-		return false, true, "enforcement disabled", nil
+		return false, true, reasonEnforcingOff, nil
 	}
 	rules, err := s.ListRules(ctx, tenantID)
 	if err != nil {
@@ -176,6 +209,86 @@ func (s *Service) Check(ctx context.Context, tenantID uuid.UUID, ip string) (ena
 	}
 	allowed, reason = Evaluate(rules, ip)
 	return enabled, allowed, reason, nil
+}
+
+// CheckSignIn is the gate every sign-in to an organisation, and every renewal
+// of a session in it, passes before a session is issued or renewed. With the
+// organisation's rules off (or no organisation) it allows everything. Refused,
+// it records auth.address_refused — the rule responsible, the address and the
+// path — in its own transaction, so the record survives the refused sign-in,
+// and returns errs.ErrAuthAddressNotAllowed. ip is the address the platform
+// derived for the request (httpx.ClientIP), never one the caller declared;
+// path names the sign-in ("password", "passkey", "refresh", "oidc_authorize",
+// …). A failure to read the rules is returned, so the sign-in fails closed.
+func (s *Service) CheckSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
+	if tenantID == uuid.Nil {
+		return nil
+	}
+	enabled, err := s.Enabled(ctx, tenantID)
+	if err != nil || !enabled {
+		return err
+	}
+	rules, err := s.ListRules(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	d := Decide(rules, ip)
+	if d.Allowed {
+		return nil
+	}
+	meta := map[string]any{"reason": d.Reason, "path": path, "address": ip}
+	var ruleID *uuid.UUID
+	if d.Rule != nil {
+		id := d.Rule.ID
+		ruleID = &id
+		meta["rule_id"] = id
+		meta["cidr"] = d.Rule.CIDR
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tid := tenantID
+	var actor *uuid.UUID
+	if userID != uuid.Nil {
+		uid := userID
+		actor = &uid
+	}
+	// The address column takes only a readable address; an unreadable one is
+	// kept in the metadata alone.
+	recordedIP := ip
+	if d.Reason == ReasonUnknownAddr {
+		recordedIP = ""
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID:     &tid,
+		ActorUserID:  actor,
+		ActorType:    "user",
+		Action:       "auth.address_refused",
+		ResourceType: "ip_rule",
+		ResourceID:   ruleID,
+		IP:           recordedIP,
+		Metadata:     meta,
+	}); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return errs.ErrAuthAddressNotAllowed
+}
+
+// refusesCaller reports whether rules, enforced, would refuse the caller's own
+// address. A change to enforced rules that does is refused: the organisation
+// would lock its admins out, with no way back in to undo it. The console calls
+// from its own server, so there it is the console's address that must stay
+// allowed.
+func refusesCaller(rules []Rule, r *http.Request) error {
+	if d := Decide(rules, httpx.ClientIP(r)); !d.Allowed {
+		return errs.ErrRiskRulesLockOutCaller.WithDetail("your address as the API sees it: " + httpx.ClientIP(r))
+	}
+	return nil
 }
 
 type Handler struct {
@@ -228,6 +341,28 @@ func (h *Handler) recordAudit(ctx context.Context, tx pgx.Tx, r *http.Request, t
 	})
 }
 
+// guardEnforced refuses a rule change, inside its transaction, when the rules
+// are enforced and the rule set it leaves would refuse the caller.
+func (h *Handler) guardEnforced(ctx context.Context, tx pgx.Tx, r *http.Request, tenantID uuid.UUID) error {
+	q := h.Service.q.WithTx(tx)
+	enabled, err := q.GetIPRulesEnabled(ctx, tenantID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !enabled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rows, err := q.ListIPRules(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	rules := make([]Rule, len(rows))
+	for i, row := range rows {
+		rules[i] = ruleFromModel(row)
+	}
+	return refusesCaller(rules, r)
+}
+
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := requirePathTenant(r)
 	if err != nil {
@@ -261,6 +396,17 @@ func (h *Handler) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if in.Enabled {
+		rules, err := h.Service.ListRules(ctx, tenantID)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if err := refusesCaller(rules, r); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+	}
 	tx, err := h.Service.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -309,6 +455,10 @@ func (h *Handler) add(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if err := h.guardEnforced(ctx, tx, r, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	if err := h.recordAudit(ctx, tx, r, tenantID, "ip_rules.rule_added", map[string]any{"cidr": rule.CIDR, "action": rule.Action}); err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -339,6 +489,10 @@ func (h *Handler) del(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	if err := h.Service.DeleteRule(ctx, tx, tenantID, ruleID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	if err := h.guardEnforced(ctx, tx, r, tenantID); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

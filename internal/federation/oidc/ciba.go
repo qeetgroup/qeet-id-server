@@ -314,7 +314,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(userID, tenantID, clientID, "")
+		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Scopes: scopes})
 		if err != nil {
 			return nil, err
 		}
@@ -322,7 +322,7 @@ func (s *Service) BackchannelToken(ctx context.Context, clientID, rawAuthReqID s
 	}
 	refresh := ""
 	if contains(grantTypes, "refresh_token") {
-		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{})
+		refresh, err = s.issueRefreshToken(ctx, s.q, clientID, userID, tenantID, scopes, "", pgtype.UUID{}, "")
 		if err != nil {
 			return nil, err
 		}
@@ -346,6 +346,11 @@ func (h *Handler) backchannelAuthorize(w http.ResponseWriter, r *http.Request) {
 	clientSecret := r.Form.Get("client_secret")
 	if u, p, ok := r.BasicAuth(); ok {
 		clientID, clientSecret = u, p
+	}
+	if r.Form.Get("resource") != "" {
+		// Explicitly refused, never silently dropped: this flow binds no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
 	}
 	resp, err := h.Service.BackchannelAuthorize(r.Context(), clientID, clientSecret,
 		r.Form.Get("login_hint"), r.Form.Get("scope"), r.Form.Get("binding_message"))

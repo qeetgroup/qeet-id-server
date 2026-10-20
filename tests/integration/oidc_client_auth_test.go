@@ -51,11 +51,11 @@ func TestPublicClientsCantStandInForConfidentialOnes(t *testing.T) {
 	}
 
 	// A signed-in user's tokens, from the confidential client.
-	code, _, err := svc.Authorize(ctx, userID, conf.ClientID, redirect, []string{"openid", "profile"}, "", "", "")
+	code, _, err := svc.Authorize(ctx, userID, conf.ClientID, redirect, []string{"openid", "profile"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
 	}
-	userTokens, err := svc.ExchangeCode(ctx, conf.ClientID, secret, code, redirect, "", "")
+	userTokens, err := svc.ExchangeCode(ctx, conf.ClientID, secret, code, redirect, testVerifier, "")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestPublicClientsCantStandInForConfidentialOnes(t *testing.T) {
 	var spaRefresh string
 	t.Run("the public browser sign-in with PKCE still works", func(t *testing.T) {
 		verifier, challenge := newPKCE(t)
-		c, _, err := svc.Authorize(ctx, userID, spa.ClientID, redirect, []string{"openid"}, "", challenge, "S256")
+		c, _, err := svc.Authorize(ctx, userID, spa.ClientID, redirect, []string{"openid"}, testNonce, challenge, "S256")
 		if err != nil {
 			t.Fatalf("authorize: %v", err)
 		}

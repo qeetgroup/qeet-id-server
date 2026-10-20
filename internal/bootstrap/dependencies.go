@@ -133,35 +133,41 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	// KMS-side rotation; see docs/JWT-KEY-ROTATION.md for the same two-phase
 	// shape applied to signing keys.
 	keyProvider = secret.StaticKeyProvider{Key: dataKey}
-	signingKeyPEM := cfg.JWTSigningKey
-	ephemeralSigningKey := signingKeyPEM == ""
-	if signingKeyPEM == "" {
-		if !cfg.IsDev() {
-			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
-			os.Exit(1)
-		}
-		k, err := tokens.GenerateES256KeyPEM()
-		if err != nil {
-			slog.Error("generate ephemeral signing key", "err", err)
-			os.Exit(1)
-		}
-		signingKeyPEM = k
-		slog.Warn("JWT_SIGNING_KEY unset — generated and activated a new development ES256 key")
-	}
 	signingKeyRegistry, err := tokens.NewSigningKeyRegistry(pool, sharedCipher)
 	if err != nil {
 		slog.Error("init signing key registry", "err", err)
 		os.Exit(1)
 	}
-	ephemeralEnvelopeKey := cfg.IsDev() && (cfg.SecretsProvider == "" || cfg.SecretsProvider == "static") && cfg.SecretsKey == ""
-	activateSigningKey := cfg.JWTActivateSigningKey || ephemeralSigningKey || ephemeralEnvelopeKey
-	if err := signingKeyRegistry.Reconcile(rootCtx, signingKeyPEM, cfg.JWTRetiredKeys, activateSigningKey, cfg.JWTSigningKeyRetireGrace); err != nil {
+	if cfg.JWTSigningKey == "" {
+		if !cfg.IsDev() {
+			slog.Error("JWT_SIGNING_KEY is required outside dev (PEM-encoded EC P-256 private key)")
+			os.Exit(1)
+		}
+		// A workstation with no key uses the database's active one, and makes one
+		// only for a database that has none: never a new key per start, which
+		// retired the last one and split instances sharing the database.
+		generated, err := signingKeyRegistry.EnsureDevelopmentKey(rootCtx)
+		if err != nil {
+			slog.Error("JWT_SIGNING_KEY unset and the database's active key can't be used; "+
+				"set SECRETS_KEY to the vault key it was sealed with, or set JWT_SIGNING_KEY (make dev does)", "err", err)
+			os.Exit(1)
+		}
+		if generated {
+			slog.Warn("JWT_SIGNING_KEY unset — generated and activated a development ES256 key (the database had none)")
+		} else {
+			slog.Warn("JWT_SIGNING_KEY unset — signing with the database's active development key")
+		}
+	} else if err := signingKeyRegistry.Reconcile(rootCtx, cfg.JWTSigningKey, cfg.JWTRetiredKeys, cfg.JWTActivateSigningKey, cfg.JWTSigningKeyRetireGrace); err != nil {
+		// Activation is the operator's call alone (JWT_ACTIVATE_SIGNING_KEY): a
+		// configured key never replaces the active one by itself, even when this
+		// process's vault key is ephemeral.
 		slog.Error("reconcile JWT signing key registry", "err", err)
 		os.Exit(1)
 	}
 	issuer, err := signingKeyRegistry.NewIssuer(rootCtx, cfg.JWTIssuer, cfg.JWTAudience, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	if err != nil {
-		slog.Error("init token issuer from registry", "err", err)
+		slog.Error("init token issuer from registry; if the active key was sealed with another vault key, set that SECRETS_KEY, "+
+			"or activate the configured key with JWT_ACTIVATE_SIGNING_KEY=true", "err", err)
 		os.Exit(1)
 	}
 	slog.Info("JWT signing key registry ready", "active_kid", issuer.KID())
@@ -371,10 +377,15 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	healthHandler := health.New(cfg.ServiceName, cfg.ServiceEnv, startedAt)
 	healthHandler.ServiceProfile = cfg.ServiceProfile
 	healthHandler.AddReadiness("db", health.PingDB(pool))
+	healthHandler.AddReadiness("jwt-keyring", signingKeyRegistry.Ready) // not ready after repeated keyring refresh failures
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
-	oidcService.SetGrantMaxAge(cfg.SessionMaxAge) // grant bound where the organisation sets none
-	oidcService.SetNotifier(notificationService)  // CIBA async consent prompts
+	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
+	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
+	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
+		Threshold: cfg.ClientAuthLockoutThreshold, Window: cfg.ClientAuthLockoutWindow, Duration: cfg.ClientAuthLockoutDuration,
+	})
+	oidcService.SetNotifier(notificationService) // CIBA async consent prompts
 	rpID, rpDisplayName, rpOrigins := cfg.WebAuthnRP()
 	// UserVerification: Required is load-bearing, not a preference.
 	//
@@ -514,6 +525,10 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	scimService.SetProfileMapper(directoryService)
 	ldapService.SetProfileMapper(directoryService)
 	ipAllowService := ipallow.NewService(pool)
+	authService.SetAddressPolicy(ipAllowService) // address rules: every sign-in to an organisation, and every renewal
+	authService.SetSignOutNotifier(oidcService)  // tell applications when someone signs out of the hosted login
+	oidcService.SetLogoutHTTPClient(outboundPolicy)
+	oidcService.SetAddressPolicy(ipAllowService) // address rules: application authorize, device approval and collection
 
 	// Plan enforcement: inject the entitlement checker into every gated create
 	// path. Numeric limits (seats/apps/api keys/custom roles) use SetPlanLimiter;
@@ -671,6 +686,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	workers := []namedWorker{
 		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
 		{name: "outbox", run: outboxDispatcher.Run},
+		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},
 		{name: "gdpr", run: gdprService.Run},
 		{name: "retention", run: retentionService.Run},

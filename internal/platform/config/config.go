@@ -35,8 +35,10 @@ var serviceProfiles = map[string]bool{"dev": true, "test": true, "staging": true
 type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
 	// ServiceEnv is one of EnvDev, EnvLocal or EnvProd (L0 QEET_ENV mapping:
-	// dev and local are the Local tier, prod is Production).
-	ServiceEnv string `envconfig:"SERVICE_ENV" default:"dev"`
+	// dev and local are the Local tier, prod is Production). It has no
+	// default: dev switches the production gates off, so a deployment that
+	// forgot the setting must not start as one.
+	ServiceEnv string `envconfig:"SERVICE_ENV"`
 	// ServiceProfile names the local environment ("dev", "test" or "staging"). It
 	// is only valid with SERVICE_ENV=local, and is reported on /healthz and in logs.
 	ServiceProfile string `envconfig:"SERVICE_PROFILE" default:""`
@@ -50,8 +52,14 @@ type Config struct {
 	// trusted hop rewrote it, and the client IP keys the login rate limiter and
 	// every audit record. A deployment behind exactly one proxy must set 1, or
 	// every request will be attributed to the proxy's own address.
-	TrustedProxyHops int    `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
-	LogLevel         string `envconfig:"LOG_LEVEL" default:"info"`
+	TrustedProxyHops int `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
+	// RelayKeysRaw is a comma-separated list of keys that first-party relays
+	// (the console's and hosted login's servers) present to have the client
+	// address they forward trusted (see httpx.SetRelayKeys). Empty: no relay is
+	// trusted, and relayed requests are judged by the relay's own address. More
+	// than one lets a key be rotated without downtime.
+	RelayKeysRaw string `envconfig:"RELAY_KEYS" default:""`
+	LogLevel     string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
 	// for structured log ingestion and dev with jq). "text" forces the colored
 	// logfmt dev handler. Empty auto-selects: text when stdout is a TTY in
@@ -279,6 +287,18 @@ type Config struct {
 	// self-hosted mirrors). Empty uses the public api.pwnedpasswords.com.
 	BreachedPasswordAPIURL string `envconfig:"BREACHED_PASSWORD_API_URL" default:""`
 
+	// Application secret lockout (internal/federation/oidc/client_lockout.go).
+	// After CLIENT_AUTH_LOCKOUT_THRESHOLD wrong secrets for one confidential
+	// application within CLIENT_AUTH_LOCKOUT_WINDOW, on any endpoint that takes
+	// one, the application is refused for CLIENT_AUTH_LOCKOUT_DURATION.
+	// TokenExchangeMaxDepth is how many token exchanges deep a token may still
+	// be exchanged (an exchanged token's exchange is depth 2).
+	TokenExchangeMaxDepth int `envconfig:"TOKEN_EXCHANGE_MAX_DEPTH" default:"2"`
+
+	ClientAuthLockoutThreshold int           `envconfig:"CLIENT_AUTH_LOCKOUT_THRESHOLD" default:"10"`
+	ClientAuthLockoutWindow    time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_WINDOW" default:"15m"`
+	ClientAuthLockoutDuration  time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_DURATION" default:"15m"`
+
 	// Sign-in lockout (internal/access/authentication/lockout.go). After
 	// LOGIN_LOCKOUT_THRESHOLD failed password sign-ins to one account from one
 	// network, each within LOGIN_LOCKOUT_WINDOW of the last, the account is
@@ -419,6 +439,9 @@ func (c *Config) checkSignInLockout() error {
 	if c.LoginSprayAccounts < 2 || c.LoginSprayWindow <= 0 || c.LoginSprayBlock <= 0 {
 		problems = append(problems, "LOGIN_SPRAY_ACCOUNTS must be at least 2, and LOGIN_SPRAY_WINDOW and LOGIN_SPRAY_BLOCK positive")
 	}
+	if c.ClientAuthLockoutThreshold < 1 || c.ClientAuthLockoutWindow < time.Minute || c.ClientAuthLockoutDuration < time.Minute {
+		problems = append(problems, "CLIENT_AUTH_LOCKOUT_THRESHOLD must be at least 1, and CLIENT_AUTH_LOCKOUT_WINDOW and CLIENT_AUTH_LOCKOUT_DURATION at least 1m")
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("invalid sign-in lockout configuration:\n  - %s", strings.Join(problems, "\n  - "))
 	}
@@ -429,11 +452,13 @@ func (c *Config) checkSignInLockout() error {
 // only environment in which the production gates and Secure cookies are off.
 func (c *Config) IsDev() bool { return c.ServiceEnv == EnvDev }
 
-// checkEnvironment rejects an unrecognised SERVICE_ENV, and a SERVICE_PROFILE
-// that is unknown or used outside SERVICE_ENV=local.
+// checkEnvironment rejects a missing or unrecognised SERVICE_ENV, and a
+// SERVICE_PROFILE that is unknown or used outside SERVICE_ENV=local.
 func (c *Config) checkEnvironment() error {
 	switch c.ServiceEnv {
 	case EnvDev, EnvLocal, EnvProd:
+	case "":
+		return fmt.Errorf("SERVICE_ENV is not set: set it to %q (a developer workstation), %q (the Qeet ID Kit) or %q", EnvDev, EnvLocal, EnvProd)
 	default:
 		return fmt.Errorf("SERVICE_ENV %q is not recognised (want %q, %q or %q)", c.ServiceEnv, EnvDev, EnvLocal, EnvProd)
 	}
@@ -504,6 +529,12 @@ func (c *Config) Validate() error {
 	default:
 		problems = append(problems, fmt.Sprintf("SECRETS_PROVIDER %q is invalid (want \"static\" or \"aws-kms\")", c.SecretsProvider))
 	}
+	for _, k := range c.RelayKeys() {
+		if isWeakSecret(k) {
+			problems = append(problems, "RELAY_KEYS: every key must be at least 32 characters and not a placeholder (`openssl rand -base64 32`)")
+			break
+		}
+	}
 	if o := strings.TrimSpace(c.AllowedOriginsRaw); o == "" || o == "*" {
 		problems = append(problems, "ALLOWED_ORIGINS must list explicit origins (a wildcard is unsafe with credentialed CORS)")
 	}
@@ -559,6 +590,18 @@ func isLocalHost(h string) bool {
 func isLoopbackName(h string) bool {
 	h = strings.TrimSuffix(strings.ToLower(h), ".")
 	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
+// RelayKeys returns the configured relay keys (RELAY_KEYS), trimmed, empty
+// ones dropped.
+func (c *Config) RelayKeys() []string {
+	var out []string
+	for _, k := range strings.Split(c.RelayKeysRaw, ",") {
+		if k = strings.TrimSpace(k); k != "" {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 func (c *Config) AllowedOrigins() []string {

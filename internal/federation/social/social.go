@@ -633,6 +633,12 @@ func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, u
 	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
 }
 
+// CheckHostedSignIn asks the organisation's address rules whether the browser
+// at ip may finish a hosted social sign-in to it.
+func (s *Service) CheckHostedSignIn(ctx context.Context, tenantID, userID uuid.UUID, ip string) error {
+	return s.auth.CheckSignInAddress(ctx, tenantID, userID, ip, "hosted_social")
+}
+
 // findOrCreateUser links the external identity to an existing user (matched by
 // provider subject, then by globally-unique email) or provisions a new
 // password-less one. All in one tx so concurrent logins can't duplicate rows.
@@ -1137,6 +1143,17 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.ReturnTo != "" {
+		// An address the organisation refuses is told so on the hosted login,
+		// as every other method is, not shown a provider failure.
+		if aerr := h.Service.CheckHostedSignIn(r.Context(), res.TenantID, res.UserID, httpx.ClientIP(r)); aerr != nil {
+			if errors.Is(aerr, errs.ErrAuthAddressNotAllowed) && h.LoginBaseURL != "" {
+				q := url.Values{"error": {"address_not_allowed"}, "return_to": {res.ReturnTo}}
+				http.Redirect(w, r, h.LoginBaseURL+"/login?"+q.Encode(), http.StatusFound)
+				return
+			}
+			h.redirectSocialError(w, r, aerr)
+			return
+		}
 		// Hosted flow: set the SSO cookie and return to /oauth/authorize.
 		if raw, serr := h.Service.StartLoginSession(r.Context(), res.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
 			auth.SetLoginSessionCookie(w, raw, h.CookieSecure)

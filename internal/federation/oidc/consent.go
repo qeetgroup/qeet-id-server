@@ -29,6 +29,8 @@ type ConsentRequest struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
+	// Resource is the RFC 8707 resource the token is for ("" for none).
+	Resource string
 }
 
 // StartConsentRequest stores an authorization request for the hosted consent
@@ -38,6 +40,18 @@ type ConsentRequest struct {
 func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userID uuid.UUID, in ConsentRequest) (uuid.UUID, error) {
 	if !s.RegisteredRedirect(ctx, in.ClientID, in.RedirectURI) {
 		return uuid.Nil, errs.ErrOIDCRedirectURINotRegistered
+	}
+	// A request the authorization would refuse (no proof key, no nonce) is
+	// refused now, not after the person has been asked to consent to it.
+	info, err := s.q.GetClientRedirectInfo(ctx, in.ClientID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := validateSignInRequest(info.Type, info.PkceExempt, in.Scopes, in.Nonce, in.CodeChallenge, in.CodeChallengeMethod); err != nil {
+		return uuid.Nil, err
+	}
+	if err := s.checkResource(ctx, info.TenantID, in.Resource); err != nil {
+		return uuid.Nil, err
 	}
 	scopes := in.Scopes
 	if scopes == nil {
@@ -54,6 +68,7 @@ func (s *Service) StartConsentRequest(ctx context.Context, loginSessionID, userI
 		CodeChallenge:       in.CodeChallenge,
 		CodeChallengeMethod: in.CodeChallengeMethod,
 		ExpiresAt:           time.Now().Add(consentRequestTTL),
+		Resource:            in.Resource,
 	})
 }
 
@@ -71,6 +86,7 @@ func (s *Service) GetConsentRequest(ctx context.Context, id, loginSessionID uuid
 		ID: row.ID, UserID: row.UserID, ClientID: row.ClientID, RedirectURI: row.RedirectUri,
 		Scopes: row.Scopes, State: row.State, Nonce: row.Nonce,
 		CodeChallenge: row.CodeChallenge, CodeChallengeMethod: row.CodeChallengeMethod,
+		Resource: row.Resource,
 	}, nil
 }
 
@@ -89,5 +105,6 @@ func (s *Service) TakeConsentRequest(ctx context.Context, id, loginSessionID uui
 		ID: row.ID, UserID: row.UserID, ClientID: row.ClientID, RedirectURI: row.RedirectUri,
 		Scopes: row.Scopes, State: row.State, Nonce: row.Nonce,
 		CodeChallenge: row.CodeChallenge, CodeChallengeMethod: row.CodeChallengeMethod,
+		Resource: row.Resource,
 	}, nil
 }

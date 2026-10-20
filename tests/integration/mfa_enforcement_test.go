@@ -441,7 +441,7 @@ func TestPolicyRecordsWhenMFAWasTurnedOn(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(ctx)
-		since, err := repo.Upsert(ctx, tx, policy.Policy{TenantID: tenantID, IPAllowlist: []string{}, IPDenylist: []string{},
+		since, err := repo.Upsert(ctx, tx, policy.Policy{TenantID: tenantID,
 			PasswordMinLength: 8, PasswordComplexity: "standard", SessionMaxAge: policy.Duration(24 * time.Hour),
 			SessionIdleTimeout: policy.Duration(time.Hour), SessionLimitAction: "evict_oldest",
 			MFAEnforcement: enforcement, MFAGraceDays: 7})

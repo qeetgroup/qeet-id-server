@@ -46,6 +46,10 @@ func (s *Service) BeginMagicLinkSignIn(ctx context.Context, userID, tenantID uui
 // trusted-device token of the account's, and the request's risk does not
 // override it — and never the setting up of a factor the account must have.
 func (s *Service) BeginMagicLinkSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*LoginSessionResult, error) {
+	// The link was sent for tenantID: its address rules decide, here.
+	if err := s.checkAddress(ctx, tenantID, userID, ip, "hosted_magic_link"); err != nil {
+		return nil, err
+	}
 	gate, err := s.mfaGate(ctx, userID, tenantID)
 	if err != nil {
 		return nil, err

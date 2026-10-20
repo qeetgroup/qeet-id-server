@@ -89,14 +89,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OIDCDiscovery'
+  /.well-known/oauth-authorization-server:
+    get:
+      operationId: get_wellKnown_oauth_authorization_server
+      description: 'Returns the OAuth 2.0 authorization server metadata (RFC 8414) for clients that speak only OAuth, and for model-context-protocol clients following the protected-resource document to the authorization server it names. It is the same document as the OpenID configuration, so the endpoints and capabilities in the two always agree. Served unauthenticated at the root, not under /v1.'
+      summary: OAuth authorization server metadata
+      tags:
+        - OIDC
+      security: []
+      responses:
+        '200':
+          description: Authorization server metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCDiscovery'
   /.well-known/oauth-protected-resource:
     get:
       operationId: get_wellKnown_oauth_protected_resource
       summary: Protected resource metadata
       description: >-
-        Protected-resource metadata for MCP authorization-server compliance.
-        Advertises the resource identifier, its authorization server(s), and the
-        supported bearer methods and token-signing algorithms.
+        Protected-resource metadata (RFC 9728) for MCP authorization-server
+        compliance. Advertises the resource identifier, its authorization
+        server(s), the scopes it accepts (scopes_supported), and the supported
+        bearer methods and token-signing algorithms. Each authorization server
+        named resolves to its RFC 8414 metadata at
+        /.well-known/oauth-authorization-server.
       tags:
         - OIDC
       security: []
@@ -122,7 +140,7 @@ paths:
                     type: array
                     items:
                       type: string
-                  scopes_provided:
+                  scopes_supported:
                     type: array
                     items:
                       type: string
@@ -131,7 +149,7 @@ paths:
   /oauth/introspect:
     post:
       operationId: post_oauth_introspect
-      description: 'Reports whether a supplied access or refresh token is currently active and returns its associated claims when it is (RFC 7662), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials supplied as form parameters or via HTTP Basic. Mounted at the root, not under /v1; it pairs with the revocation endpoint for token lifecycle management. A public client can''t call it: its client_id is in every sign-in link and proves nothing, so the call answers 401 oidc.client_auth_failed. Wrong secrets are audited.'
+      description: 'Reports whether a supplied access or refresh token is currently active and returns its associated claims when it is (RFC 7662), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials supplied as form parameters or via HTTP Basic. Mounted at the root, not under /v1; it pairs with the revocation endpoint for token lifecycle management. A public client can''t call it: its client_id is in every sign-in link and proves nothing, so the call answers 401 oidc.client_auth_failed. Wrong secrets are audited. An application only learns about tokens it owns: an access token issued to it (its client_id claim), or one issued for a registered resource it serves (server_client_id), and a refresh token issued to it. Any other token, including another application''s in the same organisation or one from another organisation, answers only {"active": false}, so the endpoint never confirms a token exists; asking about another application''s token is audited as oidc.introspection_refused. An active access token reports its real aud (a string for one audience, a list for several), its client_id, and resource when it was issued for one.'
       summary: Token introspect (RFC 7662)
       tags:
         - OIDC
@@ -164,7 +182,7 @@ paths:
   /oauth/revoke:
     post:
       operationId: post_oauth_revoke
-      description: 'Revokes an access or refresh token so it can no longer be used (RFC 7009), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials; per the RFC the endpoint returns 200 even for an unknown or already-invalid token. Mounted at the root, not under /v1; use the introspection endpoint to confirm a token''s state. A public client may revoke its own tokens with its client_id alone (RFC 7009); a refresh token is only ever revoked for the client it was issued to.'
+      description: 'Revokes a refresh token (RFC 7009), with Qeet acting as the OAuth authorization server. Callers authenticate with OAuth client credentials. Revoking a refresh token ends the whole grant it belongs to, every earlier and later rotation of it, so no link of the chain stays usable; introspection then reports every link inactive, the grant leaves the admin grant list, and the revocation is audited as oidc.grant_revoked. An access token can''t be revoked (it is stateless and lasts out its short lifetime): presenting one answers 400 unsupported_token_type. Per the RFC the endpoint returns 200 for an unknown or already-invalid token, and for another client''s token, which it leaves untouched. Mounted at the root, not under /v1. A public client may revoke its own tokens with its client_id alone.'
       summary: Token revoke (RFC 7009)
       tags:
         - OIDC
@@ -196,7 +214,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id.'
+      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused). Every application, confidential ones included, must send a PKCE code_challenge with code_challenge_method S256, and a nonce whenever scope includes openid; the nonce comes back in the ID token. A request without them gets invalid_request at the redirect_uri (oidc.code_challenge_required, oidc.nonce_required) before any consent is asked. A confidential application whose pkce_exempt_until is still ahead is excused both until then. response_type is required and only code is served (else invalid_request / unsupported_response_type at the redirect_uri); request and request_uri are refused (request_not_supported, request_uri_not_supported), as is a response_mode other than query. prompt=none never shows a page: no sign-in answers login_required, no consent consent_required. prompt=login, and a sign-in older than max_age seconds, send the browser to sign in again and then complete the request; prompt=consent asks for consent again. The ID token carries auth_time (when the person signed in) and sid (the hosted-login session).'
       summary: Authorize
       tags:
         - OIDC
@@ -229,18 +247,39 @@ paths:
             type: string
         - in: query
           name: code_challenge
+          description: Required (43 characters, base64url of the SHA-256 of the code_verifier), unless the confidential application is exempt (pkce_exempt_until).
           schema:
             type: string
         - in: query
           name: code_challenge_method
+          description: Required with code_challenge; only S256.
           schema:
             type: string
             enum:
               - S256
         - in: query
           name: nonce
+          description: Required when scope includes openid (at most 255 characters), unless the confidential application is exempt; echoed in the ID token.
           schema:
             type: string
+            maxLength: 255
+        - in: query
+          name: prompt
+          description: Space-separated; none, login and consent are honoured.
+          schema:
+            type: string
+        - in: query
+          name: max_age
+          description: Seconds; a sign-in older than this is made fresh before the code is issued.
+          schema:
+            type: integer
+            minimum: 0
+        - in: query
+          name: resource
+          description: An RFC 8707 resource the access token is for; it must be registered for the organisation (else invalid_target). The code carries it, and the token names it alone as its audience.
+          schema:
+            type: string
+            format: uri
       security:
         - ssoCookie: []
       responses:
@@ -362,7 +401,7 @@ paths:
     post:
       operationId: post_v1_oauth_device_decision
       summary: Device decision (approve)
-      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant) is bound and the device can complete its token poll.
+      description: The SSO-cookie-identified user approves or denies a pending device request identified by user_code. On approval the user (who must belong to the client's tenant, and approve from an address its address rules allow, else 403 auth.address_not_allowed) is bound and the device can complete its token poll.
       tags:
         - OIDC
       security:
@@ -600,10 +639,27 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/oauth/logout/continue:
+    get:
+      operationId: get_v1_oauth_logout_continue
+      summary: Continue after sign-out
+      description: 'Sends the browser on to the post-logout address a sign-out validated, from the signed ticket the hosted signed-out page was given after loading the applications'' front-channel pages. An invalid or expired ticket goes to the hosted signed-out page instead. Never a redirect to an address the ticket doesn''t sign.'
+      tags:
+        - OIDC
+      security: []
+      parameters:
+        - in: query
+          name: ticket
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to the validated post-logout address, or the signed-out page
   /v1/oauth/logout:
     get:
       operationId: get_v1_oauth_logout
-      description: 'Performs OpenID Connect RP-initiated logout: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — and clears the cookie. Only the cookie identifies the session to end; without it nothing is ended. The sign-out is recorded in the audit log (auth.signed_out), naming client_id when it is a registered application. When the client supplies a registered post_logout_redirect_uri the browser is redirected there with any provided state; otherwise the hosted logged-out page is shown. Other browsers and API sessions are unaffected. Advertised as end_session_endpoint in discovery; a POST variant exists at the same path for relying parties that submit the request as a form.'
+      description: 'Performs OpenID Connect RP-initiated logout: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — and clears the cookie. Only the cookie identifies the session to end; without it nothing is ended. The sign-out is recorded in the audit log (auth.signed_out), naming client_id when it is a registered application. When the client supplies a registered post_logout_redirect_uri the browser is redirected there with any provided state; otherwise the hosted logged-out page is shown. Other browsers and API sessions are unaffected. Advertised as end_session_endpoint in discovery; a POST variant exists at the same path for relying parties that submit the request as a form. A sign-out must carry an id_token_hint (one of our ID tokens, expired or not, issued to client_id and naming this session and person; another session''s is refused with 400 invalid_request) or a logout_confirmation ticket: without either, the browser is sent to the hosted login''s /logout page to confirm, with a ticket that brings it back, so a plain link or image can''t sign anyone out. Every application that holds a code or grant from the ended session is told: a signed logout token (OpenID Connect Back-Channel Logout 1.0, with sid) is POSTed to its backchannel_logout_uri and retried with backoff, a final failure audited as oidc.backchannel_logout_failed; its frontchannel_logout_uri (with iss and sid) is given to the hosted signed-out page, which then continues to the post_logout_redirect_uri through /v1/oauth/logout/continue. Audited as oidc.sign_out_notified.'
       summary: RP-initiated logout
       tags:
         - OIDC
@@ -725,7 +781,7 @@ paths:
   /v1/oauth/token-code:
     post:
       operationId: post_v1_oauth_token_code
-      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user.'
+      description: 'The OAuth token endpoint advertised in discovery, serving the authorization_code, refresh_token, device_code (RFC 8628), token-exchange (RFC 8693) and CIBA grants with Qeet as the authorization server. Clients authenticate with their credentials in the form body or via HTTP Basic. This endpoint does not serve client_credentials: use the client-credentials token endpoint at /v1/oauth/token for machine-to-machine tokens. Every grant refuses an account that is suspended or deleted (auth.account_suspended for code and refresh, invalid_grant account_suspended for device and CIBA polling), and a refused refresh ends the application''s refresh tokens for that user. Device polling from an address the organisation''s address rules refuse answers access_denied address_not_allowed and spends the device code; code redemption and refresh come from the application''s server, so the address rules are asked at authorization instead. An authorization code redeems once, with the code_verifier of its challenge; a code issued under a PKCE exemption redeems only while the exemption lasts. A code presented a second time is refused (oidc.auth_code_used) and the grant its first redemption issued is revoked, every renewal of it included (audited as oidc.authorization_code_reused). Token exchange (RFC 8693) is bounded: the caller must be entitled to the subject token (issued to it, issued for a registered resource it serves, or the person consented to it; else oidc.subject_token_invalid), the person must still be active and the organisation live (auth.account_suspended), the result expires no later than the subject token, carries a new session id, and records its exchange_depth; a token TOKEN_EXCHANGE_MAX_DEPTH exchanges deep (2) can''t be exchanged again (oidc.exchange_depth_exceeded). Every exchange is audited as oidc.token_exchanged.'
       summary: Token (authorization_code)
       tags:
         - OIDC
@@ -763,7 +819,7 @@ paths:
   /v1/oauth/userinfo:
     get:
       operationId: get_v1_oauth_userinfo
-      description: 'Returns OpenID Connect UserInfo claims for the subject identified by the presented bearer access token (or API key), with Qeet acting as the OpenID provider. The response includes at least the subject and tenant identifiers. Advertised as userinfo_endpoint in discovery. Accepts an access token issued to an application (one carrying client_id) — the one authenticated endpoint that does.'
+      description: 'Returns the OpenID Connect UserInfo claims for the signed-in user of the presented bearer access token, with Qeet acting as the OpenID provider: sub and tenant_id, plus the standard claims the token''s scopes grant: email gives email and email_verified; profile gives name, picture, locale (where known) and updated_at; phone gives phone_number and phone_number_verified. No claim is returned without its scope. A token without the openid scope is refused with 403 oidc.insufficient_scope and WWW-Authenticate: Bearer error="insufficient_scope"; a missing, invalid or expired token, or one whose account has been suspended or deleted, gets 401 with error="invalid_token". GET and POST answer alike (OIDC Core 5.3.1). Advertised as userinfo_endpoint in discovery, with the claims in claims_supported. Accepts an access token issued to an application (one carrying client_id), the one authenticated endpoint that does.'
       summary: UserInfo
       tags:
         - OIDC
@@ -784,8 +840,69 @@ paths:
                   tenant_id:
                     type: string
                     format: uuid
+                  email:
+                    type: string
+                  email_verified:
+                    type: boolean
+                  name:
+                    type: string
+                  picture:
+                    type: string
+                  locale:
+                    type: string
+                  updated_at:
+                    type: integer
+                  phone_number:
+                    type: string
+                  phone_number_verified:
+                    type: boolean
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_oauth_userinfo
+      description: 'Returns the OpenID Connect UserInfo claims for the signed-in user of the presented bearer access token, with Qeet acting as the OpenID provider: sub and tenant_id, plus the standard claims the token''s scopes grant: email gives email and email_verified; profile gives name, picture, locale (where known) and updated_at; phone gives phone_number and phone_number_verified. No claim is returned without its scope. A token without the openid scope is refused with 403 oidc.insufficient_scope and WWW-Authenticate: Bearer error="insufficient_scope"; a missing, invalid or expired token, or one whose account has been suspended or deleted, gets 401 with error="invalid_token". GET and POST answer alike (OIDC Core 5.3.1). Advertised as userinfo_endpoint in discovery, with the claims in claims_supported. Accepts an access token issued to an application (one carrying client_id), the one authenticated endpoint that does.'
+      summary: UserInfo (POST)
+      tags:
+        - OIDC
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: UserInfo claims
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub:
+                    type: string
+                    format: uuid
+                  tenant_id:
+                    type: string
+                    format: uuid
+                  email:
+                    type: string
+                  email_verified:
+                    type: boolean
+                  name:
+                    type: string
+                  picture:
+                    type: string
+                  locale:
+                    type: string
+                  updated_at:
+                    type: integer
+                  phone_number:
+                    type: string
+                  phone_number_verified:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /v1/oidc/clients:
     post:
       operationId: post_v1_oidc_clients
@@ -1121,7 +1238,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID_oidc_clients_ById
-      description: 'Applies a partial update to an OIDC client in the tenant; omitted fields are left unchanged. Changes are confined to the tenant in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return. The edited client is held to the same rules as registration: supported grant types, valid redirect URIs, and no token exchange or CIBA for a public client.'
+      description: 'Applies a partial update to an OIDC client in the tenant; omitted fields are left unchanged. Changes are confined to the tenant in the path and are audited. Use the rotate-secret endpoint to change the client secret, which this endpoint does not accept or return. The edited client is held to the same rules as registration: supported grant types, valid redirect URIs, and no token exchange or CIBA for a public client. pkce_exempt_until sets (a date-time) or clears (null) a confidential application''s exemption from sending a PKCE code_challenge and a nonce; it must end in the future and within 90 days, else 422 oidc.pkce_exemption_invalid, and a public application can''t have one.'
       summary: Update OIDC client
       tags:
         - OIDC
@@ -1189,6 +1306,171 @@ paths:
       responses:
         '204':
           description: Client deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oidc/clients/{id}/auth-failures:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_clients_ById_auth_failures
+      summary: Application secret failures
+      description: 'An application''s wrong-secret lockout and its last 20 failed authentications, newest first, each with its time and address (no secret material is ever recorded). Wrong secrets count against a confidential application on every endpoint that takes one (code exchange, refresh, token exchange, device and backchannel requests, revocation, introspection); past the threshold (CLIENT_AUTH_LOCKOUT_THRESHOLD in CLIENT_AUTH_LOCKOUT_WINDOW, 10 in 15 minutes by default) every authentication is refused for CLIENT_AUTH_LOCKOUT_DURATION (15 minutes), the right secret included, with the same 401 oidc.client_auth_failed as a wrong secret or an unknown application. Each failure is audited as oidc.client_auth_failed; a lockout as oidc.client_locked_out, and announced as the oidc.client.locked_out event. A successful authentication resets the count. locked_until is null when no lockout is in force.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: The lockout in force (if any) and recent failures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locked_until:
+                    type: string
+                    format: date-time
+                    nullable: true
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        at:
+                          type: string
+                          format: date-time
+                        ip:
+                          type: string
+                        reason:
+                          type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oidc/resources:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_resources
+      summary: List resources
+      description: 'The organisation''s registered resources (RFC 8707): the downstream services its applications may ask tokens for, with the resource parameter at authorize or the token endpoint. A token issued for a resource names it alone as its audience, so the platform API and every other service refuse it; an unregistered resource is refused with invalid_target. server_client_id, when set, is the application that serves the resource and may introspect tokens issued for it.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Registered resources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OIDCResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_resources
+      summary: Register a resource
+      description: 'Registers a resource: identifier is an absolute URI without a fragment (422 oidc.resource_invalid), unique in the organisation (409 oidc.resource_exists); server_client_id, optional, must be one of the organisation''s applications. Audited as oidc.resource_registered.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - identifier
+              properties:
+                identifier:
+                  type: string
+                  format: uri
+                name:
+                  type: string
+                server_client_id:
+                  type: string
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/oidc/resources/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oidc_resources_ById
+      summary: Remove a resource
+      description: 'Removes a registered resource: no new token is issued for it; tokens already issued last out their short lifetime. Audited as oidc.resource_removed.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1698,7 +1980,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
-      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. Other failures send it there with error=social.'
+      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. An address the organisation''s address rules refuse is sent there with error=address_not_allowed and the return_to, and no hosted-login session is opened. Other failures send it there with error=social.'
       summary: Social login callback
       tags:
         - Social
@@ -4300,6 +4582,38 @@ components:
         created_at:
           type: string
           format: date-time
+        pkce_exempt_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: When this confidential application's exemption from sending a PKCE code_challenge and a nonce ends; null for none.
+        backchannel_logout_uri:
+          type: string
+          format: uri
+          description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
+        frontchannel_logout_uri:
+          type: string
+          format: uri
+          description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
+    OIDCResource:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        identifier:
+          type: string
+          format: uri
+        name:
+          type: string
+        server_client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     OIDCClientCreate:
       type: object
       required:
@@ -4335,6 +4649,14 @@ components:
           type: array
           items:
             type: string
+        backchannel_logout_uri:
+          type: string
+          format: uri
+          description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
+        frontchannel_logout_uri:
+          type: string
+          format: uri
+          description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
     OIDCClientUpdate:
       type: object
       description: Partial (COALESCE-style) update; omitted fields are left unchanged.
@@ -4359,6 +4681,19 @@ components:
           type: array
           items:
             type: string
+        pkce_exempt_until:
+          type: string
+          format: date-time
+          nullable: true
+          description: Sets (a date-time, within 90 days) or clears (null) a confidential application's PKCE exemption; omitted, unchanged.
+        backchannel_logout_uri:
+          type: string
+          format: uri
+          description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
+        frontchannel_logout_uri:
+          type: string
+          format: uri
+          description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
     OAuthDeviceAuthorization:
       type: object
       description: Admin view of an RFC 8628 device-authorization row. Never includes the device_code or its hash.
