@@ -291,6 +291,10 @@ type Config struct {
 	// After CLIENT_AUTH_LOCKOUT_THRESHOLD wrong secrets for one confidential
 	// application within CLIENT_AUTH_LOCKOUT_WINDOW, on any endpoint that takes
 	// one, the application is refused for CLIENT_AUTH_LOCKOUT_DURATION.
+	// TokenExchangeMaxDepth is how many token exchanges deep a token may still
+	// be exchanged (an exchanged token's exchange is depth 2).
+	TokenExchangeMaxDepth int `envconfig:"TOKEN_EXCHANGE_MAX_DEPTH" default:"2"`
+
 	ClientAuthLockoutThreshold int           `envconfig:"CLIENT_AUTH_LOCKOUT_THRESHOLD" default:"10"`
 	ClientAuthLockoutWindow    time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_WINDOW" default:"15m"`
 	ClientAuthLockoutDuration  time.Duration `envconfig:"CLIENT_AUTH_LOCKOUT_DURATION" default:"15m"`

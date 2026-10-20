@@ -63,10 +63,22 @@ type Service struct {
 	addresses AddressPolicy
 	// lockout bounds wrong application secrets. See client_lockout.go.
 	lockout ClientLockout
+	// exchangeMaxDepth bounds a chain of token exchanges (config
+	// TOKEN_EXCHANGE_MAX_DEPTH).
+	exchangeMaxDepth int
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
-	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour, lockout: DefaultClientLockout()}
+	return &Service{pool: pool, q: dbgen.New(pool), issuer: issuer, grantMaxAge: 30 * 24 * time.Hour, lockout: DefaultClientLockout(), exchangeMaxDepth: 2}
+}
+
+// SetTokenExchangeMaxDepth sets how many exchanges deep a token may be
+// exchanged again (at least 1). Called from internal/bootstrap/dependencies.go.
+func (s *Service) SetTokenExchangeMaxDepth(n int) {
+	if n < 1 {
+		n = 1
+	}
+	s.exchangeMaxDepth = n
 }
 
 // SetGrantMaxAge sets how long an application's grant lasts however often it
@@ -673,7 +685,8 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	if requestedTokenType != "" && requestedTokenType != tokenTypeAccessToken {
 		return nil, errs.ErrOIDCRequestedTokenTypeUnsupported
 	}
-	claims, err := s.issuer.VerifyAccess(subjectToken)
+	// Whatever its audience; who may exchange it is decided below.
+	claims, err := s.issuer.VerifyAccessAnyAudience(subjectToken)
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenInvalid
 	}
@@ -696,6 +709,29 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
 		return nil, errs.ErrOIDCSubjectTokenNoSubject
+	}
+	// The caller must be entitled to the subject's token: issued to it, issued
+	// for a resource it serves, or the person delegated to it (consented).
+	// Otherwise an application allowed to exchange could mint tokens in the
+	// name of anyone whose token passes through it, an administrator's too.
+	entitled, err := s.mayExchange(ctx, caller.TenantID, clientID, userID, claims)
+	if err != nil {
+		return nil, err
+	}
+	if !entitled {
+		return nil, errs.ErrOIDCSubjectTokenInvalid
+	}
+	// A suspended or deleted person, or a closed organisation, gets nothing.
+	live, err := s.activeTenantPrincipal(ctx, userID, claims.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !live {
+		return nil, errs.ErrAuthAccountSuspended
+	}
+	// A chain of exchanges is bounded.
+	if claims.ExchangeDepth >= s.exchangeMaxDepth {
+		return nil, errs.ErrOIDCExchangeDepthExceeded
 	}
 	// Downscope: the result is at most the subject's scopes (never escalate).
 	granted, ok := downscope(strings.Fields(claims.Scope), scope)
@@ -721,12 +757,15 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 		}
 		actorSubject = actorClaims.Subject
 	}
-	// Preserve the originating session so the exchanged token traces back to it.
-	sid := claims.SessionID
-	if sid == uuid.Nil {
-		sid = uuid.New()
-	}
+	// A session of its own, linked to the one it came from in the audit
+	// record, so the chain doesn't read as one sign-in.
+	sid := uuid.New()
 	scopeStr := strings.Join(granted, " ")
+	// Never outlive the subject token: exchange can't extend a credential.
+	var notAfter time.Time
+	if claims.ExpiresAt != nil {
+		notAfter = claims.ExpiresAt.Time
+	}
 	var (
 		access string
 		exp    time.Time
@@ -736,8 +775,12 @@ func (s *Service) TokenExchange(ctx context.Context, clientID, clientSecret, sub
 	access, exp, err = s.issuer.IssueClientAccess(tokens.ClientAccess{
 		UserID: userID, TenantID: claims.TenantID, SessionID: sid, Scopes: scopeStr,
 		ActorSubject: actorSubject, Resource: resource, ClientID: clientID,
+		NotAfter: notAfter, ExchangeDepth: claims.ExchangeDepth + 1,
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := s.auditExchange(ctx, claims, clientID, userID, sid, actorSubject, scopeStr, resource, exp); err != nil {
 		return nil, err
 	}
 	return &TokenResponse{
@@ -1076,6 +1119,47 @@ func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (boo
 		return false, err
 	}
 	return !row.Deleted && row.Status != "suspended", nil
+}
+
+// mayExchange reports whether clientID may exchange a subject token of its
+// tenant: the token was issued to it, or for a registered resource it serves,
+// or the person has consented to it (a delegation it holds).
+func (s *Service) mayExchange(ctx context.Context, tenantID uuid.UUID, clientID string, userID uuid.UUID, claims *tokens.Claims) (bool, error) {
+	if ok, err := s.mayIntrospect(ctx, tenantID, clientID, claims); err != nil || ok {
+		return ok, err
+	}
+	_, err := s.q.GetConsent(ctx, dbgen.GetConsentParams{UserID: userID, ClientID: clientID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// auditExchange records a token exchange: caller, subject, actor, scopes,
+// resource, and the session the subject token came from.
+func (s *Service) auditExchange(ctx context.Context, subject *tokens.Claims, clientID string, userID, sid uuid.UUID, actor, scopes, resource string, exp time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tenantID := subject.TenantID
+	meta := map[string]any{
+		"client_id": clientID, "scope": scopes, "resource": resource, "actor": actor,
+		"subject_client_id": subject.ClientID, "exchange_depth": subject.ExchangeDepth + 1,
+		"session_id": sid, "expires_at": exp,
+	}
+	if subject.SessionID != uuid.Nil {
+		meta["from_session_id"] = subject.SessionID
+	}
+	if err := audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "client",
+		Action: "oidc.token_exchanged", ResourceType: "oidc_client", IP: httpx.ClientIPFromContext(ctx),
+		Metadata: meta,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // mayIntrospect reports whether clientID may see an access token of its

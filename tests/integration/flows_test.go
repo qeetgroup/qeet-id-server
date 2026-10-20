@@ -1137,6 +1137,7 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	`, tenantID, uniqueSlug("rp")+"@example.com").Scan(&userID); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
+	addTenantMembership(t, ctx, userID, tenantID)
 
 	issuer := mustIssuer()
 	svc := oidc.NewService(testPool, issuer)
@@ -1161,6 +1162,11 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	subjectAccess, _, err := issuer.IssueAccess(userID, tenantID, uuid.New(), "doc.read")
 	if err != nil {
 		t.Fatalf("issue subject token: %v", err)
+	}
+	// The person delegated to this application (consented), so it may
+	// exchange their token.
+	if err := svc.GrantConsent(ctx, userID, client.ClientID, []string{"doc.read"}); err != nil {
+		t.Fatalf("grant consent: %v", err)
 	}
 
 	// RFC 8693 delegation: the actor_token is a real, verifiable access token
