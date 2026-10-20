@@ -217,6 +217,17 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Relayed sign-ins (2026-10-20)**
+
+* **httpx:** a first-party relay can name the person's address. The console signs people in, and the
+  hosted login fetches application details, from their own servers, so the API saw one address for
+  everyone behind them: one shared per-address allowance (twenty people signing in at once got 429),
+  one network for sign-in lockout and spraying, one address in every audit record and session, and
+  address rules that could neither allow nor refuse a console user by their own network. A relay
+  that sends a key from the new `RELAY_KEYS` in `X-Qeet-Relay-Key` may name the person's address in
+  `X-Qeet-Client-IP`, and limits, lockout, risk, address rules, sessions and audit use it. A claimed
+  address without a valid key is ignored. Several keys may be configured, so one can be rotated.
+
 **Signing keys at startup (2026-10-20)**
 
 * **config:** `SERVICE_ENV` has no default. Left unset it meant `dev`, which switches the production

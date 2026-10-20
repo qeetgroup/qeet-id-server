@@ -103,7 +103,13 @@ func SetTrustedProxyHops(n int) {
 // positional structure, so there is no way to distinguish a proxy-set value
 // from a caller-set one, and the common proxies pass a caller-supplied one
 // through untouched.
+//
+// A trusted relay (see relay.go) that presents a valid relay key names the
+// person's address itself, and that address wins.
 func ClientIP(r *http.Request) string {
+	if ip := relayedClientIP(r); ip != "" {
+		return ip
+	}
 	if hops := int(trustedProxyHops.Load()); hops > 0 {
 		if v := r.Header.Get("X-Forwarded-For"); v != "" {
 			parts := strings.Split(v, ",")
