@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -163,7 +162,7 @@ func decodeHeader(t *testing.T, token string) map[string]any {
 	return h
 }
 
-func TestIssueAccessResource_BindsAudienceAndStillVerifies(t *testing.T) {
+func TestIssueAccessResource_IsForThatResourceAlone(t *testing.T) {
 	i, _ := testIssuer(t)
 	uid, tid, sid := uuid.New(), uuid.New(), uuid.New()
 	const resource = "https://mcp.example/server"
@@ -172,18 +171,20 @@ func TestIssueAccessResource_BindsAudienceAndStillVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueAccessResource: %v", err)
 	}
-	// Critical safety property: a resource-bound token must STILL verify on the
-	// platform, because VerifyAccess enforces the platform audience.
-	c, err := i.VerifyAccess(tok)
+	// A token issued for a resource is for that resource alone (RFC 8707): the
+	// platform API refuses it, and the service it names accepts it.
+	if _, err := i.VerifyAccess(tok); err == nil {
+		t.Fatal("the platform accepted a token issued for another resource")
+	}
+	c, err := i.VerifyAccessFor(tok, resource)
 	if err != nil {
-		t.Fatalf("VerifyAccess of resource-bound token: %v", err)
+		t.Fatalf("VerifyAccessFor its own resource: %v", err)
 	}
-	auds := []string(c.Audience)
-	if !slices.Contains(auds, "qeet-test") {
-		t.Errorf("aud missing platform audience: %v", auds)
+	if auds := []string(c.Audience); len(auds) != 1 || auds[0] != resource {
+		t.Errorf("aud = %v, want only %q", auds, resource)
 	}
-	if !slices.Contains(auds, resource) {
-		t.Errorf("aud missing RFC 8707 resource: %v", auds)
+	if _, err := i.VerifyAccessFor(tok, "https://other.example"); err == nil {
+		t.Fatal("another service accepted a token issued for this one")
 	}
 
 	// No resource → a single, platform-only audience (back-compat).

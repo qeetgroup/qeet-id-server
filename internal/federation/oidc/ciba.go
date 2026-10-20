@@ -347,6 +347,11 @@ func (h *Handler) backchannelAuthorize(w http.ResponseWriter, r *http.Request) {
 	if u, p, ok := r.BasicAuth(); ok {
 		clientID, clientSecret = u, p
 	}
+	if r.Form.Get("resource") != "" {
+		// Explicitly refused, never silently dropped: this flow binds no resource.
+		writeOAuthError(w, oauthErr("invalid_target", "resource indicators aren't supported on the device and backchannel flows"))
+		return
+	}
 	resp, err := h.Service.BackchannelAuthorize(r.Context(), clientID, clientSecret,
 		r.Form.Get("login_hint"), r.Form.Get("scope"), r.Form.Get("binding_message"))
 	if err != nil {

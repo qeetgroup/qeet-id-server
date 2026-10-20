@@ -66,7 +66,7 @@ func (q *Queries) ClearClientAuthFailures(ctx context.Context, clientRowID uuid.
 
 const consumeAuthorizationCode = `-- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource
 FROM auth.oidc_authorization_codes
 WHERE code_hash = $1 AND client_id = $2
 FOR UPDATE
@@ -88,6 +88,7 @@ type ConsumeAuthorizationCodeRow struct {
 	ExpiresAt           time.Time
 	UsedAt              pgtype.Timestamptz
 	LoginSessionID      pgtype.UUID
+	Resource            *string
 }
 
 func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAuthorizationCodeParams) (ConsumeAuthorizationCodeRow, error) {
@@ -104,6 +105,7 @@ func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAutho
 		&i.ExpiresAt,
 		&i.UsedAt,
 		&i.LoginSessionID,
+		&i.Resource,
 	)
 	return i, err
 }
@@ -153,6 +155,22 @@ func (q *Queries) DeleteOIDCClient(ctx context.Context, arg DeleteOIDCClientPara
 	var client_id string
 	err := row.Scan(&client_id)
 	return client_id, err
+}
+
+const deleteResource = `-- name: DeleteResource :one
+DELETE FROM auth.oidc_resources WHERE id = $1 AND tenant_id = $2 RETURNING identifier
+`
+
+type DeleteResourceParams struct {
+	ID       uuid.UUID
+	TenantID uuid.UUID
+}
+
+func (q *Queries) DeleteResource(ctx context.Context, arg DeleteResourceParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteResource, arg.ID, arg.TenantID)
+	var identifier string
+	err := row.Scan(&identifier)
+	return identifier, err
 }
 
 const denyCIBARequest = `-- name: DenyCIBARequest :exec
@@ -340,7 +358,7 @@ func (q *Queries) GetConsent(ctx context.Context, arg GetConsentParams) ([]strin
 }
 
 const getConsentRequest = `-- name: GetConsentRequest :one
-SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method
+SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method, resource
 FROM auth.oidc_consent_requests
 WHERE id = $1 AND login_session_id = $2 AND used_at IS NULL AND expires_at > NOW()
 `
@@ -360,6 +378,7 @@ type GetConsentRequestRow struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
+	Resource            string
 }
 
 // GetConsentRequest reads an undecided, unexpired request for the hosted-login
@@ -377,6 +396,7 @@ func (q *Queries) GetConsentRequest(ctx context.Context, arg GetConsentRequestPa
 		&i.Nonce,
 		&i.CodeChallenge,
 		&i.CodeChallengeMethod,
+		&i.Resource,
 	)
 	return i, err
 }
@@ -528,10 +548,10 @@ const insertAuthorizationCode = `-- name: InsertAuthorizationCode :exec
 
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource
 ) VALUES ($1, $2, $3, $4, $5,
           $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
-          NOW() + INTERVAL '10 minutes', $10)
+          NOW() + INTERVAL '10 minutes', $10, NULLIF($11::text,''))
 `
 
 type InsertAuthorizationCodeParams struct {
@@ -545,6 +565,7 @@ type InsertAuthorizationCodeParams struct {
 	CodeChallenge       interface{}
 	CodeChallengeMethod interface{}
 	LoginSessionID      pgtype.UUID
+	Resource            string
 }
 
 // ==========================================================================
@@ -564,6 +585,7 @@ func (q *Queries) InsertAuthorizationCode(ctx context.Context, arg InsertAuthori
 		arg.CodeChallenge,
 		arg.CodeChallengeMethod,
 		arg.LoginSessionID,
+		arg.Resource,
 	)
 	return err
 }
@@ -602,10 +624,10 @@ func (q *Queries) InsertCIBARequest(ctx context.Context, arg InsertCIBARequestPa
 const insertConsentRequest = `-- name: InsertConsentRequest :one
 INSERT INTO auth.oidc_consent_requests (
     login_session_id, user_id, client_id, redirect_uri, scopes, state, nonce,
-    code_challenge, code_challenge_method, expires_at
+    code_challenge, code_challenge_method, expires_at, resource
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    $8, $9, $10
+    $8, $9, $10, $11
 )
 RETURNING id
 `
@@ -621,6 +643,7 @@ type InsertConsentRequestParams struct {
 	CodeChallenge       string
 	CodeChallengeMethod string
 	ExpiresAt           time.Time
+	Resource            string
 }
 
 // InsertConsentRequest stores an authorization request that has passed the
@@ -637,6 +660,7 @@ func (q *Queries) InsertConsentRequest(ctx context.Context, arg InsertConsentReq
 		arg.CodeChallenge,
 		arg.CodeChallengeMethod,
 		arg.ExpiresAt,
+		arg.Resource,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -800,6 +824,38 @@ func (q *Queries) InsertRefreshToken(ctx context.Context, arg InsertRefreshToken
 		arg.DefaultMaxAgeSeconds,
 	)
 	return err
+}
+
+const insertResource = `-- name: InsertResource :one
+INSERT INTO auth.oidc_resources (tenant_id, identifier, name, server_client_id)
+VALUES ($1, $2, $3, $4)
+RETURNING id, tenant_id, identifier, name, server_client_id, created_at
+`
+
+type InsertResourceParams struct {
+	TenantID       uuid.UUID
+	Identifier     string
+	Name           string
+	ServerClientID *string
+}
+
+func (q *Queries) InsertResource(ctx context.Context, arg InsertResourceParams) (AuthOidcResource, error) {
+	row := q.db.QueryRow(ctx, insertResource,
+		arg.TenantID,
+		arg.Identifier,
+		arg.Name,
+		arg.ServerClientID,
+	)
+	var i AuthOidcResource
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Identifier,
+		&i.Name,
+		&i.ServerClientID,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const insertRotatedRefreshToken = `-- name: InsertRotatedRefreshToken :one
@@ -1076,6 +1132,38 @@ func (q *Queries) ListPendingCIBA(ctx context.Context, userID uuid.UUID) ([]List
 			&i.BindingMessage,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listResources = `-- name: ListResources :many
+SELECT id, tenant_id, identifier, name, server_client_id, created_at
+FROM auth.oidc_resources WHERE tenant_id = $1 ORDER BY identifier
+`
+
+func (q *Queries) ListResources(ctx context.Context, tenantID uuid.UUID) ([]AuthOidcResource, error) {
+	rows, err := q.db.Query(ctx, listResources, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthOidcResource{}
+	for rows.Next() {
+		var i AuthOidcResource
+		if err := rows.Scan(
+			&i.ID,
+			&i.TenantID,
+			&i.Identifier,
+			&i.Name,
+			&i.ServerClientID,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1422,6 +1510,50 @@ func (q *Queries) RecordClientAuthFailure(ctx context.Context, arg RecordClientA
 	return failures, err
 }
 
+const resourceRegistered = `-- name: ResourceRegistered :one
+
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_resources WHERE tenant_id = $1 AND identifier = $2
+)::bool
+`
+
+type ResourceRegisteredParams struct {
+	TenantID   uuid.UUID
+	Identifier string
+}
+
+// ==========================================================================
+// Resources (RFC 8707 resource indicators, QTID-157)
+// ==========================================================================
+func (q *Queries) ResourceRegistered(ctx context.Context, arg ResourceRegisteredParams) (bool, error) {
+	row := q.db.QueryRow(ctx, resourceRegistered, arg.TenantID, arg.Identifier)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const resourceServedBy = `-- name: ResourceServedBy :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_resources
+    WHERE tenant_id = $1 AND server_client_id = $2 AND identifier = ANY($3::text[])
+)::bool
+`
+
+type ResourceServedByParams struct {
+	TenantID    uuid.UUID
+	ClientID    *string
+	Identifiers []string
+}
+
+// ResourceServedBy reports whether a client serves one of the given resources
+// of its tenant, so it may introspect tokens issued for them.
+func (q *Queries) ResourceServedBy(ctx context.Context, arg ResourceServedByParams) (bool, error) {
+	row := q.db.QueryRow(ctx, resourceServedBy, arg.TenantID, arg.ClientID, arg.Identifiers)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const reviewOIDCClient = `-- name: ReviewOIDCClient :execrows
 UPDATE auth.oidc_clients SET reviewed_at = NOW(), reviewed_by = $1
 WHERE id = $2 AND tenant_id = $3
@@ -1567,7 +1699,7 @@ func (q *Queries) RevokeRefreshTokenGrant(ctx context.Context, arg RevokeRefresh
 const takeConsentRequest = `-- name: TakeConsentRequest :one
 UPDATE auth.oidc_consent_requests SET used_at = NOW()
 WHERE id = $1 AND login_session_id = $2 AND used_at IS NULL AND expires_at > NOW()
-RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method
+RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method, resource
 `
 
 type TakeConsentRequestParams struct {
@@ -1585,6 +1717,7 @@ type TakeConsentRequestRow struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
+	Resource            string
 }
 
 // TakeConsentRequest claims an undecided, unexpired request for its own
@@ -1602,6 +1735,7 @@ func (q *Queries) TakeConsentRequest(ctx context.Context, arg TakeConsentRequest
 		&i.Nonce,
 		&i.CodeChallenge,
 		&i.CodeChallengeMethod,
+		&i.Resource,
 	)
 	return i, err
 }

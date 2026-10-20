@@ -381,9 +381,12 @@ func (i *Issuer) issueAccess(userID, tenantID, sessionID uuid.UUID, scopes strin
 	if !notAfter.IsZero() && notAfter.Before(exp) {
 		exp = notAfter.UTC()
 	}
+	// RFC 8707: a token issued for a resource is for that resource alone, so
+	// the platform API (which requires its own audience) and every other
+	// service refuse it.
 	aud := jwt.ClaimStrings{i.audience}
-	if resource != "" && resource != i.audience {
-		aud = append(aud, resource) // RFC 8707: bind the token to the requested resource
+	if resource != "" {
+		aud = jwt.ClaimStrings{resource}
 	}
 	claims := Claims{
 		UserID:    userID,
@@ -439,11 +442,28 @@ func (i *Issuer) keyFunc(t *jwt.Token) (any, error) {
 var validMethods = []string{"ES256"}
 
 func (i *Issuer) VerifyAccess(raw string) (*Claims, error) {
-	parser := jwt.NewParser(
+	return i.verifyAccess(raw, jwt.WithAudience(i.audience))
+}
+
+// VerifyAccessFor verifies an access token issued for audience: a resource a
+// token was issued for (RFC 8707), as the downstream service serving it checks
+// its own name, or the platform's own audience (VerifyAccess).
+func (i *Issuer) VerifyAccessFor(raw, audience string) (*Claims, error) {
+	return i.verifyAccess(raw, jwt.WithAudience(audience))
+}
+
+// VerifyAccessAnyAudience verifies an access token's signature, issuer and
+// lifetime whatever its audience. Only for introspection, which then decides
+// whether the caller may see the token at all.
+func (i *Issuer) VerifyAccessAnyAudience(raw string) (*Claims, error) {
+	return i.verifyAccess(raw)
+}
+
+func (i *Issuer) verifyAccess(raw string, opts ...jwt.ParserOption) (*Claims, error) {
+	parser := jwt.NewParser(append([]jwt.ParserOption{
 		jwt.WithValidMethods(validMethods),
 		jwt.WithIssuer(i.issuer),
-		jwt.WithAudience(i.audience),
-	)
+	}, opts...)...)
 	tok, err := parser.ParseWithClaims(raw, &Claims{}, i.keyFunc)
 	if err != nil {
 		return nil, err

@@ -106,14 +106,14 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- name: InsertAuthorizationCode :exec
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource
 ) VALUES (@code_hash, @client_id, @user_id, @tenant_id, @redirect_uri,
           @scopes, NULLIF(@nonce,''), NULLIF(@code_challenge,''), NULLIF(@code_challenge_method,''),
-          NOW() + INTERVAL '10 minutes', sqlc.narg('login_session_id'));
+          NOW() + INTERVAL '10 minutes', sqlc.narg('login_session_id'), NULLIF(@resource::text,''));
 
 -- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource
 FROM auth.oidc_authorization_codes
 WHERE code_hash = @code_hash AND client_id = @client_id
 FOR UPDATE;
@@ -318,17 +318,17 @@ UPDATE auth.oidc_ciba_requests SET consumed_at = NOW() WHERE id = @id;
 -- name: InsertConsentRequest :one
 INSERT INTO auth.oidc_consent_requests (
     login_session_id, user_id, client_id, redirect_uri, scopes, state, nonce,
-    code_challenge, code_challenge_method, expires_at
+    code_challenge, code_challenge_method, expires_at, resource
 ) VALUES (
     @login_session_id, @user_id, @client_id, @redirect_uri, @scopes, @state, @nonce,
-    @code_challenge, @code_challenge_method, @expires_at
+    @code_challenge, @code_challenge_method, @expires_at, @resource
 )
 RETURNING id;
 
 -- GetConsentRequest reads an undecided, unexpired request for the hosted-login
 -- session that started it, for the consent screen to show.
 -- name: GetConsentRequest :one
-SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method
+SELECT id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method, resource
 FROM auth.oidc_consent_requests
 WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND expires_at > NOW();
 
@@ -337,7 +337,7 @@ WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND 
 -- name: TakeConsentRequest :one
 UPDATE auth.oidc_consent_requests SET used_at = NOW()
 WHERE id = @id AND login_session_id = @login_session_id AND used_at IS NULL AND expires_at > NOW()
-RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method;
+RETURNING id, user_id, client_id, redirect_uri, scopes, state, nonce, code_challenge, code_challenge_method, resource;
 
 -- GetAccountStanding is what decides whether a user may still be issued tokens:
 -- the same suspended-or-deleted rule the first-party refresh applies.
@@ -388,3 +388,32 @@ FROM audit.events
 WHERE tenant_id = @tenant_id AND action = 'oidc.client_auth_failed' AND resource_id = @client_row_id
 ORDER BY created_at DESC
 LIMIT @max_rows;
+
+-- ==========================================================================
+-- Resources (RFC 8707 resource indicators, QTID-157)
+-- ==========================================================================
+
+-- name: ResourceRegistered :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_resources WHERE tenant_id = @tenant_id AND identifier = @identifier
+)::bool;
+
+-- name: ListResources :many
+SELECT id, tenant_id, identifier, name, server_client_id, created_at
+FROM auth.oidc_resources WHERE tenant_id = @tenant_id ORDER BY identifier;
+
+-- name: InsertResource :one
+INSERT INTO auth.oidc_resources (tenant_id, identifier, name, server_client_id)
+VALUES (@tenant_id, @identifier, @name, sqlc.narg('server_client_id'))
+RETURNING id, tenant_id, identifier, name, server_client_id, created_at;
+
+-- name: DeleteResource :one
+DELETE FROM auth.oidc_resources WHERE id = @id AND tenant_id = @tenant_id RETURNING identifier;
+
+-- ResourceServedBy reports whether a client serves one of the given resources
+-- of its tenant, so it may introspect tokens issued for them.
+-- name: ResourceServedBy :one
+SELECT EXISTS (
+    SELECT 1 FROM auth.oidc_resources
+    WHERE tenant_id = @tenant_id AND server_client_id = @client_id AND identifier = ANY(@identifiers::text[])
+)::bool;

@@ -39,6 +39,9 @@ const (
 	CodeOIDCNonceRequired                  = "oidc.nonce_required"
 	CodeOIDCNonceInvalid                   = "oidc.nonce_invalid"
 	CodeOIDCPKCEExemptionInvalid           = "oidc.pkce_exemption_invalid"
+	CodeOIDCResourceInvalid                = "oidc.resource_invalid"
+	CodeOIDCResourceExists                 = "oidc.resource_exists"
+	CodeOIDCResourceNotFound               = "oidc.resource_not_found"
 
 	// Token exchange (RFC 8693) subject/actor tokens.
 	CodeOIDCSubjectTokenRequired          = "oidc.subject_token_required"
@@ -130,6 +133,9 @@ var (
 	ErrOIDCNonceInvalid  = New(CodeOIDCNonceInvalid, "The nonce is too long (at most 255 characters).")
 	// ErrOIDCPKCEExemptionInvalid: a PKCE exemption must be for a confidential
 	// application, and end in the future and within 90 days.
+	ErrOIDCResourceInvalid      = New(CodeOIDCResourceInvalid, "A resource identifier is an absolute URI without a fragment, such as https://api.example.com.")
+	ErrOIDCResourceExists       = New(CodeOIDCResourceExists, "That resource is already registered.")
+	ErrOIDCResourceNotFound     = New(CodeOIDCResourceNotFound, "We couldn't find that resource.")
 	ErrOIDCPKCEExemptionInvalid = New(CodeOIDCPKCEExemptionInvalid, "A PKCE exemption is for a confidential application, and must end in the future and within 90 days.")
 
 	// Token exchange (RFC 8693) subject/actor tokens.

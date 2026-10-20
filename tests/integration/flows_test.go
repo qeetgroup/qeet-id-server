@@ -924,6 +924,9 @@ func TestOIDCRefreshTokenPreservesResourceBinding(t *testing.T) {
 	}
 
 	const mcpResource = "https://mcp.example.com"
+	const otherResource = "https://other.example.com"
+	registerResource(t, ctx, svc, tenantID, mcpResource, "")
+	registerResource(t, ctx, svc, tenantID, otherResource, "")
 	code, _, err := svc.Authorize(ctx, userID, client.ClientID, redirectURI, []string{"openid"}, testNonce, testChallenge, "S256")
 	if err != nil {
 		t.Fatalf("authorize: %v", err)
@@ -932,7 +935,7 @@ func TestOIDCRefreshTokenPreservesResourceBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange code: %v", err)
 	}
-	claims, err := issuer.VerifyAccess(issued.AccessToken)
+	claims, err := issuer.VerifyAccessFor(issued.AccessToken, mcpResource)
 	if err != nil || !slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("initial access token audience = %v (err %v), want to include %q", claims, err, mcpResource)
 	}
@@ -942,18 +945,17 @@ func TestOIDCRefreshTokenPreservesResourceBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	claims, err = issuer.VerifyAccess(rotated.AccessToken)
+	claims, err = issuer.VerifyAccessFor(rotated.AccessToken, mcpResource)
 	if err != nil || !slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("rotated access token audience = %v (err %v), want to still include %q", claims, err, mcpResource)
 	}
 
 	// An explicit resource on the refresh call switches the bound resource.
-	const otherResource = "https://other.example.com"
 	rotated2, err := svc.RefreshToken(ctx, client.ClientID, secret, rotated.RefreshToken, otherResource)
 	if err != nil {
 		t.Fatalf("refresh (explicit resource): %v", err)
 	}
-	claims, err = issuer.VerifyAccess(rotated2.AccessToken)
+	claims, err = issuer.VerifyAccessFor(rotated2.AccessToken, otherResource)
 	if err != nil || !slices.Contains([]string(claims.Audience), otherResource) || slices.Contains([]string(claims.Audience), mcpResource) {
 		t.Fatalf("re-refreshed access token audience = %v (err %v), want only %q", claims, err, otherResource)
 	}
@@ -1173,11 +1175,12 @@ func TestOIDCTokenExchangeBindsResource(t *testing.T) {
 	}
 
 	const mcpResource = "https://mcp.example.com"
+	registerResource(t, ctx, svc, tenantID, mcpResource, "")
 	resp, err := svc.TokenExchange(ctx, client.ClientID, secret, subjectAccess, "", "", "", actorAccess, "", mcpResource)
 	if err != nil {
 		t.Fatalf("token exchange: %v", err)
 	}
-	claims, err := issuer.VerifyAccess(resp.AccessToken)
+	claims, err := issuer.VerifyAccessFor(resp.AccessToken, mcpResource)
 	if err != nil {
 		t.Fatalf("verify exchanged token: %v", err)
 	}

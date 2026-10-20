@@ -245,6 +245,12 @@ paths:
           schema:
             type: string
             maxLength: 255
+        - in: query
+          name: resource
+          description: An RFC 8707 resource the access token is for; it must be registered for the organisation (else invalid_target). The code carries it, and the token names it alone as its audience.
+          schema:
+            type: string
+            format: uri
       security:
         - ssoCookie: []
       responses:
@@ -1246,6 +1252,118 @@ paths:
                           type: string
                         reason:
                           type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/tenants/{tenantID}/oidc/resources:
+    get:
+      operationId: get_v1_tenants_ByTenantID_oidc_resources
+      summary: List resources
+      description: 'The organisation''s registered resources (RFC 8707): the downstream services its applications may ask tokens for, with the resource parameter at authorize or the token endpoint. A token issued for a resource names it alone as its audience, so the platform API and every other service refuse it; an unregistered resource is refused with invalid_target. server_client_id, when set, is the application that serves the resource and may introspect tokens issued for it.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Registered resources
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OIDCResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: post_v1_tenants_ByTenantID_oidc_resources
+      summary: Register a resource
+      description: 'Registers a resource: identifier is an absolute URI without a fragment (422 oidc.resource_invalid), unique in the organisation (409 oidc.resource_exists); server_client_id, optional, must be one of the organisation''s applications. Audited as oidc.resource_registered.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - identifier
+              properties:
+                identifier:
+                  type: string
+                  format: uri
+                name:
+                  type: string
+                server_client_id:
+                  type: string
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /v1/tenants/{tenantID}/oidc/resources/{id}:
+    delete:
+      operationId: delete_v1_tenants_ByTenantID_oidc_resources_ById
+      summary: Remove a resource
+      description: 'Removes a registered resource: no new token is issued for it; tokens already issued last out their short lifetime. Audited as oidc.resource_removed.'
+      tags:
+        - OIDC
+      parameters:
+        - name: tenantID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '204':
+          description: Removed
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -4362,6 +4480,25 @@ components:
           format: date-time
           nullable: true
           description: When this confidential application's exemption from sending a PKCE code_challenge and a nonce ends; null for none.
+    OIDCResource:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        identifier:
+          type: string
+          format: uri
+        name:
+          type: string
+        server_client_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     OIDCClientCreate:
       type: object
       required:

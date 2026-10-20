@@ -69,6 +69,25 @@ func registerOIDCClient(t *testing.T, ctx context.Context, svc *oidc.Service, te
 	return client, secret
 }
 
+// registerResource registers an RFC 8707 resource for the tenant, served by
+// serverClientID ("" for none).
+func registerResource(t *testing.T, ctx context.Context, svc *oidc.Service, tenantID uuid.UUID, identifier, serverClientID string) *oidc.Resource {
+	t.Helper()
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	res, err := svc.CreateResource(ctx, tx, tenantID, oidc.CreateResourceInput{Identifier: identifier, ServerClientID: serverClientID})
+	if err != nil {
+		t.Fatalf("register resource %s: %v", identifier, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	return res
+}
+
 func registerOIDCPublicClient(t *testing.T, ctx context.Context, svc *oidc.Service, tenantID uuid.UUID, redirectURI string) *oidc.Client {
 	t.Helper()
 	tx, err := testPool.Begin(ctx)
