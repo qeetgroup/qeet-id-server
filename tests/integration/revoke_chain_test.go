@@ -117,6 +117,26 @@ func TestRevokingARefreshTokenEndsItsWholeGrant(t *testing.T) {
 		}
 	})
 
+	t.Run("an access token for a registered resource is refused the same way", func(t *testing.T) {
+		const reports = "https://reports.example.com"
+		registerResource(t, ctx, svc, tenantID, reports, "")
+		code, _, err := svc.AuthorizeInLoginSession(ctx, oidc.AuthorizeInput{
+			UserID: userID, ClientID: client.ClientID, RedirectURI: redirect, Scopes: []string{"openid"},
+			Nonce: testNonce, CodeChallenge: testChallenge, CodeChallengeMethod: "S256", Resource: reports,
+		})
+		if err != nil {
+			t.Fatalf("authorize: %v", err)
+		}
+		out, err := svc.ExchangeCode(ctx, client.ClientID, secret, code, redirect, testVerifier, "")
+		if err != nil {
+			t.Fatalf("exchange: %v", err)
+		}
+		err = svc.RevokeToken(ctx, client.ClientID, secret, out.AccessToken, "")
+		if err == nil || !strings.Contains(err.Error(), "unsupported_token_type") {
+			t.Fatalf("revoking a resource's access token: err = %v, want unsupported_token_type", err)
+		}
+	})
+
 	t.Run("an unknown token, or another application's, is a no-op", func(t *testing.T) {
 		if err := svc.RevokeToken(ctx, client.ClientID, secret, "no-such-token", ""); err != nil {
 			t.Fatalf("unknown token: %v", err)

@@ -2320,7 +2320,9 @@ func (s *Service) RevokeToken(ctx context.Context, clientID, clientSecret, token
 	if token == "" {
 		return nil
 	}
-	if _, err := s.issuer.VerifyAccess(token); err == nil {
+	// Whatever its audience: a token issued for a registered resource is an
+	// access token too.
+	if _, err := s.issuer.VerifyAccessAnyAudience(token); err == nil {
 		return oauthErr("unsupported_token_type", "access tokens can't be revoked; they expire on their own")
 	}
 	tx, err := s.pool.Begin(ctx)
