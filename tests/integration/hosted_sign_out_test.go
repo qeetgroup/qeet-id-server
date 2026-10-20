@@ -153,13 +153,22 @@ func (f *hostedSignOutFixture) signOutOfHostedLogin(cookie string) *httptest.Res
 	return rr
 }
 
+// signOutFromApp sends an application's sign-out request and, when the
+// server asks the person to confirm (no id_token_hint), confirms it.
 func (f *hostedSignOutFixture) signOutFromApp(cookie string, q url.Values) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/logout?"+q.Encode(), nil)
-	if cookie != "" {
-		req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+	send := func(q url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/v1/oauth/logout?"+q.Encode(), nil)
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
+		}
+		rr := httptest.NewRecorder()
+		f.router.ServeHTTP(rr, req)
+		return rr
 	}
-	rr := httptest.NewRecorder()
-	f.router.ServeHTTP(rr, req)
+	rr := send(q)
+	if loc, err := url.Parse(rr.Header().Get("Location")); err == nil && loc.Path == "/logout" && loc.Query().Get("logout_confirmation") != "" {
+		return send(loc.Query())
+	}
 	return rr
 }
 

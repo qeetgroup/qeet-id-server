@@ -8,11 +8,12 @@
 -- name: InsertOIDCClient :one
 INSERT INTO auth.oidc_clients (
     tenant_id, client_id, client_secret_hash, type, name,
-    redirect_uris, post_logout_uris, grant_types, scopes
+    redirect_uris, post_logout_uris, grant_types, scopes, backchannel_logout_uri, frontchannel_logout_uri
 ) VALUES (@tenant_id, @client_id, sqlc.narg('client_secret_hash'), @type, @name,
-          @redirect_uris, @post_logout_uris, @grant_types, @scopes)
+          @redirect_uris, @post_logout_uris, @grant_types, @scopes,
+          NULLIF(@backchannel_logout_uri::text, ''), NULLIF(@frontchannel_logout_uri::text, ''))
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until;
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri;
 
 -- pkce_exempt is whether the client's PKCE exemption is in force now.
 -- name: GetClientForAuth :one
@@ -58,7 +59,7 @@ WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: ListOIDCClients :many
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 FROM auth.oidc_clients WHERE tenant_id = @tenant_id ORDER BY created_at DESC;
 
 -- CountOIDCClientsByTenant counts a tenant's registered applications (relying
@@ -68,7 +69,7 @@ SELECT COUNT(*) FROM auth.oidc_clients WHERE tenant_id = @tenant_id;
 
 -- name: GetOIDCClient :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id;
 
 -- name: UpdateOIDCClient :one
@@ -80,17 +81,21 @@ UPDATE auth.oidc_clients SET
     scopes           = COALESCE(sqlc.narg('scopes'), scopes),
     pkce_exempt_until = CASE WHEN @set_pkce_exempt_until::bool
                              THEN sqlc.narg('pkce_exempt_until')::timestamptz
-                             ELSE pkce_exempt_until END
+                             ELSE pkce_exempt_until END,
+    backchannel_logout_uri = CASE WHEN @set_backchannel_logout_uri::bool
+                                  THEN NULLIF(@backchannel_logout_uri::text, '') ELSE backchannel_logout_uri END,
+    frontchannel_logout_uri = CASE WHEN @set_frontchannel_logout_uri::bool
+                                   THEN NULLIF(@frontchannel_logout_uri::text, '') ELSE frontchannel_logout_uri END
 WHERE id = @id AND tenant_id = @tenant_id
 RETURNING id, tenant_id, client_id, type, name, redirect_uris,
-          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until;
+          post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri;
 
 -- name: DeleteOIDCClient :one
 DELETE FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id RETURNING client_id;
 
 -- name: LockOIDCClientForUpdate :one
 SELECT id, tenant_id, client_id, type, name, redirect_uris,
-       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until
+       post_logout_uris, grant_types, scopes, created_at, pkce_exempt_until, backchannel_logout_uri, frontchannel_logout_uri
 FROM auth.oidc_clients WHERE id = @id AND tenant_id = @tenant_id FOR UPDATE;
 
 -- name: UpdateOIDCClientSecret :exec
@@ -425,3 +430,46 @@ SELECT EXISTS (
 SELECT email, email_verified_at, phone, phone_verified_at, display_name, avatar_url, updated_at,
        COALESCE(metadata->>'locale', '')::text AS locale
 FROM "user".users WHERE id = @id AND deleted_at IS NULL AND status = 'active';
+
+-- ==========================================================================
+-- Sign-out notices (OpenID Connect Back- and Front-Channel Logout, QTID-166)
+-- ==========================================================================
+
+-- SessionClients is every application that holds a code or a grant from a
+-- hosted-login session, with where it hears of a sign-out.
+-- name: SessionClients :many
+SELECT c.client_id, c.tenant_id, COALESCE(c.backchannel_logout_uri, '')::text AS backchannel_logout_uri,
+       COALESCE(c.frontchannel_logout_uri, '')::text AS frontchannel_logout_uri
+FROM auth.oidc_clients c
+WHERE c.client_id IN (
+    SELECT t.client_id FROM auth.oidc_refresh_tokens t WHERE t.login_session_id = @login_session_id
+    UNION
+    SELECT a.client_id FROM auth.oidc_authorization_codes a WHERE a.login_session_id = @login_session_id
+)
+ORDER BY c.client_id;
+
+-- name: InsertLogoutDelivery :exec
+INSERT INTO auth.oidc_logout_deliveries (tenant_id, client_id, uri, logout_token)
+VALUES (@tenant_id, @client_id, @uri, @logout_token);
+
+-- ClaimLogoutDeliveries takes due notices for one delivery pass, pushing them
+-- back so a crashed pass's are retried, not lost.
+-- name: ClaimLogoutDeliveries :many
+UPDATE auth.oidc_logout_deliveries d SET next_attempt_at = NOW() + INTERVAL '5 minutes'
+WHERE d.id IN (
+    SELECT id FROM auth.oidc_logout_deliveries
+    WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= NOW()
+    ORDER BY next_attempt_at LIMIT @max_rows FOR UPDATE SKIP LOCKED
+)
+RETURNING d.id, d.tenant_id, d.client_id, d.uri, d.logout_token, d.attempts;
+
+-- name: MarkLogoutDelivered :exec
+UPDATE auth.oidc_logout_deliveries SET delivered_at = NOW(), attempts = attempts + 1, last_error = ''
+WHERE id = @id;
+
+-- name: MarkLogoutDeliveryFailed :exec
+UPDATE auth.oidc_logout_deliveries
+SET attempts = attempts + 1, last_error = @last_error,
+    next_attempt_at = NOW() + make_interval(secs => @retry_in_seconds::float8),
+    failed_at = CASE WHEN @final::bool THEN NOW() END
+WHERE id = @id;

@@ -526,6 +526,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	ldapService.SetProfileMapper(directoryService)
 	ipAllowService := ipallow.NewService(pool)
 	authService.SetAddressPolicy(ipAllowService) // address rules: every sign-in to an organisation, and every renewal
+	authService.SetSignOutNotifier(oidcService)  // tell applications when someone signs out of the hosted login
+	oidcService.SetLogoutHTTPClient(outboundPolicy)
 	oidcService.SetAddressPolicy(ipAllowService) // address rules: application authorize, device approval and collection
 
 	// Plan enforcement: inject the entitlement checker into every gated create
@@ -684,6 +686,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	workers := []namedWorker{
 		{name: "jwt-keyring", run: func(ctx context.Context) { signingKeyRegistry.Run(ctx, issuer, cfg.JWTSigningKeyRefreshInterval) }, always: true},
 		{name: "outbox", run: outboxDispatcher.Run},
+		{name: "oidc-logout", run: oidcService.RunLogoutDeliveries},
 		{name: "webhook", run: webhookService.RunDispatcher},
 		{name: "gdpr", run: gdprService.Run},
 		{name: "retention", run: retentionService.Run},

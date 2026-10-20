@@ -1527,11 +1527,21 @@ func TestEndSessionLogout(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Logout with a registered post_logout_redirect_uri → redirected there.
+	// Logout with a registered post_logout_redirect_uri → the hosted login asks
+	// first (no id_token_hint), then the confirmed request redirects there.
 	q := url.Values{"client_id": {client.ClientID}, "post_logout_redirect_uri": {postLogout}, "state": {"s1"}}
 	resp, err = hc.Get(srv.URL + "/v1/oauth/logout?" + q.Encode())
 	if err != nil {
 		t.Fatalf("logout: %v", err)
+	}
+	confirm, _ := url.Parse(resp.Header.Get("Location"))
+	resp.Body.Close()
+	if confirm == nil || confirm.Path != "/logout" || confirm.Query().Get("logout_confirmation") == "" {
+		t.Fatalf("logout without a hint = %q, want the hosted confirmation page", resp.Header.Get("Location"))
+	}
+	resp, err = hc.Get(srv.URL + "/v1/oauth/logout?" + confirm.Query().Encode())
+	if err != nil {
+		t.Fatalf("confirmed logout: %v", err)
 	}
 	loc := resp.Header.Get("Location")
 	resp.Body.Close()

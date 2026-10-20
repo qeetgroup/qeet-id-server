@@ -621,10 +621,27 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+  /v1/oauth/logout/continue:
+    get:
+      operationId: get_v1_oauth_logout_continue
+      summary: Continue after sign-out
+      description: 'Sends the browser on to the post-logout address a sign-out validated, from the signed ticket the hosted signed-out page was given after loading the applications'' front-channel pages. An invalid or expired ticket goes to the hosted signed-out page instead. Never a redirect to an address the ticket doesn''t sign.'
+      tags:
+        - OIDC
+      security: []
+      parameters:
+        - in: query
+          name: ticket
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to the validated post-logout address, or the signed-out page
   /v1/oauth/logout:
     get:
       operationId: get_v1_oauth_logout
-      description: 'Performs OpenID Connect RP-initiated logout: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — and clears the cookie. Only the cookie identifies the session to end; without it nothing is ended. The sign-out is recorded in the audit log (auth.signed_out), naming client_id when it is a registered application. When the client supplies a registered post_logout_redirect_uri the browser is redirected there with any provided state; otherwise the hosted logged-out page is shown. Other browsers and API sessions are unaffected. Advertised as end_session_endpoint in discovery; a POST variant exists at the same path for relying parties that submit the request as a form.'
+      description: 'Performs OpenID Connect RP-initiated logout: ends the hosted-login SSO session behind the qe_ls cookie and what it started — the refresh grants applications received through it are revoked and its unredeemed authorization codes can no longer be redeemed — and clears the cookie. Only the cookie identifies the session to end; without it nothing is ended. The sign-out is recorded in the audit log (auth.signed_out), naming client_id when it is a registered application. When the client supplies a registered post_logout_redirect_uri the browser is redirected there with any provided state; otherwise the hosted logged-out page is shown. Other browsers and API sessions are unaffected. Advertised as end_session_endpoint in discovery; a POST variant exists at the same path for relying parties that submit the request as a form. A sign-out must carry an id_token_hint (one of our ID tokens, expired or not, issued to client_id and naming this session and person; another session''s is refused with 400 invalid_request) or a logout_confirmation ticket: without either, the browser is sent to the hosted login''s /logout page to confirm, with a ticket that brings it back, so a plain link or image can''t sign anyone out. Every application that holds a code or grant from the ended session is told: a signed logout token (OpenID Connect Back-Channel Logout 1.0, with sid) is POSTed to its backchannel_logout_uri and retried with backoff, a final failure audited as oidc.backchannel_logout_failed; its frontchannel_logout_uri (with iss and sid) is given to the hosted signed-out page, which then continues to the post_logout_redirect_uri through /v1/oauth/logout/continue. Audited as oidc.sign_out_notified.'
       summary: RP-initiated logout
       tags:
         - OIDC
@@ -4552,6 +4569,14 @@ components:
           format: date-time
           nullable: true
           description: When this confidential application's exemption from sending a PKCE code_challenge and a nonce ends; null for none.
+        backchannel_logout_uri:
+          type: string
+          format: uri
+          description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
+        frontchannel_logout_uri:
+          type: string
+          format: uri
+          description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
     OIDCResource:
       type: object
       properties:
@@ -4606,6 +4631,14 @@ components:
           type: array
           items:
             type: string
+        backchannel_logout_uri:
+          type: string
+          format: uri
+          description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
+        frontchannel_logout_uri:
+          type: string
+          format: uri
+          description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
     OIDCClientUpdate:
       type: object
       description: Partial (COALESCE-style) update; omitted fields are left unchanged.
@@ -4635,6 +4668,14 @@ components:
           format: date-time
           nullable: true
           description: Sets (a date-time, within 90 days) or clears (null) a confidential application's PKCE exemption; omitted, unchanged.
+        backchannel_logout_uri:
+          type: string
+          format: uri
+          description: Receives a signed logout token (OpenID Connect Back-Channel Logout, with sid) when someone the application signed in signs out; "" for none.
+        frontchannel_logout_uri:
+          type: string
+          format: uri
+          description: Loaded by the hosted signed-out page (with iss and sid) when someone the application signed in signs out; "" for none.
     OAuthDeviceAuthorization:
       type: object
       description: Admin view of an RFC 8628 device-authorization row. Never includes the device_code or its hash.

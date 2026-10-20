@@ -506,6 +506,26 @@ func (i *Issuer) VerifyVC(raw string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
+// VerifySignedAnyTime verifies a token this issuer signed (signature and
+// issuer) whatever its lifetime says: for an id_token_hint, which a sign-out
+// request may present after the ID token has expired (OIDC RP-Initiated
+// Logout §2).
+func (i *Issuer) VerifySignedAnyTime(raw string) (jwt.MapClaims, error) {
+	parser := jwt.NewParser(
+		jwt.WithValidMethods(validMethods),
+		jwt.WithIssuer(i.issuer),
+		jwt.WithoutClaimsValidation(),
+	)
+	claims := jwt.MapClaims{}
+	if _, err := parser.ParseWithClaims(raw, claims, i.keyFunc); err != nil {
+		return nil, err
+	}
+	if iss, _ := claims.GetIssuer(); iss != i.issuer {
+		return nil, errors.New("issuer mismatch")
+	}
+	return claims, nil
+}
+
 // KeyMeta is non-secret signing-key metadata for the admin signing-keys view.
 // It deliberately carries no key material (the public coordinates live in the
 // JWKS); it only reports the key's id, algorithm, use, and rotation status.

@@ -217,6 +217,21 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Sign-out tells the applications (2026-10-20)**
+
+* **oidc:** signing out ended the hosted session and its grants and told no application, so a
+  person stayed signed in wherever an application keeps its own session, and a plain link or image
+  could sign anyone out. Applications can now register a `backchannel_logout_uri` (a signed logout
+  token naming the session, OpenID Connect Back-Channel Logout, POSTed and retried with backoff; a
+  final failure audited as `oidc.backchannel_logout_failed`) and a `frontchannel_logout_uri` (loaded
+  by the hosted signed-out page, which continues to the post-logout address through a signed ticket
+  at `/v1/oauth/logout/continue`); migration 0146. Every application with a code or grant from the
+  ended session is told, whether the sign-out came from an application or the hosted login itself
+  (`DELETE /v1/auth/session` now returns the front-channel pages). `/v1/oauth/logout` verifies an
+  `id_token_hint` (another sign-in's is refused) and, without one, asks the person first on the
+  hosted login with a confirmation ticket. Audited as `oidc.sign_out_notified`; discovery advertises
+  both logout profiles.
+
 **Authorize honours the OIDC directives (2026-10-20)**
 
 * **oidc:** `/v1/oauth/authorize` read four parameters and the proof key and ignored the rest:
