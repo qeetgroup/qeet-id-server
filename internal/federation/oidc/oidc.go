@@ -1574,6 +1574,7 @@ func (h *Handler) loginContext(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Get("/.well-known/openid-configuration", h.discovery)
+	r.Get("/.well-known/oauth-authorization-server", h.authorizationServerMetadata) // RFC 8414
 	r.Get("/.well-known/jwks.json", h.jwks)
 	r.Get("/.well-known/oauth-protected-resource", h.protectedResourceMetadata) // RFC 9728
 	// Client-authenticated, machine-to-machine; CSRF-exempt in the router.
@@ -2206,8 +2207,22 @@ func (h *Handler) introspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, h.serverMetadata(r))
+}
+
+// authorizationServerMetadata (GET /.well-known/oauth-authorization-server) is
+// the RFC 8414 document an OAuth-only client, or a model-context-protocol
+// client following the protected-resource document, configures itself from.
+// The same document as the OpenID configuration, so the two can't disagree.
+func (h *Handler) authorizationServerMetadata(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, h.serverMetadata(r))
+}
+
+// serverMetadata is the authorization server's metadata, for the request's
+// host.
+func (h *Handler) serverMetadata(r *http.Request) map[string]any {
 	base := externalScheme(r) + "://" + r.Host
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"issuer":                                base,
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
 		"token_endpoint":                        base + "/v1/oauth/token-code",
@@ -2220,7 +2235,7 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
-		"scopes_supported":                      []string{"openid", "profile", "email", "phone"},
+		"scopes_supported":                      scopesSupported,
 		"claims_supported":                      claimsSupported(),
 		"prompt_values_supported":               promptValuesSupported,
 		"response_modes_supported":              responseModesSupported,
@@ -2241,8 +2256,6 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"token_endpoint_auth_methods_supported":         []string{"client_secret_basic", "client_secret_post", "none"},
 		"revocation_endpoint_auth_methods_supported":    []string{"client_secret_basic", "client_secret_post", "none"},
 		"introspection_endpoint_auth_methods_supported": []string{"client_secret_basic", "client_secret_post"},
-		// RFC 9728 — Protected Resource Metadata discovery link
-		"protected_resource_metadata": base + "/.well-known/oauth-protected-resource",
 		// RFC 8707 — Resource Indicators
 		"resource_indicators_supported": true,
 		// RFC 9207 — the authorization response carries an `iss` parameter.
@@ -2253,8 +2266,11 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		// UUID — see TokenExchange), an agent token self-describes via the
 		// actor_type + agent_id claims, also surfaced on /oauth/introspect.
 		"actor_types_supported": []string{"user", "service", "agent"},
-	})
+	}
 }
+
+// scopesSupported is every scope an application may request.
+var scopesSupported = []string{"openid", "profile", "email", "phone"}
 
 // protectedResourceMetadata implements RFC 9728 §3 — OAuth 2.0 Protected
 // Resource Metadata. MCP authorization servers must advertise this document
@@ -2268,6 +2284,7 @@ func (h *Handler) protectedResourceMetadata(w http.ResponseWriter, r *http.Reque
 		"bearer_methods_supported":              []string{"header"},
 		"resource_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"resource_documentation":                "https://docs.qeet.in/id/api-reference",
+		"scopes_supported":                      scopesSupported,
 	})
 }
 

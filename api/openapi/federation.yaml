@@ -89,14 +89,32 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OIDCDiscovery'
+  /.well-known/oauth-authorization-server:
+    get:
+      operationId: get_wellKnown_oauth_authorization_server
+      description: 'Returns the OAuth 2.0 authorization server metadata (RFC 8414) for clients that speak only OAuth, and for model-context-protocol clients following the protected-resource document to the authorization server it names. It is the same document as the OpenID configuration, so the endpoints and capabilities in the two always agree. Served unauthenticated at the root, not under /v1.'
+      summary: OAuth authorization server metadata
+      tags:
+        - OIDC
+      security: []
+      responses:
+        '200':
+          description: Authorization server metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OIDCDiscovery'
   /.well-known/oauth-protected-resource:
     get:
       operationId: get_wellKnown_oauth_protected_resource
       summary: Protected resource metadata
       description: >-
-        Protected-resource metadata for MCP authorization-server compliance.
-        Advertises the resource identifier, its authorization server(s), and the
-        supported bearer methods and token-signing algorithms.
+        Protected-resource metadata (RFC 9728) for MCP authorization-server
+        compliance. Advertises the resource identifier, its authorization
+        server(s), the scopes it accepts (scopes_supported), and the supported
+        bearer methods and token-signing algorithms. Each authorization server
+        named resolves to its RFC 8414 metadata at
+        /.well-known/oauth-authorization-server.
       tags:
         - OIDC
       security: []
@@ -122,7 +140,7 @@ paths:
                     type: array
                     items:
                       type: string
-                  scopes_provided:
+                  scopes_supported:
                     type: array
                     items:
                       type: string
