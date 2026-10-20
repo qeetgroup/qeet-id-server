@@ -52,14 +52,14 @@ type Config struct {
 	// trusted hop rewrote it, and the client IP keys the login rate limiter and
 	// every audit record. A deployment behind exactly one proxy must set 1, or
 	// every request will be attributed to the proxy's own address.
-	TrustedProxyHops int    `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
+	TrustedProxyHops int `envconfig:"TRUSTED_PROXY_HOPS" default:"0"`
 	// RelayKeysRaw is a comma-separated list of keys that first-party relays
 	// (the console's and hosted login's servers) present to have the client
 	// address they forward trusted (see httpx.SetRelayKeys). Empty: no relay is
 	// trusted, and relayed requests are judged by the relay's own address. More
 	// than one lets a key be rotated without downtime.
 	RelayKeysRaw string `envconfig:"RELAY_KEYS" default:""`
-	LogLevel         string `envconfig:"LOG_LEVEL" default:"info"`
+	LogLevel     string `envconfig:"LOG_LEVEL" default:"info"`
 	// LogFormat controls the log output format. "json" forces JSON lines (good
 	// for structured log ingestion and dev with jq). "text" forces the colored
 	// logfmt dev handler. Empty auto-selects: text when stdout is a TTY in
