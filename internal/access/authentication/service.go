@@ -606,6 +606,17 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	// SSO cookie is opaque, and any JWT is minted later by the OIDC authorize
 	// flow for a specific client, decoupled from this call — a separate,
 	// larger integration than the direct API-token login this powers.
+	// The hosted login opens a session for the browser, not for one
+	// organisation; the application it is serving belongs to one, whose address
+	// rules refuse here, not later at authorize. Before the password is
+	// checked, so the answer is the same whether it is right or wrong.
+	clientTenant, err := s.SignInTenant(ctx, in.ClientID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkAddress(ctx, clientTenant, uuid.Nil, in.IP, "hosted_password"); err != nil {
+		return nil, err
+	}
 	u, _, err := s.CheckPassword(ctx, in)
 	if err != nil {
 		return nil, err
@@ -654,6 +665,10 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 	}
 	if !enabled {
 		return nil, nil, errs.ErrAuthSelfRegistrationDisabled
+	}
+	// Nobody joins an organisation from an address it doesn't allow.
+	if err := s.checkAddress(ctx, tenantID, uuid.Nil, ip, "hosted_signup"); err != nil {
+		return nil, nil, err
 	}
 	if err := s.checkNewPassword(ctx, tenantID, email, plain); err != nil {
 		return nil, nil, err

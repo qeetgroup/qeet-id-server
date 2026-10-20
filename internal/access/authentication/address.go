@@ -19,6 +19,14 @@ type AddressPolicy interface {
 // Called from internal/bootstrap/dependencies.go.
 func (s *Service) SetAddressPolicy(p AddressPolicy) { s.addresses = p }
 
+// CheckSignInAddress asks tenantID's address rules whether ip may sign in to it
+// (errs.ErrAuthAddressNotAllowed, recorded, when not). For a hosted-login step
+// that opens no session of its own, such as the social callback. No
+// organisation, or no rules wired: yes.
+func (s *Service) CheckSignInAddress(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
+	return s.checkAddress(ctx, tenantID, userID, ip, path)
+}
+
 // checkAddress asks the organisation's address rules whether ip may sign in
 // to it, or renew a session in it. No organisation, or no rules wired: yes.
 func (s *Service) checkAddress(ctx context.Context, tenantID, userID uuid.UUID, ip, path string) error {
