@@ -217,6 +217,15 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Introspection answers only for the owner (2026-10-20)**
+
+* **oidc:** `/oauth/introspect` answered for any access token of the caller's organisation, so any
+  application could read the live state, subject and scopes of every other application's tokens,
+  and it reported the fixed platform audience. An application now learns only about access tokens
+  issued to it, or issued for a registered resource it serves; anything else is `{"active": false}`,
+  and asking about another application's token is audited (`oidc.introspection_refused`). An active
+  token reports its real `aud`, its `client_id`, and `resource` when it was issued for one.
+
 **Resource indicators confine tokens (2026-10-20)**
 
 * **oidc:** a token issued for a resource is for that resource alone. A client could name any
