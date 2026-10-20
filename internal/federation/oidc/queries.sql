@@ -106,14 +106,15 @@ WHERE id = @id AND tenant_id = @tenant_id;
 -- name: InsertAuthorizationCode :exec
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource, auth_time
 ) VALUES (@code_hash, @client_id, @user_id, @tenant_id, @redirect_uri,
           @scopes, NULLIF(@nonce,''), NULLIF(@code_challenge,''), NULLIF(@code_challenge_method,''),
-          NOW() + INTERVAL '10 minutes', sqlc.narg('login_session_id'), NULLIF(@resource::text,''));
+          NOW() + INTERVAL '10 minutes', sqlc.narg('login_session_id'), NULLIF(@resource::text,''),
+          sqlc.narg('auth_time'));
 
 -- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource, auth_time
 FROM auth.oidc_authorization_codes
 WHERE code_hash = @code_hash AND client_id = @client_id
 FOR UPDATE;

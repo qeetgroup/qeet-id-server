@@ -107,7 +107,7 @@ func (f *hostedSignOutFixture) signIn(t *testing.T, ctx context.Context, userID 
 // code the application receives.
 func (f *hostedSignOutFixture) authorize(t *testing.T, cookie string) string {
 	t.Helper()
-	q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
+	q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}, "response_type": {"code"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?"+q.Encode(), nil)
 	req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: cookie})
 	rr := httptest.NewRecorder()

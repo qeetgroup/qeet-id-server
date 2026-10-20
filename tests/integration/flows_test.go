@@ -1390,6 +1390,7 @@ func TestHostedAuthorizeConsentFlow(t *testing.T) {
 			"redirect_uri":          {redirectURI},
 			"scope":                 {"openid"},
 			"state":                 {"xyz"},
+			"response_type":         {"code"},
 			"code_challenge":        {testChallenge},
 			"code_challenge_method": {"S256"},
 			"nonce":                 {testNonce},
@@ -1539,7 +1540,7 @@ func TestEndSessionLogout(t *testing.T) {
 	}
 
 	// Session cleared: authorize now bounces back to the hosted login.
-	aq := url.Values{"client_id": {client.ClientID}, "redirect_uri": {redirectURI}, "scope": {"openid"}}
+	aq := url.Values{"client_id": {client.ClientID}, "redirect_uri": {redirectURI}, "scope": {"openid"}, "response_type": {"code"}}
 	resp, err = hc.Get(srv.URL + "/v1/oauth/authorize?" + aq.Encode())
 	if err != nil {
 		t.Fatalf("authorize after logout: %v", err)

@@ -66,7 +66,7 @@ func (q *Queries) ClearClientAuthFailures(ctx context.Context, clientRowID uuid.
 
 const consumeAuthorizationCode = `-- name: ConsumeAuthorizationCode :one
 SELECT user_id, tenant_id, redirect_uri, scopes,
-       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource
+       nonce, code_challenge, code_challenge_method, expires_at, used_at, login_session_id, resource, auth_time
 FROM auth.oidc_authorization_codes
 WHERE code_hash = $1 AND client_id = $2
 FOR UPDATE
@@ -89,6 +89,7 @@ type ConsumeAuthorizationCodeRow struct {
 	UsedAt              pgtype.Timestamptz
 	LoginSessionID      pgtype.UUID
 	Resource            *string
+	AuthTime            pgtype.Timestamptz
 }
 
 func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAuthorizationCodeParams) (ConsumeAuthorizationCodeRow, error) {
@@ -106,6 +107,7 @@ func (q *Queries) ConsumeAuthorizationCode(ctx context.Context, arg ConsumeAutho
 		&i.UsedAt,
 		&i.LoginSessionID,
 		&i.Resource,
+		&i.AuthTime,
 	)
 	return i, err
 }
@@ -583,10 +585,11 @@ const insertAuthorizationCode = `-- name: InsertAuthorizationCode :exec
 
 INSERT INTO auth.oidc_authorization_codes (
     code_hash, client_id, user_id, tenant_id, redirect_uri,
-    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource
+    scopes, nonce, code_challenge, code_challenge_method, expires_at, login_session_id, resource, auth_time
 ) VALUES ($1, $2, $3, $4, $5,
           $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''),
-          NOW() + INTERVAL '10 minutes', $10, NULLIF($11::text,''))
+          NOW() + INTERVAL '10 minutes', $10, NULLIF($11::text,''),
+          $12)
 `
 
 type InsertAuthorizationCodeParams struct {
@@ -601,6 +604,7 @@ type InsertAuthorizationCodeParams struct {
 	CodeChallengeMethod interface{}
 	LoginSessionID      pgtype.UUID
 	Resource            string
+	AuthTime            pgtype.Timestamptz
 }
 
 // ==========================================================================
@@ -621,6 +625,7 @@ func (q *Queries) InsertAuthorizationCode(ctx context.Context, arg InsertAuthori
 		arg.CodeChallengeMethod,
 		arg.LoginSessionID,
 		arg.Resource,
+		arg.AuthTime,
 	)
 	return err
 }

@@ -333,7 +333,7 @@ func TestSignOutEverywhereMakesTheNextAuthorizationAskToSignIn(t *testing.T) {
 
 	authorize := func() string {
 		t.Helper()
-		q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
+		q := url.Values{"client_id": {f.clientID}, "redirect_uri": {f.redirectURI}, "scope": {"openid"}, "state": {"s"}, "response_type": {"code"}, "code_challenge": {testChallenge}, "code_challenge_method": {"S256"}, "nonce": {testNonce}}
 		req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?"+q.Encode(), nil)
 		req.AddCookie(&http.Cookie{Name: auth.LoginSessionCookie, Value: me.browsers[0]})
 		rr := httptest.NewRecorder()

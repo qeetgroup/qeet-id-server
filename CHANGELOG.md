@@ -217,6 +217,18 @@ The changes below are the work staged for that first release.
   them; a save that still sends them empty is accepted, and one with entries is refused with
   `422 validation_failed` (code `retired`).
 
+**Authorize honours the OIDC directives (2026-10-20)**
+
+* **oidc:** `/v1/oauth/authorize` read four parameters and the proof key and ignored the rest:
+  `response_type` was never read (a request for an unsupported flow got a code), and `prompt` and
+  `max_age` were accepted and discarded. Now `response_type` is required and only `code` served
+  (`invalid_request`, `unsupported_response_type`); `prompt=none` answers `login_required` or
+  `consent_required` instead of showing a page; `prompt=login`, and a sign-in older than `max_age`,
+  send the browser to sign in again before the code is issued; `prompt=consent` asks again;
+  `request`, `request_uri` and response modes other than `query` are refused. The ID token carries
+  `auth_time` and `sid` (migration 0145), and discovery lists the prompts, response modes and types
+  honoured.
+
 **UserInfo and the ID token say who signed in (2026-10-20)**
 
 * **oidc:** `/v1/oauth/userinfo` returned only `sub` and the tenant id, so no application could
