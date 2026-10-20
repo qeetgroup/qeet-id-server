@@ -1078,6 +1078,58 @@ func accountActive(ctx context.Context, q *dbgen.Queries, userID uuid.UUID) (boo
 	return !row.Deleted && row.Status != "suspended", nil
 }
 
+// mayIntrospect reports whether clientID may see an access token of its
+// tenant: it is the application the token was issued to (client_id claim), or
+// it serves one of the registered resources the token was issued for.
+func (s *Service) mayIntrospect(ctx context.Context, tenantID uuid.UUID, clientID string, claims *tokens.Claims) (bool, error) {
+	if claims.ClientID != "" && claims.ClientID == clientID {
+		return true, nil
+	}
+	res := resourcesOf(claims.Audience, s.issuer.JWTAudience())
+	if len(res) == 0 {
+		return false, nil
+	}
+	return s.q.ResourceServedBy(ctx, dbgen.ResourceServedByParams{TenantID: tenantID, ClientID: &clientID, Identifiers: res})
+}
+
+// auditIntrospectionRefused records an application asking about a token it
+// doesn't own (owner "" for a token issued to no application).
+func (s *Service) auditIntrospectionRefused(ctx context.Context, tenantID uuid.UUID, caller, owner string) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback(ctx)
+	if audit.Record(ctx, tx, audit.Event{
+		TenantID: &tenantID, ActorType: "client", Action: "oidc.introspection_refused",
+		ResourceType: "oidc_client", IP: httpx.ClientIPFromContext(ctx),
+		Metadata: map[string]any{"client_id": caller, "token_client_id": owner, "outcome": "inactive"},
+	}) == nil {
+		_ = tx.Commit(ctx)
+	}
+}
+
+// resourcesOf is an audience without the platform's own entry: the resources
+// a token was issued for.
+func resourcesOf(aud []string, platform string) []string {
+	var out []string
+	for _, a := range aud {
+		if a != platform {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// audienceClaim renders an audience as JWT does: one value as a string,
+// several as a list.
+func audienceClaim(aud []string) any {
+	if len(aud) == 1 {
+		return aud[0]
+	}
+	return aud
+}
+
 // revokeGrantFromCode ends the grant redeemed from the authorization code
 // with this hash, after the code was presented again, and records it.
 func (s *Service) revokeGrantFromCode(ctx context.Context, tx pgx.Tx, clientID, codeHash string, userID, tenantID uuid.UUID) error {
@@ -2046,11 +2098,20 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 	}
 
 	// Access token (stateless JWT) — unless the hint says it's a refresh token.
+	// Whatever its audience: a token issued for a resource is still ours.
 	if hint != "refresh_token" {
-		if claims, err := s.issuer.VerifyAccess(token); err == nil {
-			// Access tokens carry no client_id, so bind at tenant granularity:
-			// a client may only introspect tokens issued within its own tenant.
+		if claims, err := s.issuer.VerifyAccessAnyAudience(token); err == nil {
 			if claims.TenantID != caller.TenantID {
+				return inactive, nil
+			}
+			// Only the application the token was issued to, or the service a
+			// registered resource it names says serves it, may see it.
+			allowed, err := s.mayIntrospect(ctx, caller.TenantID, clientID, claims)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				s.auditIntrospectionRefused(ctx, caller.TenantID, clientID, claims.ClientID)
 				return inactive, nil
 			}
 			out := map[string]any{
@@ -2059,7 +2120,13 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 				"sub":        claims.Subject,
 				"scope":      claims.Scope,
 				"iss":        s.issuer.JWTIssuer(),
-				"aud":        s.issuer.JWTAudience(),
+				"aud":        audienceClaim(claims.Audience),
+			}
+			if claims.ClientID != "" {
+				out["client_id"] = claims.ClientID
+			}
+			if res := resourcesOf(claims.Audience, s.issuer.JWTAudience()); len(res) > 0 {
+				out["resource"] = audienceClaim(res)
 			}
 			if claims.ExpiresAt != nil {
 				out["exp"] = claims.ExpiresAt.Unix()
