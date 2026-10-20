@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -354,16 +355,37 @@ func (s *Service) ReviewShadowAIClient(ctx context.Context, tenantID, id, review
 // hosted-login session, and no address is known, so an organisation with its
 // address rules on refuses it; the browser flow uses AuthorizeInLoginSession.
 func (s *Service) Authorize(ctx context.Context, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod string) (string, uuid.UUID, error) {
-	return s.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirectURI, scopes, nonce, challenge, challengeMethod, "", "")
+	return s.AuthorizeInLoginSession(ctx, AuthorizeInput{
+		UserID: userID, ClientID: clientID, RedirectURI: redirectURI, Scopes: scopes,
+		Nonce: nonce, CodeChallenge: challenge, CodeChallengeMethod: challengeMethod,
+	})
 }
 
-// AuthorizeInLoginSession is Authorize for a user signed in to the hosted
-// login: the code records loginSessionID (uuid.Nil for none), and so does the
-// grant redeemed from it, so that signing out of that session ends both. ip is
-// the browser's address (httpx.ClientIP), which the organisation's address
-// rules must allow. resource ("" for none) is the RFC 8707 resource the token
-// is for, which the organisation must have registered; the code carries it.
-func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, userID uuid.UUID, clientID, redirectURI string, scopes []string, nonce, challenge, challengeMethod, ip, resource string) (string, uuid.UUID, error) {
+// AuthorizeInput is one authorization request to mint a code for.
+type AuthorizeInput struct {
+	// LoginSessionID is the hosted-login session the code is minted in
+	// (uuid.Nil for none); signing out of it ends the code and its grant.
+	LoginSessionID, UserID             uuid.UUID
+	ClientID, RedirectURI              string
+	Scopes                             []string
+	Nonce                              string
+	CodeChallenge, CodeChallengeMethod string
+	// IP is the browser's address (httpx.ClientIP), which the organisation's
+	// address rules must allow.
+	IP string
+	// Resource ("" for none) is the RFC 8707 resource the token is for, which
+	// the organisation must have registered; the code carries it.
+	Resource string
+	// AuthTime is when the person signed in (zero: unknown); the ID token
+	// reports it as auth_time.
+	AuthTime time.Time
+}
+
+// AuthorizeInLoginSession mints a code for a request in a hosted-login session.
+func (s *Service) AuthorizeInLoginSession(ctx context.Context, in AuthorizeInput) (string, uuid.UUID, error) {
+	clientID, redirectURI, scopes := in.ClientID, in.RedirectURI, in.Scopes
+	userID, loginSessionID := in.UserID, in.LoginSessionID
+	nonce, challenge, challengeMethod, ip, resource := in.Nonce, in.CodeChallenge, in.CodeChallengeMethod, in.IP, in.Resource
 	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", uuid.Nil, errs.ErrOIDCClientUnknown
@@ -412,6 +434,7 @@ func (s *Service) AuthorizeInLoginSession(ctx context.Context, loginSessionID, u
 		CodeChallengeMethod: challengeMethod,
 		LoginSessionID:      optionalUUID(loginSessionID),
 		Resource:            resource,
+		AuthTime:            optionalTime(in.AuthTime),
 	})
 	if err != nil {
 		return "", uuid.Nil, err
@@ -937,7 +960,10 @@ func (s *Service) ExchangeCode(ctx context.Context, clientID, clientSecret, code
 	}
 	idTok := ""
 	if contains(scopes, "openid") {
-		t, err := s.signIDToken(ctx, idToken{UserID: userID, TenantID: tenantID, Audience: clientID, Nonce: derefStr(nonce), Scopes: scopes})
+		t, err := s.signIDToken(ctx, idToken{
+			UserID: userID, TenantID: tenantID, Audience: clientID, Nonce: derefStr(nonce), Scopes: scopes,
+			AuthTime: timeOrZero(ac.AuthTime), SessionID: uuidOrNil(ac.LoginSessionID),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -1277,6 +1303,11 @@ type idToken struct {
 	Audience, Nonce string
 	// Scopes decide which standard claims it carries (see userClaims).
 	Scopes []string
+	// AuthTime is when the person signed in (zero: unknown), reported as
+	// auth_time; SessionID is the hosted-login session (uuid.Nil: none),
+	// reported as sid so a sign-out notice can name it.
+	AuthTime  time.Time
+	SessionID uuid.UUID
 }
 
 func (s *Service) signIDToken(ctx context.Context, in idToken) (string, error) {
@@ -1292,6 +1323,12 @@ func (s *Service) signIDToken(ctx context.Context, in idToken) (string, error) {
 	}
 	if in.Nonce != "" {
 		claims["nonce"] = in.Nonce
+	}
+	if !in.AuthTime.IsZero() {
+		claims["auth_time"] = in.AuthTime.Unix()
+	}
+	if in.SessionID != uuid.Nil {
+		claims["sid"] = in.SessionID.String()
 	}
 	user, err := s.userClaims(ctx, in.UserID, in.Scopes)
 	if err != nil {
@@ -1324,6 +1361,7 @@ func derefStr(s *string) string {
 type SessionManager interface {
 	ResolveLoginSession(ctx context.Context, raw string) (uuid.UUID, error)
 	ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error)
+	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
 	EndLoginSession(ctx context.Context, in auth.EndLoginSessionInput) (auth.LoginSessionEnded, error)
 }
 
@@ -1601,6 +1639,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	redirect := q.Get("redirect_uri")
+	state := q.Get("state")
 	scopes := strings.Fields(q.Get("scope"))
 
 	// Nothing about this request is trusted until its redirect_uri is one the
@@ -1609,44 +1648,67 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrOIDCRedirectURINotRegistered)
 		return
 	}
+	if err := checkAuthorizeRequest(q); err != nil {
+		h.authorizeError(w, r, clientID, redirect, state, err)
+		return
+	}
+	silent := slices.Contains(prompts(q), "none")
 
-	loginSessionID, userID, ok := h.loginSession(r)
-	if !ok {
-		ret := url.QueryEscape(currentURL(r))
-		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+ret, http.StatusFound)
+	loginSessionID, userID, signedInAt, ok := h.loginSessionAt(r)
+	now := time.Now()
+	switch {
+	case !ok && silent:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "no active sign-in"))
+		return
+	case !ok:
+		http.Redirect(w, r, h.LoginBaseURL+"/login?return_to="+url.QueryEscape(currentURL(r)), http.StatusFound)
+		return
+	case signInRequired(q, signedInAt, now) && silent:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("login_required", "a fresh sign-in is required"))
+		return
+	case signInRequired(q, signedInAt, now):
+		// prompt=login or max_age: sign in again, then come back to this request.
+		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(reauthReturnTo(r, now)), http.StatusFound)
 		return
 	}
 
 	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {
-		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
+		h.authorizeError(w, r, clientID, redirect, state, err)
 		return
 	}
-	if !has {
+	if !has && silent {
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("consent_required", "consent is required"))
+		return
+	}
+	if !has || slices.Contains(prompts(q), "consent") {
 		// Hand off to the hosted consent screen with only the id of the request
 		// stored here; the decision acts on the stored values, not on anything
 		// the browser sends back.
 		id, err := h.Service.StartConsentRequest(r.Context(), loginSessionID, userID, ConsentRequest{
-			ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: q.Get("state"),
+			ClientID: clientID, RedirectURI: redirect, Scopes: scopes, State: state,
 			Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
 			Resource: q.Get("resource"),
 		})
 		if err != nil {
-			h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
+			h.authorizeError(w, r, clientID, redirect, state, err)
 			return
 		}
 		http.Redirect(w, r, h.LoginBaseURL+"/consent?request_id="+url.QueryEscape(id.String()), http.StatusFound)
 		return
 	}
 
-	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, clientID, redirect,
-		scopes, q.Get("nonce"), q.Get("code_challenge"), q.Get("code_challenge_method"), httpx.ClientIP(r), q.Get("resource"))
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), AuthorizeInput{
+		LoginSessionID: loginSessionID, UserID: userID, ClientID: clientID, RedirectURI: redirect, Scopes: scopes,
+		Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge"), CodeChallengeMethod: q.Get("code_challenge_method"),
+		IP: httpx.ClientIP(r), Resource: q.Get("resource"), AuthTime: signedInAt,
+	})
 	if err != nil {
-		h.authorizeError(w, r, clientID, redirect, q.Get("state"), err)
+		h.authorizeError(w, r, clientID, redirect, state, err)
 		return
 	}
 	// RFC 9207: identify the issuer in the authorization response.
-	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", q.Get("state"), "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
+	http.Redirect(w, r, appendQuery(redirect, "code", code, "state", state, "iss", h.Service.issuer.JWTIssuer()), http.StatusFound)
 }
 
 // authorizeError reports a failure that happened before a code was minted.
@@ -1756,8 +1818,12 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), loginSessionID, userID, req.ClientID, req.RedirectURI,
-		req.Scopes, req.Nonce, req.CodeChallenge, req.CodeChallengeMethod, httpx.ClientIP(r), req.Resource)
+	_, _, signedInAt, _ := h.loginSessionAt(r)
+	code, _, err := h.Service.AuthorizeInLoginSession(r.Context(), AuthorizeInput{
+		LoginSessionID: loginSessionID, UserID: userID, ClientID: req.ClientID, RedirectURI: req.RedirectURI,
+		Scopes: req.Scopes, Nonce: req.Nonce, CodeChallenge: req.CodeChallenge, CodeChallengeMethod: req.CodeChallengeMethod,
+		IP: httpx.ClientIP(r), Resource: req.Resource, AuthTime: signedInAt,
+	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -1847,6 +1913,19 @@ func (h *Handler) loginSession(r *http.Request) (sessionID, userID uuid.UUID, ok
 		return uuid.Nil, uuid.Nil, false
 	}
 	return sessionID, userID, true
+}
+
+// loginSessionAt is loginSession plus when the person signed in.
+func (h *Handler) loginSessionAt(r *http.Request) (sessionID, userID uuid.UUID, signedInAt time.Time, ok bool) {
+	c, err := r.Cookie(auth.LoginSessionCookie)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	sessionID, userID, signedInAt, err = h.Sessions.ResolveLoginSessionAt(r.Context(), c.Value)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, time.Time{}, false
+	}
+	return sessionID, userID, signedInAt, true
 }
 
 // externalScheme returns the request's public scheme, honoring X-Forwarded-Proto
@@ -2048,6 +2127,10 @@ func (h *Handler) discovery(w http.ResponseWriter, r *http.Request) {
 		"id_token_signing_alg_values_supported": []string{h.Service.issuer.Alg()},
 		"scopes_supported":                      []string{"openid", "profile", "email", "phone"},
 		"claims_supported":                      claimsSupported(),
+		"prompt_values_supported":               promptValuesSupported,
+		"response_modes_supported":              responseModesSupported,
+		"request_parameter_supported":           false,
+		"request_uri_parameter_supported":       false,
 		"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", grantTypeTokenExchange, grantTypeCIBA},
 		// OpenID CIBA — poll mode only (no ping/push notification_endpoint).
 		"backchannel_token_delivery_modes_supported": []string{"poll"},

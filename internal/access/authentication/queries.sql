@@ -121,7 +121,7 @@ INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent
 VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_agent);
 
 -- name: GetLoginSession :one
-SELECT id, user_id, expires_at FROM auth.login_sessions WHERE token_hash = @token_hash;
+SELECT id, user_id, expires_at, created_at FROM auth.login_sessions WHERE token_hash = @token_hash;
 
 -- name: GetLoginSessionUser :one
 -- The user behind a live hosted-login session, and their own organization (NULL

@@ -6,8 +6,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/google/uuid"
-
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 )
 
@@ -33,8 +31,10 @@ func TestIntrospectionAnswersOnlyForTheTokensOwner(t *testing.T) {
 
 	signIn := func(t *testing.T, clientID, secret, resource string) *oidc.TokenResponse {
 		t.Helper()
-		code, _, err := svc.AuthorizeInLoginSession(ctx, uuid.Nil, userID, clientID, redirect, []string{"openid"},
-			testNonce, testChallenge, "S256", "", resource)
+		code, _, err := svc.AuthorizeInLoginSession(ctx, oidc.AuthorizeInput{
+			UserID: userID, ClientID: clientID, RedirectURI: redirect, Scopes: []string{"openid"},
+			Nonce: testNonce, CodeChallenge: testChallenge, CodeChallengeMethod: "S256", Resource: resource,
+		})
 		if err != nil {
 			t.Fatalf("authorize: %v", err)
 		}

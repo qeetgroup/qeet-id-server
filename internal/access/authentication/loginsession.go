@@ -88,20 +88,28 @@ func (s *Service) ResolveLoginSession(ctx context.Context, raw string) (uuid.UUI
 // session's own id, which the authorization codes minted through it record so
 // that signing out of it can end what it started.
 func (s *Service) ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error) {
+	sessionID, userID, _, err = s.ResolveLoginSessionAt(ctx, raw)
+	return sessionID, userID, err
+}
+
+// ResolveLoginSessionAt is ResolveLoginSessionWithID plus when the person
+// signed in to the hosted login: the authentication time (auth_time) an
+// authorization request's max_age and prompt=login are judged by.
+func (s *Service) ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	row, err := s.q.GetLoginSession(ctx, tokens.HashRefresh(raw))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
 	if err != nil {
-		return uuid.Nil, uuid.Nil, err
+		return uuid.Nil, uuid.Nil, time.Time{}, err
 	}
 	if time.Now().After(row.ExpiresAt) {
-		return uuid.Nil, uuid.Nil, errs.ErrUnauthorized
+		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
 	}
-	return row.ID, row.UserID, nil
+	return row.ID, row.UserID, row.CreatedAt, nil
 }
 
 // ResolveLoginSessionUser returns the user behind a live SSO session cookie

@@ -199,8 +199,10 @@ func TestAddressRulesDecideEverySignIn(t *testing.T) {
 		uma := member(t, google)
 
 		authorize := func(addr string) error {
-			_, _, err := svc.AuthorizeInLoginSession(ctx, uuid.Nil, uma, client.ClientID, redirect, []string{"openid"},
-				"n-0S6_WzA2Mj", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "S256", addr, "")
+			_, _, err := svc.AuthorizeInLoginSession(ctx, oidc.AuthorizeInput{
+				UserID: uma, ClientID: client.ClientID, RedirectURI: redirect, Scopes: []string{"openid"},
+				Nonce: testNonce, CodeChallenge: testChallenge, CodeChallengeMethod: "S256", IP: addr,
+			})
 			return err
 		}
 		refused(t, "authorize", authorize(deniedAddr))

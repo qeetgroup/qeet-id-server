@@ -196,7 +196,7 @@ paths:
   /v1/oauth/authorize:
     get:
       operationId: get_v1_oauth_authorize
-      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused). Every application, confidential ones included, must send a PKCE code_challenge with code_challenge_method S256, and a nonce whenever scope includes openid; the nonce comes back in the ID token. A request without them gets invalid_request at the redirect_uri (oidc.code_challenge_required, oidc.nonce_required) before any consent is asked. A confidential application whose pkce_exempt_until is still ahead is excused both until then.'
+      description: 'Begins the OAuth 2.0 / OpenID Connect authorization-code flow with Qeet as the provider. The end user is identified by the hosted-login SSO session cookie: with no session the browser is redirected to the hosted login, with missing consent to the hosted consent screen, and otherwise back to the client''s redirect_uri carrying an authorization code and state. Exchange that code for tokens at the token-code endpoint (authorization_code grant), not at the client-credentials token endpoint. The redirect_uri must be one the client registered; otherwise the error is shown here and nothing is sent to that address. When consent is needed, the request is stored server-side and the hosted consent screen is given only its request_id. While the client organisation''s address rules are on, a browser address they refuse gets access_denied at the redirect_uri and no code, and the refusal is audited (auth.address_refused). Every application, confidential ones included, must send a PKCE code_challenge with code_challenge_method S256, and a nonce whenever scope includes openid; the nonce comes back in the ID token. A request without them gets invalid_request at the redirect_uri (oidc.code_challenge_required, oidc.nonce_required) before any consent is asked. A confidential application whose pkce_exempt_until is still ahead is excused both until then. response_type is required and only code is served (else invalid_request / unsupported_response_type at the redirect_uri); request and request_uri are refused (request_not_supported, request_uri_not_supported), as is a response_mode other than query. prompt=none never shows a page: no sign-in answers login_required, no consent consent_required. prompt=login, and a sign-in older than max_age seconds, send the browser to sign in again and then complete the request; prompt=consent asks for consent again. The ID token carries auth_time (when the person signed in) and sid (the hosted-login session).'
       summary: Authorize
       tags:
         - OIDC
@@ -245,6 +245,17 @@ paths:
           schema:
             type: string
             maxLength: 255
+        - in: query
+          name: prompt
+          description: Space-separated; none, login and consent are honoured.
+          schema:
+            type: string
+        - in: query
+          name: max_age
+          description: Seconds; a sign-in older than this is made fresh before the code is issued.
+          schema:
+            type: integer
+            minimum: 0
         - in: query
           name: resource
           description: An RFC 8707 resource the access token is for; it must be registered for the organisation (else invalid_target). The code carries it, and the token names it alone as its audience.

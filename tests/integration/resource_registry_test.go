@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/qeetgroup/qeet-id-server/internal/federation/oidc"
 )
@@ -37,8 +36,10 @@ func TestTokensForAResourceAreForThatResourceAlone(t *testing.T) {
 
 	code := func(t *testing.T, resource string) (string, error) {
 		t.Helper()
-		c, _, err := svc.AuthorizeInLoginSession(ctx, uuid.Nil, userID, client.ClientID, redirect, []string{"openid"},
-			testNonce, testChallenge, "S256", "", resource)
+		c, _, err := svc.AuthorizeInLoginSession(ctx, oidc.AuthorizeInput{
+			UserID: userID, ClientID: client.ClientID, RedirectURI: redirect, Scopes: []string{"openid"},
+			Nonce: testNonce, CodeChallenge: testChallenge, CodeChallengeMethod: "S256", Resource: resource,
+		})
 		return c, err
 	}
 	invalidTarget := func(t *testing.T, what string, err error) {
