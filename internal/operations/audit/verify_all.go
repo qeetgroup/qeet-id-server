@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,9 +85,13 @@ func (v *Verifier) VerifyAll(ctx context.Context) (VerificationRun, error) {
 	}
 	run.FinishedAt = time.Now()
 
+	walked := run.TenantsWalked
+	if walked > math.MaxInt32 {
+		walked = math.MaxInt32
+	}
 	arg := dbgen.InsertAuditVerificationRunParams{
 		ID: run.ID, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt,
-		TenantsWalked: int32(run.TenantsWalked), RowsChecked: int64(run.RowsChecked), Outcome: run.Outcome,
+		TenantsWalked: int32(walked), RowsChecked: int64(run.RowsChecked), Outcome: run.Outcome,
 	}
 	if len(run.Broken) > 0 {
 		first := run.Broken[0]
