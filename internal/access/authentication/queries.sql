@@ -152,10 +152,10 @@ SELECT id, user_id, expires_at, created_at FROM auth.login_sessions WHERE token_
 
 -- name: GetLoginSessionUser :one
 -- The user behind a live hosted-login session, and their own organization (NULL
--- for a user without one), and when the sign-in happened. No row when the
--- session is unknown or expired, or the user or their organization is no
--- longer active.
-SELECT s.user_id, u.tenant_id, s.created_at
+-- for a user without one), when the sign-in happened, and how it met a second
+-- factor ('' when it didn't). No row when the session is unknown or expired,
+-- or the user or their organization is no longer active.
+SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
 JOIN "user".users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id

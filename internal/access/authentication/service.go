@@ -852,6 +852,7 @@ func (s *Service) RegisterInTenant(ctx context.Context, tenantID uuid.UUID, emai
 const (
 	firstFactorPassword  = "password"
 	firstFactorMagicLink = "magic_link"
+	firstFactorSocial    = "social"
 )
 
 // challengeSignIn records a single-use, short-lived pending sign-in that
