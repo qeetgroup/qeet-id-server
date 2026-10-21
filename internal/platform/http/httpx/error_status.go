@@ -69,7 +69,8 @@ var statusByCode = map[string]int{
 	errs.CodePasskeyLoginFailed: http.StatusUnauthorized,
 
 	// Organization / tenant.
-	errs.CodeOrgSlugTaken: http.StatusConflict,
+	errs.CodeOrgSlugTaken:    http.StatusConflict,
+	errs.CodeTenantLastOwner: http.StatusConflict,
 
 	// Qeet AI.
 	"qeetai_unconfigured": http.StatusConflict,

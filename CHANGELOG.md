@@ -533,6 +533,16 @@ The changes below are the work staged for that first release.
   ends every session). Each verification records its proof in `email.verified` (`emailed_code` or
   `password_reset`). The invitations inbox already needed a verified address.
 
+**An organisation keeps an active owner (2026-10-21)**
+
+* **tenant / users / rbac:** nothing counted an organisation's owners after its creator became the first one, so
+  the only owner could be suspended, soft-deleted or stripped of the owner role, by an administrator or by
+  themselves, leaving an organisation nobody could administer. The database now refuses any change that would
+  take away the last active owner, on every path (migration 0151), and the API answers 409
+  `tenant.last_owner` with nothing changed. A suspended or deleted owner doesn't count; two removals at once
+  queue on the organisation, so at most one goes; a deleted organisation frees its owners. To hand ownership
+  over, make someone else an owner (role assignment) and then remove the old one; both are audited.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

@@ -3175,7 +3175,7 @@ paths:
   /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}:
     delete:
       operationId: delete_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call.'
+      description: 'Removes a directly assigned role from a user within the tenant; the user loses that role''s permissions unless a group still confers it. This is the counterpart to the assign-role-to-user call. Confirm the remaining grants with the effective-permissions call. Removing the owner role is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
       summary: Unassign role from user
       tags:
         - RBAC
