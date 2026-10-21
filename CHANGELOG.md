@@ -25,6 +25,12 @@ The changes below are the work staged for that first release.
   the DEV, TEST and STAGING environments, with every production gate on and loopback-only
   `APP_BASE_URL`/`LOGIN_BASE_URL`) or `prod`. Any other value refuses to start. New
   `SERVICE_PROFILE` (`dev`|`test`|`staging`, `local` only) is reported on `/healthz`. `prod` now also rejects a `*.localhost` `APP_BASE_URL`.
+- `local` also accepts `APP_BASE_URL`/`LOGIN_BASE_URL` on the profile's own kit zone,
+  `<profile>.id.qeet.in` (e.g. `https://console.test.id.qeet.in`), and only over `https`. Public DNS
+  points those zones at `127.0.0.1`, so they still reach only the computer running the kit, and
+  Google, Microsoft and Apple accept their https sign-in callbacks, which they refuse for
+  `*.localhost`. Another profile's zone, `id.qeet.in` itself and plain `http` are refused; `prod`
+  refuses every kit zone.
 - `qeet-id-server healthcheck` probes `/readyz` on loopback for container health checks (the image is
   distroless).
 - The image is stamped with `VERSION`/`COMMIT`/`DATE` build args, surfaced on `/healthz`.
