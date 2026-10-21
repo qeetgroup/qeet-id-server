@@ -17,7 +17,7 @@ PostgreSQL database, one deployable binary, five bounded contexts as enforced pa
 | | |
 |---|---|
 | Module | `github.com/qeetgroup/qeet-id-server` |
-| Language | Go 1.26.0 (toolchain 1.27.2) |
+| Language | Go 1.26.0 (toolchain 1.27.3) |
 | Router | chi v5 |
 | Database | PostgreSQL, pgx v5, hand-written SQL via sqlc |
 | Binaries | `api`, `worker`, `scheduler`, `migrate`, `seed` |
@@ -558,7 +558,7 @@ lint passes.
 
 **This repository builds a container. It does not own its deployment.**
 
-- `Dockerfile` — build on `golang:1.27.2-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian12:nonroot`,
+- `Dockerfile` — build on `golang:1.27.3-alpine` (same Go as go.mod's toolchain), ship on `gcr.io/distroless/static-debian12:nonroot`,
   non-root user, `EXPOSE 4001`.
 - `docker-compose.yml` — **local dependencies only**: postgres :5001, nats :4222, mailpit :8025.
 - Terraform, Caddy, compose for production and the rollout live in **`qeet-id-deploy`**.

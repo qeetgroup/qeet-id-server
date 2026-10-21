@@ -468,6 +468,12 @@ The changes below are the work staged for that first release.
   revocation introspect. Tying an application's access token to its grant, so revoking the grant also shows
   here, needs a token claim and is QTID-41.
 
+**Toolchain (2026-10-21)**
+
+* **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
+  `crypto/x509` in 1.27.2 trusts compromised intermediate certificates, reached through token
+  verification (govulncheck).
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
