@@ -50,6 +50,7 @@ func TestValidate_ProdRejectsInsecure(t *testing.T) {
 		"empty origins":            func(c *Config) { c.AllowedOriginsRaw = "" },
 		"localhost base url":       func(c *Config) { c.AppBaseURL = "http://localhost:3000" },
 		"*.localhost base url":     func(c *Config) { c.AppBaseURL = "http://console.test.id.qeet.localhost" },
+		"kit zone base url":        func(c *Config) { c.AppBaseURL = "https://console.test.id.qeet.in" },
 		"unknown env":              func(c *Config) { c.ServiceEnv = "production" },
 		"profile outside local":    func(c *Config) { c.ServiceProfile = "test" },
 	}
@@ -137,6 +138,21 @@ func TestValidate_LocalHappyPath(t *testing.T) {
 	}
 }
 
+// The kit can also serve an environment on its own public zone
+// (<profile>.id.qeet.in, which public DNS points at 127.0.0.1) over https.
+func TestValidate_LocalAcceptsItsKitZoneOverHTTPS(t *testing.T) {
+	for _, profile := range []string{"dev", "test", "staging"} {
+		c := localOK()
+		c.ServiceProfile = profile
+		c.AllowedOriginsRaw = "https://login." + profile + ".id.qeet.in,https://console." + profile + ".id.qeet.in"
+		c.AppBaseURL = "https://console." + profile + ".id.qeet.in"
+		c.LoginBaseURL = "https://login." + profile + ".id.qeet.in"
+		if err := c.Validate(); err != nil {
+			t.Errorf("local %s on its kit zone should pass: %v", profile, err)
+		}
+	}
+}
+
 // Local keeps every production gate; it only differs in requiring loopback hosts.
 func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
 	cases := map[string]func(*Config){
@@ -150,6 +166,17 @@ func TestValidate_LocalRejectsInsecureAndPublicHosts(t *testing.T) {
 		"public app base url":    func(c *Config) { c.AppBaseURL = "https://console.id.qeet.in" },
 		"public login url":       func(c *Config) { c.LoginBaseURL = "https://login.id.qeet.in" },
 		"lookalike login host":   func(c *Config) { c.LoginBaseURL = "http://login.localhost.example.com" },
+		"kit zone over http":     func(c *Config) { c.AppBaseURL = "http://console.test.id.qeet.in" },
+		"another profile's zone": func(c *Config) { c.AppBaseURL = "https://console.staging.id.qeet.in" },
+		"kit zone lookalike":     func(c *Config) { c.LoginBaseURL = "https://login.test.id.qeet.in.example.com" },
+		"kit zone prefix lookalike": func(c *Config) {
+			c.LoginBaseURL = "https://login.evil-test.id.qeet.in"
+		},
+		"production zone apex": func(c *Config) { c.AppBaseURL = "https://id.qeet.in" },
+		"kit zone without a profile": func(c *Config) {
+			c.ServiceProfile = ""
+			c.AppBaseURL = "https://console.test.id.qeet.in"
+		},
 		"qa is not a profile":    func(c *Config) { c.ServiceProfile = "qa" },
 		"uat is not a profile":   func(c *Config) { c.ServiceProfile = "uat" },
 		"stage is not a profile": func(c *Config) { c.ServiceProfile = "stage" },
