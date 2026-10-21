@@ -387,6 +387,19 @@ The changes below are the work staged for that first release.
   `oidc.authorization_code_reused`; other grants of the application stay. Migration 0141 records
   the code a grant came from.
 
+**Applications act within the scope they were given (2026-10-21)**
+
+* **rbac:** every authenticated route now names the OAuth scope an application's token needs on it
+  (`RoutePolicy.ApplicationScope`): the route's permission on an administrative route (`user.read`,
+  `role.write` …, the names API keys already carry), `account.read`/`account.write` on the user's own
+  account, `openid` on userinfo. A token issued to an application (it carries `client_id`) passes only
+  with that scope **and** the user's role granting the permission, so it holds the overlap of the two; a
+  token without the scope gets 403 `auth.insufficient_scope` with an RFC 6750 challenge naming it. The
+  user's own tokens are unchanged. Which routes accept application tokens at all is unchanged too
+  (userinfo only, `auth.application_token` elsewhere); opening another is a product decision, and now
+  safe to make. `TestEveryRouteNamesAnApplicationScope` fails a route added without a scope. The unused
+  `httpx.RequireScope`, which implied a scope check that never ran, is removed.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

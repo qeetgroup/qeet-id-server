@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
@@ -74,7 +73,7 @@ func TestAuthenticatedRoutesHaveExplicitPolicies(t *testing.T) {
 		t.Fatalf("walk authenticated router: %v", err)
 	}
 
-	policies := routePolicyMap()
+	policies := RoutePolicies()
 	var missing, stale []string
 	for route := range mounted {
 		if _, ok := policies[route]; !ok {
@@ -90,6 +89,45 @@ func TestAuthenticatedRoutesHaveExplicitPolicies(t *testing.T) {
 	sort.Strings(stale)
 	if len(missing) > 0 || len(stale) > 0 {
 		t.Fatalf("route policy mismatch\nmissing policies: %v\nstale policies: %v", missing, stale)
+	}
+}
+
+// TestEveryRouteNamesAnApplicationScope fails when an authenticated route's
+// policy names no scope for an application's token: without one, opening the
+// route to applications would let any of them act there with the user's whole
+// role set. Administrative routes need their permission as the scope, and the
+// routes open to applications need one too.
+func TestEveryRouteNamesAnApplicationScope(t *testing.T) {
+	policies := RoutePolicies()
+	var unscoped, mismatched []string
+	for route, p := range policies {
+		switch {
+		case p.ApplicationScope == "":
+			unscoped = append(unscoped, route)
+		case p.UserPermission != "" && p.ApplicationScope != p.UserPermission:
+			mismatched = append(mismatched, route+" ("+p.ApplicationScope+" for "+p.UserPermission+")")
+		}
+	}
+	sort.Strings(unscoped)
+	sort.Strings(mismatched)
+	if len(unscoped) > 0 || len(mismatched) > 0 {
+		t.Fatalf("routes with no application scope: %v\nscope differs from permission: %v", unscoped, mismatched)
+	}
+	for _, route := range ApplicationTokenRoutes() {
+		if got := policies[route].ApplicationScope; got != "openid" {
+			t.Errorf("%s needs %q of an application, want openid", route, got)
+		}
+	}
+	for route, want := range map[string]string{
+		"GET /v1/me":              "account.read",
+		"PATCH /v1/me":            "account.write",
+		"POST /v1/account/delete": "account.write",
+		"GET /v1/users":           "user.read",
+		"DELETE /v1/users/{id}":   "user.write",
+	} {
+		if got := policies[route].ApplicationScope; got != want {
+			t.Errorf("%s needs %q of an application, want %q", route, got, want)
+		}
 	}
 }
 
@@ -163,12 +201,12 @@ func TestLoginSessionRoutesStayNarrow(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("walk authenticated router: %v", err)
 	}
-	policies := routePolicyMap()
+	policies := RoutePolicies()
 	for _, route := range got {
 		if _, ok := mounted[route]; !ok {
 			t.Errorf("%s is not an authenticated route", route)
 		}
-		if !reflect.DeepEqual(policies[route], rbac.UserOnlyPolicy()) {
+		if p := policies[route]; !p.AllowUser || p.AllowAPIKey || p.AllowService || p.AllowAgent || p.UserPermission != "" || p.HandlerAuthorizedMachine {
 			t.Errorf("%s policy = %+v, want user-only", route, policies[route])
 		}
 		method, path, _ := strings.Cut(route, " ")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -28,7 +29,7 @@ func buildRouter(c Checker, p *httpx.Principal) http.Handler {
 	policies := map[string]RoutePolicy{
 		"POST /v1/users": PermissionPolicy("user.write"),
 		"GET /v1/users":  PermissionPolicy("user.read"),
-		"GET /v1/me":     UserOnlyPolicy(),
+		"GET /v1/me":     UserOnlyPolicy("account.read"),
 	}
 	r := chi.NewRouter()
 	// Inject the test principal before routing so Enforce can read it.
@@ -53,9 +54,13 @@ func userPrincipal() *httpx.Principal {
 }
 
 func do(h http.Handler, method, path string) int {
+	return record(h, method, path).Code
+}
+
+func record(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
-	return rec.Code
+	return rec
 }
 
 func TestEnforce_UserAllowedAndDenied(t *testing.T) {
@@ -69,6 +74,81 @@ func TestEnforce_UserAllowedAndDenied(t *testing.T) {
 	}
 	if deny.calls != 1 {
 		t.Fatalf("checker calls = %d, want 1 (RoutePattern must resolve to a mapped key)", deny.calls)
+	}
+}
+
+// TestEnforce_ApplicationTokenNeedsScopeAndPermission: a token issued to an
+// application acts for its user only where both agree, the user's role
+// granting the permission and the user having approved the route's scope. The
+// user's own token (no client_id) is decided by the role alone, as before.
+func TestEnforce_ApplicationTokenNeedsScopeAndPermission(t *testing.T) {
+	app := func(scopes ...string) *httpx.Principal {
+		p := userPrincipal()
+		p.ClientID, p.Scopes = "app-1", scopes
+		return p
+	}
+
+	allow := &fakeChecker{allow: true}
+	if got := do(buildRouter(allow, app("openid", "user.read")), "GET", "/v1/users"); got != http.StatusOK {
+		t.Fatalf("app token with user.read, role allows: GET /v1/users = %d, want 200", got)
+	}
+	if allow.calls != 1 {
+		t.Fatalf("checker calls = %d, want 1: the scope does not replace the user's permission", allow.calls)
+	}
+
+	deny := &fakeChecker{allow: false}
+	if got := do(buildRouter(deny, app("user.read")), "GET", "/v1/users"); got != http.StatusForbidden {
+		t.Fatalf("app token with user.read, role refuses: GET /v1/users = %d, want 403", got)
+	}
+
+	for name, p := range map[string]*httpx.Principal{
+		"another route's scope": app("openid", "user.read"),
+		"no scope at all":       app(),
+	} {
+		checker := &fakeChecker{allow: true}
+		rec := record(buildRouter(checker, p), "POST", "/v1/users")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "auth.insufficient_scope") {
+			t.Fatalf("app token with %s: POST /v1/users = %d %s, want 403 auth.insufficient_scope", name, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("WWW-Authenticate"); !strings.Contains(got, `error="insufficient_scope"`) || !strings.Contains(got, `scope="user.write"`) {
+			t.Fatalf("app token with %s: challenge %q, want insufficient_scope naming user.write", name, got)
+		}
+		if checker.calls != 0 {
+			t.Fatalf("app token with %s: checker called %d times; the scope is checked first", name, checker.calls)
+		}
+	}
+
+	if got := do(buildRouter(allow, app("account.read")), "GET", "/v1/me"); got != http.StatusOK {
+		t.Fatalf("app token with account.read: GET /v1/me = %d, want 200", got)
+	}
+	if got := do(buildRouter(allow, app("openid")), "GET", "/v1/me"); got != http.StatusForbidden {
+		t.Fatalf("app token without account.read: GET /v1/me = %d, want 403", got)
+	}
+
+	// The user's own token carries no client_id and may carry no scope.
+	if got := do(buildRouter(&fakeChecker{allow: true}, userPrincipal()), "POST", "/v1/users"); got != http.StatusCreated {
+		t.Fatalf("user's own token: POST /v1/users = %d, want 201", got)
+	}
+}
+
+// TestEnforce_UnscopedPolicyRefusesApplications: a policy that names no
+// application scope is closed to applications, not open to them.
+func TestEnforce_UnscopedPolicyRefusesApplications(t *testing.T) {
+	policies := map[string]RoutePolicy{"GET /v1/me": {AllowUser: true}}
+	p := userPrincipal()
+	p.ClientID, p.Scopes = "app-1", []string{"openid", "account.read"}
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(httpx.WithPrincipal(req.Context(), p)))
+		})
+	})
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(Enforce(&fakeChecker{allow: true}, policies))
+		r.Get("/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	})
+	if got := do(r, "GET", "/v1/me"); got != http.StatusForbidden {
+		t.Fatalf("app token on a route with no application scope = %d, want 403", got)
 	}
 }
 
@@ -147,8 +227,8 @@ func TestValidateMachineScopes(t *testing.T) {
 // order, so the same request could be classified differently between processes.
 func TestEnforce_MostLiteralPolicyWins(t *testing.T) {
 	policies := map[string]RoutePolicy{
-		"GET /v1/vault/tokens": UserOnlyPolicy(),
-		"GET /v1/vault/{name}": HandlerAuthorizedPolicy(true),
+		"GET /v1/vault/tokens": UserOnlyPolicy("account.read"),
+		"GET /v1/vault/{name}": HandlerAuthorizedPolicy(true, "vault:read"),
 	}
 	uid, tid := uuid.New(), uuid.New()
 	machine := &httpx.Principal{UserID: &uid, TenantID: &tid, ActorType: "api_key", Scopes: []string{"vault:read"}}
