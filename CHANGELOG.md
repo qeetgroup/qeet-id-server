@@ -484,7 +484,7 @@ The changes below are the work staged for that first release.
   elsewhere, or with no home, signed in with a password and then switched in (`POST /v1/auth/switch-tenant`),
   accepted its invitation while signed in (`POST /v1/me/invites/accept`, `.../{id}/accept`), signed in to one of
   its applications (`GET /oauth/authorize` and the consent decision) or approved a device for one
-  (`POST /oauth/device/decision`), and got a session or a code with no factor asked for (QTID-800). Each now
+  (`POST /oauth/device/decision`), and got a session or a code with no factor asked for. Each now
   requires the sign-in to have met a second factor, or the session switched from to hold a fresh step-up:
   otherwise 403 `step_up_required`, or `mfa.enrollment_required` for an account with none (unless the
   organisation's grace period still lets it put the setup off). The hosted sign-in applies the requirement of
@@ -500,7 +500,7 @@ The changes below are the work staged for that first release.
 
 * **social / auth:** signing in with Google, Microsoft, GitHub, Apple or an organisation's own provider issued
   the session on the provider's word alone: no challenge for a factor the account held, no enrolment where the
-  organisation required one, no risk assessment (QTID-801). It now takes the same decision as a password
+  organisation required one, no risk assessment. It now takes the same decision as a password
   sign-in. `POST /v1/social/exchange` (the console's own and an organisation's) answers with the token pair or
   the sign-in challenge, met at `POST /v1/auth/mfa`; the hosted callback opens no hosted-login session while a
   factor is due, and sends the browser to the hosted login with the challenge in the URL fragment, to meet at
@@ -508,6 +508,17 @@ The changes below are the work staged for that first release.
   sign-in. The completed sign-in is a `social_mfa` one (migration 0150). A hosted sign-in counts as a step-up
   only when it proved a second factor itself (a met challenge or a passkey), so a social one no longer
   unlocks factor-gated actions.
+
+**A suspended account can't sign in any other way (2026-10-21)**
+
+* **auth / social / passkeys:** password and magic-link sign-in refused a suspended account, but a passkey or a
+  social provider (the console's own or an organisation's, token or hosted) signed it straight back in with a
+  working token, so suspending an account during an incident didn't contain it. Every sign-in now ends in one
+  issuing step, for sessions and hosted-login cookies alike, which refuses an account that is deleted or
+  neither active nor invited once its credential is proved, with the password path's
+  `auth.account_inactive`, and audits it as `auth.sign_in_refused` (reason `account_inactive`). A social
+  sign-in gets no one-time code to begin with; the hosted callback sends the browser to the hosted login with
+  `error=account_inactive`.
 
 **Toolchain (2026-10-21)**
 

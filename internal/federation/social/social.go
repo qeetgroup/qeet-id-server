@@ -606,6 +606,10 @@ func (s *Service) CompleteCallback(ctx context.Context, provider, state, code st
 		return nil, err
 	}
 
+	// A suspended or deleted account gets no code to sign in with.
+	if err := s.auth.CheckSignInAccount(ctx, userID, st.TenantID, "social", "", ""); err != nil {
+		return nil, err
+	}
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
 		return nil, err
@@ -630,7 +634,7 @@ func (s *Service) EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) 
 // BeginLoginSession signs a social-authenticated user in to the hosted login
 // for tenantID, so social login can drive the OAuth authorize/consent flow: the
 // SSO session cookie value, or the second-factor challenge to complete first
-// (QTID-801; see auth.Service.BeginSocialLoginSession).
+// (see auth.Service.BeginSocialLoginSession).
 func (s *Service) BeginLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error) {
 	return s.auth.BeginSocialLoginSession(ctx, userID, tenantID, ip, ua, trustedToken, country)
 }
@@ -797,7 +801,7 @@ func (s *Service) recordSignUpRefused(ctx context.Context, tenantID uuid.UUID, p
 }
 
 // ExchangeLogin trades a one-time social login code for a Qeet token pair, or
-// the second-factor challenge to complete first (QTID-801).
+// the second-factor challenge to complete first.
 func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired
@@ -1045,6 +1049,10 @@ func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, er
 		return
 	}
 	q := url.Values{"error": {"social"}}
+	// A suspended or deleted account is told so, as at password sign-in.
+	if errors.Is(err, errs.ErrAuthAccountInactive) {
+		q.Set("error", "account_inactive")
+	}
 	if rt := r.URL.Query().Get("return_to"); rt != "" {
 		q.Set("return_to", rt)
 	}
@@ -1159,7 +1167,7 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		}
 		// Hosted flow: set the SSO cookie and return to /oauth/authorize — or,
 		// when the sign-in must meet a second factor first, hand the challenge to
-		// the hosted login (QTID-801). It travels in the fragment, which the
+		// the hosted login. It travels in the fragment, which the
 		// browser never sends to a server or in a Referer.
 		trusted := ""
 		if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {

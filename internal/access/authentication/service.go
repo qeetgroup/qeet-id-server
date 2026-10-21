@@ -484,7 +484,7 @@ type SwitchTenantInput struct {
 // are told, with "tenant_switch" as the reason.
 //
 // The organization's second-factor requirement applies to entering it, not
-// only to signing in at home (QTID-800): the sign-in behind the session
+// only to signing in at home: the sign-in behind the session
 // switched from must have met a factor, or that session must hold a fresh
 // step-up, and the new session carries it on.
 //
@@ -582,8 +582,7 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 
 // SignInInvitedAccount signs in an account an accepted invitation has just
 // created in tenantID, as at sign-up: where the organisation requires a second
-// factor the result is the enrolment challenge instead of a session
-// (QTID-800).
+// factor the result is the enrolment challenge instead of a session.
 func (s *Service) SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*LoginResult, error) {
 	gate, err := s.mfaGate(ctx, userID, tenantID)
 	if err != nil {
@@ -608,7 +607,7 @@ func (s *Service) SignInInvitedAccount(ctx context.Context, userID, tenantID uui
 // caller's session (uuid.Nil: none, so no factor carries): its second factor
 // carries on as for SwitchTenant, and the entry is refused the same way
 // (ErrStepUpRequired, ErrMFAEnrollmentRequired) while the organisation
-// requires one it didn't meet (QTID-800). The invitation stays accepted, so
+// requires one it didn't meet. The invitation stays accepted, so
 // the caller can step up or set a factor up and switch in.
 func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
 	carried := ""
@@ -732,7 +731,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		return nil, err
 	}
 	// The organisation of the application served requires its second factor
-	// here as well as the account's own (QTID-800).
+	// here as well as the account's own.
 	gate, err := s.mfaGateFor(ctx, u.ID, u.TenantID, clientTenant)
 	if err != nil {
 		return nil, err
@@ -1425,9 +1424,13 @@ func (s *Service) issuePair(ctx context.Context, userID, tenantID uuid.UUID, ip,
 // auditMeta (may be nil) is added to the sign-in audit record. notAfter (zero:
 // none) is when the sign-in this session continues ends: it ends no later.
 func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID uuid.UUID, ip, ua, method string, claims, auditMeta map[string]any, notAfter time.Time) (*TokenPair, error) {
-	// Every sign-in to an organisation ends here, whatever its method, so the
-	// organisation's address rules are asked here, before anything is written
-	// (the session limit below may end another session).
+	// Every sign-in ends here, whatever its method, so a suspended or deleted
+	// account is refused here, and the organisation's address rules
+	// are asked here, before anything is written (the session limit below may
+	// end another session).
+	if err := s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua); err != nil {
+		return nil, err
+	}
 	if err := s.checkAddress(ctx, tenantID, userID, ip, method); err != nil {
 		return nil, err
 	}
