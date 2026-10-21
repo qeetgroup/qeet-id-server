@@ -196,14 +196,15 @@ func TestSocialSignInWithALinkedIdentityWorksWhenClosed(t *testing.T) {
 }
 
 // TestSocialAdoptsAnInTenantAccountWhenClosed: a verified assertion for an
-// account the organisation already has is adopted exactly as before.
+// account the organisation already has, whose address it has proved, is
+// adopted exactly as before.
 func TestSocialAdoptsAnInTenantAccountWhenClosed(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
 	f := newClosedRegFixture(t, ctx, true)
 	setSelfRegistration(t, ctx, f.tenantID, false)
 	member := createUserInTenant(t, ctx, f.tenantID)
-	if _, err := testPool.Exec(ctx, `UPDATE "user".users SET email = $2 WHERE id = $1`, member, f.email); err != nil {
+	if _, err := testPool.Exec(ctx, `UPDATE "user".users SET email = $2, email_verified_at = NOW() WHERE id = $1`, member, f.email); err != nil {
 		t.Fatalf("set member email: %v", err)
 	}
 	res, err := f.callback(t, ctx)

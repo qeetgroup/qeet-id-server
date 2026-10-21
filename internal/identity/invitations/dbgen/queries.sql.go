@@ -13,6 +13,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activateInvitedAccount = `-- name: ActivateInvitedAccount :exec
+UPDATE "user".users SET status = 'active'
+WHERE id = $1
+`
+
+// ActivateInvitedAccount activates the account created to accept an
+// invitation. Its address stays unverified, as the password path's
+// InsertInvitedUser leaves it: the link proves nothing about who owns it.
+func (q *Queries) ActivateInvitedAccount(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, activateInvitedAccount, userID)
+	return err
+}
+
 const countSeats = `-- name: CountSeats :one
 SELECT (
     (SELECT COUNT(DISTINCT user_id) FROM rbac.user_roles WHERE tenant_id = $1::uuid)
@@ -253,8 +266,8 @@ func (q *Queries) InsertInviteCredential(ctx context.Context, arg InsertInviteCr
 }
 
 const insertInvitedUser = `-- name: InsertInvitedUser :one
-INSERT INTO "user".users (tenant_id, email, display_name, status, email_verified_at)
-VALUES ($1, $2, NULLIF($3, ''), 'active', NOW())
+INSERT INTO "user".users (tenant_id, email, display_name, status)
+VALUES ($1, $2, NULLIF($3, ''), 'active')
 RETURNING id
 `
 
@@ -264,8 +277,10 @@ type InsertInvitedUserParams struct {
 	DisplayName interface{}
 }
 
-// InsertInvitedUser creates a brand-new invited account (no prior user). The
-// invited email is pre-verified (they proved control by receiving the link).
+// InsertInvitedUser creates a brand-new invited account (no prior user). Its
+// address is not verified: the invitation link is also handed to the inviter
+// to share, so having it proves nothing about who owns the address. A code or
+// link sent to it later does.
 func (q *Queries) InsertInvitedUser(ctx context.Context, arg InsertInvitedUserParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertInvitedUser, arg.TenantID, arg.Email, arg.DisplayName)
 	var id uuid.UUID
@@ -425,19 +440,6 @@ UPDATE tenant.invites SET status = 'expired' WHERE id = $1
 
 func (q *Queries) MarkInviteExpired(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, markInviteExpired, id)
-	return err
-}
-
-const markInvitedAccountVerified = `-- name: MarkInvitedAccountVerified :exec
-UPDATE "user".users SET status = 'active', email_verified_at = COALESCE(email_verified_at, NOW())
-WHERE id = $1
-`
-
-// MarkInvitedAccountVerified records that the account created to accept an
-// invitation owns its address — the invitation reached it there — as the
-// password path's InsertInvitedUser does.
-func (q *Queries) MarkInvitedAccountVerified(ctx context.Context, userID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, markInvitedAccountVerified, userID)
 	return err
 }
 

@@ -97,7 +97,7 @@ func (s *Service) AcceptForNewAccountTx(ctx context.Context, tx pgx.Tx, id, tena
 			return err
 		}
 	}
-	if err := qtx.MarkInvitedAccountVerified(ctx, userID); err != nil {
+	if err := qtx.ActivateInvitedAccount(ctx, userID); err != nil {
 		return err
 	}
 	return qtx.MarkInviteAccepted(ctx, inv.ID)

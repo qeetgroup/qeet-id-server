@@ -520,6 +520,19 @@ The changes below are the work staged for that first release.
   sign-in gets no one-time code to begin with; the hosted callback sends the browser to the hosted login with
   `error=account_inactive`.
 
+**An address belongs to whoever proves it (2026-10-21)**
+
+* **invitations / social / recovery:** whoever holds the account for an address gets that person's invitations
+  and federated sign-ins, but an address could be claimed without proving it. Accepting an invitation link marked
+  the new account's address verified, though the link is also returned to the inviter to share; it no longer
+  does, for the password and the passkey acceptance alike. A social sign-in, the console's own or an
+  organisation's, adopted an existing account whose address was never verified, leaving whoever registered it
+  with a working password; it now refuses with 403 `social.account_unverified` (the callbacks say
+  `account_unverified`). Completing a password reset, whose link reaches only the address, now verifies the
+  address, so its owner can take an account registered with it back (the reset already replaces the password and
+  ends every session). Each verification records its proof in `email.verified` (`emailed_code` or
+  `password_reset`). The invitations inbox already needed a verified address.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
