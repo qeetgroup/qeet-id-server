@@ -2,12 +2,14 @@ package bootstrap
 
 import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 
-// stepUpRoutes is the catalogue of authenticated routes that need a step-up
+// StepUpRoutes is the catalogue of authenticated routes that need a step-up
 // of the calling session, consumed by mfa.Service.StepUpGate. A stolen access
 // token alone must not be able to add or remove a factor, mint or revoke a
 // machine credential, read or change a secret, weaken sign-in or security
-// policy, reconfigure single sign-on, change retention or audit streaming, or
-// destroy an account or organisation.
+// policy, reconfigure single sign-on, change retention or audit streaming,
+// hand out authority (permissions, roles, invitations, relationship rules,
+// attribute policies), bring an account back, move an account's email
+// address, or destroy an account or organisation.
 //
 // StepUpWhenFactorHeld covers a person's own factors and sign-in methods: a
 // first factor can be set up with nothing to step up with. Everything else is
@@ -17,7 +19,7 @@ import "github.com/qeetgroup/qeet-id-server/internal/access/mfa"
 // Keys MUST match the composed route pattern ("/v1" included).
 // TestSensitiveRoutesNeedStepUp fails when a route that looks sensitive is
 // neither listed here nor in stepUpExempt.
-func stepUpRoutes() map[string]mfa.StepUpRule {
+func StepUpRoutes() map[string]mfa.StepUpRule {
 	routes := map[string]mfa.StepUpRule{}
 	for _, route := range []string{
 		// The person's own factors and sign-in methods.
@@ -31,6 +33,8 @@ func stepUpRoutes() map[string]mfa.StepUpRule {
 		"DELETE /v1/passkeys/{id}",
 		"POST /v1/social/{provider}/link/start",
 		"POST /v1/account/delete",
+		// The address password resets and invitations go to.
+		"POST /v1/me/email/change/start",
 	} {
 		routes[route] = mfa.StepUpWhenFactorHeld
 	}
@@ -123,6 +127,25 @@ func stepUpRoutes() map[string]mfa.StepUpRule {
 		"PATCH /v1/tenants/{tenantID}/log-sinks/{id}",
 		"DELETE /v1/tenants/{tenantID}/log-sinks/{id}",
 
+		// Handing out authority: what a role can do, who holds it, who is invited
+		// to hold it, and the relationship and attribute rules that decide access.
+		"POST /v1/roles/{roleID}/permissions/{permID}",
+		"DELETE /v1/roles/{roleID}/permissions/{permID}",
+		"POST /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
+		"DELETE /v1/users/{userID}/tenants/{tenantID}/roles/{roleID}",
+		"POST /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}",
+		"DELETE /v1/tenants/{tenantID}/groups/{groupID}/roles/{roleID}",
+		"POST /v1/invites",
+		"POST /v1/tenants/{tenantID}/relation-tuples",
+		"DELETE /v1/tenants/{tenantID}/relation-tuples/{id}",
+		"POST /v1/tenants/{tenantID}/abac/policies",
+		"PATCH /v1/tenants/{tenantID}/abac/policies/{id}",
+		"DELETE /v1/tenants/{tenantID}/abac/policies/{id}",
+
+		// Bringing an account back.
+		"POST /v1/users/{id}/reactivate",
+		"POST /v1/users/{id}/restore",
+
 		// Destroying an organisation or an account. Updating the organisation
 		// can suspend it, which locks every member out.
 		"DELETE /v1/tenants/{tenantID}",
@@ -183,6 +206,18 @@ func stepUpExempt() map[string]string {
 		"DELETE /v1/tenants/{tenantID}/oauth/grants/{id}":                                   "revokes an application's access",
 		"DELETE /v1/tenants/{tenantID}/oauth/devices/{id}":                                  "revokes a device's access",
 		"POST /v1/tenants/{tenantID}/audit/anomalies/{id}/resolve":                          "records a triage decision",
+		"POST /v1/tenants/{tenantID}/roles":                                                 "creates an empty role; granting it permissions is gated",
+		"DELETE /v1/invites/{id}":                                                           "withdraws an invitation",
+		"POST /v1/invites/{id}/resend":                                                      "re-sends an invitation whose creation was gated",
+		"POST /v1/me/invites/accept":                                                        "joins an organisation that invited the caller; entering it follows its second-factor rule",
+		"POST /v1/me/invites/{id}/accept":                                                   "joins an organisation that invited the caller; entering it follows its second-factor rule",
+		"POST /v1/me/invites/{id}/decline":                                                  "declines an invitation",
+		"POST /v1/tenants/{tenantID}/abac/evaluate":                                         "evaluates a request against the policies",
+		"POST /v1/tenants/{tenantID}/relation-tuples/check":                                 "checks a relationship",
+		"POST /v1/me/email/change/confirm":                                                  "completes a change its start already gated, with a code sent to the new address",
+		"POST /v1/users/{id}/verify/email/start":                                            "sends a verification code to the account's own address",
+		"POST /v1/users/{id}/verify/email/confirm":                                          "confirms the account's own address with the code sent to it",
+		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}":                             "lets email reach an address again after a bounce",
 		"POST /v1/tenants/{tenantID}/security/anomalies/{id}/resolve":                       "records a triage decision",
 	}
 }
