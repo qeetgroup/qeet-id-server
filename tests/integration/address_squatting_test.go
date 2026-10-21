@@ -94,7 +94,7 @@ func TestAnAddressIsClaimedOnlyByProvingIt(t *testing.T) {
 			return nil, err
 		}
 		u, _ := url.Parse(authURL)
-		return svc.CompleteCallback(ctx, provider, u.Query().Get("state"), "upstream-code")
+		return svc.CompleteCallback(ctx, provider, u.Query().Get("state"), "upstream-code", true)
 	}
 
 	t.Run("an organisation's social sign-in doesn't adopt an account that never proved its address", func(t *testing.T) {
@@ -141,7 +141,7 @@ func TestAnAddressIsClaimedOnlyByProvingIt(t *testing.T) {
 			t.Fatal(err)
 		}
 		u, _ := url.Parse(loginURL)
-		if res, err := svc.CompletePlatformCallback(ctx, provider, u.Query().Get("state"), "login-code"); !errors.Is(err, errs.ErrSocialAccountUnverified) || (res != nil && res.LoginCode != "") {
+		if res, err := svc.CompletePlatformCallback(ctx, provider, u.Query().Get("state"), "login-code", true); !errors.Is(err, errs.ErrSocialAccountUnverified) || (res != nil && res.LoginCode != "") {
 			t.Fatalf("console sign-in = %+v, %v; want social.account_unverified and no code", res, err)
 		}
 	})

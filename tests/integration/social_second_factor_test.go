@@ -62,7 +62,7 @@ func TestSocialSignInTakesTheSecondFactorDecision(t *testing.T) {
 			t.Fatal(err)
 		}
 		u, _ := url.Parse(authURL)
-		res, err := svc.CompleteCallback(ctx, provider, u.Query().Get("state"), "upstream-code")
+		res, err := svc.CompleteCallback(ctx, provider, u.Query().Get("state"), "upstream-code", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,8 +130,7 @@ func TestSocialSignInTakesTheSecondFactorDecision(t *testing.T) {
 			}
 			u, _ := url.Parse(authURL)
 			rr := httptest.NewRecorder()
-			router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/social/"+provider+"/callback?"+
-				url.Values{"state": {u.Query().Get("state")}, "code": {"upstream-code"}}.Encode(), nil))
+			router.ServeHTTP(rr, socialCallback(provider, u.Query().Get("state")))
 			return rr
 		}
 		cookieSet := func(rr *httptest.ResponseRecorder) bool {

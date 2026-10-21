@@ -29,6 +29,9 @@ const (
 	CodeSocialAlreadyLinked         = "social.already_linked"
 	CodeSocialNoAccount             = "social.no_account"
 	CodeSocialProviderInUse         = "social.provider_in_use"
+	CodeSocialBrowserMismatch       = "social.browser_mismatch"
+	CodeSocialLinkCodeInvalid       = "social.link_code_invalid"
+	CodeSocialLinkAccountMismatch   = "social.link_account_mismatch"
 )
 
 // Social-login errors. The Message is what the end user sees. Transient upstream
@@ -78,4 +81,19 @@ var (
 	ErrSocialLoginCodeExpired = New(CodeSocialLoginCodeExpired, "That sign-in code has expired. Please start again.").AsRetryable()
 	ErrSocialAlreadyLinked    = New(CodeSocialAlreadyLinked, "That account is already linked to a different Qeet ID.")
 	ErrSocialNoAccount        = New(CodeSocialNoAccount, "No Qeet ID account uses that provider yet. Sign up first.")
+
+	// ErrSocialBrowserMismatch refuses a provider callback in a browser that
+	// didn't begin the sign-in: a link someone else began would otherwise sign
+	// this browser in to their account.
+	ErrSocialBrowserMismatch = New(CodeSocialBrowserMismatch,
+		"This sign-in was started in a different browser. Please start again here.").AsRetryable()
+	// ErrSocialLinkCodeInvalid: the code that completes connecting a provider
+	// is unknown, used or expired.
+	ErrSocialLinkCodeInvalid = New(CodeSocialLinkCodeInvalid,
+		"That connection has expired or was already completed. Please connect the account again.").AsRetryable()
+	// ErrSocialLinkAccountMismatch: connecting a provider is completed only by
+	// the account that began it, so a connect link sent to someone else can't
+	// attach their provider account to the sender's.
+	ErrSocialLinkAccountMismatch = New(CodeSocialLinkAccountMismatch,
+		"This connection was started from a different account.")
 )

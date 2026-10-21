@@ -22,6 +22,7 @@ var statusByCode = map[string]int{
 	errs.CodeValidation:          http.StatusUnprocessableEntity,
 	errs.CodeTooManyRequests:     http.StatusTooManyRequests,
 	errs.CodeRequestBodyTooLarge: http.StatusRequestEntityTooLarge,
+	errs.CodeUnsupportedMedia:    http.StatusUnsupportedMediaType,
 	errs.CodeInternal:            http.StatusInternalServerError,
 	errs.CodeNotImplemented:      http.StatusNotImplemented,
 

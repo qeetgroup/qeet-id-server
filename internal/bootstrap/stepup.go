@@ -178,6 +178,7 @@ func stepUpExempt() map[string]string {
 		"POST /v1/mfa/push/step-up/{id}/complete":                                           "is how a session steps up",
 		"POST /v1/passkeys/register/finish":                                                 "completes a ceremony its begin already gated",
 		"PATCH /v1/passkeys/{id}":                                                           "renames a passkey",
+		"POST /v1/social/link/complete":                                                     "completes a link its start already gated, for the account that began it",
 		"DELETE /v1/me/social/identities/{id}":                                              "removes a way in; adding one is gated",
 		"DELETE /v1/social/identities/{id}":                                                 "removes a way in; adding one is gated",
 		"PATCH /v1/users/{id}":                                                              "edits profile fields; suspending must stay instant in an incident",

@@ -1769,7 +1769,7 @@ paths:
     post:
       operationId: post_v1_social_ByProvider_link_start
       summary: Begin linking a provider to my account
-      description: Authenticated "connect this provider" ceremony. Returns the provider authorize URL for the browser to navigate to; the callback attaches the identity to the caller — never creating or switching accounts, and refusing an identity already linked elsewhere (`social.already_linked`).
+      description: 'Authenticated "connect this provider" ceremony. Returns the provider authorize URL for the browser to navigate to. The callback never creates or switches accounts, and attaches nothing itself: it sends the browser back to the account page (/account/security) with a one-time link_code and the provider, and the identity is attached only when the account that began the link completes it at POST /v1/social/link/complete.'
       tags:
         - Social
       parameters:
@@ -1799,6 +1799,47 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/social/link/complete:
+    post:
+      operationId: post_v1_social_link_complete
+      summary: Complete linking a provider to my account
+      description: 'Attaches the provider identity a link callback returned, held under the one-time link_code the account page was sent back with, to the caller. Only the account that began the link (POST /v1/social/{provider}/link/start) completes it; for any other the code is spent and the answer is 403 social.link_account_mismatch, so a connect link sent to someone else never attaches their provider account to the sender''s. An unknown, used or expired code answers 400 social.link_code_invalid (codes live two minutes); an identity already linked to another account answers 409 social.already_linked.'
+      tags:
+        - Social
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: The link_code from the callback's redirect.
+      responses:
+        '200':
+          description: Linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider:
+                    type: string
+                required:
+                  - provider
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /v1/social/identities/{id}:
     delete:
       operationId: delete_v1_social_identities_ById
@@ -1980,7 +2021,7 @@ paths:
   /v1/social/{provider}/callback:
     get:
       operationId: get_v1_social_ByProvIDer_callback
-      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. An address the organisation''s address rules refuse is sent there with error=address_not_allowed and the return_to, and no hosted-login session is opened. An existing account whose address has never been verified is not adopted by the provider''s word (error=account_unverified; the console flow gets social_error=account_unverified): it must verify the address, or reset its password from the emailed link, first. A suspended or deleted account gets error=account_inactive. When the sign-in must meet a second factor first (the account holds one, the organisation requires one, or the sign-in is risky; a remembered device may skip it as for a password sign-in), no hosted-login session is opened either: the browser is sent to the hosted login with the return_to, and the challenge in the URL fragment (mfa_token, methods, and enrollment_required / enrollment_due_at for one to set up), to complete at POST /v1/auth/session/mfa. Other failures send it there with error=social.'
+      description: 'Completes a social sign-in: exchanges the provider''s code, then signs in the account linked to that provider identity, adopts the organisation''s existing account for a verified address, or creates an account. The callback completes only in the browser that began the sign-in, which holds the binding cookie from GET /v1/social/{provider}/start: the same return link opened in another browser, or without the cookie, is refused and nothing is issued — the browser is sent to the hosted login with error=other_browser and the return_to (the console flow gets social_error=other_browser). A link ceremony (POST /v1/social/{provider}/link/start) attaches nothing here: the browser is sent to the account page with a one-time link_code and the provider, which the account that began the link completes at POST /v1/social/link/complete. Creating one is self-registration: when the organisation does not allow it, nothing is created, the attempt is audited (social.signup_refused, naming the provider and the address), and the browser is sent to the hosted login with error=registration_closed and the original return_to. An address the organisation''s address rules refuse is sent there with error=address_not_allowed and the return_to, and no hosted-login session is opened. An existing account whose address has never been verified is not adopted by the provider''s word (error=account_unverified; the console flow gets social_error=account_unverified): it must verify the address, or reset its password from the emailed link, first. A suspended or deleted account gets error=account_inactive. When the sign-in must meet a second factor first (the account holds one, the organisation requires one, or the sign-in is risky; a remembered device may skip it as for a password sign-in), no hosted-login session is opened either: the browser is sent to the hosted login with the return_to, and the challenge in the URL fragment (mfa_token, methods, and enrollment_required / enrollment_due_at for one to set up), to complete at POST /v1/auth/session/mfa. Other failures send it there with error=social.'
       summary: Social login callback
       tags:
         - Social
@@ -2008,7 +2049,7 @@ paths:
     post:
       operationId: post_v1_social_ByProvider_callback
       summary: Social login callback using form_post
-      description: Sign in with Apple returns the authorization response as a bounded form POST. Successful callbacks redirect with a one-time Qeet login code.
+      description: 'Sign in with Apple returns the authorization response as a bounded form POST. Successful callbacks redirect with a one-time Qeet login code. The browser must hold the binding cookie, as for the GET callback.'
       tags: [Social]
       security: []
       parameters:
@@ -2060,7 +2101,7 @@ paths:
           schema:
             type: string
       security: []
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Begins a social sign-in and redirects the browser to the provider. ?tenant (slug) or ?tenant_id names the organisation; without either it is the console''s own sign-in, where ?intent=signup allows creating an account. ?return_to opts into the hosted flow. The browser is given an HttpOnly binding cookie (qe_social, __Host- prefixed outside dev, SameSite=None so a form_post callback carries it) naming the sign-in, which the callback requires.'
       responses:
         '200':
           description: OK

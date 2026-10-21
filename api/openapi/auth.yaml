@@ -524,6 +524,7 @@ paths:
         spent either way.
         A link for an organisation whose address rules refuse the browser's
         address answers 403 auth.address_not_allowed and opens no session.
+        It is protected against cross-site requests as POST /v1/auth/session is (an allowed Origin, and the qe_csrf token echoed in X-CSRF-Token), and a body not sent as JSON is refused (415 unsupported_media_type).
       tags:
         - Auth
       security: []
@@ -564,6 +565,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/auth/magic-link/resend:
@@ -705,7 +708,7 @@ paths:
       description: 'Establishes a hosted-login SSO session and sets the HttpOnly qe_ls cookie so the browser can continue into the OAuth authorize and consent flow. When the account has a second factor enrolled, no cookie is set yet and a short-lived mfa_token is returned; complete it at the session-MFA call before the cookie is issued. Because this is a cookie session, later state-changing calls made with it are subject to CSRF protection. End the session with the corresponding destroy-session call.
 
 
-        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set.'
+        Sign-in lockout: failed password sign-ins are counted per account and source network (the client IP behind the trusted proxies; an IPv4 address or an IPv6 /64). Reaching the threshold within the window locks the account for that network for the lock duration, so a stranger on another network cannot lock the owner out. The threshold, window and duration are those of the tenant of the OAuth client named by `client_id` (its authentication policy), or the platform defaults when no client is named. Failures from any mix of networks also lock the account everywhere at a looser cap (the threshold times LOGIN_LOCKOUT_ACCOUNT_MULTIPLIER), and a source network that fails against too many distinct accounts (LOGIN_SPRAY_ACCOUNTS within LOGIN_SPRAY_WINDOW) is refused password sign-in for LOGIN_SPRAY_BLOCK. An address with no account is counted and answered exactly like a wrong password. When the counters cannot be read or written the sign-in is refused with 503 auth.sign_in_unavailable (fail closed). When the organisation of the named client_id has switched password sign-in off, the request is refused with 403 auth.method_disabled before any password is checked (the same answer for any account or none); without a client_id, the account''s own organisation decides once the password is verified. While the address rules of that client''s organisation are on, an address they refuse is answered 403 auth.address_not_allowed before any password is checked, and no cookie is set. A body not sent as JSON is refused (415 unsupported_media_type).'
       summary: Create SSO session
       tags:
         - Auth
@@ -735,6 +738,8 @@ paths:
                   - $ref: '#/components/schemas/MFAChallenge'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -755,6 +760,7 @@ paths:
         POST /v1/auth/mfa), for the SSO cookie (qe_ls). An enrolment challenge is completed by
         a code from the authenticator app set up for it, or skipped while its grace period
         runs, as for POST /v1/auth/mfa; a skipped setup never remembers the device.
+        A body not sent as JSON is refused (415 unsupported_media_type).
       tags:
         - Auth
       security: []
@@ -823,6 +829,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
   /v1/auth/register:
@@ -841,6 +849,7 @@ paths:
 
         An address the organisation's address rules refuse answers 403
         auth.address_not_allowed, and no account is created.
+        A body not sent as JSON is refused (415 unsupported_media_type).
       tags:
         - Auth
       security: []
@@ -886,6 +895,8 @@ paths:
                             format: uuid
         '403':
           $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1483,7 +1494,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Begins a passkey sign-in ceremony (an empty body, or no email, for a discoverable one) and returns its session_id and the WebAuthn request options. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser is given the hosted-login cookie when the ceremony finishes. A body not sent as JSON is refused (415 unsupported_media_type).'
       responses:
         '201':
           description: Created
@@ -1494,6 +1505,8 @@ paths:
                 additionalProperties: true
         '404':
           $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1513,7 +1526,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Response body summarized; accurate path/method/params/security. Enrich the body later. When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
+      description: 'Completes a passkey sign-in with the assertion and returns the token pair. The browser that began the ceremony (holding the binding cookie from begin) is also given the hosted-login cookie (qe_ls); any other caller, such as another browser or a server calling for one, gets the token pair only, so an assertion carried into another browser never signs it in. A body not sent as JSON is refused (415 unsupported_media_type). A cross-site form post therefore never reaches it. When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
       responses:
         '201':
           description: Created
@@ -1524,6 +1537,8 @@ paths:
                 additionalProperties: true
         '404':
           $ref: '#/components/responses/NotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -1736,7 +1751,7 @@ paths:
   /v1/register/passkey/finish:
     post:
       operationId: post_v1_register_passkey_finish
-      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own.'
+      description: 'Completes passwordless hosted signup by verifying the authenticator attestation and creating the user in the ceremony''s tenant with the passkey as its credential. On success it sets the hosted-login SSO cookie so the browser continues into the OAuth authorize and consent flow rather than returning bearer tokens. The account is passwordless and its passkey satisfies MFA on its own. A body not sent as JSON is refused (415 unsupported_media_type).'
       summary: Passkey-first signup finish (tenant-scoped hosted signup)
       tags:
         - Passkeys
@@ -1767,6 +1782,8 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
         '429':
@@ -4592,6 +4609,12 @@ components:
             $ref: '#/components/schemas/Error'
     Unprocessable:
       description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMediaType:
+      description: The body was not sent as JSON (`unsupported_media_type`). Routes that sign a browser in accept only an application/json body, which a page on another site cannot make the browser post.
       content:
         application/json:
           schema:

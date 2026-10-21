@@ -199,7 +199,7 @@ func (h *Handler) magicConsume(w http.ResponseWriter, r *http.Request) {
 // /v1/auth/session/mfa) and where to continue after it.
 func (h *Handler) magicSession(w http.ResponseWriter, r *http.Request) {
 	var in magicConsumeInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

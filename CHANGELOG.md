@@ -611,6 +611,36 @@ The changes below are the work staged for that first release.
   request to the person's phones, and `POST /v1/mfa/push/step-up/{id}/complete` records the session's step-up
   (method `push`) once it is approved, spending the request.
 
+**Sign-in completes only in the browser that began it (2026-10-21)**
+
+* **social:** a social sign-in remembered its request by the state value alone, so someone who began one with
+  their own provider account and stopped before the return could send the return link on, and whoever opened it
+  was signed in as the sender — in an organisation's hosted and application flows and in the console's own.
+  `GET /v1/social/{provider}/start` now gives the browser an HttpOnly binding cookie (`qe_social`, `__Host-`
+  prefixed outside dev, SameSite=None so Apple's form_post return carries it) naming the sign-in, and the
+  callback completes it only in a browser holding it. Anywhere else the return is refused before anything is
+  issued: the hosted login gets `error=other_browser` with the `return_to`, the console `social_error=other_browser`.
+* **social:** connecting a provider (`POST /v1/social/{provider}/link/start`) attached whatever the provider
+  returned to the account the link was asked for, in whichever browser the return arrived, so a connect link sent
+  to someone else attached their provider account to the sender's. The return now attaches nothing: it sends the
+  account page a one-time `link_code` (with the `provider`), and the new `POST /v1/social/link/complete` attaches
+  the identity only for the account that began the link (403 `social.link_account_mismatch` otherwise, the code
+  spent; 400 `social.link_code_invalid` for an unknown, used or expired one). Migration `0152` adds
+  `auth.platform_social_link_codes`. The console's account page has to complete the link with the code.
+* **passkeys:** passkey sign-in finish sets the hosted-login cookie, yet skipped the cross-site check and nothing
+  tied the ceremony to a browser, so a page on another site could post its owner's own signed assertion from a
+  visitor's browser and sign it in as that owner. `POST /v1/passkeys/login/begin` now gives the browser a binding
+  cookie (`qe_passkey`) naming the ceremony, and finish sets the hosted-login cookie only in a browser holding it;
+  any other caller, such as the console's server, gets the token pair alone.
+* **csrf:** the hosted magic-link exchange (`POST /v1/auth/magic-link/session`), which sets the hosted-login
+  cookie, sat under the magic-link CSRF exemption; it is now checked as `POST /v1/auth/session` is. The
+  bearer-only steps beside it stay exempt.
+* **http:** request bodies were decoded as JSON whatever content type they arrived with, so a cross-site
+  text/plain form reached JSON routes. The routes that sign a browser in (`/v1/auth/session`,
+  `/v1/auth/session/mfa`, `/v1/auth/register`, `/v1/auth/magic-link/session`, `/v1/passkeys/login/begin` and
+  `/finish`, `/v1/register/passkey/finish`) now refuse a body not sent as JSON with
+  `415 unsupported_media_type`.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

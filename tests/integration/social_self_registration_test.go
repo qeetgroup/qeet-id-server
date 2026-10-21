@@ -87,7 +87,7 @@ func (f *closedRegFixture) begin(t *testing.T, ctx context.Context) string {
 
 func (f *closedRegFixture) callback(t *testing.T, ctx context.Context) (*social.CallbackResult, error) {
 	t.Helper()
-	return f.svc.CompleteCallback(ctx, f.provider, f.begin(t, ctx), "upstream-code")
+	return f.svc.CompleteCallback(ctx, f.provider, f.begin(t, ctx), "upstream-code", true)
 }
 
 // leftBehind counts what a refused attempt must not leave: the account, the
@@ -247,7 +247,7 @@ func TestSocialConcurrentSignUpsIntoAClosedOrganisationAreBothRefused(t *testing
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, results[i] = f.svc.CompleteCallback(ctx, f.provider, st, "upstream-code")
+			_, results[i] = f.svc.CompleteCallback(ctx, f.provider, st, "upstream-code", true)
 		}()
 	}
 	wg.Wait()
@@ -273,7 +273,7 @@ func TestSocialRefusalTellsThePersonRegistrationIsClosed(t *testing.T) {
 	r := chi.NewRouter()
 	r.Route("/v1", h.MountPublic)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/social/"+f.provider+"/callback?state="+url.QueryEscape(f.begin(t, ctx))+"&code=upstream-code", nil)
+	req := socialCallback(f.provider, f.begin(t, ctx))
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 	loc, err := url.Parse(rr.Header().Get("Location"))

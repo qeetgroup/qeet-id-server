@@ -206,7 +206,11 @@ func NewRouter(d Deps) http.Handler {
 			//     cross-origin by an attacker; and CORS origin-checks + rate limits
 			//     already gate them — so the double-submit only adds friction.
 			//     NB: /v1/auth/session (the cookie-session creator) is deliberately
-			//     NOT exempt — it stays CSRF-protected.
+			//     NOT exempt — it stays CSRF-protected, as does the hosted
+			//     magic-link exchange (/v1/auth/magic-link/session), which sets
+			//     the same cookie. Passkey sign-in finish stays exempt for the
+			//     console's server, and sets the cookie only in the browser that
+			//     began the ceremony.
 			// Entries are exact paths unless they end in "/" (prefix) or contain
 			// "*" (one path segment). Keep them narrow: a prefix over a whole
 			// feature area also exempts every authenticated mutation later added
@@ -472,7 +476,8 @@ func csrfExemptPaths() []string {
 		"/v1/auth/signup", "/v1/auth/login", "/v1/auth/refresh",
 		"/v1/auth/mfa",  // completes a token-flow sign-in: the mfa_token, not a cookie, is the credential
 		"/v1/auth/mfa/", // its helpers (send a code, begin a passkey, send a push) — likewise
-		"/v1/auth/forgot-password", "/v1/auth/reset-password", "/v1/auth/magic-link/",
+		"/v1/auth/forgot-password", "/v1/auth/reset-password",
+		"/v1/auth/magic-link/start", "/v1/auth/magic-link/consume", "/v1/auth/magic-link/resend", // not .../session: it sets the hosted-login cookie
 		"/v1/passkeys/login/",
 		"/v1/social/exchange",           // one-time code exchange, no cookie session
 		"/v1/social/*/callback",         // Apple response_mode=form_post lands cross-site
