@@ -2479,7 +2479,7 @@ paths:
       operationId: post_v1_webhooks_ses
       summary: SES delivery events
       description: >-
-        Receives Amazon SES delivery, bounce, complaint and reject events through Amazon SNS. Each message's SNS signature is verified against a signing certificate served by sns.<region>.amazonaws.com, a message older than an hour is refused, and only the topics in SES_EVENTS_TOPIC_ARN are accepted (anyone can create an SNS topic); with none configured the endpoint answers 404. A subscription confirmation is completed by visiting its SubscribeURL. A hard bounce or a complaint suppresses the address; a soft bounce is only recorded.
+        Receives Amazon SES delivery, bounce, complaint and reject events through Amazon SNS. Each message's SNS signature (SignatureVersion 2, SHA256withRSA; version 1 is refused) is verified against a signing certificate served by sns.<region>.amazonaws.com, a message older than an hour is refused, and only the topics in SES_EVENTS_TOPIC_ARN are accepted (anyone can create an SNS topic); with none configured the endpoint answers 404. A subscription confirmation is completed by visiting its SubscribeURL. A hard bounce or a complaint suppresses the address; a soft bounce is only recorded.
       tags:
         - Email Templates
       security: []
