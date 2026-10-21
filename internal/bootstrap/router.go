@@ -304,8 +304,8 @@ func NewRouter(d Deps) http.Handler {
 			// unmapped (self-service / public) routes pass through.
 			r.Use(rbac.Enforce(d.RBACChecker, RoutePolicies()))
 			// Sensitive actions also need a step-up of the calling session
-			// (stepUpRoutes); asked only of a caller already authorized.
-			r.Use(d.MFA.Service.StepUpGate(stepUpRoutes()))
+			// (StepUpRoutes); asked only of a caller already authorized.
+			r.Use(d.MFA.Service.StepUpGate(StepUpRoutes()))
 
 			mountAuthenticatedRoutes(r, d)
 		})

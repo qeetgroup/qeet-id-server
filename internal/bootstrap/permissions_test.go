@@ -251,8 +251,11 @@ func TestApplicationTokenRoutesStayNarrow(t *testing.T) {
 
 // sensitiveLooking matches the paths of routes that change factors, machine
 // credentials, secrets, sign-in or security policy, single sign-on, retention
-// or audit streaming, or destroy an account or organisation.
+// or audit streaming, hand out authority (roles, permissions, invitations,
+// relationship rules, attribute policies), bring an account back, move an
+// account's email address, or destroy an account or organisation.
 var sensitiveLooking = regexp.MustCompile(`/mfa/|/passkeys|/api-keys|/service-principals|/agents|` +
+	`/roles|/permissions|/invites|/relation-tuples|/abac|/reactivate|/restore|/email|` +
 	`/oidc/clients|/scim/token|/credentials|/webhooks|/auth-hooks|/secrets|/vault/tokens|/provider-config|` +
 	`/policy$|/auth-policy|/risk-settings|/bots/settings|/ip-rules|/rate-limits|/mfa-required|/mfa$|` +
 	`/password$|/saml|/ldap|/social/|/domains|/mappings|/admin-portal|/email-templates|/retention|` +
@@ -274,7 +277,7 @@ func TestSensitiveRoutesNeedStepUp(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("walk authenticated router: %v", err)
 	}
-	gated, exempt := stepUpRoutes(), stepUpExempt()
+	gated, exempt := StepUpRoutes(), stepUpExempt()
 	var unclassified, stale, both []string
 	for route := range mounted {
 		method, path, _ := strings.Cut(route, " ")
@@ -305,7 +308,7 @@ func TestSensitiveRoutesNeedStepUp(t *testing.T) {
 	sort.Strings(stale)
 	sort.Strings(both)
 	if len(unclassified) > 0 {
-		t.Errorf("sensitive-looking routes neither in stepUpRoutes nor stepUpExempt:\n  %s", strings.Join(unclassified, "\n  "))
+		t.Errorf("sensitive-looking routes neither in StepUpRoutes nor stepUpExempt:\n  %s", strings.Join(unclassified, "\n  "))
 	}
 	if len(stale) > 0 {
 		t.Errorf("step-up catalogue names routes that are not mounted:\n  %s", strings.Join(stale, "\n  "))

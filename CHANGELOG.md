@@ -580,6 +580,18 @@ The changes below are the work staged for that first release.
   to the administrator's organisation they work as before, and the person is emailed that an administrator of
   that organisation made the change.
 
+**Handing out authority needs a step-up (2026-10-21)**
+
+* **mfa / rbac / invitations:** step-up asked a session to prove a factor again before changing factors,
+  machine credentials, secrets and security policy, but not before the actions that hand out authority or move
+  an account's recovery address, so a stolen administrator token could grant the owner role, attach permissions
+  to a role, invite an accomplice as owner or point the account's email at the attacker. Granting and revoking a
+  role's permissions, assigning and removing user and group roles, creating invitations, writing relationship
+  tuples and attribute policies, and reactivating or restoring an account now need a step-up of the session
+  (403 `step_up_required` otherwise), and starting an email change does for anyone holding a factor.
+  Containment (suspending, ending sessions) stays instant. The route-classification test now covers these route
+  families, so a new one has to be classified.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
