@@ -934,7 +934,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions).'
+      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions). Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change.'
       summary: Set password
       tags:
         - Users
@@ -977,7 +977,7 @@ paths:
     delete:
       operationId: delete_v1_users_ById_mfa
       summary: Admin reset user MFA
-      description: Account-recovery for a locked-out user. Requires the `user.write` permission; audited as `mfa.admin_reset`.
+      description: 'Account-recovery for a locked-out user. Requires the `user.write` permission; audited as `mfa.admin_reset`. Refused with 403 user.credentials_shared, and nothing changes, when the account also belongs to another organization: its password and second factors are the person''s credentials there too, so only they change them (the password reset link reaches only their address). Otherwise the person is emailed that an administrator of this organization made the change.'
       tags:
         - Users
       parameters:

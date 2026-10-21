@@ -16,6 +16,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 )
 
 // mfaResetter clears a user's MFA factors (admin account-recovery). Kept as an
@@ -73,6 +74,9 @@ type Handler struct {
 	// SignIns ends every way a user is signed in (admin force sign-out).
 	// Without it that route answers 501.
 	SignIns signInEnder
+	// Mailer tells a person when an administrator changes their password or
+	// second factors (nil = tells nobody).
+	Mailer notifier.Sender
 }
 
 // hashNewPassword checks a password for an account in tenantID with the given
@@ -249,6 +253,15 @@ func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if err := h.refuseSharedCredentials(ctx, id, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	target, err := h.Repo.Get(ctx, id)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	tx, err := h.Repo.Pool().Begin(ctx)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -282,6 +295,7 @@ func (h *Handler) resetMFA(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.tellCredentialChange(ctx, tenantID, target.Email, credentialFactorsReset)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"message": "The user's multi-factor authentication has been reset. They can re-enroll at next sign-in.",
 	})
@@ -648,6 +662,10 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	if err := h.refuseSharedCredentials(r.Context(), id, tenantID); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
 	hash, err := h.hashNewPassword(r.Context(), tenantID, target.Email, in.Password)
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -657,6 +675,7 @@ func (h *Handler) setPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.tellCredentialChange(r.Context(), tenantID, target.Email, credentialPasswordSet)
 	w.WriteHeader(http.StatusNoContent)
 }
 
