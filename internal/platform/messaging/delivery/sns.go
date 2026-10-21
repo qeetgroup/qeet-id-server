@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/rsa"
-	"crypto/sha1" //nolint:gosec // SNS SignatureVersion 1 is SHA1withRSA; version 2 is preferred and supported
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -35,7 +34,9 @@ import (
 //
 // Anyone can create an SNS topic, and SNS signs its messages too, so a valid
 // signature alone proves nothing: a message is accepted only from a topic in
-// TopicARNs. With none configured the endpoint is off (404).
+// TopicARNs. With none configured the endpoint is off (404). Only
+// SignatureVersion 2 (SHA256withRSA) is accepted: the topic is created with it
+// (qeet-id-deploy), and version 1 is SHA-1.
 type Webhook struct {
 	Store     *Store
 	TopicARNs []string
@@ -133,14 +134,8 @@ func (h *Webhook) verify(ctx context.Context, m snsMessage) error {
 	if age := now().Sub(ts); age > maxMessageAge || age < -5*time.Minute {
 		return fmt.Errorf("timestamp %s out of range", m.Timestamp)
 	}
-	var hash crypto.Hash
-	switch m.SignatureVersion {
-	case "1":
-		hash = crypto.SHA1
-	case "2":
-		hash = crypto.SHA256
-	default:
-		return fmt.Errorf("signature version %q", m.SignatureVersion)
+	if m.SignatureVersion != "2" {
+		return fmt.Errorf("signature version %q (only 2, SHA256withRSA, is accepted)", m.SignatureVersion)
 	}
 	canonical, err := canonicalString(m)
 	if err != nil {
@@ -158,15 +153,8 @@ func (h *Webhook) verify(ctx context.Context, m snsMessage) error {
 	if !ok {
 		return errors.New("signing certificate has no RSA key")
 	}
-	var digest []byte
-	if hash == crypto.SHA1 {
-		sum := sha1.Sum([]byte(canonical)) //nolint:gosec // see the import
-		digest = sum[:]
-	} else {
-		sum := sha256.Sum256([]byte(canonical))
-		digest = sum[:]
-	}
-	return rsa.VerifyPKCS1v15(pub, hash, digest, sig)
+	digest := sha256.Sum256([]byte(canonical))
+	return rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], sig)
 }
 
 // canonicalString is what SNS signs: the message's fields, by type, each as

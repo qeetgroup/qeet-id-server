@@ -31,7 +31,7 @@ func (h *DeliveryHandler) Mount(r chi.Router) {
 }
 
 func listLimit(r *http.Request) int32 {
-	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 100 {
+	if n, err := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 32); err == nil && n > 0 && n <= 100 {
 		return int32(n)
 	}
 	return 50

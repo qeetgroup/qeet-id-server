@@ -117,6 +117,12 @@ func TestWebhookVerifiesEveryMessage(t *testing.T) {
 		t.Fatalf("validly signed, from another topic = %d, want 401", code)
 	}
 
+	v1 := signer.sign(t, note())
+	v1["SignatureVersion"] = "1"
+	if code := post(h, v1); code != http.StatusUnauthorized {
+		t.Fatalf("SignatureVersion 1 (SHA-1) = %d, want 401", code)
+	}
+
 	stale := note()
 	stale["Timestamp"] = time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
 	if code := post(h, signer.sign(t, stale)); code != http.StatusUnauthorized {
