@@ -2915,7 +2915,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_roles_ByRoleID_permissions_ByPermID
-      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call.'
+      description: 'Grants a permission to a role, so every current and future holder of the role gains it through their effective permissions. The role and permission must both exist, and the grant is idempotent. Reverse it with the revoke-permission-from-role call, and inspect the role''s grants with the list-role-permissions call. The caller must hold the permission in this organization, unless they are an owner (403 rbac.grant_exceeds_caller otherwise).'
       summary: Grant permission to role
       tags:
         - RBAC
@@ -2997,6 +2997,9 @@ paths:
       summary: Grant role to group
       description: >-
         Grant a role to a group. Every member of the group inherits the role's permissions (effective permissions = direct user grants UNION group-derived grants). The role and group must belong to the tenant.
+        The caller must hold every permission the role carries in this organization
+        (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the
+        owner role (403 rbac.owner_only); an owner may give any role.
       tags:
         - RBAC
       parameters:
@@ -3211,7 +3214,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       operationId: post_v1_users_ByUserID_tenants_ByTenantID_roles_ByRoleID
-      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call.'
+      description: 'Assigns a role to a user within the tenant, adding the role''s permissions to that user''s effective permissions. The role must belong to the tenant and the user must already be a member of it, or have it as their home tenant; otherwise the call answers 404 rbac.user_or_role_not_found, the same for a missing id as for another tenant''s. The assignment is idempotent. Reverse it with the unassign-role-from-user call, and verify the outcome with the effective-permissions call. The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
       summary: Assign role to user
       tags:
         - RBAC
