@@ -147,25 +147,6 @@ func (q *Queries) EndLoginSession(ctx context.Context, tokenHash string) (EndLog
 	return i, err
 }
 
-const endLoginSessionsForUser = `-- name: EndLoginSessionsForUser :one
-WITH ended AS (
-    DELETE FROM auth.login_sessions WHERE user_id = $1
-    RETURNING expires_at
-)
-SELECT COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS live
-FROM ended
-`
-
-// EndLoginSessionsForUser ends every hosted-login (browser) session of the
-// user — the way hosted sign-out ends one, by deleting it — and returns how
-// many of them had not yet expired.
-func (q *Queries) EndLoginSessionsForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, endLoginSessionsForUser, userID)
-	var live int64
-	err := row.Scan(&live)
-	return live, err
-}
-
 const expireAuthorizationCodesForLoginSession = `-- name: ExpireAuthorizationCodesForLoginSession :execrows
 UPDATE auth.oidc_authorization_codes SET used_at = NOW()
 WHERE login_session_id = $1 AND used_at IS NULL

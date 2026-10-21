@@ -555,6 +555,15 @@ The changes below are the work staged for that first release.
   own status is unchanged, and reactivating lets them sign in again. An access token already issued lasts out
   its short lifetime, as for a suspended account.
 
+**A password change ends hosted sign-ins too (2026-10-21)**
+
+* **auth / recovery / users:** a password reset, a self-service password change and an administrator setting a
+  password ended the person's console and API sessions but left every hosted sign-in (browser) session alive
+  for up to its thirty minutes, able to start an application's sign-in or, on an account with no second
+  factor, enrol a passkey that outlasts the reset. All three now end every hosted sign-in session of the
+  person, through the helper signing out everywhere uses, and their audit records count them
+  (`revoked_login_sessions`); the self-service change keeps the session it was made from.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

@@ -287,16 +287,6 @@ WHERE user_id = @user_id AND revoked_at IS NULL
   AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
 RETURNING id, tenant_id;
 
--- EndLoginSessionsForUser ends every hosted-login (browser) session of the
--- user — the way hosted sign-out ends one, by deleting it — and returns how
--- many of them had not yet expired.
--- name: EndLoginSessionsForUser :one
-WITH ended AS (
-    DELETE FROM auth.login_sessions WHERE user_id = @user_id
-    RETURNING expires_at
-)
-SELECT COUNT(*) FILTER (WHERE expires_at > NOW())::bigint AS live
-FROM ended;
 
 -- RevokeAppGrantsForUser ends every application grant (OIDC refresh-token
 -- chain) the user holds, for every application. It marks every not-yet-revoked

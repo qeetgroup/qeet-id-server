@@ -292,6 +292,10 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		return err
 	}
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordReset, ended...)
+	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, row.UserID)
+	if err != nil {
+		return err
+	}
 	userID := row.UserID
 	target := userID
 	if err := audit.Record(ctx, tx, audit.Event{
@@ -303,7 +307,7 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 		IP:           ac.IP,
 		UserAgent:    ac.UserAgent,
 		RequestID:    ac.RequestID,
-		Metadata:     map[string]any{"sessions_revoked": true},
+		Metadata:     map[string]any{"sessions_revoked": true, "revoked_sessions": len(ended), "revoked_login_sessions": hosted},
 	}); err != nil {
 		return err
 	}
