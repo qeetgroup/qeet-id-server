@@ -1,5 +1,5 @@
 # Keep in step with go.mod's toolchain line: CI builds, tests and scans with that Go.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
