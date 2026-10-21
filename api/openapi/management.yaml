@@ -178,7 +178,7 @@ paths:
   /v1/tenants/{tenantID}:
     delete:
       operationId: delete_v1_tenants_ByTenantID
-      description: 'Soft-deletes the tenant. This is a destructive, owner-only action: members lose access and tenant-scoped calls stop resolving once it completes. Users who belonged only to this tenant are left without one and must create or join another.'
+      description: 'Soft-deletes the tenant. This is a destructive, owner-only action: members lose access and tenant-scoped calls stop resolving once it completes. Users who belonged only to this tenant are left without one and must create or join another. In the same transaction every session in the tenant ends (session.revoked with reason tenant_deleted) and the deletion is audited (tenant.deleted, naming who) and queued as an event; refresh and every sign-in refuse the tenant from then on (403 auth.tenant_inactive). An access token already issued lasts out its short lifetime.'
       summary: Delete tenant
       tags:
         - Tenants
@@ -230,7 +230,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_tenants_ByTenantID
-      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed.'
+      description: 'Updates mutable tenant attributes such as name and slug. Requires an administrative role within the tenant. Only the fields supplied in the request body are changed. Setting status to suspended ends every session in the tenant in the same transaction (session.revoked with reason tenant_suspended), and refresh and every sign-in refuse it until it is active again (403 auth.tenant_inactive); an access token already issued lasts out its short lifetime. Suspending and reactivating are audited (tenant.suspended, tenant.reactivated, naming who and the status it had) and queued as events.'
       summary: Update tenant
       tags:
         - Tenants

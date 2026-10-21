@@ -179,7 +179,7 @@ func TestAnOrganisationKeepsAnActiveOwner(t *testing.T) {
 
 	t.Run("once the organisation is deleted its last owner can go", func(t *testing.T) {
 		org, owner, _ := owned(t)
-		if err := orgs.SoftDelete(ctx, org); err != nil {
+		if err := orgs.SoftDelete(ctx, org, nil); err != nil {
 			t.Fatalf("delete the organisation: %v", err)
 		}
 		if err := softDelete(owner); err != nil {

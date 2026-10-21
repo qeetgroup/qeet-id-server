@@ -1431,6 +1431,9 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	if err := s.refuseInactiveAccount(ctx, userID, tenantID, method, ip, ua); err != nil {
 		return nil, err
 	}
+	if err := s.refuseInactiveTenant(ctx, tenantID); err != nil {
+		return nil, err
+	}
 	if err := s.checkAddress(ctx, tenantID, userID, ip, method); err != nil {
 		return nil, err
 	}
@@ -1574,6 +1577,9 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		sessionExp  time.Time
 		pastMaxAge  bool
 		pastIdle    bool
+		// tenantActive: the session's organisation is neither suspended nor
+		// deleted (true for a tenant-less session).
+		tenantActive bool
 	)
 	// Whether the session had reached its maximum age or idle timeout by the
 	// time it ended — now, if it has not ended — is decided on the database's
@@ -1583,15 +1589,17 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 		       s.revoked_at, s.user_id, s.tenant_id, u.status, u.deleted_at, s.hook_claims,
 		       s.expires_at,
 		       s.expires_at <= COALESCE(s.revoked_at, NOW()),
-		       s.last_seen_at + s.idle_timeout <= COALESCE(s.revoked_at, NOW())
+		       s.last_seen_at + s.idle_timeout <= COALESCE(s.revoked_at, NOW()),
+		       s.tenant_id IS NULL OR (t.status = 'active' AND t.deleted_at IS NULL)
 		FROM auth.refresh_tokens rt
 		JOIN auth.sessions s ON s.id = rt.session_id
 		JOIN "user".users u ON u.id = s.user_id
+		LEFT JOIN tenant.tenants t ON t.id = s.tenant_id
 		WHERE rt.token_hash = $1
 		FOR UPDATE OF rt, s
 	`, hash)
 	if err := row.Scan(&id, &sessionID, &usedAt, &expiresAt, &sessionRev, &userID, &tenantPtr, &userStatus, &userDeleted, &hookClaims,
-		&sessionExp, &pastMaxAge, &pastIdle); err != nil {
+		&sessionExp, &pastMaxAge, &pastIdle, &tenantActive); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.ErrAuthRefreshTokenInvalid
 		}
@@ -1630,6 +1638,11 @@ func (s *Service) Refresh(ctx context.Context, in RefreshInput) (*TokenPair, err
 	// tokens indefinitely.
 	if userDeleted != nil || userStatus == "suspended" {
 		return nil, errs.ErrAuthAccountSuspended
+	}
+	// The same for the organisation: suspending or deleting it ends its
+	// sessions, and a refresh token that outlived that is refused.
+	if !tenantActive {
+		return nil, errs.ErrAuthTenantInactive
 	}
 	if time.Now().After(expiresAt) {
 		return nil, errs.ErrAuthRefreshTokenInvalid

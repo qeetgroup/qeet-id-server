@@ -75,6 +75,11 @@ const (
 	// ReasonRemovedFromOrganization: the user was removed from the
 	// organisation the session was in; their sessions elsewhere stay.
 	ReasonRemovedFromOrganization = "removed_from_organization"
+	// ReasonTenantSuspended: the organisation the session was in was
+	// suspended; sessions elsewhere stay.
+	ReasonTenantSuspended = "tenant_suspended"
+	// ReasonTenantDeleted: the organisation the session was in was deleted.
+	ReasonTenantDeleted = "tenant_deleted"
 	// ReasonExpired: every refresh token of the session expired without it
 	// being ended; announced when the cleanup removes it.
 	ReasonExpired = "expired"
@@ -197,6 +202,24 @@ func EndUserSessionsInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uu
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Session, error) {
 		sess := Session{UserID: userID, TenantID: tenantID}
 		err := row.Scan(&sess.ID)
+		return sess, err
+	})
+}
+
+// EndTenantSessions revokes every live session in one organisation, whoever
+// holds it, for suspending or deleting it, and returns them for Revoked.
+func EndTenantSessions(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]Session, error) {
+	rows, err := tx.Query(ctx, `
+		UPDATE auth.sessions SET revoked_at = NOW()
+		WHERE tenant_id = $1 AND revoked_at IS NULL
+		  AND expires_at > NOW() AND last_seen_at + idle_timeout > NOW()
+		RETURNING id, user_id`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Session, error) {
+		sess := Session{TenantID: tenantID}
+		err := row.Scan(&sess.ID, &sess.UserID)
 		return sess, err
 	})
 }

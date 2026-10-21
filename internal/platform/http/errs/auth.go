@@ -26,6 +26,7 @@ const (
 	CodeAuthLastSignInMethod            = "auth.last_sign_in_method"
 	CodeAuthSessionLimit                = "auth.session_limit"
 	CodeAuthAccountSuspended            = "auth.account_suspended"
+	CodeAuthTenantInactive              = "auth.tenant_inactive"
 	CodeAuthSignInUnavailable           = "auth.sign_in_unavailable"
 	CodeAuthAddressNotAllowed           = "auth.address_not_allowed"
 )
@@ -71,6 +72,9 @@ var (
 	// organisation's limit on one person's simultaneous sessions.
 	ErrAuthSessionLimit     = New(CodeAuthSessionLimit, "You're signed in on too many devices for this organisation. Sign out of one of them, then try again.")
 	ErrAuthAccountSuspended = New(CodeAuthAccountSuspended, "Your account is no longer active. Please contact your administrator.")
+	// ErrAuthTenantInactive: the organisation is suspended or deleted, so no
+	// session is issued or renewed for it.
+	ErrAuthTenantInactive = New(CodeAuthTenantInactive, "This organization isn't active. Contact its administrator.")
 	// ErrAuthSignInUnavailable refuses a password sign-in whose failed-attempt
 	// counters could not be read or written: the lockout fails closed. The same
 	// answer whatever the password and whether the address has an account.
