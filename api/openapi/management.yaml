@@ -828,7 +828,7 @@ paths:
   /v1/users/{id}:
     delete:
       operationId: delete_v1_users_ById
-      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every session of the user ends, the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere.'
+      description: 'Soft-deletes the user, moving the account into the tenant recycle bin rather than erasing it. A soft-deleted account can be brought back with the restore call or removed for good with the purge call. It continues to appear in the deleted-users list until purged. In the same transaction every session of the user ends, the deletion is audited (user.deleted, naming the admin) and a user.deleted event is queued; restoring the account brings none of those sessions back. The answer names the deleted user, when, and by whom. Only the organization the account belongs to can delete it; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere. Refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
       summary: Delete user
       tags:
         - Users
@@ -895,7 +895,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patch_v1_users_ById
-      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership).'
+      description: 'Updates mutable attributes of a user in the caller''s tenant. Only the fields present in the request body are modified. This edits directory attributes, not credentials or verification state. Changing the account (status, profile) belongs to the organization the account belongs to; for a member whose account belongs elsewhere the call answers 403 user.managed_elsewhere and nothing changes. Remove them from this organization instead (DELETE /v1/users/{id}/membership). Suspending is refused with 409 tenant.last_owner, and nothing changes, when it would leave an organization with no active owner: make someone else an owner first.'
       summary: Update user
       tags:
         - Users
@@ -1518,7 +1518,7 @@ paths:
     delete:
       operationId: delete_v1_users_ById_membership
       summary: Remove a member from this organization
-      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization, in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404.'
+      description: 'Removes a member whose account belongs to another organization (or to none) from the caller''s organization, in one transaction: their roles and groups here, their sessions here, and the application grants and API keys they hold here. Their account and their other organizations are left alone. Audited as user.removed_from_organization, with an event. The organization''s own accounts are suspended or deleted instead (409 user.managed_here); someone who doesn''t belong here is 404. Removing an owner is refused with 409 tenant.last_owner, and nothing changes, when it would leave the organization with no active owner.'
       tags:
         - Users
       parameters:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres/pgxerr"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
@@ -42,9 +43,14 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	e := errs.As(err)
 	if e == nil {
 		var domain *errs.Error
-		if errors.As(err, &domain) {
+		switch {
+		case errors.As(err, &domain):
 			e = domain
-		} else {
+		case pgxerr.IsLastOwner(err):
+			// The database's own guard (migration 0151): whichever path tried to
+			// take away the organisation's last active owner is told why.
+			e = errs.ErrTenantLastOwner
+		default:
 			attrs := []any{
 				"err", err,
 				"route", safeRequestRoute(r),
