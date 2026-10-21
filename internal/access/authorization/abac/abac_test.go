@@ -3,6 +3,10 @@ package abac
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 )
 
 // bag is a convenience constructor for a simple attribute bag used in tests.
@@ -479,5 +483,39 @@ func TestEvaluateCondition_CrossNamespace(t *testing.T) {
 	]}`
 	if !eval(t, cond, b) {
 		t.Error("cross-namespace all should be true when all conditions hold")
+	}
+}
+
+// TestLocksOutAuthor: an enabled deny that would refuse its own author
+// policy.write is refused at save, since nobody could then remove it; a deny
+// aimed at someone else, at other resources, disabled, or an allow, is not.
+func TestLocksOutAuthor(t *testing.T) {
+	author, other, tenantID := uuid.New(), uuid.New(), uuid.New()
+	actor := audit.Actor{UserID: &author}
+	subjectIs := func(id uuid.UUID) json.RawMessage {
+		return json.RawMessage(`{"attr":"subject.id","op":"eq","value":"` + id.String() + `"}`)
+	}
+	for _, tc := range []struct {
+		name                         string
+		effect, resourceType, action string
+		enabled                      bool
+		cond                         json.RawMessage
+		want                         bool
+	}{
+		{"deny everything for everyone", "deny", "*", "*", true, json.RawMessage(`{}`), true},
+		{"deny policy writes for everyone", "deny", "policy", "write", true, json.RawMessage(`{}`), true},
+		{"deny everything for the author", "deny", "*", "*", true, subjectIs(author), true},
+		{"deny everything for someone else", "deny", "*", "*", true, subjectIs(other), false},
+		{"deny another resource for everyone", "deny", "doc", "*", true, json.RawMessage(`{}`), false},
+		{"deny policy reads for everyone", "deny", "policy", "read", true, json.RawMessage(`{}`), false},
+		{"disabled deny everything", "deny", "*", "*", false, json.RawMessage(`{}`), false},
+		{"allow everything", "allow", "*", "*", true, json.RawMessage(`{}`), false},
+	} {
+		if got := locksOutAuthor(tc.effect, tc.resourceType, tc.action, tc.enabled, tc.cond, tenantID, actor); got != tc.want {
+			t.Errorf("%s: locksOutAuthor = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if locksOutAuthor("deny", "*", "*", true, json.RawMessage(`{}`), tenantID, audit.Actor{}) {
+		t.Error("a save with no user author (system) is never a lock-out")
 	}
 }

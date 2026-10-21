@@ -392,6 +392,7 @@ For the product-level flow narrative, read `qeet-id-context/FLOWS/`.
 | ABAC — deny-overrides, fail-closed | `internal/access/authorization/abac/` |
 | ReBAC — Zanzibar relation tuples | `internal/access/authorization/rebac/` |
 | AuthZEN PDP/PEP | `internal/access/authorization/authzen/` |
+| Composed decision — every check and the route guard ask it | `internal/access/authorization/decide/` |
 | Tenant policy / password rules | `internal/access/authorization/{policy,authpolicy}/` |
 
 The **route → permission map** lives in `internal/bootstrap/permissions.go` and is consumed by

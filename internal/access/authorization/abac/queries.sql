@@ -42,3 +42,11 @@ WHERE tenant_id = @tenant_id
   AND (resource_type = @resource_type OR resource_type = '*')
   AND (action = @action OR action = '*')
 ORDER BY priority DESC;
+
+-- name: CountEnabledPolicies :one
+-- How many enabled deny and allow policies a tenant has, so a decision can
+-- skip ABAC for a tenant with none of the kind it needs.
+SELECT count(*) FILTER (WHERE effect = 'deny')::int  AS deny,
+       count(*) FILTER (WHERE effect = 'allow')::int AS allow
+FROM auth.abac_policies
+WHERE tenant_id = @tenant_id AND enabled = true;

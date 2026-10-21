@@ -11,6 +11,27 @@ import (
 	"github.com/google/uuid"
 )
 
+const countEnabledPolicies = `-- name: CountEnabledPolicies :one
+SELECT count(*) FILTER (WHERE effect = 'deny')::int  AS deny,
+       count(*) FILTER (WHERE effect = 'allow')::int AS allow
+FROM auth.abac_policies
+WHERE tenant_id = $1 AND enabled = true
+`
+
+type CountEnabledPoliciesRow struct {
+	Deny  int32
+	Allow int32
+}
+
+// How many enabled deny and allow policies a tenant has, so a decision can
+// skip ABAC for a tenant with none of the kind it needs.
+func (q *Queries) CountEnabledPolicies(ctx context.Context, tenantID uuid.UUID) (CountEnabledPoliciesRow, error) {
+	row := q.db.QueryRow(ctx, countEnabledPolicies, tenantID)
+	var i CountEnabledPoliciesRow
+	err := row.Scan(&i.Deny, &i.Allow)
+	return i, err
+}
+
 const createAbacPolicy = `-- name: CreateAbacPolicy :one
 
 INSERT INTO auth.abac_policies

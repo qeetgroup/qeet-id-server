@@ -2759,7 +2759,7 @@ paths:
   /v1/check:
     get:
       operationId: get_v1_check
-      description: 'Evaluates whether a user holds a given permission in a tenant under the baseline RBAC model and returns an allow or deny decision. By default the response is the bare decision; pass explain=true to receive the full authorization trace, including the grant path and, on denial, a reason. This is a read-only decision and changes no state. Richer models are available through the ABAC evaluate, ReBAC check, and AuthZEN evaluation calls.'
+      description: 'Evaluates whether a user may use a permission in a tenant, composing every model: an ABAC deny policy (resource type and action read from the key, so doc:write is resource doc, action write) refuses and stops; otherwise a role granting the permission, or an ABAC allow policy, permits; otherwise it is refused. An engine error refuses. The response names the deciding model and rule in decided_by; the ABAC policy is named only to a caller holding policy.read. Pass explain=true to add the role grant paths, a reason on denial and the step-by-step trace. This is a read-only decision and changes no state.'
       summary: Permission check
       tags:
         - RBAC
@@ -2785,7 +2785,7 @@ paths:
           name: explain
           required: false
           description: >-
-            When "true", return the full authorization trace (allowed, the grant path(s), and a reason on denial) instead of the bare {allowed} object.
+            When "true", also return the role grant path(s), a reason on denial and the decision's trace.
           schema:
             type: string
             enum:
@@ -2796,16 +2796,28 @@ paths:
       responses:
         '200':
           description: >-
-            Decision. The default shape is {allowed}. With explain=true the response is the Explanation object (allowed, paths, reason).
+            Decision: {allowed, decided_by}. With explain=true also paths, reason (on denial) and trace.
           content:
             application/json:
               schema:
-                oneOf:
-                  - type: object
-                    properties:
-                      allowed:
-                        type: boolean
-                  - $ref: '#/components/schemas/AuthzExplanation'
+                type: object
+                properties:
+                  allowed:
+                    type: boolean
+                  decided_by:
+                    $ref: '#/components/schemas/AuthzDecidedBy'
+                  paths:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuthzGrantStep'
+                  reason:
+                    type: string
+                    description: Set only on a denial, with explain=true.
+                  trace:
+                    type: array
+                    items:
+                      type: string
+                    description: With explain=true. Each step in order, prefixed with its model (tenant, abac, rbac, rebac, none).
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3598,7 +3610,7 @@ paths:
   /v1/tenants/{tenantID}/relation-tuples/check:
     post:
       operationId: post_v1_tenants_ByTenantID_relation_tuples_check
-      description: 'Evaluates whether a user holds a relation on an object by walking the ReBAC tuple graph, following userset references transitively. It returns a boolean decision by default; pass explain=true to also receive the root-to-leaf chain of tuples that granted access. This is a read-only decision; author the underlying tuples with the write-tuple call.'
+      description: 'Evaluates whether a user holds a relation on an object, composing every model: an ABAC deny policy for the object''s type with the relation as action refuses and stops; otherwise a relationship tuple (following userset references transitively), a role granting type:relation or type.relation, or an ABAC allow policy permits. A role grant counts without a tuple. An engine error refuses. The response names the deciding model and rule in decided_by; pass explain=true to also receive the chain of tuples that granted access and the decision''s trace. This is a read-only decision; author the underlying tuples with the write-tuple call.'
       summary: Check relation
       tags:
         - ReBAC
@@ -3637,7 +3649,7 @@ paths:
                   type: string
       responses:
         '200':
-          description: '{ allowed: bool } by default; with explain=true, { allowed, path } where each path step is { object, relation, subject, depth }'
+          description: '{ allowed, decided_by } by default; with explain=true also path, where each step is { object, relation, subject, depth }, and trace'
           content:
             application/json:
               schema:
@@ -3645,6 +3657,12 @@ paths:
                 properties:
                   allowed:
                     type: boolean
+                  decided_by:
+                    $ref: '#/components/schemas/AuthzDecidedBy'
+                  trace:
+                    type: array
+                    items:
+                      type: string
                   path:
                     type: array
                     items:
@@ -3759,7 +3777,7 @@ paths:
     post:
       operationId: post_v1_tenants_ByTenantID_access_v1_evaluation
       summary: AuthZEN evaluation
-      description: OpenID AuthZEN core PDP evaluation request. Routes to RBAC when resource.type is "permission" (action.name is the permission key); otherwise routes to ReBAC (resource becomes "type:id", action.name becomes the relation).
+      description: OpenID AuthZEN core PDP evaluation request, answered by the same composed decision as the permission and relation checks (an ABAC deny refuses; then roles, relationships and ABAC allow policies are a union). When resource.type is "permission", action.name is the permission key; otherwise resource becomes "type:id" and action.name the relation. The response context always carries decided_by.
       tags:
         - AuthZEN
       parameters:
@@ -3802,10 +3820,10 @@ paths:
                       type: string
                 context:
                   type: object
-                  description: 'Optional. { explain: true } includes the grant-path trace inline in the response context.'
+                  description: 'Optional. { explain: true } includes the grant path and the decision''s trace inline in the response context.'
       responses:
         '200':
-          description: '{ decision: bool, context?: object }'
+          description: '{ decision: bool, context: { decided_by, paths | path, trace } }'
           content:
             application/json:
               schema:
@@ -5157,6 +5175,19 @@ components:
           format: uuid
           description: Set only when via is a group grant.
         role_id:
+          type: string
+          format: uuid
+    AuthzDecidedBy:
+      type: object
+      description: >-
+        What decided a composed authorization decision. The ABAC policy (rule, policy_id) is named only to a caller holding policy.read; anyone else sees rule "an attribute policy".
+      properties:
+        model:
+          type: string
+          enum: [tenant, abac, rbac, rebac, none]
+        rule:
+          type: string
+        policy_id:
           type: string
           format: uuid
     AuthzExplanation:

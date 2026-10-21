@@ -1,13 +1,13 @@
 // Package authzen implements the OpenID AuthZEN standard's core Policy Decision
 // Point API — POST /access/v1/evaluation — as a thin facade over Qeet ID's
-// existing RBAC and ReBAC engines. It makes no authorization decisions of its
-// own: every request is translated and forwarded to rbac.Repository or
-// rebac.Service, the same engines the native /check endpoints already use.
+// composed decision (decide.Decider), the same one the native /check endpoints
+// use: an attribute (ABAC) deny refuses, then roles, relationships and
+// attribute allow policies are a union. It makes no decision of its own.
 //
-// Routing between the two engines is by resource.type: "permission" routes
-// to RBAC (action.name is the permission key, resource.id is ignored — RBAC
-// has no resource dimension); anything else routes to ReBAC (resource
-// becomes "type:id", action.name becomes the relation).
+// The question asked is chosen by resource.type: "permission" asks about a
+// permission (action.name is the key, resource.id is ignored); anything else
+// asks about a relationship (resource becomes "type:id", action.name the
+// relation). The response context names the deciding model and rule.
 package authzen
 
 import (
@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
@@ -40,8 +41,8 @@ type Action struct {
 
 // EvaluationRequest is the AuthZEN §5 evaluation request. Context is
 // accepted but only one key is currently interpreted: {"explain": true}
-// requests the grant-path trace (RBAC/ReBAC's own ?explain=true) inline in
-// the response's context.
+// requests the grant path (RBAC/ReBAC's own ?explain=true) and the decision's
+// trace inline in the response's context.
 type EvaluationRequest struct {
 	Subject  Subject        `json:"subject"`
 	Resource Resource       `json:"resource"`
@@ -69,20 +70,24 @@ type rebacChecker interface {
 }
 
 type Service struct {
-	rbac  rbacChecker
-	rebac rebacChecker
+	rbac    rbacChecker
+	rebac   rebacChecker
+	decider *decide.Decider
 }
 
-func NewService(rbacRepo rbacChecker, rebacSvc rebacChecker) *Service {
-	return &Service{rbac: rbacRepo, rebac: rebacSvc}
+// NewService fronts decider; rbacRepo and rebacSvc supply the grant paths an
+// explain request asks for.
+func NewService(rbacRepo rbacChecker, rebacSvc rebacChecker, decider *decide.Decider) *Service {
+	return &Service{rbac: rbacRepo, rebac: rebacSvc, decider: decider}
 }
 
 // permissionResourceType is the resource.type sentinel that routes an
 // evaluation to RBAC instead of ReBAC (see package doc).
 const permissionResourceType = "permission"
 
-// Evaluate translates and forwards one AuthZEN evaluation request to
-// whichever engine resource.type selects.
+// Evaluate translates one AuthZEN evaluation request into the composed
+// decision resource.type selects. The ABAC policy that decided is named only to
+// a caller who may read policies (decide.Decider.ForViewer).
 func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req EvaluationRequest) (*EvaluationResponse, error) {
 	if req.Subject.ID == "" {
 		return nil, errs.ErrAuthZENSubjectIDRequired
@@ -92,41 +97,52 @@ func (s *Service) Evaluate(ctx context.Context, tenantID uuid.UUID, req Evaluati
 	}
 	explain, _ := req.Context["explain"].(bool)
 
+	var (
+		dec  decide.Decision
+		err  error
+		path map[string]any
+	)
 	if req.Resource.Type == permissionResourceType {
-		userID, err := uuid.Parse(req.Subject.ID)
-		if err != nil {
+		userID, perr := uuid.Parse(req.Subject.ID)
+		if perr != nil {
 			return nil, errs.ErrAuthZENSubjectIDInvalid
+		}
+		if dec, err = s.decider.Permission(ctx, tenantID, userID, req.Action.Name); err != nil {
+			return nil, err
 		}
 		if explain {
 			exp, err := s.rbac.Explain(ctx, userID, tenantID, req.Action.Name)
 			if err != nil {
 				return nil, err
 			}
-			return &EvaluationResponse{Decision: exp.Allowed, Context: map[string]any{"paths": exp.Paths}}, nil
+			path = map[string]any{"paths": exp.Paths}
 		}
-		allowed, err := s.rbac.Check(ctx, userID, tenantID, req.Action.Name)
-		if err != nil {
+	} else {
+		if req.Resource.Type == "" || req.Resource.ID == "" {
+			return nil, errs.ErrAuthZENResourceRequired
+		}
+		object := req.Resource.Type + ":" + req.Resource.ID
+		if dec, err = s.decider.Relation(ctx, tenantID, req.Subject.ID, object, req.Action.Name); err != nil {
 			return nil, err
 		}
-		return &EvaluationResponse{Decision: allowed}, nil
+		if explain {
+			exp, err := s.rebac.CheckExplain(ctx, tenantID, object, req.Action.Name, req.Subject.ID)
+			if err != nil {
+				return nil, err
+			}
+			path = map[string]any{"path": exp.Path}
+		}
 	}
 
-	if req.Resource.Type == "" || req.Resource.ID == "" {
-		return nil, errs.ErrAuthZENResourceRequired
-	}
-	object := req.Resource.Type + ":" + req.Resource.ID
+	dec = s.decider.ForViewer(ctx, httpx.PrincipalFromCtx(ctx), tenantID, dec)
+	out := &EvaluationResponse{Decision: dec.Allow, Context: map[string]any{"decided_by": dec.DecidedBy()}}
 	if explain {
-		exp, err := s.rebac.CheckExplain(ctx, tenantID, object, req.Action.Name, req.Subject.ID)
-		if err != nil {
-			return nil, err
+		for k, v := range path {
+			out.Context[k] = v
 		}
-		return &EvaluationResponse{Decision: exp.Allowed, Context: map[string]any{"path": exp.Path}}, nil
+		out.Context["trace"] = dec.Trace
 	}
-	allowed, err := s.rebac.Check(ctx, tenantID, object, req.Action.Name, req.Subject.ID)
-	if err != nil {
-		return nil, err
-	}
-	return &EvaluationResponse{Decision: allowed}, nil
+	return out, nil
 }
 
 // --- HTTP ---
