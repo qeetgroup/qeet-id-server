@@ -691,6 +691,10 @@ func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid
 		return err
 	}
 	h.Signals.Revoked(ctx, tx, sessionsignal.ReasonAdminPasswordSet, ended...)
+	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
 
 	actor := httpx.PrincipalFromCtx(ctx)
 	var actorID *uuid.UUID
@@ -713,7 +717,7 @@ func (h *Handler) setPasswordWithEvidence(r *http.Request, tenantID, userID uuid
 		IP:           httpx.ClientIP(r),
 		UserAgent:    r.UserAgent(),
 		RequestID:    httpx.RequestID(r),
-		Metadata:     map[string]any{"sessions_revoked": true},
+		Metadata:     map[string]any{"sessions_revoked": true, "revoked_sessions": len(ended), "revoked_login_sessions": hosted},
 	}); err != nil {
 		return err
 	}

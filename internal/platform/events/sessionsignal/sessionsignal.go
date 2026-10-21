@@ -206,6 +206,23 @@ func EndUserSessionsInTenant(ctx context.Context, tx pgx.Tx, userID, tenantID uu
 	})
 }
 
+// EndLoginSessions ends every hosted sign-in (browser) session of userID
+// inside tx — deleting each, as hosted sign-out deletes one — and returns how
+// many had not yet expired. Signing out everywhere uses it, and so does every
+// password reset, change and administrator's password set: a hosted session
+// opened with the old password must not outlive it (it could still start an
+// application's sign-in or enrol a passkey).
+func EndLoginSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (int64, error) {
+	var live int64
+	err := tx.QueryRow(ctx, `
+		WITH ended AS (
+			DELETE FROM auth.login_sessions WHERE user_id = $1
+			RETURNING expires_at
+		)
+		SELECT COUNT(*) FILTER (WHERE expires_at > NOW()) FROM ended`, userID).Scan(&live)
+	return live, err
+}
+
 // EndTenantSessions revokes every live session in one organisation, whoever
 // holds it, for suspending or deleting it, and returns them for Revoked.
 func EndTenantSessions(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]Session, error) {

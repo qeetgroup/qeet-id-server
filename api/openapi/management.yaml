@@ -934,7 +934,7 @@ paths:
   /v1/users/{id}/password:
     post:
       operationId: post_v1_users_ById_password
-      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call.'
+      description: 'Administratively sets or replaces a user''s password. The password must meet the organisation''s password rules (minimum length and required character classes), the offline strength baseline and, when enabled, the breached-password check; a refusal is a 422 naming the rule that failed (authpolicy.password_* or auth.password_weak). All of that user''s active sessions are revoked as a side effect, since an admin password reset is treated as incident response. The user must authenticate again after this call. Every hosted sign-in (browser) session of the person ends too, so one opened with the old password can no longer start an application''s sign-in or enrol a passkey; the audit record counts them (revoked_login_sessions).'
       summary: Set password
       tags:
         - Users

@@ -2001,7 +2001,7 @@ func (s *Service) EndAllSignIns(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 		}
 	}
 	s.signals.Revoked(ctx, tx, reason, signals...)
-	if ended.LoginSessions, err = q.EndLoginSessionsForUser(ctx, userID); err != nil {
+	if ended.LoginSessions, err = sessionsignal.EndLoginSessions(ctx, tx, userID); err != nil {
 		return SignInsEnded{}, err
 	}
 	// The ways back in that are not sessions: a remembered device would skip
@@ -2108,11 +2108,16 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 	}
 	revoked := int64(len(rows))
 	s.signals.Revoked(ctx, tx, sessionsignal.ReasonPasswordChanged, otherSessionsEnded(in.UserID, rows)...)
+	// Every hosted sign-in too: the calling session is an API one, kept above.
+	hosted, err := sessionsignal.EndLoginSessions(ctx, tx, in.UserID)
+	if err != nil {
+		return err
+	}
 	if err := audit.Record(ctx, tx, audit.Event{
 		TenantID: in.TenantID, ActorUserID: &in.UserID, ActorType: "user",
 		Action: "auth.password_changed", ResourceType: "user", ResourceID: &in.UserID,
 		IP: in.IP, UserAgent: in.UserAgent, RequestID: in.RequestID,
-		Metadata: map[string]any{"revoked_sessions": revoked, "kept_session_id": in.KeepSessionID},
+		Metadata: map[string]any{"revoked_sessions": revoked, "revoked_login_sessions": hosted, "kept_session_id": in.KeepSessionID},
 	}); err != nil {
 		return err
 	}
@@ -2120,7 +2125,7 @@ func (s *Service) ChangePassword(ctx context.Context, in ChangePasswordInput) er
 		AggregateID: in.UserID, Topic: "auth", EventType: "auth.password.changed",
 		Payload: map[string]any{
 			"user_id": in.UserID, "tenant_id": in.TenantID,
-			"kept_session_id": in.KeepSessionID, "revoked_sessions": revoked,
+			"kept_session_id": in.KeepSessionID, "revoked_sessions": revoked, "revoked_login_sessions": hosted,
 		},
 	}); err != nil {
 		return err
