@@ -52,6 +52,9 @@ type PushChallengeContext struct {
 	UserAgent string `json:"user_agent,omitempty"`
 	Location  string `json:"location,omitempty"`
 	Timestamp string `json:"timestamp"`
+	// SessionID is the session a step-up request was raised for; only that
+	// session's step-up is recorded when it is approved.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // ── Service methods ───────────────────────────────────────────────────────────

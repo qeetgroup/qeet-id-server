@@ -70,6 +70,7 @@ SELECT
     EXISTS (SELECT 1 FROM auth.mfa_otp_factors f WHERE f.user_id = @user_id AND f.verified_at IS NOT NULL)::bool AS otp,
     (EXISTS (SELECT 1 FROM auth.passkey_credentials c WHERE c.user_id = @user_id)
      AND COALESCE((SELECT ap.passkey_enabled FROM tenant.auth_policy ap WHERE ap.tenant_id = @tenant_id::uuid), TRUE))::bool AS passkeys,
+    EXISTS (SELECT 1 FROM auth.mfa_push_devices d WHERE d.user_id = @user_id)::bool AS push,
     (SELECT sp.step_up_methods FROM tenant.security_policies sp WHERE sp.tenant_id = @tenant_id::uuid)::text[] AS step_up_methods;
 
 -- OrgStepUpPolicy is how long a step-up lasts in an organisation and whether
@@ -202,3 +203,14 @@ SELECT
 SELECT status, expires_at FROM auth.mfa_push_challenges
 WHERE id = @id AND user_id = @user_id
 FOR UPDATE;
+
+-- name: PushChallengeForStepUp :one
+-- A step-up push request of the user's, under lock, with the session it was
+-- raised for.
+SELECT status, expires_at, action, COALESCE(context->>'session_id', '')::text AS session_id
+FROM auth.mfa_push_challenges
+WHERE id = @id AND user_id = @user_id
+FOR UPDATE;
+
+-- name: SpendPushChallenge :exec
+DELETE FROM auth.mfa_push_challenges WHERE id = $1;

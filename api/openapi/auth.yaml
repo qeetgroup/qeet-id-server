@@ -2174,11 +2174,18 @@ paths:
         settings, a user's MFA requirement, factors or password; configuring
         SAML, LDAP, social providers, domains, directory mappings and
         administrator portal links; editing email templates; changing
-        retention, anomaly settings and log streaming; and updating or
+        retention, anomaly settings and log streaming; granting or revoking a
+        role's permissions, assigning or removing user and group roles,
+        creating invitations, and writing relationship tuples and attribute
+        policies; reactivating or restoring a user; starting a change of the
+        caller's own email address while they hold a factor; and updating or
         deleting the organisation, deleting or purging a user, or deleting
         one's own account. An API key, service principal or agent holds no
         session, so it cannot perform these. The hosted login's own sign-in
-        counts as a step-up for the organisation's window after it happens.
+        counts as a step-up for the organisation's window after it happens,
+        when that sign-in proved a second factor itself (a met challenge or a
+        passkey). A linked phone counts as a factor held, and steps a session
+        up through the push step-up calls.
       responses:
         '200':
           description: OK
@@ -2214,6 +2221,69 @@ paths:
           $ref: '#/components/responses/Unprocessable'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /v1/mfa/push/step-up:
+    post:
+      operationId: post_v1_mfa_push_step_up
+      summary: Step up with a linked phone
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      description: 'Sends a step-up request for the calling session to every phone the caller has linked, and answers 202 with its challenge_id and expires_at. Once the request is approved on a phone, complete the step-up with the complete call. A caller with no linked phone gets 404 mfa.push_device_not_found; a principal without a session (an API key, agent) cannot step up.'
+      responses:
+        '202':
+          description: Request sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge_id:
+                    type: string
+                    format: uuid
+                  expires_at:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/mfa/push/step-up/{id}/complete:
+    post:
+      operationId: post_v1_mfa_push_step_up_complete
+      summary: Complete a phone step-up
+      tags:
+        - MFA
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      description: 'Records the calling session''s step-up (method push) once its request has been approved on a linked phone, and spends the request. 409 mfa.push_pending while it awaits an answer (retry); 409 mfa.push_challenge_invalid for a denied or spent request, or one raised for another session; 410 mfa.push_challenge_expired for one left unanswered past its expiry.'
+      responses:
+        '200':
+          description: Stepped up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - approved
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          description: The request expired unanswered (mfa.push_challenge_expired)
   /v1/mfa/totp:
     get:
       operationId: get_v1_mfa_totp

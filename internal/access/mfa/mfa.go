@@ -1077,7 +1077,7 @@ func (s *Service) HoldsStepUpFactor(ctx context.Context, userID uuid.UUID, tenan
 		return false
 	}
 	return (row.Totp && counts("totp", "recovery_code")) || (row.Otp && counts("otp")) ||
-		(row.Passkeys && counts("webauthn")), nil
+		(row.Passkeys && counts("webauthn")) || (row.Push && counts("push")), nil
 }
 
 // passStepUp reports whether the request's session is stepped up; when it is
@@ -1238,6 +1238,10 @@ func (h *Handler) Mount(r chi.Router) {
 	// Step-up status — lets a client decide whether to prompt before a
 	// sensitive action.
 	r.Get("/mfa/step-up/status", h.stepUpStatus)
+	// Stepping up with a linked phone: send it a request, then complete the
+	// step-up once it is approved.
+	r.Post("/mfa/push/step-up", h.startStepUpPush)
+	r.Post("/mfa/push/step-up/{id}/complete", h.completeStepUpPush)
 
 	// Sensitive MFA actions require a step-up of the calling session:
 	// disabling MFA wholesale and regenerating recovery codes both invalidate a
