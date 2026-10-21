@@ -15,6 +15,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 )
 
 // AuditVerifyInterval is how often every audit chain is verified.
@@ -95,6 +96,20 @@ func MaintenanceJobs(pool *pgxpool.Pool, signals *sessionsignal.Signaller) []wor
 					return err
 				}
 				slog.Info("outbox DLQ cleaned", "deleted", tag.RowsAffected())
+				return nil
+			},
+		},
+		{
+			// Delivery records answer "did that invitation arrive?"; after 90
+			// days they answer nothing. Suppressions are kept.
+			Name:     "email-delivery-cleanup",
+			Interval: 24 * time.Hour,
+			Run: func(ctx context.Context) error {
+				n, err := delivery.NewStore(pool).DeleteBefore(ctx, time.Now().Add(-delivery.Retention))
+				if err != nil {
+					return err
+				}
+				slog.Info("email delivery records cleaned", "deleted", n)
 				return nil
 			},
 		},

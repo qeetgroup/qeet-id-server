@@ -189,6 +189,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Build info | `internal/platform/observability/buildinfo/` |
 | Rate limiting | `internal/platform/cache/ratelimit/` |
 | Email templates / notifier | `internal/platform/messaging/` |
+| Email delivery records, suppression list, SES webhook | `internal/platform/messaging/delivery/` (tenant API: `internal/operations/email/delivery.go`) |
 
 ## Contracts
 
