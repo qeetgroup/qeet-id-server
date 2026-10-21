@@ -1683,12 +1683,12 @@ func TestSocialOIDCLoginFlow(t *testing.T) {
 		t.Fatalf("external identity rows = %d (err %v), want 1", n, err)
 	}
 
-	pair, err := svc.ExchangeLogin(ctx, res.Code, "1.2.3.4", "test-agent")
+	signedIn, err := svc.ExchangeLogin(ctx, res.Code, "1.2.3.4", "test-agent")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	if pair.AccessToken == "" || pair.RefreshToken == "" {
-		t.Fatal("exchange should return access + refresh tokens")
+	if signedIn.MFARequired || signedIn.Pair == nil || signedIn.Pair.AccessToken == "" || signedIn.Pair.RefreshToken == "" {
+		t.Fatal("exchange should return access + refresh tokens (the account holds no factor and nothing requires one)")
 	}
 
 	// One-time: a second exchange of the same code must fail.

@@ -627,10 +627,12 @@ func (s *Service) EnabledProviderNames(ctx context.Context, tenantID uuid.UUID) 
 	return s.q.EnabledSocialProviderNames(ctx, tenantID)
 }
 
-// StartLoginSession mints a hosted-login SSO session for a social-authenticated
-// user, so social login can drive the OAuth authorize/consent flow.
-func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
-	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
+// BeginLoginSession signs a social-authenticated user in to the hosted login
+// for tenantID, so social login can drive the OAuth authorize/consent flow: the
+// SSO session cookie value, or the second-factor challenge to complete first
+// (QTID-801; see auth.Service.BeginSocialLoginSession).
+func (s *Service) BeginLoginSession(ctx context.Context, userID, tenantID uuid.UUID, ip, ua, trustedToken, country string) (*auth.LoginSessionResult, error) {
+	return s.auth.BeginSocialLoginSession(ctx, userID, tenantID, ip, ua, trustedToken, country)
 }
 
 // CheckHostedSignIn asks the organisation's address rules whether the browser
@@ -794,8 +796,9 @@ func (s *Service) recordSignUpRefused(ctx context.Context, tenantID uuid.UUID, p
 	return tx.Commit(ctx)
 }
 
-// ExchangeLogin trades a one-time social login code for a Qeet token pair.
-func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+// ExchangeLogin trades a one-time social login code for a Qeet token pair, or
+// the second-factor challenge to complete first (QTID-801).
+func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired
 	}
@@ -828,7 +831,7 @@ func (s *Service) ExchangeLogin(ctx context.Context, rawCode, ip, ua string) (*a
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return s.auth.IssuePair(ctx, row.UserID, row.TenantID, ip, ua, "social")
+	return s.auth.BeginSocialSignIn(ctx, row.UserID, row.TenantID, ip, ua)
 }
 
 type Handler struct {
@@ -1154,10 +1157,29 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 			h.redirectSocialError(w, r, aerr)
 			return
 		}
-		// Hosted flow: set the SSO cookie and return to /oauth/authorize.
-		if raw, serr := h.Service.StartLoginSession(r.Context(), res.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
-			auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+		// Hosted flow: set the SSO cookie and return to /oauth/authorize — or,
+		// when the sign-in must meet a second factor first, hand the challenge to
+		// the hosted login (QTID-801). It travels in the fragment, which the
+		// browser never sends to a server or in a Referer.
+		trusted := ""
+		if c, cerr := r.Cookie(auth.TrustedDeviceCookie); cerr == nil {
+			trusted = c.Value
 		}
+		ls, serr := h.Service.BeginLoginSession(r.Context(), res.UserID, res.TenantID, httpx.ClientIP(r), r.UserAgent(),
+			trusted, httpx.GeoCountry(r.Context()))
+		if serr != nil {
+			h.redirectSocialError(w, r, serr)
+			return
+		}
+		if ls.MFARequired {
+			if h.LoginBaseURL == "" {
+				h.redirectSocialError(w, r, errs.ErrInternalServer)
+				return
+			}
+			http.Redirect(w, r, h.LoginBaseURL+"/login?"+url.Values{"return_to": {res.ReturnTo}}.Encode()+"#"+challengeFragment(ls.MFAChallenge), http.StatusFound)
+			return
+		}
+		auth.SetLoginSessionCookie(w, ls.RawCookie, h.CookieSecure)
 		http.Redirect(w, r, res.ReturnTo, http.StatusFound)
 		return
 	}
@@ -1169,6 +1191,31 @@ type exchangeInput struct {
 	Code string `json:"code"`
 }
 
+// challengeFragment is a hosted social sign-in's second-factor challenge as
+// the hosted login reads it from the URL fragment: the challenge token, the
+// methods it offers, and for an enrolment one enrollment_required (and
+// enrollment_due_at while it may be put off).
+func challengeFragment(c auth.MFAChallenge) string {
+	v := url.Values{"mfa_token": {c.MFAToken}, "methods": {strings.Join(c.Methods, ",")}}
+	if c.EnrollmentRequired {
+		v.Set("enrollment_required", "true")
+		if c.EnrollmentDueAt != nil {
+			v.Set("enrollment_due_at", c.EnrollmentDueAt.UTC().Format(time.RFC3339))
+		}
+	}
+	return v.Encode()
+}
+
+// writeSignIn answers a social code exchange: the token pair, or the
+// second-factor challenge shaped as a password sign-in's, met at /v1/auth/mfa.
+func writeSignIn(w http.ResponseWriter, res *auth.LoginResult) {
+	if res.MFARequired {
+		httpx.WriteJSON(w, http.StatusOK, res.Body())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res.Pair)
+}
+
 // exchange trades a one-time social login code for a token pair.
 func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	var in exchangeInput
@@ -1178,19 +1225,19 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	}
 	// Platform (tenant-less) code first; fall back to the tenant exchange when
 	// the code isn't a platform one.
-	if pair, perr := h.Service.ExchangePlatformLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent()); perr == nil {
-		httpx.WriteJSON(w, http.StatusOK, pair)
+	if res, perr := h.Service.ExchangePlatformLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent()); perr == nil {
+		writeSignIn(w, res)
 		return
 	} else if !errors.Is(perr, errs.ErrSocialLoginCodeInvalid) {
 		httpx.WriteError(w, r, perr)
 		return
 	}
-	pair, err := h.Service.ExchangeLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent())
+	res, err := h.Service.ExchangeLogin(r.Context(), in.Code, httpx.ClientIP(r), r.UserAgent())
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, pair)
+	writeSignIn(w, res)
 }
 
 // userInTenant reports whether a user is one this tenant can sign in.

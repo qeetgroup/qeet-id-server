@@ -535,8 +535,9 @@ func TestPasskeyEnrolmentFollowsTenantPolicy(t *testing.T) {
 
 // TestHostedPasskeyEnrolmentStepUp: for a person who already holds a second
 // factor, adding a passkey needs a step-up; the hosted login's own fresh
-// sign-in counts as one, and a sign-in older than the organisation's step-up
-// window does not.
+// sign-in counts as one when it met a second factor, and a sign-in older than
+// the organisation's step-up window, or one that met none (a social sign-in,
+// QTID-801), does not.
 func TestHostedPasskeyEnrolmentStepUp(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
@@ -548,9 +549,20 @@ func TestHostedPasskeyEnrolmentStepUp(t *testing.T) {
 	userID := createUserInTenant(t, ctx, tenantID)
 	holdApp(t, ctx, svc, userID)
 	browser := api.signIn(t, ctx, userID)
+	metFactor := func(factor any) {
+		t.Helper()
+		if _, err := testPool.Exec(ctx, `UPDATE auth.login_sessions SET second_factor = $2 WHERE user_id = $1`, userID, factor); err != nil {
+			t.Fatal(err)
+		}
+	}
 
+	if rr := api.call(t, browser, http.MethodPost, "/v1/passkeys/register/begin", nil); rr.Code != http.StatusForbidden ||
+		!strings.Contains(rr.Body.String(), "step_up_required") {
+		t.Fatalf("enrolment right after a hosted sign-in that met no factor: %d %s, want 403 step_up_required", rr.Code, rr.Body)
+	}
+	metFactor("mfa") // as the hosted sign-in of someone holding a factor does
 	if rr := api.call(t, browser, http.MethodPost, "/v1/passkeys/register/begin", nil); rr.Code != http.StatusOK {
-		t.Fatalf("enrolment right after a hosted sign-in: %d %s, want 200", rr.Code, rr.Body)
+		t.Fatalf("enrolment right after a hosted sign-in that met its factor: %d %s, want 200", rr.Code, rr.Body)
 	}
 	if _, err := testPool.Exec(ctx,
 		`UPDATE auth.login_sessions SET created_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1`, userID); err != nil {

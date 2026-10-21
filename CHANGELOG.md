@@ -496,6 +496,19 @@ The changes below are the work staged for that first release.
   before it count as none. The grace period is judged by when the person joined that organisation, not when
   the account was created.
 
+**Social sign-in asks for the second factor (2026-10-21)**
+
+* **social / auth:** signing in with Google, Microsoft, GitHub, Apple or an organisation's own provider issued
+  the session on the provider's word alone: no challenge for a factor the account held, no enrolment where the
+  organisation required one, no risk assessment (QTID-801). It now takes the same decision as a password
+  sign-in. `POST /v1/social/exchange` (the console's own and an organisation's) answers with the token pair or
+  the sign-in challenge, met at `POST /v1/auth/mfa`; the hosted callback opens no hosted-login session while a
+  factor is due, and sends the browser to the hosted login with the challenge in the URL fragment, to meet at
+  `POST /v1/auth/session/mfa`. A remembered device skips the factor on the same terms as the hosted password
+  sign-in. The completed sign-in is a `social_mfa` one (migration 0150). A hosted sign-in counts as a step-up
+  only when it proved a second factor itself (a met challenge or a passkey), so a social one no longer
+  unlocks factor-gated actions.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

@@ -154,7 +154,8 @@ func (s *Service) ResolveLoginSessionUser(ctx context.Context, raw string) (user
 }
 
 // resolveLoginSession is ResolveLoginSessionUser plus when the sign-in that
-// opened the session happened.
+// opened the session happened, if that sign-in proved a second factor (zero
+// otherwise): what a hosted-login principal's step-up is judged by.
 func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, tenantID uuid.UUID, signedInAt time.Time, err error) {
 	if raw == "" {
 		return uuid.Nil, uuid.Nil, time.Time{}, errs.ErrUnauthorized
@@ -168,6 +169,13 @@ func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, 
 	}
 	if row.TenantID.Valid {
 		tenantID = uuid.UUID(row.TenantID.Bytes)
+	}
+	// A fresh hosted sign-in counts as a step-up only when it proved a second
+	// factor itself — a met challenge or a passkey — not when a remembered
+	// device stood in for one or none was asked for, as for a social sign-in
+	// (QTID-801).
+	if row.SecondFactor != secondFactorMFA && row.SecondFactor != secondFactorPasskey {
+		return row.UserID, tenantID, time.Time{}, nil
 	}
 	return row.UserID, tenantID, row.CreatedAt, nil
 }
@@ -213,12 +221,15 @@ func (s *Service) LoginSessionAuth(routes []string) func(http.Handler) http.Hand
 				next.ServeHTTP(w, r)
 				return
 			}
-			userID, tenantID, signedInAt, err := s.resolveLoginSession(r.Context(), c.Value)
+			userID, tenantID, factorAt, err := s.resolveLoginSession(r.Context(), c.Value)
 			if err != nil {
 				httpx.WriteError(w, r, err)
 				return
 			}
-			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID, SignedInAt: &signedInAt}
+			p := &httpx.Principal{ActorType: "user", Subject: userID.String(), UserID: &userID}
+			if !factorAt.IsZero() {
+				p.SignedInAt = &factorAt
+			}
 			if tenantID != uuid.Nil {
 				p.TenantID = &tenantID
 			}

@@ -237,7 +237,7 @@ func (q *Queries) GetLoginSession(ctx context.Context, tokenHash string) (GetLog
 }
 
 const getLoginSessionUser = `-- name: GetLoginSessionUser :one
-SELECT s.user_id, u.tenant_id, s.created_at
+SELECT s.user_id, u.tenant_id, s.created_at, COALESCE(s.second_factor, '')::text AS second_factor
 FROM auth.login_sessions s
 JOIN "user".users u ON u.id = s.user_id
 LEFT JOIN tenant.tenants t ON t.id = u.tenant_id
@@ -248,19 +248,25 @@ WHERE s.token_hash = $1
 `
 
 type GetLoginSessionUserRow struct {
-	UserID    uuid.UUID
-	TenantID  pgtype.UUID
-	CreatedAt time.Time
+	UserID       uuid.UUID
+	TenantID     pgtype.UUID
+	CreatedAt    time.Time
+	SecondFactor string
 }
 
 // The user behind a live hosted-login session, and their own organization (NULL
-// for a user without one), and when the sign-in happened. No row when the
-// session is unknown or expired, or the user or their organization is no
-// longer active.
+// for a user without one), when the sign-in happened, and how it met a second
+// factor (” when it didn't). No row when the session is unknown or expired,
+// or the user or their organization is no longer active.
 func (q *Queries) GetLoginSessionUser(ctx context.Context, tokenHash string) (GetLoginSessionUserRow, error) {
 	row := q.db.QueryRow(ctx, getLoginSessionUser, tokenHash)
 	var i GetLoginSessionUserRow
-	err := row.Scan(&i.UserID, &i.TenantID, &i.CreatedAt)
+	err := row.Scan(
+		&i.UserID,
+		&i.TenantID,
+		&i.CreatedAt,
+		&i.SecondFactor,
+	)
 	return i, err
 }
 

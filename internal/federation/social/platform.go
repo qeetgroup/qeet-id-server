@@ -396,9 +396,11 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 }
 
 // ExchangePlatformLogin trades a one-time platform login code for a tenant-less
-// Qeet token pair. Returns ErrSocialLoginCodeInvalid when the code isn't a
-// platform code (so the caller can fall back to the tenant exchange).
-func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.TokenPair, error) {
+// Qeet token pair, or the second-factor challenge to complete first (QTID-801;
+// see auth.Service.BeginSocialSignIn). Returns ErrSocialLoginCodeInvalid when
+// the code isn't a platform code (so the caller can fall back to the tenant
+// exchange).
+func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {
 	if rawCode == "" {
 		return nil, errs.ErrSocialCodeRequired
 	}
@@ -417,6 +419,6 @@ func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua str
 	if err != nil {
 		return nil, err
 	}
-	// Tenant-less session, exactly like signup.
-	return s.auth.IssuePair(ctx, userID, uuid.Nil, ip, ua, "social")
+	// Tenant-less, exactly like signup.
+	return s.auth.BeginSocialSignIn(ctx, userID, uuid.Nil, ip, ua)
 }
