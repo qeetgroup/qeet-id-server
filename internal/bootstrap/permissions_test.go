@@ -346,10 +346,9 @@ func TestLinkedPhoneCallsPassCSRF(t *testing.T) {
 // TestHostedLoginCookieRoutesKeepTheCSRFCheck: the routes that give a browser
 // the hosted-login cookie must not skip the CSRF check, or a page on another
 // site could sign a visitor's browser in to an account of its choosing. The
-// hosted magic-link exchange sat under the magic-link exemption; the bearer
-// steps beside it still skip the check. Passkey sign-in finish skips it for the
-// console's server and sets the cookie only in the browser that began the
-// ceremony.
+// hosted magic-link exchange sat under the magic-link exemption, and the hosted
+// passkey sign-in sits beside the passkey token steps; the bearer steps still
+// skip the check.
 func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 	reached := false
 	h := httpx.CSRF(httpx.CSRFConfig{AllowedOrigins: []string{"https://login.example"}, ExemptPaths: csrfExemptPaths()})(
@@ -363,6 +362,9 @@ func TestHostedLoginCookieRoutesKeepTheCSRFCheck(t *testing.T) {
 		"/v1/auth/magic-link/start":   true,
 		"/v1/auth/magic-link/consume": true,
 		"/v1/auth/magic-link/resend":  true,
+		"/v1/passkeys/login/session":  false,
+		"/v1/passkeys/login/begin":    true,
+		"/v1/passkeys/login/finish":   true,
 	} {
 		reached = false
 		req := httptest.NewRequest(http.MethodPost, path, nil)

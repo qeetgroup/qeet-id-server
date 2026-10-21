@@ -85,7 +85,15 @@ func TestSuspendedAccountsCannotSignInAnyWay(t *testing.T) {
 		if !errors.Is(err, errs.ErrAuthAccountInactive) || pair != nil {
 			t.Fatalf("passkey sign-in of a suspended account = %v, %v; want auth.account_inactive and no pair", pair != nil, err)
 		}
-		if cookie, err := svc.StartLoginSession(ctx, userID, ip, ua); !errors.Is(err, errs.ErrAuthAccountInactive) || cookie != "" {
+		hostedSID, hostedAssertion, err := svc.BeginLogin(ctx, email)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ = json.Marshal(hostedAssertion)
+		if asOpts, err = virtualwebauthn.ParseAssertionOptions(string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		if _, cookie, err := svc.FinishLoginSession(ctx, hostedSID, json.RawMessage(virtualwebauthn.CreateAssertionResponse(rp, authenticator, cred, *asOpts)), ip, ua); !errors.Is(err, errs.ErrAuthAccountInactive) || cookie != "" {
 			t.Fatalf("hosted passkey sign-in of a suspended account = %q, %v; want auth.account_inactive and no cookie", cookie, err)
 		}
 		refusalAudited(t, userID)

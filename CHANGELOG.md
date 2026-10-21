@@ -630,16 +630,28 @@ The changes below are the work staged for that first release.
 * **passkeys:** passkey sign-in finish sets the hosted-login cookie, yet skipped the cross-site check and nothing
   tied the ceremony to a browser, so a page on another site could post its owner's own signed assertion from a
   visitor's browser and sign it in as that owner. `POST /v1/passkeys/login/begin` now gives the browser a binding
-  cookie (`qe_passkey`) naming the ceremony, and finish sets the hosted-login cookie only in a browser holding it;
-  any other caller, such as the console's server, gets the token pair alone.
+  cookie (`qe_passkey`) naming the ceremony, and only a browser holding it finishes the hosted passkey sign-in
+  (`POST /v1/passkeys/login/session`, below).
 * **csrf:** the hosted magic-link exchange (`POST /v1/auth/magic-link/session`), which sets the hosted-login
   cookie, sat under the magic-link CSRF exemption; it is now checked as `POST /v1/auth/session` is. The
   bearer-only steps beside it stay exempt.
 * **http:** request bodies were decoded as JSON whatever content type they arrived with, so a cross-site
   text/plain form reached JSON routes. The routes that sign a browser in (`/v1/auth/session`,
-  `/v1/auth/session/mfa`, `/v1/auth/register`, `/v1/auth/magic-link/session`, `/v1/passkeys/login/begin` and
-  `/finish`, `/v1/register/passkey/finish`) now refuse a body not sent as JSON with
+  `/v1/auth/session/mfa`, `/v1/auth/register`, `/v1/auth/magic-link/session`, `/v1/passkeys/login/begin`,
+  `/finish` and `/session`, `/v1/register/passkey/finish`) now refuse a body not sent as JSON with
   `415 unsupported_media_type`.
+
+**Hosted passkey sign-in hands script no tokens (2026-10-21)**
+
+* **passkeys:** passkey sign-in finish answered every caller with a full access and refresh token pair as well as
+  setting the hosted-login cookie, and the hosted sign-in page calls it from page script only for the cookie, so a
+  thirty-day renewal credential reached browser script at every passkey sign-in. Passkey sign-in now has two forms:
+  `POST /v1/passkeys/login/session` (hosted) sets only the cookie and answers with the user id, finishing only in the
+  browser that began the ceremony (403 `passkey.browser_mismatch` elsewhere, the ceremony left untouched) and keeping
+  the CSRF check; `POST /v1/passkeys/login/finish` (token form, for the console's server) answers with the token
+  pair and sets no cookie. The hosted sign-in page and the React library must use the hosted form. Password and magic
+  link already have cookie-only hosted forms (`/v1/auth/session`, `/v1/auth/magic-link/session`), and a test now
+  checks that no hosted sign-in answer carries a token.
 
 **Toolchain (2026-10-21)**
 

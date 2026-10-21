@@ -1494,7 +1494,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Begins a passkey sign-in ceremony (an empty body, or no email, for a discoverable one) and returns its session_id and the WebAuthn request options. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser is given the hosted-login cookie when the ceremony finishes. A body not sent as JSON is refused (415 unsupported_media_type).'
+      description: 'Begins a passkey sign-in ceremony (an empty body, or no email, for a discoverable one) and returns its session_id and the WebAuthn request options. The browser that begins it is given an HttpOnly binding cookie (qe_passkey, __Host- prefixed outside dev) naming the ceremony; only that browser can finish it at POST /v1/passkeys/login/session. A body not sent as JSON is refused (415 unsupported_media_type).'
       responses:
         '201':
           description: Created
@@ -1526,7 +1526,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: 'Completes a passkey sign-in with the assertion and returns the token pair. The browser that began the ceremony (holding the binding cookie from begin) is also given the hosted-login cookie (qe_ls); any other caller, such as another browser or a server calling for one, gets the token pair only, so an assertion carried into another browser never signs it in. A body not sent as JSON is refused (415 unsupported_media_type). A cross-site form post therefore never reaches it. When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
+      description: 'The token form of passkey sign-in: completes the ceremony with the assertion and returns the token pair, setting no cookie, for a caller that keeps tokens on a server (such as the console''s). A browser signs in to the hosted login with POST /v1/passkeys/login/session instead, so no token pair reaches its script. A body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
       responses:
         '201':
           description: Created
@@ -1541,6 +1541,51 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /v1/passkeys/login/session:
+    post:
+      operationId: post_v1_passkeys_login_session
+      summary: Login finish (hosted)
+      description: 'The hosted form of passkey sign-in: completes the ceremony with the assertion and sets the hosted-login SSO cookie (qe_ls), so the browser continues into the OAuth authorize flow, answering with the user id only: no token reaches the page''s script. Only the browser that began the ceremony, holding the binding cookie from POST /v1/passkeys/login/begin, finishes it here; any other is refused with 403 passkey.browser_mismatch and the ceremony is left untouched. It is protected against cross-site requests as POST /v1/auth/session is, and a body not sent as JSON is refused (415 unsupported_media_type). When the account''s organisation has switched passkeys off, the sign-in is refused with 403 passkey.disabled before the assertion is verified.'
+      tags:
+        - Passkeys
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, credential]
+              properties:
+                session_id:
+                  type: string
+                  format: uuid
+                credential:
+                  type: object
+                  additionalProperties: true
+                  description: The WebAuthn assertion (PublicKeyCredential JSON).
+      responses:
+        '200':
+          description: Signed in to the hosted login (the cookie is set)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                required: [user_id]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '429':
           $ref: '#/components/responses/TooManyRequests'
   /v1/passkeys/register/begin:
