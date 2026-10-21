@@ -87,10 +87,12 @@ type Config struct {
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
 	JWTAudience string `envconfig:"JWT_AUDIENCE" default:"qeet-id"`
 	// AccessTokenTTL bounds how long a revoked-but-not-yet-expired access token
-	// stays usable: access tokens are stateless JWTs verified by signature alone
-	// (no per-request DB revocation check), so this TTL is the hard ceiling on
-	// that exposure window. Real mitigation is the session.revoked /
-	// token.claims_change webhook signals that let a relying party react at once.
+	// stays usable to a verifier that checks it offline (signature and expiry
+	// only): this TTL is the ceiling on that exposure window. Introspection
+	// (POST /oauth/introspect) is the authoritative answer and reports a token
+	// inactive as soon as its account, membership or agent is revoked; the
+	// session.revoked / token.claims_change webhook signals let a relying party
+	// react at once. The contract is ADR-0017 (qeet-id-files).
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
 	// SessionMaxAge and SessionIdleTimeout bound the API and console sessions

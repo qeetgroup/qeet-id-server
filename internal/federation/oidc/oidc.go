@@ -77,6 +77,14 @@ type Service struct {
 	// exchangeMaxDepth bounds a chain of token exchanges (config
 	// TOKEN_EXCHANGE_MAX_DEPTH).
 	exchangeMaxDepth int
+	// agentStatus returns an AI agent's lifecycle status, so introspection
+	// reports a suspended agent's tokens inactive (nil: not checked).
+	agentStatus func(ctx context.Context, agentID uuid.UUID) (string, error)
+}
+
+// SetAgentStatus wires the agent lifecycle lookup introspection consults.
+func (s *Service) SetAgentStatus(f func(ctx context.Context, agentID uuid.UUID) (string, error)) {
+	s.agentStatus = f
 }
 
 func NewService(pool *pgxpool.Pool, issuer *tokens.Issuer) *Service {
@@ -490,6 +498,42 @@ func (s *Service) activeClientTenantMember(ctx context.Context, userID uuid.UUID
 		)
 	`, userID, clientID).Scan(&member)
 	return member, err
+}
+
+// tokenSubjectLive reports whether what an access token acts for still holds:
+// its user active, not deleted and a member of its organisation (itself
+// active), and its agent, if any, active.
+func (s *Service) tokenSubjectLive(ctx context.Context, claims *tokens.Claims) (bool, error) {
+	if claims.UserID != uuid.Nil {
+		var member bool
+		if err := s.pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM "user".users u
+				JOIN rbac.user_roles ur ON ur.user_id = u.id AND ur.tenant_id = $2
+				JOIN tenant.tenants t ON t.id = ur.tenant_id
+				WHERE u.id = $1
+				  AND u.status = 'active' AND u.deleted_at IS NULL
+				  AND t.status = 'active' AND t.deleted_at IS NULL
+			)
+		`, claims.UserID, claims.TenantID).Scan(&member); err != nil {
+			return false, err
+		}
+		if !member {
+			return false, nil
+		}
+	}
+	if claims.AgentID != "" && s.agentStatus != nil {
+		id, err := uuid.Parse(claims.AgentID)
+		if err != nil {
+			return false, nil
+		}
+		status, err := s.agentStatus(ctx, id)
+		if err != nil || status != "active" {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // RegisteredRedirect reports whether redirectURI is registered for the client.
@@ -2308,7 +2352,7 @@ func (h *Handler) jwks(w http.ResponseWriter, r *http.Request) {
 //
 // A refresh token ends the whole grant it belongs to, every rotation of it, so
 // no earlier link stays usable, and is audited. An access token can't be
-// revoked (it is stateless and lasts out its short lifetime, QTID-52), so it
+// revoked (it is stateless and lasts out its short lifetime, ADR-0017), so it
 // is refused with unsupported_token_type rather than answered with a success
 // that revokes nothing. An unknown token, or another client's, is a 200 no-op
 // (RFC 7009 §2.2), whatever the hint says.
@@ -2404,6 +2448,18 @@ func (s *Service) Introspect(ctx context.Context, clientID, clientSecret, token,
 			}
 			if !allowed {
 				s.auditIntrospectionRefused(ctx, caller.TenantID, clientID, claims.ClientID)
+				return inactive, nil
+			}
+			// Introspection is the authoritative answer on revocation
+			// (ADR-0017): a token whose account is suspended or deleted, whose
+			// membership of the organisation has ended, or whose agent is no
+			// longer active, is inactive here though its signature still
+			// verifies. Offline verification stays bounded by its lifetime.
+			live, err := s.tokenSubjectLive(ctx, claims)
+			if err != nil {
+				return nil, err
+			}
+			if !live {
 				return inactive, nil
 			}
 			out := map[string]any{
