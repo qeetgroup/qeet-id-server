@@ -322,6 +322,7 @@ func NewRouter(d Deps) http.Handler {
 func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimiter *ratelimit.Limiter) {
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
+	r.Get("/version", d.Health.Version)
 	r.Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Directory credential verification — same throttle as /v1 login.

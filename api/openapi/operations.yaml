@@ -135,6 +135,40 @@ paths:
                     type: string
         '503':
           description: Not ready (a dependency is down)
+  /version:
+    get:
+      operationId: get_version
+      description: 'Answers what is running on this instance: the release version, the commit it was built from and its build date, and the database migration the instance runs on next to the newest migration the build carries. Requires no authentication and reads nothing at request time (the migration is the one found at start). Operators compare it with the deploy record after a deploy or rollback.'
+      summary: Version
+      tags:
+        - Health
+      security: []
+      responses:
+        '200':
+          description: The running build and its schema
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version:
+                    type: string
+                    example: v1.0.0
+                  commit:
+                    type: string
+                  date:
+                    type: string
+                  go_version:
+                    type: string
+                  schema:
+                    type: object
+                    properties:
+                      migration:
+                        type: integer
+                        description: The migration the database is at.
+                      latest:
+                        type: integer
+                        description: The newest migration this build carries.
   /v1/activity:
     get:
       operationId: get_v1_activity
