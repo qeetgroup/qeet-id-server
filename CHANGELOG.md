@@ -469,6 +469,14 @@ The changes below are the work staged for that first release.
   revocation introspect. Tying an application's access token to its grant, so revoking the grant also shows
   here, needs a token claim and is QTID-41.
 
+**The hosted-login session can say who is signed in (2026-10-21)**
+
+* **auth:** the hosted login's session cookie (`qe_ls`) now also reads `GET /v1/auth/me`, `GET /v1/me` and
+  `GET /v1/me/organizations`, the caller's own identity, profile and organisations. A browser app signed in
+  through the hosted login, which holds only that cookie, got 401 on all three, so the React SDK's `useUser`
+  had no profile and its organisation switcher showed a bare id. The cookie still opens nothing else
+  (`LoginSessionRoutes`, pinned by `TestLoginSessionRoutesStayNarrow`); every other route still needs a token.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

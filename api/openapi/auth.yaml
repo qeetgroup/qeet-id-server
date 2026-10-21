@@ -605,13 +605,14 @@ paths:
   /v1/auth/me:
     get:
       operationId: get_v1_auth_me
-      description: 'Returns the principal resolved from the presented credential, including the user, tenant, and session identifiers, the actor type, and granted scopes. Use it to confirm who the current credential authenticates as and which tenant it is scoped to. A tenant-less principal reports a null tenant until one is selected with the switch-tenant call.'
+      description: 'Returns the principal resolved from the presented credential, including the user, tenant, and session identifiers, the actor type, and granted scopes. Use it to confirm who the current credential authenticates as and which tenant it is scoped to. A tenant-less principal reports a null tenant until one is selected with the switch-tenant call. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can tell who is signed in.'
       summary: Me
       tags:
         - Auth
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       responses:
         '200':
           description: Current principal

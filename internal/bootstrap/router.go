@@ -446,9 +446,14 @@ func ApplicationTokenRoutes() []string {
 // login act through that route. All must be user-only self-service routes and
 // none may be CSRF-exempt (TestLoginSessionRoutesStayNarrow). Removing a
 // passkey is deliberately not here: it stays token-only until removal checks
-// that the user keeps a way to sign in.
+// that the user keeps a way to sign in. The three reads tell a signed-in page
+// (and the React SDK's useUser and organisation switcher, which hold only the
+// cookie) who the person is and which organisations they belong to.
 func LoginSessionRoutes() []string {
 	return []string{
+		"GET /v1/auth/me",
+		"GET /v1/me",
+		"GET /v1/me/organizations",
 		"GET /v1/passkeys",
 		"PATCH /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",

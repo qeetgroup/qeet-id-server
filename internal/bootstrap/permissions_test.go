@@ -178,6 +178,9 @@ var routeParamPattern = regexp.MustCompile(`\{[^}]+\}`)
 // users only, and CSRF-checked. Removing a passkey stays token-only.
 func TestLoginSessionRoutesStayNarrow(t *testing.T) {
 	want := []string{
+		"GET /v1/auth/me",
+		"GET /v1/me",
+		"GET /v1/me/organizations",
 		"GET /v1/passkeys",
 		"PATCH /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",

@@ -56,7 +56,8 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection.
+        - ssoCookie: []
+      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
       parameters:
         - name: limit
           in: query
@@ -1595,12 +1596,13 @@ paths:
   /v1/me:
     get:
       operationId: get_v1_me
-      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details.'
+      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token.'
       summary: Get the authenticated user's profile
       tags: [Users]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       responses:
         '200':
           description: User profile
