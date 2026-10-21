@@ -211,7 +211,7 @@ func TestLogSenderDoesNotLeakCredentialsOutsideDev(t *testing.T) {
 			Channel: "sms", To: "+15550000000", Subject: "Your code", Body: secret,
 		})
 		// The message reached nobody outside development, so it is never a
-		// success there (QTID-115); in development the log is the delivery.
+		// success there; in development the log is the delivery.
 		if s.Reveal && err != nil {
 			t.Fatalf("Send in development: %v", err)
 		}

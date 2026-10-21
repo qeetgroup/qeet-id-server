@@ -536,8 +536,8 @@ func TestPasskeyEnrolmentFollowsTenantPolicy(t *testing.T) {
 // TestHostedPasskeyEnrolmentStepUp: for a person who already holds a second
 // factor, adding a passkey needs a step-up; the hosted login's own fresh
 // sign-in counts as one when it met a second factor, and a sign-in older than
-// the organisation's step-up window, or one that met none (a social sign-in,
-// QTID-801), does not.
+// the organisation's step-up window, or one that met none (a social sign-in),
+// does not.
 func TestHostedPasskeyEnrolmentStepUp(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()

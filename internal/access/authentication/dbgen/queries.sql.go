@@ -579,7 +579,7 @@ type MFARequirementRow struct {
 // any write permission.
 // joined_at is when the account joined the organisation, which the grace
 // period is judged by: its creation for its own organisation, its first role
-// there for any other (QTID-800).
+// there for any other.
 func (q *Queries) MFARequirement(ctx context.Context, arg MFARequirementParams) (MFARequirementRow, error) {
 	row := q.db.QueryRow(ctx, mFARequirement, arg.TenantID, arg.UserID)
 	var i MFARequirementRow

@@ -11,7 +11,7 @@ import (
 // A social sign-in — Google, Microsoft, GitHub, Apple, or an organisation's
 // own provider — proves the first factor through the provider, and then takes
 // the same second-factor, enrolment and risk decision as a password or
-// magic-link sign-in (QTID-801): an account holding a factor is challenged
+// magic-link sign-in: an account holding a factor is challenged
 // for it, one an organisation requires a factor of and holding none sets one
 // up first, and a risky sign-in is confirmed. Before, the provider's word
 // alone issued the session, so anyone who could sign in to the person's

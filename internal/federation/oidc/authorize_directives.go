@@ -10,7 +10,7 @@ import (
 )
 
 // The authorization request directives the endpoint honours, as discovery
-// advertises them (QTID-163).
+// advertises them.
 var (
 	responseTypesSupported = []string{"code"}
 	responseModesSupported = []string{"query"}

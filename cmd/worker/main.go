@@ -111,7 +111,7 @@ func main() {
 	sup.Register("retention", retentionService.Run)
 	sup.Register("siem", siemService.Run)
 	sup.Register("audit-anomaly", auditAnomalyService.Run)
-	// Once per interval across instances, beside the API's own (QTID-326).
+	// Once per interval across instances, beside the API's own.
 	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
 	sup.Register("scheduler", func(ctx context.Context) {
 		worker.RunScheduled(ctx, pool, bootstrap.MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)

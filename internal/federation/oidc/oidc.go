@@ -1442,7 +1442,7 @@ type SessionManager interface {
 	// LoginSessionFactorShortfall says what stops a code or token being
 	// issued for tenantID through the session: nil, or ErrStepUpRequired /
 	// ErrMFAEnrollmentRequired while the organisation requires a second
-	// factor its sign-in didn't meet (QTID-800).
+	// factor its sign-in didn't meet.
 	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error
 }
 
@@ -1756,7 +1756,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The application's organisation may require a second factor this sign-in
-	// didn't meet (QTID-800). The hosted sign-in asks for the requirement of the
+	// didn't meet. The hosted sign-in asks for the requirement of the
 	// application it serves, so the browser signs in again for this request,
 	// once; a fresh sign-in that still hasn't met one is refused.
 	switch err := h.factorShortfall(r.Context(), loginSessionID, userID, clientID); {

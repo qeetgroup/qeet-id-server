@@ -47,7 +47,7 @@ type VerificationRun struct {
 }
 
 // VerifyAll verifies the platform chain and every organisation's chain
-// (QTID-326; Verify(ctx, nil) alone is the platform chain only) and stores the
+// (Verify(ctx, nil) alone is the platform chain only) and stores the
 // run. Each broken chain is logged at ERROR with its organisation and row; the
 // stored run names the first. A broken or failed run counts toward
 // audit_verify_failures_total and returns an error, so the scheduled job

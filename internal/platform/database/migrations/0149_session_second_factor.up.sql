@@ -1,5 +1,5 @@
 -- 0149_session_second_factor — whether, and how, the sign-in behind a session
--- met a second factor (QTID-800).
+-- met a second factor.
 --
 -- An organisation's MFA requirement was read only for the account's own
 -- organisation, at sign-in. A session or code issued for another organisation
