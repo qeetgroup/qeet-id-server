@@ -458,6 +458,16 @@ The changes below are the work staged for that first release.
   invitation is still created (its link can be shared), and its response now says whether the email went:
   `invite.delivery` is `sent`, or `not_sent` with the code (`email.suppressed`, `email.provider_unavailable`).
 
+**Introspection knows about revocation (2026-10-21)**
+
+* **oidc:** `POST /oauth/introspect` now answers `{"active": false}` for a signature-valid access token whose
+  account is suspended or deleted, whose membership of the organisation has ended, or whose agent is no longer
+  active; it said active for any token that verified, so a relying party following the specification was told
+  a revoked token was live. The contract (ADR-0017 in qeet-id-files): offline verification stays bounded by
+  `ACCESS_TOKEN_TTL` (10 minutes), introspection is authoritative, and relying parties that need immediate
+  revocation introspect. Tying an application's access token to its grant, so revoking the grant also shows
+  here, needs a token claim and is QTID-41.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
