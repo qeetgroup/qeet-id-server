@@ -440,7 +440,8 @@ The changes below are the work staged for that first release.
 
 * **email:** every email is recorded (`platform.email_messages`, migration 0148) with what happened to it:
   sent, delivered, bounced, complained, suppressed or failed, and the provider's reason. Amazon SES reports
-  arrive at a new public `POST /v1/webhooks/ses` through SNS: each message's signature is verified against a
+  arrive at a new public `POST /v1/webhooks/ses` through SNS: each message's signature (SignatureVersion 2,
+  SHA256withRSA only) is verified against a
   certificate served by `sns.<region>.amazonaws.com`, messages older than an hour are refused, and only the
   topics in `SES_EVENTS_TOPIC_ARN` are accepted (anyone can create an SNS topic; with none set the endpoint
   is off); the subscription is confirmed by visiting its `SubscribeURL`. Emails name
