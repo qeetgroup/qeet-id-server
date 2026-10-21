@@ -543,6 +543,18 @@ The changes below are the work staged for that first release.
   queue on the organisation, so at most one goes; a deleted organisation frees its owners. To hand ownership
   over, make someone else an owner (role assignment) and then remove the old one; both are audited.
 
+**Suspending an organisation cuts off access to it (2026-10-21)**
+
+* **tenant / auth:** suspending or deleting an organisation changed its row and nothing else: every member
+  already signed in kept working sessions, refresh kept minting tokens for it (it checked the user's status,
+  never the organisation's), and no audit row said who had done it. Now suspension and deletion end every
+  session in the organisation in the same transaction (`session.revoked`, reason `tenant_suspended` /
+  `tenant_deleted`); refresh and every sign-in and switch refuse an organisation that isn't active (403
+  `auth.tenant_inactive`); and suspending, reactivating and deleting are audited (`tenant.suspended`,
+  `tenant.reactivated`, `tenant.deleted`, with the actor and the status it had) and queued as events. Members'
+  own status is unchanged, and reactivating lets them sign in again. An access token already issued lasts out
+  its short lifetime, as for a suspended account.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

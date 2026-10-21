@@ -221,15 +221,32 @@ func (r *Repository) List(ctx context.Context, userID uuid.UUID, limit int, curs
 	return out, next, nil
 }
 
+// StatusChange runs inside the transaction that changes an organisation's
+// status, so the change and what follows from it — its sessions ended, the
+// audit row, the event — commit together or not at all.
+type StatusChange func(ctx context.Context, tx pgx.Tx, from, to string) error
+
 // Update applies a partial update. The SET clause is built dynamically from the
 // non-nil fields, so it intentionally stays hand-written (sqlc has no good story
 // for optional-column updates); it shares the domain's error/RETURNING conventions.
-func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (*Tenant, error) {
+// onStatus (nil: none) runs in the same transaction when the status changes.
+func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput, onStatus StatusChange) (*Tenant, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	var from string
+	if in.Status != nil {
+		if err := tx.QueryRow(ctx, `SELECT status FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id).
+			Scan(&from); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, errs.ErrNotFound
+			}
+			return nil, err
+		}
+	}
 
 	ub := dbutil.NewUpdate()
 	if in.Name != nil {
@@ -272,6 +289,11 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 		}
 		return nil, err
 	}
+	if in.Status != nil && *in.Status != from && onStatus != nil {
+		if err := onStatus(ctx, tx, from, *in.Status); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
@@ -282,15 +304,31 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (
 // it matches the field order scanned into dbgen.TenantTenant above (sans deleted_at).
 const tenantCols = `id, slug, name, status, plan, region, logo_url, metadata, created_at, updated_at`
 
-func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	n, err := r.q.SoftDeleteTenant(ctx, id)
+// SoftDelete deletes the organisation (its rows stay, marked deleted).
+// onDeleted (nil: none) runs in the same transaction, given the status it had.
+func (r *Repository) SoftDelete(ctx context.Context, id uuid.UUID, onDeleted StatusChange) error {
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return errs.ErrNotFound
+	defer tx.Rollback(ctx)
+	var from string
+	if err := tx.QueryRow(ctx, `SELECT status FROM tenant.tenants WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, id).
+		Scan(&from); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errs.ErrNotFound
+		}
+		return err
 	}
-	return nil
+	if _, err := r.q.WithTx(tx).SoftDeleteTenant(ctx, id); err != nil {
+		return err
+	}
+	if onDeleted != nil {
+		if err := onDeleted(ctx, tx, from, "deleted"); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // IsEmailVerified reports whether the user has a verified email — the gate for

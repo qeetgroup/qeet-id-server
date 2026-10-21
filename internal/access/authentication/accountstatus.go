@@ -43,6 +43,21 @@ func (s *Service) refuseInactiveAccount(ctx context.Context, userID, tenantID uu
 	return errs.ErrAuthAccountInactive
 }
 
+// refuseInactiveTenant refuses, with ErrAuthTenantInactive, a session for an
+// organisation that is suspended or deleted (uuid.Nil: tenant-less, nothing
+// to check). Every sign-in and switch ends in the issuing step that asks it.
+func (s *Service) refuseInactiveTenant(ctx context.Context, tenantID uuid.UUID) error {
+	if tenantID == uuid.Nil {
+		return nil
+	}
+	var active bool
+	err := s.pool.QueryRow(ctx, `SELECT status = 'active' AND deleted_at IS NULL FROM tenant.tenants WHERE id = $1`, tenantID).Scan(&active)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) {
+		return errs.ErrAuthTenantInactive
+	}
+	return err
+}
+
 // CheckSignInAccount is refuseInactiveAccount for a sign-in that hands out
 // something before the session — a social provider's one-time code, which
 // would otherwise be issued to a suspended account and refused only at the
