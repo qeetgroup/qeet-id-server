@@ -570,6 +570,16 @@ The changes below are the work staged for that first release.
   person, through the helper signing out everywhere uses, and their audit records count them
   (`revoked_login_sessions`); the self-service change keeps the session it was made from.
 
+**An organisation can't take over a person's other memberships (2026-10-21)**
+
+* **users:** a person's one account carries the same password and second factors into every organisation they
+  belong to, so an administrator of the organisation the account calls home could set its password or reset
+  its factors, sign in as the person and switch into their other organisations. `POST /v1/users/{id}/password`
+  and `DELETE /v1/users/{id}/mfa` now refuse an account that also belongs to another organisation (403
+  `user.credentials_shared`); the person changes those credentials themselves. For an account that belongs only
+  to the administrator's organisation they work as before, and the person is emailed that an administrator of
+  that organisation made the change.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
