@@ -418,6 +418,8 @@ func RoutePolicies() map[string]rbac.RoutePolicy {
 		"GET /v1/mfa/push/pairing/{id}",
 		"DELETE /v1/mfa/push/pairing/{id}",
 		"GET /v1/mfa/step-up/status",
+		"POST /v1/mfa/push/step-up",
+		"POST /v1/mfa/push/step-up/{id}/complete",
 		"GET /v1/oauth/userinfo",
 		"POST /v1/oauth/userinfo",
 		"GET /v1/oauth/bc-authorize/pending",

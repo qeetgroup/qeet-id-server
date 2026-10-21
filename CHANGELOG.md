@@ -601,6 +601,16 @@ The changes below are the work staged for that first release.
   caller to hold every permission the role carries (403 `rbac.grant_exceeds_caller`, naming one it lacks); and
   only an owner gives the owner role (403 `rbac.owner_only`). An owner may still give anything.
 
+**A linked phone is a step-up factor (2026-10-21)**
+
+* **mfa:** a linked phone that approves sign-ins counted as a second factor at sign-in but not for step-up, and
+  no route stepped up with one, so an account whose only factor is a phone was treated as having none: a stolen
+  token could unlink the phone, pair another or add a passkey without a step-up, while the person could never
+  complete an always-gated action (nor anyone in an organisation that counted only push). A linked phone now
+  counts as a factor held for step-up, and a session steps up with it: `POST /v1/mfa/push/step-up` sends the
+  request to the person's phones, and `POST /v1/mfa/push/step-up/{id}/complete` records the session's step-up
+  (method `push`) once it is approved, spending the request.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

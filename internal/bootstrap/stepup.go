@@ -174,6 +174,8 @@ func stepUpExempt() map[string]string {
 		"POST /v1/mfa/otp/factors/{id}/challenge":                                           "sends a step-up code",
 		"POST /v1/mfa/webauthn/challenge":                                                   "is how a session steps up",
 		"POST /v1/mfa/webauthn/verify":                                                      "is how a session steps up",
+		"POST /v1/mfa/push/step-up":                                                         "is how a session steps up",
+		"POST /v1/mfa/push/step-up/{id}/complete":                                           "is how a session steps up",
 		"POST /v1/passkeys/register/finish":                                                 "completes a ceremony its begin already gated",
 		"PATCH /v1/passkeys/{id}":                                                           "renames a passkey",
 		"DELETE /v1/me/social/identities/{id}":                                              "removes a way in; adding one is gated",
