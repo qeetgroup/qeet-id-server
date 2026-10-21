@@ -57,7 +57,7 @@ func prompts(q url.Values) []string { return strings.Fields(q.Get("prompt")) }
 // A sign-in at or after the login_after marker (set when we sent the browser
 // to sign in for this request) satisfies both.
 func signInRequired(q url.Values, signedInAt, now time.Time) bool {
-	if la, err := strconv.ParseInt(q.Get(loginAfterParam), 10, 64); err == nil && !signedInAt.Before(time.Unix(la, 0)) {
+	if signedInForRequest(q, signedInAt) {
 		return false
 	}
 	if slices.Contains(prompts(q), "login") {
@@ -67,6 +67,14 @@ func signInRequired(q url.Values, signedInAt, now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// signedInForRequest reports whether the hosted sign-in happened at or after
+// the login_after marker: the browser was sent to sign in for this request and
+// has.
+func signedInForRequest(q url.Values, signedInAt time.Time) bool {
+	la, err := strconv.ParseInt(q.Get(loginAfterParam), 10, 64)
+	return err == nil && !signedInAt.Before(time.Unix(la, 0))
 }
 
 // reauthReturnTo is the authorize URL to come back to after a forced sign-in:

@@ -483,10 +483,17 @@ type SwitchTenantInput struct {
 // transaction, and revocation subscribers of the organization it belonged to
 // are told, with "tenant_switch" as the reason.
 //
+// The organization's second-factor requirement applies to entering it, not
+// only to signing in at home (QTID-800): the sign-in behind the session
+// switched from must have met a factor, or that session must hold a fresh
+// step-up, and the new session carries it on.
+//
 // Refused with ErrAuthNotTenantMember for an organization the caller does not
-// belong to, with the hook's error when the hook refuses, and with
-// ErrUnauthorized when the session switched from has already ended (its access
-// token outlives it by a few minutes); in every refusal nothing changes.
+// belong to, with ErrStepUpRequired or ErrMFAEnrollmentRequired while its
+// second-factor requirement isn't met (see tenantFactorShortfall), with the
+// hook's error when the hook refuses, and with ErrUnauthorized when the
+// session switched from has already ended (its access token outlives it by a
+// few minutes); in every refusal nothing changes.
 func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*TokenPair, error) {
 	member, err := s.q.CheckTenantMembership(ctx, dbgen.CheckTenantMembershipParams{
 		UserID:   in.UserID,
@@ -506,6 +513,13 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 	}
 	if !live {
 		return nil, errs.ErrUnauthorized
+	}
+	carried, err := s.carriedSecondFactor(ctx, in.FromSessionID, in.UserID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.tenantFactorShortfall(ctx, in.UserID, in.TenantID, carried); err != nil {
+		return nil, err
 	}
 	var claims map[string]any
 	if s.loginHook != nil {
@@ -540,8 +554,11 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 		return nil, err
 	}
 	pair, err := s.issuePairTx(ctx, tx, in.UserID, in.TenantID, in.IP, in.UserAgent, "tenant_switch", claims,
-		map[string]any{"previous_session_id": in.FromSessionID}, ends)
+		map[string]any{"previous_session_id": in.FromSessionID, "second_factor": carried}, ends)
 	if err != nil {
+		return nil, err
+	}
+	if err := carrySecondFactor(ctx, tx, pair.SessionID, carried); err != nil {
 		return nil, err
 	}
 	left, err := q.SupersedeSession(ctx, dbgen.SupersedeSessionParams{
@@ -561,6 +578,97 @@ func (s *Service) SwitchTenant(ctx context.Context, in SwitchTenantInput) (*Toke
 		return nil, err
 	}
 	return pair, nil
+}
+
+// SignInInvitedAccount signs in an account an accepted invitation has just
+// created in tenantID, as at sign-up: where the organisation requires a second
+// factor the result is the enrolment challenge instead of a session
+// (QTID-800).
+func (s *Service) SignInInvitedAccount(ctx context.Context, userID, tenantID uuid.UUID, ip, ua string) (*LoginResult, error) {
+	gate, err := s.mfaGate(ctx, userID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if gate.challenged() {
+		challenge, err := s.challengeSignIn(ctx, userID, tenantID, nil, gate, firstFactorPassword, ip, ua)
+		if err != nil {
+			return nil, err
+		}
+		return &LoginResult{MFAChallenge: challenge}, nil
+	}
+	pair, err := s.IssuePair(ctx, userID, tenantID, ip, ua, "invite_accept")
+	if err != nil {
+		return nil, err
+	}
+	return &LoginResult{Pair: pair}, nil
+}
+
+// EnterInvitedTenant issues the session an existing account enters tenantID
+// with after accepting its invitation while signed in. fromSessionID is the
+// caller's session (uuid.Nil: none, so no factor carries): its second factor
+// carries on as for SwitchTenant, and the entry is refused the same way
+// (ErrStepUpRequired, ErrMFAEnrollmentRequired) while the organisation
+// requires one it didn't meet (QTID-800). The invitation stays accepted, so
+// the caller can step up or set a factor up and switch in.
+func (s *Service) EnterInvitedTenant(ctx context.Context, userID, tenantID, fromSessionID uuid.UUID, ip, ua string) (*TokenPair, error) {
+	carried := ""
+	if fromSessionID != uuid.Nil {
+		var err error
+		if carried, err = s.carriedSecondFactor(ctx, fromSessionID, userID); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.tenantFactorShortfall(ctx, userID, tenantID, carried); err != nil {
+		return nil, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	pair, err := s.issuePairTx(ctx, tx, userID, tenantID, ip, ua, "invite_accept", nil,
+		map[string]any{"previous_session_id": fromSessionID, "second_factor": carried}, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	if err := carrySecondFactor(ctx, tx, pair.SessionID, carried); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return pair, nil
+}
+
+// carriedSecondFactor is the second factor a session's sign-in met, for a
+// session opened from it to carry on: the sign-in's own, else "step_up" while
+// the session holds a fresh step-up, else "". ErrUnauthorized when the session
+// isn't the user's or has ended.
+func (s *Service) carriedSecondFactor(ctx context.Context, sessionID, userID uuid.UUID) (string, error) {
+	row, err := s.q.SessionSecondFactor(ctx, dbgen.SessionSecondFactorParams{SessionID: sessionID, UserID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errs.ErrUnauthorized
+	}
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case row.SecondFactor != "":
+		return row.SecondFactor, nil
+	case row.SteppedUp:
+		return secondFactorStepUp, nil
+	}
+	return "", nil
+}
+
+// carrySecondFactor records on a session opened from another the second
+// factor carried from it ("": none, nothing to record).
+func carrySecondFactor(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, factor string) error {
+	if factor == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `UPDATE auth.sessions SET second_factor = $2 WHERE id = $1`, sessionID, factor)
+	return err
 }
 
 // Login verifies the password and, when the account holds a second factor or
@@ -623,7 +731,9 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 	if err != nil {
 		return nil, err
 	}
-	gate, err := s.mfaGate(ctx, u.ID, u.TenantID)
+	// The organisation of the application served requires its second factor
+	// here as well as the account's own (QTID-800).
+	gate, err := s.mfaGateFor(ctx, u.ID, u.TenantID, clientTenant)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +753,7 @@ func (s *Service) BeginLoginSession(ctx context.Context, in SignInAttempt, ua, t
 		}
 		return &LoginSessionResult{UserID: u.ID, MFAChallenge: challenge}, nil
 	}
-	raw, err := s.CreateLoginSession(ctx, u.ID, in.IP, ua)
+	raw, err := s.createLoginSession(ctx, u.ID, in.IP, ua, gate.skippedFactor())
 	if err != nil {
 		return nil, err
 	}
@@ -1177,7 +1287,11 @@ func (s *Service) CompleteMFALoginSessionWith(ctx context.Context, mfaToken stri
 	if err != nil {
 		return nil, err
 	}
-	raw, err := s.CreateLoginSession(ctx, met.userID, ip, ua)
+	factor := ""
+	if !met.deferred && !met.riskVerified {
+		factor = secondFactorMFA
+	}
+	raw, err := s.createLoginSession(ctx, met.userID, ip, ua, factor)
 	if err != nil {
 		return nil, err
 	}
@@ -1348,17 +1462,18 @@ func (s *Service) issuePairTx(ctx context.Context, tx pgx.Tx, userID, tenantID u
 	maxAge, idle := s.sessionDefaults()
 	var sessionExp, idleExp time.Time
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country)
+		INSERT INTO auth.sessions (id, user_id, tenant_id, ip, user_agent, hook_claims, expires_at, idle_timeout, country,
+		                           second_factor)
 		SELECT $1, $2, $3, NULLIF($4,'')::inet, $5, $6,
 		       LEAST(NOW() + COALESCE(sp.session_max_age, make_interval(secs => $7::float8)),
 		             COALESCE($9::timestamptz, 'infinity'::timestamptz)),
 		       COALESCE(sp.session_idle_timeout, make_interval(secs => $8::float8)),
-		       NULLIF($10, '')
+		       NULLIF($10, ''), NULLIF($11, '')
 		FROM (VALUES (1)) AS one
 		LEFT JOIN tenant.security_policies sp ON sp.tenant_id = $3
 		RETURNING expires_at, LEAST(last_seen_at + idle_timeout, expires_at)
 	`, sessionID, userID, tenantArg, ipArg, ua, hookClaims, maxAge.Seconds(), idle.Seconds(), notAfterArg(notAfter),
-		httpx.GeoCountry(ctx)).Scan(&sessionExp, &idleExp); err != nil {
+		httpx.GeoCountry(ctx), secondFactorOfMethod(method)).Scan(&sessionExp, &idleExp); err != nil {
 		return nil, err
 	}
 	access, exp, err := s.tokens.IssueSessionAccess(userID, tenantID, sessionID, claims, sessionExp)

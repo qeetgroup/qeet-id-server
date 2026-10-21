@@ -2419,7 +2419,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Creates the invited account and signs it in. The response is a token pair, or, where the organisation requires a second factor, the sign-in''s challenge instead (mfa_required, mfa_token and, for an account with no factor yet, enrollment_required), met as at sign-in.'
       responses:
         '201':
           description: Created
@@ -2642,7 +2642,7 @@ paths:
                   type: string
               required:
                 - token
-      description: Joins the caller's existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller's own email (`invite.email_mismatch` otherwise).
+      description: 'Joins the caller''s existing account to the invited tenant (no new user, no password) and returns a tenant-scoped token pair. The invite must be addressed to the caller''s own email (`invite.email_mismatch` otherwise). An organisation that requires a second factor of the caller (its security policy, or administrators-only for its administrators) is entered (the pair issued) only by a session whose sign-in met one, or that holds a fresh step-up; otherwise 403 step_up_required (step up, then switch in) or 403 mfa.enrollment_required (set a factor up first), unless the organisation''s grace period still lets the caller put the setup off. The new session carries the factor on. The invite stays accepted when the pair is refused.'
       responses:
         '200':
           description: OK
@@ -2677,7 +2677,7 @@ paths:
           schema:
             type: string
             format: uuid
-      description: 'Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair. Answers 403 invite.email_not_verified until the account''s address is verified.'
+      description: 'Same as accepting by token, but selects the invite by id (from GET /v1/me/invites). Returns a tenant-scoped token pair, under the same second-factor rule. Answers 403 invite.email_not_verified until the account''s address is verified.'
       responses:
         '200':
           description: OK

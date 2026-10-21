@@ -452,7 +452,7 @@ func (q *Queries) GetConsentRequest(ctx context.Context, arg GetConsentRequestPa
 }
 
 const getDeviceByUserCode = `-- name: GetDeviceByUserCode :one
-SELECT client_id, scopes, status, expires_at
+SELECT client_id, scopes, status, expires_at, tenant_id
 FROM auth.oidc_device_codes WHERE user_code = $1
 `
 
@@ -461,6 +461,7 @@ type GetDeviceByUserCodeRow struct {
 	Scopes    []string
 	Status    string
 	ExpiresAt time.Time
+	TenantID  uuid.UUID
 }
 
 func (q *Queries) GetDeviceByUserCode(ctx context.Context, userCode string) (GetDeviceByUserCodeRow, error) {
@@ -471,6 +472,7 @@ func (q *Queries) GetDeviceByUserCode(ctx context.Context, userCode string) (Get
 		&i.Scopes,
 		&i.Status,
 		&i.ExpiresAt,
+		&i.TenantID,
 	)
 	return i, err
 }

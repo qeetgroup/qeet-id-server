@@ -312,18 +312,22 @@ func (q *Queries) GetSignInLocks(ctx context.Context, arg GetSignInLocksParams) 
 }
 
 const insertLoginSession = `-- name: InsertLoginSession :exec
-INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent)
-VALUES ($1, $2, $3, NULLIF($4::text, '')::inet, $5)
+INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent, second_factor)
+VALUES ($1, $2, $3, NULLIF($4::text, '')::inet, $5,
+        NULLIF($6::text, ''))
 `
 
 type InsertLoginSessionParams struct {
-	TokenHash string
-	UserID    uuid.UUID
-	ExpiresAt time.Time
-	Ip        string
-	UserAgent *string
+	TokenHash    string
+	UserID       uuid.UUID
+	ExpiresAt    time.Time
+	Ip           string
+	UserAgent    *string
+	SecondFactor string
 }
 
+// second_factor: how the sign-in met a second factor (NULL: it didn't); see
+// migration 0149.
 func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSessionParams) error {
 	_, err := q.db.Exec(ctx, insertLoginSession,
 		arg.TokenHash,
@@ -331,6 +335,7 @@ func (q *Queries) InsertLoginSession(ctx context.Context, arg InsertLoginSession
 		arg.ExpiresAt,
 		arg.Ip,
 		arg.UserAgent,
+		arg.SecondFactor,
 	)
 	return err
 }
@@ -498,9 +503,33 @@ func (q *Queries) LockUserForSessionRevocation(ctx context.Context, userID uuid.
 	return id, err
 }
 
+const loginSessionSecondFactor = `-- name: LoginSessionSecondFactor :one
+SELECT COALESCE(second_factor, '')::text AS second_factor
+FROM auth.login_sessions
+WHERE id = $1 AND user_id = $2 AND expires_at > NOW()
+`
+
+type LoginSessionSecondFactorParams struct {
+	ID     uuid.UUID
+	UserID uuid.UUID
+}
+
+// How the sign-in behind a live hosted-login session of the user's met a
+// second factor (” when it didn't). No row when the session is unknown,
+// someone else's or expired.
+func (q *Queries) LoginSessionSecondFactor(ctx context.Context, arg LoginSessionSecondFactorParams) (string, error) {
+	row := q.db.QueryRow(ctx, loginSessionSecondFactor, arg.ID, arg.UserID)
+	var second_factor string
+	err := row.Scan(&second_factor)
+	return second_factor, err
+}
+
 const mFARequirement = `-- name: MFARequirement :one
 SELECT u.mfa_required,
-       u.created_at,
+       (CASE WHEN u.tenant_id = $1::uuid THEN u.created_at
+             ELSE COALESCE((SELECT MIN(ur.granted_at) FROM rbac.user_roles ur
+                            WHERE ur.user_id = u.id AND ur.tenant_id = $1::uuid), u.created_at)
+        END)::timestamptz AS joined_at,
        COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
        COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
        sp.mfa_enforced_since,
@@ -530,7 +559,7 @@ type MFARequirementParams struct {
 
 type MFARequirementRow struct {
 	MfaRequired      bool
-	CreatedAt        time.Time
+	JoinedAt         time.Time
 	Enforcement      string
 	GraceDays        int32
 	MfaEnforcedSince pgtype.Timestamptz
@@ -542,12 +571,15 @@ type MFARequirementRow struct {
 // organisation's requirement and grace period, and whether the account is an
 // administrator there — holds a role, directly or through a group, granting
 // any write permission.
+// joined_at is when the account joined the organisation, which the grace
+// period is judged by: its creation for its own organisation, its first role
+// there for any other (QTID-800).
 func (q *Queries) MFARequirement(ctx context.Context, arg MFARequirementParams) (MFARequirementRow, error) {
 	row := q.db.QueryRow(ctx, mFARequirement, arg.TenantID, arg.UserID)
 	var i MFARequirementRow
 	err := row.Scan(
 		&i.MfaRequired,
-		&i.CreatedAt,
+		&i.JoinedAt,
 		&i.Enforcement,
 		&i.GraceDays,
 		&i.MfaEnforcedSince,
@@ -970,6 +1002,40 @@ func (q *Queries) SessionEnd(ctx context.Context, arg SessionEndParams) (time.Ti
 	var expires_at time.Time
 	err := row.Scan(&expires_at)
 	return expires_at, err
+}
+
+const sessionSecondFactor = `-- name: SessionSecondFactor :one
+SELECT COALESCE(s.second_factor, '')::text AS second_factor,
+       EXISTS (
+           SELECT 1 FROM auth.mfa_verifications v
+           WHERE v.session_id = s.id
+             AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
+       ) AS stepped_up
+FROM auth.sessions s
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW()
+`
+
+type SessionSecondFactorParams struct {
+	SessionID uuid.UUID
+	UserID    uuid.UUID
+}
+
+type SessionSecondFactorRow struct {
+	SecondFactor string
+	SteppedUp    bool
+}
+
+// How the sign-in behind a live session of the user's met a second factor
+// (” when it didn't), and whether the session holds a step-up still inside
+// its organisation's window. No row when the session is unknown, someone
+// else's, revoked or expired.
+func (q *Queries) SessionSecondFactor(ctx context.Context, arg SessionSecondFactorParams) (SessionSecondFactorRow, error) {
+	row := q.db.QueryRow(ctx, sessionSecondFactor, arg.SessionID, arg.UserID)
+	var i SessionSecondFactorRow
+	err := row.Scan(&i.SecondFactor, &i.SteppedUp)
+	return i, err
 }
 
 const spendAuthorizationCodesForUser = `-- name: SpendAuthorizationCodesForUser :execrows

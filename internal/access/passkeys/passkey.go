@@ -635,7 +635,7 @@ func (s *Service) FinishTenantSignup(ctx context.Context, sessionID uuid.UUID, c
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	raw, err := s.auth.CreateLoginSession(ctx, userID, ip, ua)
+	raw, err := s.auth.CreatePasskeyLoginSession(ctx, userID, ip, ua)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -865,7 +865,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 // passkey user, so a passkey login can also drive the OAuth authorize/consent
 // flow (the cookie is set by the handler).
 func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
-	return s.auth.CreateLoginSession(ctx, userID, ip, ua)
+	return s.auth.CreatePasskeyLoginSession(ctx, userID, ip, ua)
 }
 
 // --- WebAuthn as a second factor ---

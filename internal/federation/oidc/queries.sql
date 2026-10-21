@@ -235,7 +235,7 @@ INSERT INTO auth.oidc_device_codes (
           @interval_seconds, NOW() + INTERVAL '10 minutes');
 
 -- name: GetDeviceByUserCode :one
-SELECT client_id, scopes, status, expires_at
+SELECT client_id, scopes, status, expires_at, tenant_id
 FROM auth.oidc_device_codes WHERE user_code = @user_code;
 
 -- name: LockDeviceByUserCode :one
