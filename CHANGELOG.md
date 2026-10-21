@@ -400,6 +400,24 @@ The changes below are the work staged for that first release.
   safe to make. `TestEveryRouteNamesAnApplicationScope` fails a route added without a scope. The unused
   `httpx.RequireScope`, which implied a scope check that never ran, is removed.
 
+**A deny policy binds everywhere (2026-10-21)**
+
+* **authz:** an attribute (ABAC) deny policy now refuses at every enforcement point, not only at
+  `POST /v1/tenants/{tenantID}/abac/evaluate`. A tenant that wrote a deny to block someone found them still
+  allowed by `GET /v1/check`, the relationship check, AuthZEN and the platform's own route guard, each of
+  which consulted one engine. One composed decision (`internal/access/authorization/decide`) now answers all
+  four: the tenant first, then any ABAC deny refuses and stops, then a role, a relationship tuple or an ABAC
+  allow policy permits; an engine error refuses. ABAC reads a permission as resource type and action
+  (`doc:write` → `doc`, `write`) and the subject as the platform knows it (`subject.id`, `subject.type`,
+  `subject.tenant_id`). A role granting `type:relation` (or `type.relation`) now allows at the relationship
+  check without a tuple; roles and relationships were either-or by resource kind. On Qeet ID's own
+  management API only a role allows: an ABAC allow can't widen it, a deny narrows it. Tenants with no
+  policy of the kind that matters skip ABAC (a per-tenant flag cached 5 s, cleared on every change).
+  The check responses add `decided_by` (`model`, `rule`, `policy_id`) and, with `explain=true`, a `trace`;
+  the policy is named only to a caller holding `policy.read`. Saving an enabled deny that would stop its
+  own author changing policies is refused with 409 `abac.policy_locks_out`, so no tenant can lock itself
+  out of undoing it.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
