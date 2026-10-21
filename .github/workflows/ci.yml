@@ -129,8 +129,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # gosec v2.29.0 requires a golang.org/x/tools too old to read Go 1.27
+      # export data, so `go install gosec@...` loads most packages without type
+      # information (200 files, "export data version 5 is greater than maximum
+      # supported version 4") and the findings that need types go missing.
+      # Build it against a current x/tools instead. Pinned, not @latest; bump
+      # both with go.mod.
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: |
+          mkdir "$RUNNER_TEMP/gosec" && cd "$RUNNER_TEMP/gosec"
+          go mod init gosec-build
+          go get github.com/securego/gosec/v2/cmd/gosec@v2.29.0 golang.org/x/tools@v0.52.0
+          go build -o "$(go env GOPATH)/bin/gosec" github.com/securego/gosec/v2/cmd/gosec
 
       # Generated sqlc code is excluded for the same reason golangci-lint
       # excludes it: it is not hand-authored. Findings surface as a warning
