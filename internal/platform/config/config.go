@@ -21,8 +21,9 @@ const (
 	// EnvLocal is a Local-tier runtime of the Qeet ID Kit (qeet-id-kit; the DEV,
 	// TEST and STAGING environments, selected by SERVICE_PROFILE).
 	// Every production gate applies; the only difference from prod is that its
-	// browser-facing hosts must be loopback names (localhost / *.localhost), so
-	// it cannot be deployed publicly by mistake.
+	// browser-facing hosts must be loopback names (localhost / *.localhost) or,
+	// over https, the environment's own kit zone (see kitZoneSuffix), so it
+	// cannot be deployed publicly by mistake.
 	EnvLocal = "local"
 	// EnvProd is production.
 	EnvProd = "prod"
@@ -31,6 +32,13 @@ const (
 // serviceProfiles are the SERVICE_PROFILE values accepted with SERVICE_ENV=local:
 // the local DEV, TEST (QA testing) and STAGING (UAT testing) environments.
 var serviceProfiles = map[string]bool{"dev": true, "test": true, "staging": true} //nolint:gochecknoglobals // fixed allowlist
+
+// kitZoneSuffix completes a local environment's public kit zone:
+// <profile>.id.qeet.in (test.id.qeet.in, ...). Public DNS points every name in
+// those zones at 127.0.0.1, so they reach only the computer running the kit,
+// and real https callbacks (Google, Microsoft, Apple sign-in) can be
+// registered for them, which *.localhost cannot.
+const kitZoneSuffix = ".id.qeet.in"
 
 type Config struct {
 	ServiceName string `envconfig:"SERVICE_NAME" default:"qeet-id"`
@@ -550,18 +558,27 @@ func (c *Config) Validate() error {
 	}
 	switch c.ServiceEnv {
 	case EnvProd:
-		if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) {
-			problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost")
+		if u, err := url.Parse(c.AppBaseURL); err != nil || u.Hostname() == "" || isLocalHost(u.Hostname()) || isAnyKitZoneHost(u.Hostname()) {
+			problems = append(problems, "APP_BASE_URL must be a real public origin, not localhost or a kit zone")
 		}
 	case EnvLocal:
 		// A local runtime is reachable only on this machine: its browser-facing
-		// hosts must be loopback names, so it can never be deployed publicly.
+		// hosts must be loopback names, or https on its own kit zone, so it can
+		// never be deployed publicly.
 		for _, v := range []struct{ name, raw string }{
 			{"APP_BASE_URL", c.AppBaseURL},
 			{"LOGIN_BASE_URL", c.LoginBaseURL},
 		} {
-			if u, err := url.Parse(v.raw); err != nil || !isLoopbackName(u.Hostname()) {
-				problems = append(problems, v.name+" must use localhost or a *.localhost host with SERVICE_ENV=local")
+			u, err := url.Parse(v.raw)
+			switch {
+			case err == nil && isLoopbackName(u.Hostname()):
+			case err == nil && isKitZoneHost(u.Hostname(), c.ServiceProfile):
+				// Passkeys and Secure cookies need https on a public name.
+				if u.Scheme != "https" {
+					problems = append(problems, v.name+" must use https on the "+c.ServiceProfile+kitZoneSuffix+" kit zone")
+				}
+			default:
+				problems = append(problems, v.name+" must use localhost, a *.localhost host or https on this profile's kit zone (<profile>"+kitZoneSuffix+") with SERVICE_ENV=local")
 			}
 		}
 	}
@@ -600,6 +617,28 @@ func isLocalHost(h string) bool {
 func isLoopbackName(h string) bool {
 	h = strings.TrimSuffix(strings.ToLower(h), ".")
 	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
+// isKitZoneHost reports whether h is in the kit zone of this local profile:
+// <profile>.id.qeet.in or a subdomain of it. Another profile's zone, and
+// id.qeet.in itself (production), are not.
+func isKitZoneHost(h, profile string) bool {
+	if !serviceProfiles[profile] {
+		return false
+	}
+	h = strings.TrimSuffix(strings.ToLower(h), ".")
+	zone := profile + kitZoneSuffix
+	return h == zone || strings.HasSuffix(h, "."+zone)
+}
+
+// isAnyKitZoneHost reports whether h is in the kit zone of any local profile.
+func isAnyKitZoneHost(h string) bool {
+	for profile := range serviceProfiles {
+		if isKitZoneHost(h, profile) {
+			return true
+		}
+	}
+	return false
 }
 
 // RelayKeys returns the configured relay keys (RELAY_KEYS), trimmed, empty
