@@ -332,6 +332,12 @@ func userPermissionMap() map[string]string {
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
 
+		// Email delivery: whether the organisation's mail arrived (support),
+		// and lifting a suppression its mail caused (administrators).
+		"GET /v1/tenants/{tenantID}/email/messages":             "user.read",
+		"GET /v1/tenants/{tenantID}/email/suppressions":         "user.read",
+		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}": "user.write",
+
 		// SIEM/log streaming contains tenant audit data.
 		"GET /v1/tenants/{tenantID}/log-sinks":         "audit.read",
 		"POST /v1/tenants/{tenantID}/log-sinks":        "audit.write",

@@ -99,7 +99,7 @@ func TestScheduledJobsRunOncePerInterval(t *testing.T) {
 				t.Fatalf("job %s has no interval or body", j.Name)
 			}
 		}
-		if len(names) != 5 || names[0] != "audit-chain-verify" {
+		if len(names) != 6 || names[0] != "audit-chain-verify" || names[5] != "email-delivery-cleanup" {
 			t.Fatalf("maintenance jobs = %v", names)
 		}
 	})

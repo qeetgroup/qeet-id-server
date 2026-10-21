@@ -82,6 +82,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -214,20 +215,29 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo.SetSessionDefaults(cfg.SessionMaxAge, cfg.SessionIdleTimeout)
 
 	sender := notifier.New(notifier.Config{
-		EmailProvider:    cfg.EmailProvider,
-		AWSRegion:        cfg.AWSRegion,
-		SMTPHost:         cfg.SMTPHost,
-		SMTPPort:         cfg.SMTPPort,
-		SMTPUsername:     cfg.SMTPUsername,
-		SMTPPassword:     cfg.SMTPPassword,
-		SMTPFrom:         cfg.SMTPFrom,
-		TwilioAccountSID: cfg.TwilioAccountSID,
-		TwilioAuthToken:  cfg.TwilioAuthToken,
-		TwilioFrom:       cfg.TwilioFrom,
-		Dev:              cfg.IsDev(),
+		EmailProvider:       cfg.EmailProvider,
+		AWSRegion:           cfg.AWSRegion,
+		SMTPHost:            cfg.SMTPHost,
+		SMTPPort:            cfg.SMTPPort,
+		SMTPUsername:        cfg.SMTPUsername,
+		SMTPPassword:        cfg.SMTPPassword,
+		SMTPFrom:            cfg.SMTPFrom,
+		SESConfigurationSet: cfg.SESConfigurationSet,
+		TwilioAccountSID:    cfg.TwilioAccountSID,
+		TwilioAuthToken:     cfg.TwilioAuthToken,
+		TwilioFrom:          cfg.TwilioFrom,
+		Dev:                 cfg.IsDev(),
 	})
 	emailTransport, emailRouter := sender.(notifier.Router)
 	emailTestEnabled := emailRouter && emailTransport.Email != nil
+	// Every email is checked against the suppression list and recorded, right
+	// in front of the transport (after templating and branding).
+	deliveryStore := delivery.NewStore(pool)
+	emailProvider := "none"
+	if emailRouter {
+		emailProvider = emailTransport.EmailProvider()
+	}
+	sender = delivery.Tracker{Next: sender, Store: deliveryStore, Provider: emailProvider}
 	sender = branding.Sender{Source: brandingRepo, Next: sender}
 	sender = email.TemplateSender{Templates: emailTemplateService, Appearance: brandingRepo, Next: sender}
 	// PNG fallback for the email logo (served at the app root): shown in clients
@@ -631,6 +641,8 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
 		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: emailTestEnabled},
+		EmailDelivery: &email.DeliveryHandler{Store: deliveryStore},
+		SESWebhook:    &delivery.Webhook{Store: deliveryStore, TopicARNs: cfg.SESEventsTopicARNs},
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},

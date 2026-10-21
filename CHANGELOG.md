@@ -436,6 +436,28 @@ The changes below are the work staged for that first release.
   nothing (exit 0 compatible, 1 not, 2 can't tell), so the host can check the target image before it
   stops anything.
 
+**Email that says whether it arrived (2026-10-21)**
+
+* **email:** every email is recorded (`platform.email_messages`, migration 0148) with what happened to it:
+  sent, delivered, bounced, complained, suppressed or failed, and the provider's reason. Amazon SES reports
+  arrive at a new public `POST /v1/webhooks/ses` through SNS: each message's signature is verified against a
+  certificate served by `sns.<region>.amazonaws.com`, messages older than an hour are refused, and only the
+  topics in `SES_EVENTS_TOPIC_ARN` are accepted (anyone can create an SNS topic; with none set the endpoint
+  is off); the subscription is confirmed by visiting its `SubscribeURL`. Emails name
+  `SES_CONFIGURATION_SET` so SES publishes the events. A hard bounce or a complaint suppresses the address
+  platform-wide (`platform.email_suppressions`); a soft bounce is only recorded. A send to a suppressed
+  address never reaches the provider and fails with 422 `email.suppressed`. Addresses are stored as a
+  SHA-256 plus a masked hint, never in plain text. `email_messages_total{template,status}` counts them.
+* **email:** `GET /v1/tenants/{tenantID}/email/messages?to=` (`user.read`) shows an organisation its mail to
+  an address and the address's suppression; `GET …/email/suppressions` lists those its mail caused, and
+  `DELETE …/email/suppressions/{id}` (`user.write`, audited `email.suppression_cleared`) clears one; another
+  organisation's suppression is neither identified nor clearable. Records are kept 90 days
+  (`email-delivery-cleanup`).
+* **email:** with no provider configured outside development, a send now fails with 503
+  `email.provider_unavailable` instead of reporting success while the message reached nobody (QTID-115). An
+  invitation is still created (its link can be shared), and its response now says whether the email went:
+  `invite.delivery` is `sent`, or `not_sent` with the code (`email.suppressed`, `email.provider_unavailable`).
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard

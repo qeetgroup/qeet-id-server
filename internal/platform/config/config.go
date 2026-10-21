@@ -218,6 +218,14 @@ type Config struct {
 	SMTPUsername string `envconfig:"SMTP_USERNAME" default:""`
 	SMTPPassword string `envconfig:"SMTP_PASSWORD" default:""`
 	SMTPFrom     string `envconfig:"SMTP_FROM" default:""`
+	// SESConfigurationSet names the SES configuration set every email is sent
+	// with (ses-api), whose event destination publishes deliveries, bounces
+	// and complaints to SNS and on to POST /v1/webhooks/ses.
+	SESConfigurationSet string `envconfig:"SES_CONFIGURATION_SET" default:""`
+	// SESEventsTopicARNs are the SNS topics POST /v1/webhooks/ses accepts
+	// (comma-separated). Anyone can create an SNS topic, so a message from any
+	// other is refused; with none set the endpoint is off.
+	SESEventsTopicARNs []string `envconfig:"SES_EVENTS_TOPIC_ARN" default:""`
 
 	// SMS (Twilio). Empty credentials leave SMS on the log-only fallback.
 	TwilioAccountSID string `envconfig:"TWILIO_ACCOUNT_SID" default:""`

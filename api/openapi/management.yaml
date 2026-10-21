@@ -2374,7 +2374,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Creates an invitation and emails its accept link. The response carries the invitation, its raw token (so the link can be shared by hand) and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way.'
       responses:
         '201':
           description: Created
@@ -2383,6 +2383,15 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  invite:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      delivery:
+                        $ref: '#/components/schemas/InviteDelivery'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2748,7 +2757,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:
@@ -2968,6 +2977,18 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    InviteDelivery:
+      type: object
+      description: Whether the invitation's email went out. The invitation exists either way.
+      properties:
+        status:
+          type: string
+          enum: [sent, not_sent]
+        code:
+          type: string
+          description: 'Why not, when not_sent: email.suppressed, email.provider_unavailable or email.send_failed.'
+        message:
+          type: string
     TenantBranding:
       type: object
       properties:

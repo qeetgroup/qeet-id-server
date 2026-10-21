@@ -63,6 +63,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/metrics"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
@@ -84,6 +85,8 @@ type Deps struct {
 	Invite        *invite.Handler
 	Branding      *branding.Handler
 	EmailTemplate *email.Handler
+	EmailDelivery *email.DeliveryHandler
+	SESWebhook    *delivery.Webhook
 	APIKey        *apikey.Handler
 	APIKeyService *apikey.Service
 	Principal     *principal.Handler
@@ -358,6 +361,7 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.OIDC.MountBrowser(r)
 	d.TokenVault.MountPublic(r)
 	d.MFA.MountPublic(r)
+	d.SESWebhook.Mount(r)
 }
 
 // mountAuthenticatedRoutes is the single production registration point for
@@ -373,6 +377,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Invite.MountAuthed(r)
 	d.Branding.Mount(r)
 	d.EmailTemplate.Mount(r)
+	d.EmailDelivery.Mount(r)
 	d.APIKey.Mount(r)
 	d.Principal.Mount(r)
 	d.MFA.Mount(r)
@@ -470,6 +475,7 @@ func csrfExemptPaths() []string {
 		"/v1/invites/accept/passkey/",   // the same, accepting with a passkey
 		"/v1/invites/lookup",            // read-only preview by invitation token
 		"/v1/billing/webhooks/",         // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/webhooks/ses",              // SNS-signed SES events, no cookie session
 		"/v1/billing/sandbox/",          // dev-only mock hosted-checkout page + pay (no cookie session)
 		"/v1/agents/token",              // agent-credential auth (no cookie session)
 		"/v1/credentials/verify",        // public JWT-VC verification (no cookie session)
