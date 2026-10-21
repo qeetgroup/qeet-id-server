@@ -1090,11 +1090,17 @@ type loginBeginInput struct {
 	Email string `json:"email"`
 }
 
+// binding ties a passkey sign-in to the browser that began it: only that
+// browser is given the hosted-login cookie when it finishes.
+func (h *Handler) binding() httpx.BindingCookie {
+	return httpx.BindingCookie{Name: "qe_passkey", Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode, MaxAge: sessionTTL}
+}
+
 func (h *Handler) loginBegin(w http.ResponseWriter, r *http.Request) {
 	var in loginBeginInput
 	// Body is optional: an empty body means discoverable (usernameless) login.
 	if r.ContentLength != 0 {
-		if err := httpx.DecodeJSON(r, &in); err != nil {
+		if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
@@ -1104,6 +1110,7 @@ func (h *Handler) loginBegin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
+	h.binding().Add(w, r, sessionID.String())
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID,
 		"publicKey":  options.Response,
@@ -1115,9 +1122,15 @@ type loginFinishInput struct {
 	Credential json.RawMessage `json:"credential"`
 }
 
+// loginFinish completes a passkey sign-in with the token pair. The browser that
+// began the ceremony is also given the hosted-login SSO cookie, so a passkey
+// login can drive the OAuth authorize flow; any other caller (the console's
+// server, which holds the tokens) gets none. The route skips the cross-site
+// check because it bootstraps a bearer token, and this keeps that true: an
+// assertion carried into another browser never signs it in.
 func (h *Handler) loginFinish(w http.ResponseWriter, r *http.Request) {
 	var in loginFinishInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -1126,11 +1139,11 @@ func (h *Handler) loginFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Also establish the hosted-login SSO cookie so a passkey login can drive
-	// the OAuth authorize flow. Best-effort and harmless for the admin SPA,
-	// which authenticates with the bearer token and ignores the cookie.
-	if raw, serr := h.Service.StartLoginSession(r.Context(), pair.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
-		auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	if ceremony := in.SessionID.String(); h.binding().Holds(r, ceremony) {
+		h.binding().Remove(w, r, ceremony)
+		if raw, serr := h.Service.StartLoginSession(r.Context(), pair.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
+			auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
 }
@@ -1226,7 +1239,7 @@ func (h *Handler) tenantSignupBegin(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) tenantSignupFinish(w http.ResponseWriter, r *http.Request) {
 	var in signupFinishInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}

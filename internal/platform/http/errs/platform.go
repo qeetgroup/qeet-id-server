@@ -16,6 +16,7 @@ const (
 	CodeValidation          = "validation_failed"
 	CodeTooManyRequests     = "too_many_requests"
 	CodeRequestBodyTooLarge = "request_body_too_large"
+	CodeUnsupportedMedia    = "unsupported_media_type"
 	CodeInternal            = "internal"
 	CodeNotImplemented      = "not_implemented"
 )
@@ -39,3 +40,7 @@ var (
 	ErrInternalServer      = New(CodeInternal, "Something went wrong on our end. Please try again.").AsRetryable()
 	ErrNotImplemented      = New(CodeNotImplemented, "That feature isn't available yet.")
 )
+
+// ErrUnsupportedMediaType refuses a body not sent as JSON on a route that
+// accepts only JSON.
+var ErrUnsupportedMediaType = New(CodeUnsupportedMedia, "Send the request body as JSON.")

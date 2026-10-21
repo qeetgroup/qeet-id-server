@@ -123,12 +123,12 @@ func TestSuspendedAccountsCannotSignInAnyWay(t *testing.T) {
 
 	t.Run("an organisation's social sign-in gets no code, and the hosted one no cookie", func(t *testing.T) {
 		svc, provider := providerFor(t)
-		first, err := svc.CompleteCallback(ctx, provider, begin(t, svc, provider, ""), "upstream-code")
+		first, err := svc.CompleteCallback(ctx, provider, begin(t, svc, provider, ""), "upstream-code", true)
 		if err != nil || first.Code == "" {
 			t.Fatalf("active account = %+v, %v; want a code", first, err)
 		}
 		suspend(t, first.UserID)
-		if res, err := svc.CompleteCallback(ctx, provider, begin(t, svc, provider, ""), "upstream-code"); !errors.Is(err, errs.ErrAuthAccountInactive) || (res != nil && res.Code != "") {
+		if res, err := svc.CompleteCallback(ctx, provider, begin(t, svc, provider, ""), "upstream-code", true); !errors.Is(err, errs.ErrAuthAccountInactive) || (res != nil && res.Code != "") {
 			t.Fatalf("suspended account = %+v, %v; want auth.account_inactive and no code", res, err)
 		}
 		refusalAudited(t, first.UserID)
@@ -137,8 +137,7 @@ func TestSuspendedAccountsCannotSignInAnyWay(t *testing.T) {
 		router := chi.NewRouter()
 		router.Route("/v1", h.MountPublic)
 		rr := httptest.NewRecorder()
-		router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/social/"+provider+"/callback?"+url.Values{
-			"state": {begin(t, svc, provider, "https://app.example/oauth/authorize?client_id=rp")}, "code": {"upstream-code"}}.Encode(), nil))
+		router.ServeHTTP(rr, socialCallback(provider, begin(t, svc, provider, "https://app.example/oauth/authorize?client_id=rp")))
 		loc, _ := url.Parse(rr.Header().Get("Location"))
 		if rr.Code != http.StatusFound || loc.Host != "login.test" || loc.Query().Get("error") != "account_inactive" {
 			t.Fatalf("hosted callback = %d %s; want the hosted login with error=account_inactive", rr.Code, loc)
@@ -152,7 +151,7 @@ func TestSuspendedAccountsCannotSignInAnyWay(t *testing.T) {
 
 	t.Run("a suspended console account is refused a platform social sign-in", func(t *testing.T) {
 		svc, provider := providerFor(t)
-		first, err := svc.CompleteCallback(ctx, provider, begin(t, svc, provider, ""), "upstream-code")
+		first, err := svc.CompleteCallback(ctx, provider, begin(t, svc, provider, ""), "upstream-code", true)
 		if err != nil {
 			t.Fatal(err)
 		}

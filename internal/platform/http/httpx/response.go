@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 
@@ -182,6 +184,20 @@ const (
 
 func DecodeJSON(r *http.Request, out any) error {
 	return DecodeJSONLimit(r, out, MaxJSONBodyBytes)
+}
+
+// DecodeStrictJSON is DecodeJSON for the routes that sign a browser in: a body
+// not declared as JSON is refused as an unsupported media type. A page on
+// another site can make a browser post a text/plain or form body without asking
+// first, but not an application/json one, so those routes can't be reached by
+// a cross-site form.
+func DecodeStrictJSON(r *http.Request, out any) error {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || (mediaType != "application/json" &&
+		(!strings.HasPrefix(mediaType, "application/") || !strings.HasSuffix(mediaType, "+json"))) {
+		return errs.ErrUnsupportedMediaType
+	}
+	return DecodeJSON(r, out)
 }
 
 func DecodeJSONLimit(r *http.Request, out any, maxBytes int64) error {

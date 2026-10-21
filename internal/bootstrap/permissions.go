@@ -427,6 +427,7 @@ func RoutePolicies() map[string]rbac.RoutePolicy {
 		"GET /v1/me/social/identities",
 		"DELETE /v1/me/social/identities/{id}",
 		"POST /v1/social/{provider}/link/start",
+		"POST /v1/social/link/complete",
 		"GET /v1/vault/tokens",
 		"GET /v1/vault/tokens/{provider}/connect",
 		"DELETE /v1/vault/tokens/{provider}",

@@ -35,5 +35,8 @@ func init() {
 		errs.CodeSocialLoginCodeExpired:      http.StatusUnauthorized,
 		errs.CodeSocialAlreadyLinked:         http.StatusConflict,
 		errs.CodeSocialNoAccount:             http.StatusNotFound,
+		errs.CodeSocialBrowserMismatch:       http.StatusForbidden,
+		errs.CodeSocialLinkCodeInvalid:       http.StatusBadRequest,
+		errs.CodeSocialLinkAccountMismatch:   http.StatusForbidden,
 	})
 }

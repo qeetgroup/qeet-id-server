@@ -270,7 +270,7 @@ type sessionInput struct {
 // token flow enforces.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	var in sessionInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -310,7 +310,7 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 // cookie-flow analogue of mfaLogin (which returns a token pair).
 func (h *Handler) createSessionMFA(w http.ResponseWriter, r *http.Request) {
 	var in mfaLoginInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -365,7 +365,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	defer httpx.ConstantTimeFloor(r.Context(), start, registerFloor)
 
 	var in registerInput
-	if err := httpx.DecodeJSON(r, &in); err != nil {
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
