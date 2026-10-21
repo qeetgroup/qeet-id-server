@@ -61,7 +61,10 @@ path or body, and carry `WHERE tenant_id = $1` into every query.
 
 A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
 by default: they are for the application's own use, not account or organisation management. Only routes
-meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test).
+meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test). Its policy in
+`bootstrap.RoutePolicies()` also names the scope an application's token needs there
+(`ApplicationScope`: the permission on an administrative route, `account.read`/`account.write` on the
+user's own account); a route without one fails `TestEveryRouteNamesAnApplicationScope`.
 
 ---
 

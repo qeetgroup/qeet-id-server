@@ -299,7 +299,7 @@ func NewRouter(d Deps) http.Handler {
 			// RBAC permission enforcement for end-user principals. Gates the
 			// routes listed in permissionMap(); API-key/service actors and
 			// unmapped (self-service / public) routes pass through.
-			r.Use(rbac.Enforce(d.RBACChecker, routePolicyMap()))
+			r.Use(rbac.Enforce(d.RBACChecker, RoutePolicies()))
 			// Sensitive actions also need a step-up of the calling session
 			// (stepUpRoutes); asked only of a caller already authorized.
 			r.Use(d.MFA.Service.StepUpGate(stepUpRoutes()))
