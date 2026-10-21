@@ -600,6 +600,19 @@ func (s *Service) ValidatePostLogoutRedirect(ctx context.Context, clientID, uri 
 	return contains(uris, uri), nil
 }
 
+// ClientTenant is the organisation that owns the application clientID;
+// ErrOIDCClientUnknown when none does.
+func (s *Service) ClientTenant(ctx context.Context, clientID string) (uuid.UUID, error) {
+	info, err := s.q.GetClientRedirectInfo(ctx, clientID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, errs.ErrOIDCClientUnknown
+	}
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return info.TenantID, nil
+}
+
 // RegisteredClient reports whether clientID names a registered application.
 func (s *Service) RegisteredClient(ctx context.Context, clientID string) bool {
 	_, err := s.q.GetClientRedirectInfo(ctx, clientID)
@@ -1426,6 +1439,11 @@ type SessionManager interface {
 	ResolveLoginSessionWithID(ctx context.Context, raw string) (sessionID, userID uuid.UUID, err error)
 	ResolveLoginSessionAt(ctx context.Context, raw string) (sessionID, userID uuid.UUID, signedInAt time.Time, err error)
 	EndLoginSession(ctx context.Context, in auth.EndLoginSessionInput) (auth.LoginSessionEnded, error)
+	// LoginSessionFactorShortfall says what stops a code or token being
+	// issued for tenantID through the session: nil, or ErrStepUpRequired /
+	// ErrMFAEnrollmentRequired while the organisation requires a second
+	// factor its sign-in didn't meet (QTID-800).
+	LoginSessionFactorShortfall(ctx context.Context, loginSessionID, userID, tenantID uuid.UUID) error
 }
 
 // ProviderLister lists a tenant's enabled social providers, so the hosted login
@@ -1737,6 +1755,26 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The application's organisation may require a second factor this sign-in
+	// didn't meet (QTID-800). The hosted sign-in asks for the requirement of the
+	// application it serves, so the browser signs in again for this request,
+	// once; a fresh sign-in that still hasn't met one is refused.
+	switch err := h.factorShortfall(r.Context(), loginSessionID, userID, clientID); {
+	case err == nil:
+	case !isFactorShortfall(err):
+		h.authorizeError(w, r, clientID, redirect, state, err)
+		return
+	case silent:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("interaction_required", "the organisation requires a second factor"))
+		return
+	case !signedInForRequest(q, signedInAt):
+		http.Redirect(w, r, h.LoginBaseURL+"/login?prompt=login&return_to="+url.QueryEscape(reauthReturnTo(r, now)), http.StatusFound)
+		return
+	default:
+		h.authorizeError(w, r, clientID, redirect, state, oauthErr("access_denied", "the organisation requires a second factor"))
+		return
+	}
+
 	has, err := h.Service.HasConsent(r.Context(), userID, clientID, scopes)
 	if err != nil {
 		h.authorizeError(w, r, clientID, redirect, state, err)
@@ -1877,6 +1915,10 @@ func (h *Handler) decision(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{
 			"redirect": appendQuery(req.RedirectURI, "error", "access_denied", "state", req.State, "iss", h.Service.issuer.JWTIssuer()),
 		})
+		return
+	}
+	if err := h.factorShortfall(r.Context(), loginSessionID, userID, req.ClientID); err != nil {
+		httpx.WriteError(w, r, err)
 		return
 	}
 	if err := h.Service.GrantConsent(r.Context(), userID, req.ClientID, req.Scopes); err != nil {
@@ -2033,6 +2075,22 @@ func (h *Handler) endSessionContinue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, h.LoginBaseURL+"/logged-out", http.StatusFound)
+}
+
+// factorShortfall is what stops a code or token being issued for clientID's
+// organisation through the hosted-login session: nil, or the second factor
+// the organisation still requires (see auth.Service.LoginSessionFactorShortfall).
+func (h *Handler) factorShortfall(ctx context.Context, loginSessionID, userID uuid.UUID, clientID string) error {
+	tenantID, err := h.Service.ClientTenant(ctx, clientID)
+	if err != nil {
+		return err
+	}
+	return h.Sessions.LoginSessionFactorShortfall(ctx, loginSessionID, userID, tenantID)
+}
+
+// isFactorShortfall reports whether err is a second factor still required.
+func isFactorShortfall(err error) bool {
+	return errors.Is(err, errs.ErrStepUpRequired) || errors.Is(err, errs.ErrMFAEnrollmentRequired)
 }
 
 // sessionUser resolves the hosted-login SSO cookie to a user id.

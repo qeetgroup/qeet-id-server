@@ -477,6 +477,25 @@ The changes below are the work staged for that first release.
   had no profile and its organisation switcher showed a bare id. The cookie still opens nothing else
   (`LoginSessionRoutes`, pinned by `TestLoginSessionRoutesStayNarrow`); every other route still needs a token.
 
+**An organisation's second-factor requirement applies wherever it is entered (2026-10-21)**
+
+* **auth / oidc:** an organisation's MFA requirement (`mfa_enforcement` required, or admin_only for its
+  administrators) was read only for the organisation an account calls home, at sign-in. A member at home
+  elsewhere, or with no home, signed in with a password and then switched in (`POST /v1/auth/switch-tenant`),
+  accepted its invitation while signed in (`POST /v1/me/invites/accept`, `.../{id}/accept`), signed in to one of
+  its applications (`GET /oauth/authorize` and the consent decision) or approved a device for one
+  (`POST /oauth/device/decision`), and got a session or a code with no factor asked for (QTID-800). Each now
+  requires the sign-in to have met a second factor, or the session switched from to hold a fresh step-up:
+  otherwise 403 `step_up_required`, or `mfa.enrollment_required` for an account with none (unless the
+  organisation's grace period still lets it put the setup off). The hosted sign-in applies the requirement of
+  the application it serves as well as the account's own; authorize sends a sign-in that lacks the factor to
+  sign in again, once, then answers `access_denied` (`interaction_required` for prompt=none). An account an
+  invitation creates is signed in as at sign-up, so it gets the enrolment challenge instead of a session where
+  one is required. Sessions and hosted-login sessions record how their sign-in met a factor (`second_factor`,
+  migration 0149: a met challenge, a passkey, a remembered device, or a step-up carried over); sessions from
+  before it count as none. The grace period is judged by when the person joined that organisation, not when
+  the account was created.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

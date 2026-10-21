@@ -117,8 +117,35 @@ DELETE FROM auth.login_attempts a WHERE a.email = @email;
 SELECT tenant_id FROM auth.oidc_clients WHERE client_id = @client_id;
 
 -- name: InsertLoginSession :exec
-INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent)
-VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_agent);
+-- second_factor: how the sign-in met a second factor (NULL: it didn't); see
+-- migration 0149.
+INSERT INTO auth.login_sessions (token_hash, user_id, expires_at, ip, user_agent, second_factor)
+VALUES (@token_hash, @user_id, @expires_at, NULLIF(@ip::text, '')::inet, @user_agent,
+        NULLIF(@second_factor::text, ''));
+
+-- name: LoginSessionSecondFactor :one
+-- How the sign-in behind a live hosted-login session of the user's met a
+-- second factor ('' when it didn't). No row when the session is unknown,
+-- someone else's or expired.
+SELECT COALESCE(second_factor, '')::text AS second_factor
+FROM auth.login_sessions
+WHERE id = @id AND user_id = @user_id AND expires_at > NOW();
+
+-- name: SessionSecondFactor :one
+-- How the sign-in behind a live session of the user's met a second factor
+-- ('' when it didn't), and whether the session holds a step-up still inside
+-- its organisation's window. No row when the session is unknown, someone
+-- else's, revoked or expired.
+SELECT COALESCE(s.second_factor, '')::text AS second_factor,
+       EXISTS (
+           SELECT 1 FROM auth.mfa_verifications v
+           WHERE v.session_id = s.id
+             AND v.verified_at > NOW() - COALESCE(sp.step_up_window, INTERVAL '5 minutes')
+       ) AS stepped_up
+FROM auth.sessions s
+LEFT JOIN tenant.security_policies sp ON sp.tenant_id = s.tenant_id
+WHERE s.id = @session_id AND s.user_id = @user_id AND s.revoked_at IS NULL
+  AND s.expires_at > NOW() AND s.last_seen_at + s.idle_timeout > NOW();
 
 -- name: GetLoginSession :one
 SELECT id, user_id, expires_at, created_at FROM auth.login_sessions WHERE token_hash = @token_hash;
@@ -416,8 +443,14 @@ WHERE id = @session_id AND revoked_at IS NULL
 -- administrator there — holds a role, directly or through a group, granting
 -- any write permission.
 -- name: MFARequirement :one
+-- joined_at is when the account joined the organisation, which the grace
+-- period is judged by: its creation for its own organisation, its first role
+-- there for any other (QTID-800).
 SELECT u.mfa_required,
-       u.created_at,
+       (CASE WHEN u.tenant_id = @tenant_id::uuid THEN u.created_at
+             ELSE COALESCE((SELECT MIN(ur.granted_at) FROM rbac.user_roles ur
+                            WHERE ur.user_id = u.id AND ur.tenant_id = @tenant_id::uuid), u.created_at)
+        END)::timestamptz AS joined_at,
        COALESCE(sp.mfa_enforcement, 'optional')::text AS enforcement,
        COALESCE(sp.mfa_grace_days, 0)::int AS grace_days,
        sp.mfa_enforced_since,

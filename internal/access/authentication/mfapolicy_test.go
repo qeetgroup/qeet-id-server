@@ -20,18 +20,18 @@ func TestDecideMFARequirement(t *testing.T) {
 		reason string
 		grace  bool
 	}{
-		"optional":                       {row: dbgen.MFARequirementRow{Enforcement: "optional", CreatedAt: before}},
-		"required":                       {row: dbgen.MFARequirementRow{Enforcement: "required", CreatedAt: before}, reason: mfaReasonTenantRequired},
-		"admin_only, an administrator":   {row: dbgen.MFARequirementRow{Enforcement: "admin_only", IsAdmin: true, CreatedAt: before}, reason: mfaReasonAdminRequired},
-		"admin_only, not one":            {row: dbgen.MFARequirementRow{Enforcement: "admin_only", CreatedAt: before}},
-		"marked, organisation optional":  {row: dbgen.MFARequirementRow{Enforcement: "optional", MfaRequired: true, CreatedAt: before}, reason: mfaReasonUserRequired},
-		"marked accounts get no grace":   {row: dbgen.MFARequirementRow{Enforcement: "required", MfaRequired: true, GraceDays: 30, MfaEnforcedSince: since, CreatedAt: before}, reason: mfaReasonUserRequired},
-		"grace running, existing":        {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, CreatedAt: before}, reason: mfaReasonTenantRequired, grace: true},
-		"grace running, admin":           {row: dbgen.MFARequirementRow{Enforcement: "admin_only", IsAdmin: true, GraceDays: 30, MfaEnforcedSince: since, CreatedAt: before}, reason: mfaReasonAdminRequired, grace: true},
-		"grace running, created after":   {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, CreatedAt: after}, reason: mfaReasonTenantRequired},
-		"grace ended":                    {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 3, MfaEnforcedSince: since, CreatedAt: before}, reason: mfaReasonTenantRequired},
-		"no grace period":                {row: dbgen.MFARequirementRow{Enforcement: "required", MfaEnforcedSince: since, CreatedAt: before}, reason: mfaReasonTenantRequired},
-		"grace without a start recorded": {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, CreatedAt: before}, reason: mfaReasonTenantRequired},
+		"optional":                       {row: dbgen.MFARequirementRow{Enforcement: "optional", JoinedAt: before}},
+		"required":                       {row: dbgen.MFARequirementRow{Enforcement: "required", JoinedAt: before}, reason: mfaReasonTenantRequired},
+		"admin_only, an administrator":   {row: dbgen.MFARequirementRow{Enforcement: "admin_only", IsAdmin: true, JoinedAt: before}, reason: mfaReasonAdminRequired},
+		"admin_only, not one":            {row: dbgen.MFARequirementRow{Enforcement: "admin_only", JoinedAt: before}},
+		"marked, organisation optional":  {row: dbgen.MFARequirementRow{Enforcement: "optional", MfaRequired: true, JoinedAt: before}, reason: mfaReasonUserRequired},
+		"marked accounts get no grace":   {row: dbgen.MFARequirementRow{Enforcement: "required", MfaRequired: true, GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonUserRequired},
+		"grace running, existing":        {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonTenantRequired, grace: true},
+		"grace running, admin":           {row: dbgen.MFARequirementRow{Enforcement: "admin_only", IsAdmin: true, GraceDays: 30, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonAdminRequired, grace: true},
+		"grace running, created after":   {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, MfaEnforcedSince: since, JoinedAt: after}, reason: mfaReasonTenantRequired},
+		"grace ended":                    {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 3, MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonTenantRequired},
+		"no grace period":                {row: dbgen.MFARequirementRow{Enforcement: "required", MfaEnforcedSince: since, JoinedAt: before}, reason: mfaReasonTenantRequired},
+		"grace without a start recorded": {row: dbgen.MFARequirementRow{Enforcement: "required", GraceDays: 30, JoinedAt: before}, reason: mfaReasonTenantRequired},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := decideMFARequirement(tc.row, now)

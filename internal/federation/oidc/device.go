@@ -157,6 +157,9 @@ func (s *Service) DeviceAuthorize(ctx context.Context, clientID string, scopes [
 type DeviceVerificationContext struct {
 	ClientName string   `json:"client_name"`
 	Scopes     []string `json:"scopes"`
+	// TenantID is the organisation of the application asking, whose
+	// second-factor requirement the approval must meet; not shown.
+	TenantID uuid.UUID `json:"-"`
 }
 
 // LookupDeviceByUserCode resolves a pending device-authorization row by its
@@ -181,7 +184,7 @@ func (s *Service) LookupDeviceByUserCode(ctx context.Context, userCode string) (
 	if err != nil {
 		return nil, err
 	}
-	return &DeviceVerificationContext{ClientName: name, Scopes: row.Scopes}, nil
+	return &DeviceVerificationContext{ClientName: name, Scopes: row.Scopes, TenantID: row.TenantID}, nil
 }
 
 // DecideDevice records the user's approve/deny decision against a pending device
@@ -615,7 +618,7 @@ type deviceDecisionInput struct {
 // of a device-authorization request. The user is identified by the SSO cookie,
 // mirroring the authorize/decision consent handler.
 func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.sessionUser(r)
+	loginSessionID, userID, ok := h.loginSession(r)
 	if !ok {
 		httpx.WriteError(w, r, errs.ErrUnauthorized)
 		return
@@ -628,6 +631,19 @@ func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
 	if in.UserCode == "" {
 		httpx.WriteError(w, r, errs.ErrOIDCUserCodeRequired)
 		return
+	}
+	// Approving hands the device tokens for the application's organisation,
+	// so its second-factor requirement applies (QTID-800); denying needs none.
+	if in.Approve {
+		dc, err := h.Service.LookupDeviceByUserCode(r.Context(), in.UserCode)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		if err := h.Sessions.LoginSessionFactorShortfall(r.Context(), loginSessionID, userID, dc.TenantID); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	if err := h.Service.DecideDevice(r.Context(), userID, in.UserCode, in.Approve, httpx.ClientIP(r)); err != nil {
 		httpx.WriteError(w, r, err)
