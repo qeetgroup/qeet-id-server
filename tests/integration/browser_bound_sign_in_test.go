@@ -308,20 +308,65 @@ func TestConnectingAProviderCompletesOnlyForTheAccountThatBeganIt(t *testing.T) 
 }
 
 // TestAPasskeySignInSignsInOnlyTheBrowserThatBeganIt: passkey sign-in finish
-// sets the hosted-login cookie, yet skipped the cross-site check (it is there to
+// set the hosted-login cookie, yet skipped the cross-site check (it is there to
 // hand out a bearer token), decoded its body whatever it was sent as, and
 // nothing tied the ceremony to a browser. So a page on another site could post
 // its owner's own signed assertion, as a text/plain form, from a visitor's
 // browser, which was then signed in to the hosted login as that owner. The
-// body must now be JSON, and the cookie is set only in the browser that began
-// the ceremony; anyone else completing it gets the token pair alone.
+// hosted form (login/session) now takes only JSON, keeps the cross-site check,
+// and finishes only in the browser that began the ceremony, leaving it
+// untouched for any other; the token form (login/finish) sets no cookie.
 func TestAPasskeySignInSignsInOnlyTheBrowserThatBeganIt(t *testing.T) {
 	requireDB(t)
 	ctx := context.Background()
 	svc := newPasskeySvc(t)
-	rp := virtualwebauthn.RelyingParty{Name: pkRPName, ID: pkRPID, Origin: pkRPOrigin}
-	a := virtualwebauthn.NewAuthenticator()
-	c := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	pk := newPasskeyAccount(t, ctx, svc)
+	router := chi.NewRouter()
+	router.Route("/v1", (&passkey.Handler{Service: svc}).MountPublic)
+	owner, visitor := newBrowser(), newBrowser()
+
+	signed := pk.begin(t, router, owner)
+	rr := pk.post(router, visitor, "/v1/passkeys/login/session", "text/plain", signed)
+	if rr.Code != http.StatusUnsupportedMediaType || errorCode(t, rr) != errs.CodeUnsupportedMedia || setsCookie(rr, auth.LoginSessionCookie) {
+		t.Fatalf("the owner's assertion posted cross-site as text/plain = %d %s, cookie %v; want 415 and no cookie",
+			rr.Code, rr.Body.String(), setsCookie(rr, auth.LoginSessionCookie))
+	}
+	rr = pk.post(router, visitor, "/v1/passkeys/login/session", "application/json", signed)
+	if rr.Code != http.StatusForbidden || errorCode(t, rr) != errs.CodePasskeyBrowserMismatch || setsCookie(rr, auth.LoginSessionCookie) {
+		t.Fatalf("the owner's assertion finished in another browser = %d %s; want 403 passkey.browser_mismatch and no cookie", rr.Code, rr.Body.String())
+	}
+	// A browser with a ceremony of its own under way isn't signed in by
+	// someone else's either.
+	pk.begin(t, router, visitor)
+	if rr := pk.post(router, visitor, "/v1/passkeys/login/session", "application/json", signed); rr.Code != http.StatusForbidden || setsCookie(rr, auth.LoginSessionCookie) {
+		t.Fatalf("another ceremony finished in a browser with its own = %d; want 403 and no cookie", rr.Code)
+	}
+	// The token form sets no cookie for anyone.
+	if rr := pk.post(router, visitor, "/v1/passkeys/login/finish", "application/json", pk.begin(t, router, owner)); rr.Code != http.StatusOK || setsCookie(rr, auth.LoginSessionCookie) {
+		t.Fatalf("the token form = %d, cookie %v; want the token pair and no cookie", rr.Code, setsCookie(rr, auth.LoginSessionCookie))
+	}
+
+	// The refusals left the ceremony untouched: the browser that began it
+	// finishes it and is signed in.
+	if rr := pk.post(router, owner, "/v1/passkeys/login/session", "application/json", signed); rr.Code != http.StatusOK || !setsCookie(rr, auth.LoginSessionCookie) {
+		t.Fatalf("finished in the browser that began it = %d %s, cookie %v; want the hosted-login cookie", rr.Code, rr.Body.String(), setsCookie(rr, auth.LoginSessionCookie))
+	}
+}
+
+// passkeyAccount is a passkey-only account on a virtual authenticator.
+type passkeyAccount struct {
+	rp virtualwebauthn.RelyingParty
+	a  virtualwebauthn.Authenticator
+	c  virtualwebauthn.Credential
+}
+
+func newPasskeyAccount(t *testing.T, ctx context.Context, svc *passkey.Service) *passkeyAccount {
+	t.Helper()
+	pk := &passkeyAccount{
+		rp: virtualwebauthn.RelyingParty{Name: pkRPName, ID: pkRPID, Origin: pkRPOrigin},
+		a:  virtualwebauthn.NewAuthenticator(),
+		c:  virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2),
+	}
 	sid, creation, err := svc.BeginSignup(ctx, uniqueSlug("owner")+"@example.com", "")
 	if err != nil {
 		t.Fatal(err)
@@ -331,68 +376,41 @@ func TestAPasskeySignInSignsInOnlyTheBrowserThatBeganIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.Options.UserHandle = []byte(opts.UserID)
-	if _, _, err := svc.FinishSignup(ctx, sid, json.RawMessage(virtualwebauthn.CreateAttestationResponse(rp, a, c, *opts)), "", "203.0.113.7", "test"); err != nil {
+	pk.a.Options.UserHandle = []byte(opts.UserID)
+	if _, _, err := svc.FinishSignup(ctx, sid, json.RawMessage(virtualwebauthn.CreateAttestationResponse(pk.rp, pk.a, pk.c, *opts)), "", "203.0.113.7", "test"); err != nil {
 		t.Fatalf("passkey sign-up: %v", err)
 	}
-	a.AddCredential(c)
-	router := chi.NewRouter()
-	router.Route("/v1", (&passkey.Handler{Service: svc}).MountPublic)
+	pk.a.AddCredential(pk.c)
+	return pk
+}
 
-	// begin starts a ceremony in b and returns the owner's signed finish body.
-	begin := func(t *testing.T, b *browser) []byte {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, "/v1/passkeys/login/begin", strings.NewReader(`{}`))
-		req.Header.Set("Content-Type", "application/json")
-		rr := b.do(router, req)
-		var out struct {
-			SessionID uuid.UUID       `json:"session_id"`
-			PublicKey json.RawMessage `json:"publicKey"`
-		}
-		if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &out) != nil {
-			t.Fatalf("begin = %d %s", rr.Code, rr.Body.String())
-		}
-		options, _ := json.Marshal(map[string]json.RawMessage{"publicKey": out.PublicKey})
-		aopts, err := virtualwebauthn.ParseAssertionOptions(string(options))
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, _ := json.Marshal(map[string]any{
-			"session_id": out.SessionID,
-			"credential": json.RawMessage(virtualwebauthn.CreateAssertionResponse(rp, a, c, *aopts)),
-		})
-		return body
-	}
-	finish := func(b *browser, contentType string, body []byte) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/v1/passkeys/login/finish", bytes.NewReader(body))
-		req.Header.Set("Content-Type", contentType)
-		return b.do(router, req)
-	}
-	owner, visitor := newBrowser(), newBrowser()
+func (pk *passkeyAccount) post(router http.Handler, b *browser, path, contentType string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	return b.do(router, req)
+}
 
-	signed := begin(t, owner)
-	rr := finish(visitor, "text/plain", signed)
-	if rr.Code != http.StatusUnsupportedMediaType || errorCode(t, rr) != errs.CodeUnsupportedMedia || setsCookie(rr, auth.LoginSessionCookie) {
-		t.Fatalf("the owner's assertion posted cross-site as text/plain = %d %s, cookie %v; want 415 and no cookie",
-			rr.Code, rr.Body.String(), setsCookie(rr, auth.LoginSessionCookie))
+// begin starts a ceremony in b and returns the account's signed finish body.
+func (pk *passkeyAccount) begin(t *testing.T, router http.Handler, b *browser) []byte {
+	t.Helper()
+	rr := pk.post(router, b, "/v1/passkeys/login/begin", "application/json", []byte(`{}`))
+	var out struct {
+		SessionID uuid.UUID       `json:"session_id"`
+		PublicKey json.RawMessage `json:"publicKey"`
 	}
-	// The same body as JSON outside the browser that began it (as the
-	// console's server sends it): the token pair, and no cookie.
-	rr = finish(visitor, "application/json", signed)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "access_token") || setsCookie(rr, auth.LoginSessionCookie) {
-		t.Fatalf("finished outside the browser that began it = %d, cookie %v; want the token pair and no cookie", rr.Code, setsCookie(rr, auth.LoginSessionCookie))
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &out) != nil {
+		t.Fatalf("begin = %d %s", rr.Code, rr.Body.String())
 	}
-	// A browser with a ceremony of its own under way isn't signed in by
-	// someone else's either.
-	begin(t, visitor)
-	if rr := finish(visitor, "application/json", begin(t, owner)); rr.Code != http.StatusOK || setsCookie(rr, auth.LoginSessionCookie) {
-		t.Fatalf("another ceremony finished in a browser with its own = %d, cookie %v; want no cookie", rr.Code, setsCookie(rr, auth.LoginSessionCookie))
+	options, _ := json.Marshal(map[string]json.RawMessage{"publicKey": out.PublicKey})
+	aopts, err := virtualwebauthn.ParseAssertionOptions(string(options))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// The browser that began the ceremony is signed in.
-	if rr := finish(owner, "application/json", begin(t, owner)); rr.Code != http.StatusOK || !setsCookie(rr, auth.LoginSessionCookie) {
-		t.Fatalf("finished in the browser that began it = %d %s, cookie %v; want the hosted-login cookie", rr.Code, rr.Body.String(), setsCookie(rr, auth.LoginSessionCookie))
-	}
+	body, _ := json.Marshal(map[string]any{
+		"session_id": out.SessionID,
+		"credential": json.RawMessage(virtualwebauthn.CreateAssertionResponse(pk.rp, pk.a, pk.c, *aopts)),
+	})
+	return body
 }
 
 // TestRoutesThatSignABrowserInTakeOnlyJSON: request bodies were decoded as

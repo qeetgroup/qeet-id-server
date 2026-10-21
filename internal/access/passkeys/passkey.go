@@ -773,13 +773,38 @@ func (s *Service) BeginLogin(ctx context.Context, email string) (uuid.UUID, *pro
 // FinishLogin verifies the assertion, updates the sign counter, and issues a
 // Qeet session token pair for the authenticated user.
 func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (*auth.TokenPair, error) {
-	kind, sessUser, sessionData, err := s.takeSession(ctx, sessionID)
+	userID, tenantID, err := s.verifyLogin(ctx, sessionID, credential)
 	if err != nil {
 		return nil, err
 	}
+	return s.auth.IssuePair(ctx, userID, tenantID, ip, ua, "passkey")
+}
+
+// FinishLoginSession verifies the assertion, updates the sign counter, and
+// opens a hosted-login SSO session for the authenticated user instead of
+// issuing a token pair: it returns the user and the raw cookie value to set.
+func (s *Service) FinishLoginSession(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage, ip, ua string) (uuid.UUID, string, error) {
+	userID, _, err := s.verifyLogin(ctx, sessionID, credential)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	raw, err := s.auth.CreatePasskeyLoginSession(ctx, userID, ip, ua)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	return userID, raw, nil
+}
+
+// verifyLogin takes the login ceremony, verifies the assertion against it and
+// updates the credential's sign counter, returning who signed in.
+func (s *Service) verifyLogin(ctx context.Context, sessionID uuid.UUID, credential json.RawMessage) (uuid.UUID, uuid.UUID, error) {
+	kind, sessUser, sessionData, err := s.takeSession(ctx, sessionID)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, err
+	}
 	parsed, err := protocol.ParseCredentialRequestResponseBody(bytes.NewReader(credential))
 	if err != nil {
-		return nil, errs.ErrPasskeyAssertionInvalid
+		return uuid.Nil, uuid.Nil, errs.ErrPasskeyAssertionInvalid
 	}
 
 	var loginUserID, tenantID uuid.UUID
@@ -787,20 +812,20 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 	switch kind {
 	case "login":
 		if sessUser == nil {
-			return nil, errs.ErrPasskeySessionMismatch
+			return uuid.Nil, uuid.Nil, errs.ErrPasskeySessionMismatch
 		}
 		u, tid, err := s.loadUser(ctx, *sessUser)
 		if err != nil {
-			return nil, err
+			return uuid.Nil, uuid.Nil, err
 		}
 		// The organisation's passkey setting is checked before the assertion
 		// is verified.
 		if err := s.passkeysAllowed(ctx, tid); err != nil {
-			return nil, err
+			return uuid.Nil, uuid.Nil, err
 		}
 		cred, err = s.wa.ValidateLogin(u, *sessionData, parsed)
 		if err != nil {
-			return nil, errs.ErrPasskeyLoginFailed
+			return uuid.Nil, uuid.Nil, errs.ErrPasskeyLoginFailed
 		}
 		loginUserID, tenantID = u.id, tid
 	case "login_discoverable":
@@ -826,14 +851,14 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 		}
 		cred, err = s.wa.ValidateDiscoverableLogin(handler, *sessionData, parsed)
 		if refused != nil {
-			return nil, refused
+			return uuid.Nil, uuid.Nil, refused
 		}
 		if err != nil || resolved == nil {
-			return nil, errs.ErrPasskeyLoginFailed
+			return uuid.Nil, uuid.Nil, errs.ErrPasskeyLoginFailed
 		}
 		loginUserID, tenantID = resolved.id, resolvedTenant
 	default:
-		return nil, errs.ErrPasskeySessionInvalid
+		return uuid.Nil, uuid.Nil, errs.ErrPasskeySessionInvalid
 	}
 
 	// Signature-counter clone detection. go-webauthn computes CloneWarning in
@@ -849,23 +874,16 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID uuid.UUID, credenti
 			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID),
 			"asserted_sign_count", cred.Authenticator.SignCount,
 		)
-		return nil, errs.ErrPasskeyCloneDetected
+		return uuid.Nil, uuid.Nil, errs.ErrPasskeyCloneDetected
 	}
 	if err := s.q.UpdatePasskeySignCount(ctx, dbgen.UpdatePasskeySignCountParams{
 		SignCount:    int64(cred.Authenticator.SignCount),
 		BackupState:  cred.Flags.BackupState,
 		CredentialID: cred.ID,
 	}); err != nil {
-		return nil, err
+		return uuid.Nil, uuid.Nil, err
 	}
-	return s.auth.IssuePair(ctx, loginUserID, tenantID, ip, ua, "passkey")
-}
-
-// StartLoginSession mints a hosted-login SSO session for a freshly-authenticated
-// passkey user, so a passkey login can also drive the OAuth authorize/consent
-// flow (the cookie is set by the handler).
-func (s *Service) StartLoginSession(ctx context.Context, userID uuid.UUID, ip, ua string) (string, error) {
-	return s.auth.CreatePasskeyLoginSession(ctx, userID, ip, ua)
+	return loginUserID, tenantID, nil
 }
 
 // --- WebAuthn as a second factor ---
@@ -969,6 +987,7 @@ func (h *Handler) Mount(r chi.Router) {
 func (h *Handler) MountPublic(r chi.Router) {
 	r.Post("/passkeys/login/begin", h.loginBegin)
 	r.Post("/passkeys/login/finish", h.loginFinish)
+	r.Post("/passkeys/login/session", h.loginSession)
 	r.Post("/signup/passkey/begin", h.signupBegin)
 	r.Post("/signup/passkey/finish", h.signupFinish)
 	r.Post("/register/passkey/begin", h.tenantSignupBegin)
@@ -1091,7 +1110,7 @@ type loginBeginInput struct {
 }
 
 // binding ties a passkey sign-in to the browser that began it: only that
-// browser is given the hosted-login cookie when it finishes.
+// browser can finish it at the hosted form (loginSession).
 func (h *Handler) binding() httpx.BindingCookie {
 	return httpx.BindingCookie{Name: "qe_passkey", Secure: h.CookieSecure, SameSite: http.SameSiteStrictMode, MaxAge: sessionTTL}
 }
@@ -1122,12 +1141,11 @@ type loginFinishInput struct {
 	Credential json.RawMessage `json:"credential"`
 }
 
-// loginFinish completes a passkey sign-in with the token pair. The browser that
-// began the ceremony is also given the hosted-login SSO cookie, so a passkey
-// login can drive the OAuth authorize flow; any other caller (the console's
-// server, which holds the tokens) gets none. The route skips the cross-site
-// check because it bootstraps a bearer token, and this keeps that true: an
-// assertion carried into another browser never signs it in.
+// loginFinish is the token form of passkey sign-in: it answers with the token
+// pair and sets no cookie, for a caller that keeps tokens on a server (the
+// console's). It skips the cross-site check because it bootstraps a bearer
+// token, and setting no cookie keeps that true. A browser signs in to the
+// hosted login with loginSession instead, so no token pair reaches its script.
 func (h *Handler) loginFinish(w http.ResponseWriter, r *http.Request) {
 	var in loginFinishInput
 	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
@@ -1139,13 +1157,33 @@ func (h *Handler) loginFinish(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if ceremony := in.SessionID.String(); h.binding().Holds(r, ceremony) {
-		h.binding().Remove(w, r, ceremony)
-		if raw, serr := h.Service.StartLoginSession(r.Context(), pair.UserID, httpx.ClientIP(r), r.UserAgent()); serr == nil {
-			auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
-		}
-	}
 	httpx.WriteJSON(w, http.StatusOK, pair)
+}
+
+// loginSession is the hosted form of passkey sign-in: it sets the hosted-login
+// SSO cookie, so a passkey sign-in can drive the OAuth authorize flow, and
+// answers with the user id only — no token reaches the page's script. Only the
+// browser that began the ceremony finishes it here; the ceremony is left
+// untouched for any other.
+func (h *Handler) loginSession(w http.ResponseWriter, r *http.Request) {
+	var in loginFinishInput
+	if err := httpx.DecodeStrictJSON(r, &in); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	ceremony := in.SessionID.String()
+	if !h.binding().Holds(r, ceremony) {
+		httpx.WriteError(w, r, errs.ErrPasskeyBrowserMismatch)
+		return
+	}
+	userID, raw, err := h.Service.FinishLoginSession(r.Context(), in.SessionID, in.Credential, httpx.ClientIP(r), r.UserAgent())
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	h.binding().Remove(w, r, ceremony)
+	auth.SetLoginSessionCookie(w, raw, h.CookieSecure)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"user_id": userID})
 }
 
 type signupBeginInput struct {

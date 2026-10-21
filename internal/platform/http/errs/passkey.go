@@ -16,6 +16,7 @@ const (
 	CodePasskeyCeremonyFailed     = "passkey.ceremony_failed"
 	CodePasskeyCloneDetected      = "passkey.clone_detected"
 	CodePasskeyDisabled           = "passkey.disabled"
+	CodePasskeyBrowserMismatch    = "passkey.browser_mismatch"
 )
 
 var (
@@ -39,4 +40,8 @@ var (
 	// ErrPasskeyDisabled is returned when the user's organization has passkeys
 	// switched off (auth policy passkey_enabled), so no passkey can be added.
 	ErrPasskeyDisabled = New(CodePasskeyDisabled, "Your organization has turned off passkeys.")
+	// ErrPasskeyBrowserMismatch refuses finishing a hosted passkey sign-in in a
+	// browser that didn't begin the ceremony.
+	ErrPasskeyBrowserMismatch = New(CodePasskeyBrowserMismatch,
+		"This passkey sign-in was started in a different browser. Please start again here.").AsRetryable()
 )
