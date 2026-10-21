@@ -338,6 +338,10 @@ func (s *Service) CompletePlatformCallback(ctx context.Context, provider, state,
 		}
 	}
 
+	// A suspended or deleted account gets no code to sign in with.
+	if err := s.auth.CheckSignInAccount(ctx, userID, uuid.Nil, "social", "", ""); err != nil {
+		return nil, err
+	}
 	rawCode, codeHash, err := codes.URLToken()
 	if err != nil {
 		return nil, err
@@ -396,8 +400,8 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 }
 
 // ExchangePlatformLogin trades a one-time platform login code for a tenant-less
-// Qeet token pair, or the second-factor challenge to complete first (QTID-801;
-// see auth.Service.BeginSocialSignIn). Returns ErrSocialLoginCodeInvalid when
+// Qeet token pair, or the second-factor challenge to complete first (see
+// auth.Service.BeginSocialSignIn). Returns ErrSocialLoginCodeInvalid when
 // the code isn't a platform code (so the caller can fall back to the tenant
 // exchange).
 func (s *Service) ExchangePlatformLogin(ctx context.Context, rawCode, ip, ua string) (*auth.LoginResult, error) {

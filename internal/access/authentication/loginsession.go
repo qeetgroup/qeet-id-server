@@ -72,6 +72,10 @@ func (s *Service) CreatePasskeyLoginSession(ctx context.Context, userID uuid.UUI
 // createLoginSession mints the session, recording how its sign-in met a
 // second factor ("": it didn't).
 func (s *Service) createLoginSession(ctx context.Context, userID uuid.UUID, ip, ua, secondFactor string) (string, error) {
+	// Every hosted sign-in ends here, whatever its method.
+	if err := s.refuseInactiveAccount(ctx, userID, uuid.Nil, "hosted", ip, ua); err != nil {
+		return "", err
+	}
 	raw, hash, err := tokens.NewRefreshToken()
 	if err != nil {
 		return "", err
@@ -172,8 +176,7 @@ func (s *Service) resolveLoginSession(ctx context.Context, raw string) (userID, 
 	}
 	// A fresh hosted sign-in counts as a step-up only when it proved a second
 	// factor itself — a met challenge or a passkey — not when a remembered
-	// device stood in for one or none was asked for, as for a social sign-in
-	// (QTID-801).
+	// device stood in for one or none was asked for, as for a social sign-in.
 	if row.SecondFactor != secondFactorMFA && row.SecondFactor != secondFactorPasskey {
 		return row.UserID, tenantID, time.Time{}, nil
 	}
