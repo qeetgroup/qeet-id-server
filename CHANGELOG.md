@@ -592,6 +592,15 @@ The changes below are the work staged for that first release.
   Containment (suspending, ending sessions) stays instant. The route-classification test now covers these route
   families, so a new one has to be classified.
 
+**Nobody hands out authority they don't hold (2026-10-21)**
+
+* **rbac / invitations:** managing roles or members was checked by one permission and nothing more, so a holder
+  of `role.write` could make itself owner or add `secret.read` to its own role, and a holder of `user.write`
+  could invite its own second address as owner. Granting a permission to a role now needs the caller to hold
+  it in the organisation; assigning a role, to a person or a group, and inviting someone with a role need the
+  caller to hold every permission the role carries (403 `rbac.grant_exceeds_caller`, naming one it lacks); and
+  only an owner gives the owner role (403 `rbac.owner_only`). An owner may still give anything.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:

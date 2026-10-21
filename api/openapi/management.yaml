@@ -2375,7 +2375,7 @@ paths:
             schema:
               type: object
               additionalProperties: true
-        description: Request body summarized; see the handler for exact fields.
+        description: 'Request body summarized; see the handler for exact fields. An invitation that carries a role follows the same rule as assigning it: The caller must hold every permission the role carries in this organization (403 rbac.grant_exceeds_caller, naming one it lacks), and only an owner gives the owner role (403 rbac.owner_only); an owner may give any role.'
       description: 'Creates an invitation and emails its accept link. The response carries the invitation, its raw token (so the link can be shared by hand) and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way.'
       responses:
         '201':

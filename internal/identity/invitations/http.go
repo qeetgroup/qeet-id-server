@@ -43,6 +43,10 @@ type Handler struct {
 	Service     *Service
 	AuthService tokenIssuer
 	Validate    *validator.Validate
+	// GrantCheck refuses an invitation whose role would give the invitee
+	// authority the caller doesn't hold (rbac.Repository.CheckGrantRole).
+	// Without it an invitation that carries a role is refused.
+	GrantCheck func(ctx context.Context, caller *httpx.Principal, tenantID, roleID uuid.UUID) error
 }
 
 // MountAuthed mounts the admin-side CRUD that requires authentication, plus the
@@ -83,6 +87,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if err := h.Validate.Struct(in); err != nil {
 		httpx.WriteError(w, r, httpx.ValidationError(err))
 		return
+	}
+	if in.RoleID != nil {
+		if h.GrantCheck == nil {
+			httpx.WriteError(w, r, errs.ErrNotImplemented)
+			return
+		}
+		if err := h.GrantCheck(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, *in.RoleID); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
 	}
 	var invitedBy *uuid.UUID
 	if p := httpx.PrincipalFromCtx(r.Context()); p != nil {
