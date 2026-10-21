@@ -97,6 +97,18 @@ jobs:
           REPO: ${{ vars.ECR_REPOSITORY_URL }}
           VERSION: ${{ steps.version.outputs.tag }}
         run: |
+          # A re-run after a failed roll finds the version already pushed: fine
+          # for the same commit, refused for another (tags are immutable).
+          repo_name="${REPO#*/}"
+          if tags=$(aws ecr describe-images --repository-name "$repo_name" --image-ids "imageTag=$VERSION" \
+              --query 'imageDetails[0].imageTags' --output text 2> /dev/null); then
+            if grep -qw "$GITHUB_SHA" <<< "$tags"; then
+              echo "$VERSION is already in ECR for this commit; not pushing it again"
+              exit 0
+            fi
+            echo "::error::$VERSION is already in ECR for another commit ($tags); a version can't be overwritten"
+            exit 1
+          fi
           docker build \
             --build-arg VERSION="$VERSION" \
             --build-arg COMMIT="$GITHUB_SHA" \

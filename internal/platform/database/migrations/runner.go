@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -28,7 +29,7 @@ func Run(dbURL string) error {
 	if err != nil {
 		return err
 	}
-	defer m.Close()
+	defer closeMigrate(m)
 	if err := compatible(m); err != nil {
 		return err
 	}
@@ -54,7 +55,7 @@ func Read(dbURL string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	defer m.Close()
+	defer closeMigrate(m)
 	return status(m)
 }
 
@@ -97,7 +98,7 @@ func CheckCompatible(dbURL string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	defer m.Close()
+	defer closeMigrate(m)
 	st, err := status(m)
 	if err != nil {
 		return st, err
@@ -174,4 +175,12 @@ func checkStatus(st Status) error {
 		return &SchemaError{Status: st, Err: ErrSchemaNewer}
 	}
 	return nil
+}
+
+// closeMigrate releases the migration source and database connections; a
+// failure to close leaves nothing to undo, so it is only logged.
+func closeMigrate(m *migrate.Migrate) {
+	if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+		slog.Warn("migrations: close", "source_err", srcErr, "db_err", dbErr)
+	}
 }
