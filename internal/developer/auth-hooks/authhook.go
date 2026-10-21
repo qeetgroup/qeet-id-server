@@ -1,7 +1,9 @@
 // Package authhook implements synchronous Auth Actions/Hooks: after credentials
 // verify, Run POSTs a signed event to a tenant's policy endpoint that returns
-// allow/deny. Inert until a hook is enabled; on error/timeout fail_open decides
-// (default allow, so a hook outage never locks everyone out).
+// allow/deny. Inert until a hook is enabled; whenever the hook gives no answer
+// — it can't be read, its secret can't be opened, the call fails or the answer
+// can't be read — fail_open decides (default allow, so a hook outage never
+// locks everyone out), and the skip is recorded.
 package authhook
 
 import (
@@ -13,14 +15,18 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 
 	"github.com/qeetgroup/qeet-id-server/internal/developer/auth-hooks/dbgen"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
@@ -32,6 +38,40 @@ import (
 )
 
 const hookTimeout = 3 * time.Second
+
+// hookUnavailable is what a sign-in is told when a fail-closed hook gave no
+// answer.
+const hookUnavailable = "Sign-in is temporarily unavailable. Please try again later."
+
+// Why a hook gave no answer.
+const (
+	skipUnreadable        = "unreadable"         // the hook couldn't be read
+	skipSecretUnavailable = "secret_unavailable" // its signing secret couldn't be opened
+	skipCallFailed        = "call_failed"        // the call errored, timed out or wasn't 2xx
+	skipUnparseable       = "unparseable"        // the answer couldn't be read
+)
+
+var hookSkips = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "auth_hook_skipped_total",
+	Help: "Sign-in hook evaluations that got no answer from the hook, by reason (unreadable, secret_unavailable, call_failed, unparseable) and outcome (allowed where the hook fails open, refused where it fails closed).",
+}, []string{"reason", "outcome"})
+
+func init() {
+	// Publish every series at zero so an alert can rate() it from the start.
+	for _, reason := range []string{skipUnreadable, skipSecretUnavailable, skipCallFailed, skipUnparseable} {
+		for _, outcome := range []string{"allowed", "refused"} {
+			hookSkips.WithLabelValues(reason, outcome)
+		}
+	}
+}
+
+// hookState is an organisation's sign-in hook as last read: none, or one and
+// whether it fails open.
+type hookState struct {
+	present  bool
+	id       uuid.UUID
+	failOpen bool
+}
 
 type Hook struct {
 	ID        uuid.UUID `json:"id"`
@@ -48,6 +88,9 @@ type Service struct {
 	client *http.Client
 	egress *egress.Policy
 	box    *envelope.Cipher
+	// known holds each organisation's hook as last read (uuid.UUID →
+	// hookState), for a sign-in made while the hook can't be read.
+	known sync.Map
 }
 
 func NewService(pool *pgxpool.Pool, policies ...*egress.Policy) *Service {
@@ -60,9 +103,9 @@ func (s *Service) SetCipher(box *envelope.Cipher) { s.box = box }
 // Run implements auth.LoginHook. It returns a non-nil (ErrAuthHookDenied) error to
 // DENY the sign-in, or nil to allow — in which case the returned map (possibly
 // nil) carries any custom claims the hook asked to be injected into the
-// issued access token. A missing/disabled hook allows with no claims. Safe by
-// construction: any path that can't reach a definite "deny" allows (subject to
-// the hook's fail_open when the call itself fails).
+// issued access token. A missing/disabled hook allows with no claims. Whenever
+// the hook gives no answer the hook's fail_open decides, and the skip is
+// recorded (skipped).
 func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email string) (map[string]any, error) {
 	if tenantID == uuid.Nil {
 		return nil, nil
@@ -77,17 +120,28 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		WHERE tenant_id = $1 AND enabled AND trigger = 'post_login'
 		ORDER BY created_at LIMIT 1
 	`, tenantID).Scan(&hookID, &url, &legacySecret, &ciphertext, &nonce, &failOpen)
-	if errors.Is(err, pgx.ErrNoRows) || err != nil {
-		return nil, nil // no hook (or can't load it) → never block login on infra
+	if errors.Is(err, pgx.ErrNoRows) {
+		s.known.Store(tenantID, hookState{})
+		return nil, nil
 	}
+	if err != nil {
+		// Whether the organisation's hook fails open can't be read now, so it
+		// is taken from the last time it was read here: a fail-closed
+		// organisation stays fail-closed. Never read, the hook's default
+		// (fail open) applies.
+		last, _ := s.known.Load(tenantID)
+		state, seen := last.(hookState)
+		return s.skipped(ctx, tenantID, userID, state.id, skipUnreadable, !seen || !state.present || state.failOpen, err)
+	}
+	s.known.Store(tenantID, hookState{present: true, id: hookID, failOpen: failOpen})
 	secretValue := legacySecret
 	if len(ciphertext) > 0 {
 		if s.box == nil {
-			return nil, nil
+			return s.skipped(ctx, tenantID, userID, hookID, skipSecretUnavailable, failOpen, errors.New("no cipher to open the signing secret"))
 		}
 		plain, openErr := s.box.Open(tenantID, "auth-hook-signing", hookID.String(), ciphertext, nonce)
 		if openErr != nil {
-			return nil, nil
+			return s.skipped(ctx, tenantID, userID, hookID, skipSecretUnavailable, failOpen, openErr)
 		}
 		secretValue = string(plain)
 	} else if legacySecret != "" && s.box != nil {
@@ -109,11 +163,78 @@ func (s *Service) Run(ctx context.Context, tenantID, userID uuid.UUID, email str
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 	body, callErr := s.call(ctx, url, secretValue, payload)
-	msg, denied, claims := decide(failOpen, callErr, body)
+	if callErr != nil {
+		return s.skipped(ctx, tenantID, userID, hookID, skipCallFailed, failOpen, callErr)
+	}
+	if _, ok := parseAnswer(body); !ok {
+		return s.skipped(ctx, tenantID, userID, hookID, skipUnparseable, failOpen, errors.New("the hook's answer isn't a JSON object"))
+	}
+	msg, denied, claims := decide(failOpen, nil, body)
 	if denied {
 		return nil, errs.ErrAuthHookDenied.WithMessage(msg)
 	}
 	return claims, nil
+}
+
+// skipped answers a sign-in the hook gave no answer for — refused with
+// hookUnavailable where the hook fails closed, allowed where it fails open —
+// and records the skip: an auth_hook.skipped audit event and the
+// auth_hook_skipped_total metric, so the organisation can see its control
+// didn't run and an alert can fire.
+func (s *Service) skipped(ctx context.Context, tenantID, userID, hookID uuid.UUID, reason string, failOpen bool, cause error) (map[string]any, error) {
+	outcome := "allowed"
+	if !failOpen {
+		outcome = "refused"
+	}
+	hookSkips.WithLabelValues(reason, outcome).Inc()
+	slog.Warn("authhook: the sign-in hook gave no answer", "tenant_id", tenantID, "hook_id", hookID, "reason", reason, "outcome", outcome, "err", cause)
+	var resource *uuid.UUID
+	if hookID != uuid.Nil {
+		resource = &hookID
+	}
+	// Recorded even when the request is gone, within a short bound.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.record(rctx, audit.Event{
+		TenantID: &tenantID, ActorUserID: &userID, ActorType: "user",
+		Action: "auth_hook.skipped", ResourceType: "auth_hook", ResourceID: resource,
+		Metadata: map[string]any{"reason": reason, "outcome": outcome, "fail_open": failOpen},
+	}); err != nil {
+		slog.Warn("authhook: record a skipped hook", "tenant_id", tenantID, "reason", reason, "err", err)
+	}
+	if !failOpen {
+		return nil, errs.ErrAuthHookDenied.WithMessage(hookUnavailable)
+	}
+	return nil, nil
+}
+
+// record writes one audit event in its own transaction.
+func (s *Service) record(ctx context.Context, e audit.Event) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := audit.Record(ctx, tx, e); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// answer is what a hook said.
+type answer struct {
+	Decision string         `json:"decision"`
+	Message  string         `json:"message"`
+	Claims   map[string]any `json:"claims"`
+}
+
+// parseAnswer reads a hook's answer; ok is false when it can't be read.
+func parseAnswer(body []byte) (answer, bool) {
+	var r answer
+	if err := json.Unmarshal(body, &r); err != nil {
+		return answer{}, false
+	}
+	return r, true
 }
 
 // call POSTs the signed payload, returning the response body and a non-nil
@@ -165,18 +286,14 @@ func decide(failOpen bool, callErr error, body []byte) (denyMsg string, denied b
 		if failOpen {
 			return "", false, nil
 		}
-		return "Sign-in is temporarily unavailable. Please try again later.", true, nil
+		return hookUnavailable, true, nil
 	}
-	var r struct {
-		Decision string         `json:"decision"`
-		Message  string         `json:"message"`
-		Claims   map[string]any `json:"claims"`
-	}
-	if err := json.Unmarshal(body, &r); err != nil {
+	r, ok := parseAnswer(body)
+	if !ok {
 		if failOpen {
 			return "", false, nil
 		}
-		return "Sign-in is temporarily unavailable. Please try again later.", true, nil
+		return hookUnavailable, true, nil
 	}
 	if strings.EqualFold(strings.TrimSpace(r.Decision), "deny") {
 		msg := strings.TrimSpace(r.Message)

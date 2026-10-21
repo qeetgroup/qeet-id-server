@@ -653,6 +653,19 @@ The changes below are the work staged for that first release.
   link already have cookie-only hosted forms (`/v1/auth/session`, `/v1/auth/magic-link/session`), and a test now
   checks that no hosted sign-in answer carries a token.
 
+**A fail-closed sign-in hook is never skipped silently (2026-10-21)**
+
+* **auth hooks:** an organisation can mark its sign-in hook fail-closed so no sign-in completes without the hook's
+  answer, but when the hook couldn't be read, the cipher was missing or its signing secret couldn't be opened, the
+  sign-in completed anyway and nothing recorded it. Every case where the hook gives no answer — unreadable,
+  secret unavailable, the call failing or timing out, an unreadable answer — now follows the hook's `fail_open`
+  (refused as temporarily unavailable when false). Where the hook can't be read, the setting last read for the
+  organisation is followed, so a fail-closed organisation stays fail-closed; never read, the default (fail open,
+  ADR-0011) applies. Each skip is recorded as an `auth_hook.skipped` audit event (reason, outcome) and counted in
+  `auth_hook_skipped_total{reason,outcome}`.
+* **crypto:** opening an envelope-encrypted value with a stored nonce of the wrong length panicked; it is now
+  refused with an error.
+
 **Toolchain (2026-10-21)**
 
 * **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
