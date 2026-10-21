@@ -262,6 +262,30 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, rawToken, newPasswor
 	if err := qtx.MarkPasswordResetUsed(ctx, row.ID); err != nil {
 		return err
 	}
+	// The link reached the address and nobody else: it proves the address,
+	// so an account registered with it unproved becomes the owner's here —
+	// its old password and every session it had end below.
+	verifiedEmail, err := qtx.VerifyEmailByReset(ctx, row.UserID)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
+		return err
+	default:
+		verifiedID := row.UserID
+		if err := audit.Record(ctx, tx, audit.Event{
+			ActorUserID:  &verifiedID,
+			ActorType:    "user",
+			Action:       "email.verified",
+			ResourceType: "user",
+			ResourceID:   &verifiedID,
+			IP:           ac.IP,
+			UserAgent:    ac.UserAgent,
+			RequestID:    ac.RequestID,
+			Metadata:     map[string]any{"email": verifiedEmail, "proof": "password_reset"},
+		}); err != nil {
+			return err
+		}
+	}
 	// Invalidate all existing sessions on password reset, and announce them.
 	ended, err := sessionsignal.EndUserSessions(ctx, tx, row.UserID)
 	if err != nil {

@@ -365,6 +365,15 @@ func (s *Service) findOrCreatePlatformUser(ctx context.Context, ui userInfo, all
 		`SELECT id FROM "user".users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`, ui.Email,
 	).Scan(&userID)
 	if err == nil {
+		// Adopting an account the provider's address matches: only one whose
+		// address was proved there. Someone else may have registered it with a
+		// password of their own, which would keep working on the adopted
+		// account; until a code or link sent to the address is used (verifying
+		// it, or resetting the password), the provider's word doesn't hand it
+		// over.
+		if err := requireVerifiedAddress(ctx, s.pool, userID); err != nil {
+			return uuid.Nil, err
+		}
 		// Existing account: adopt the provider's avatar only if none is set yet,
 		// so we never clobber a picture the user chose themselves.
 		if ui.Picture != "" {

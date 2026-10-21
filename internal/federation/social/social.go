@@ -737,6 +737,14 @@ func (s *Service) findOrCreateUser(ctx context.Context, tenantID uuid.UUID, prov
 		if !belongs {
 			return uuid.Nil, errs.ErrSocialAccountNotInTenant
 		}
+		// Third, the account must own the address: someone may have registered
+		// the victim's address without proving it (open hosted sign-up), and
+		// adopting it would hand the real person an account whose password the
+		// squatter keeps. Until a code or link sent to the address is used, the
+		// provider's word doesn't adopt it.
+		if err := requireVerifiedAddress(ctx, tx, userID); err != nil {
+			return uuid.Nil, err
+		}
 	}
 
 	var emailPtr *string
@@ -1049,9 +1057,13 @@ func (h *Handler) redirectSocialError(w http.ResponseWriter, r *http.Request, er
 		return
 	}
 	q := url.Values{"error": {"social"}}
-	// A suspended or deleted account is told so, as at password sign-in.
-	if errors.Is(err, errs.ErrAuthAccountInactive) {
+	// A suspended or deleted account is told so, as at password sign-in, and
+	// one that can't be adopted yet is told to verify its address.
+	switch {
+	case errors.Is(err, errs.ErrAuthAccountInactive):
 		q.Set("error", "account_inactive")
+	case errors.Is(err, errs.ErrSocialAccountUnverified):
+		q.Set("error", "account_unverified")
 	}
 	if rt := r.URL.Query().Get("return_to"); rt != "" {
 		q.Set("return_to", rt)
@@ -1130,6 +1142,12 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		// a clear "sign up first" signal instead of silently creating an account.
 		if errors.Is(perr, errs.ErrSocialNoAccount) {
 			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=no_account", http.StatusFound)
+			return
+		}
+		// An account uses the address but hasn't proved owning it: say so, so
+		// the person verifies it or resets its password first.
+		if errors.Is(perr, errs.ErrSocialAccountUnverified) {
+			http.Redirect(w, r, h.Service.appBaseURL+"/sign-in?social_error=account_unverified", http.StatusFound)
 			return
 		}
 		if !errors.Is(perr, errs.ErrSocialStateInvalid) {
@@ -1246,6 +1264,21 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeSignIn(w, res)
+}
+
+// requireVerifiedAddress refuses, with ErrSocialAccountUnverified, adopting an
+// account whose address nobody has proved owning.
+func requireVerifiedAddress(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, userID uuid.UUID) error {
+	var verified bool
+	if err := db.QueryRow(ctx, `SELECT email_verified_at IS NOT NULL FROM "user".users WHERE id = $1`, userID).Scan(&verified); err != nil {
+		return err
+	}
+	if !verified {
+		return errs.ErrSocialAccountUnverified
+	}
+	return nil
 }
 
 // userInTenant reports whether a user is one this tenant can sign in.
