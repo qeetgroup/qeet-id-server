@@ -72,7 +72,7 @@ user's own account); a route without one fails `TestEveryRouteNamesAnApplication
 
 ```text
 1  read the existing schema        internal/platform/database/migrations/  (+ subsystems.md)
-2  new pair, next number           NNNN_description.{up,down}.sql   (highest is 0105; 0082 is absent)
+2  new pair, next number           NNNN_description.{up,down}.sql   (read the highest with ls; 0082 is absent)
 3  additive first                  add columns/tables; do not drop in the same release
 4  queries.sql                     update the affected domain
 5  regenerate                      sqlc → dbgen/
@@ -85,6 +85,12 @@ user's own account); a route without one fails `TestEveryRouteNamesAnApplication
 
 **Expand → migrate → contract.** A migration that drops or renames a column ships **at least one
 release after** the code that stopped using it, or a rollback breaks.
+
+**A build refuses a database newer than itself.** Start (`migrations.Run`), the scheduler, the worker
+and `qeet-id-server schema-check` (run by the host before it switches versions) refuse a database a
+later release has migrated past the build's newest migration, and a half-applied one, with the
+recovery step (`migrations.SchemaError`). So rolling back to a release from before a migration means a
+restore or a roll forward, never an automatic down-migration.
 
 **New tenant-scoped table?** It needs a `tenant_id` column and every query needs the predicate.
 There is no RLS to catch a mistake.

@@ -4,6 +4,13 @@ on:
   push:
     branches: [main] # every merge to main builds, deploys, then tags
   workflow_dispatch:
+    inputs:
+      rollback_to:
+        description: >-
+          Roll production back to this released version (vX.Y.Z, or a full commit sha) instead of
+          building. Its image must still be in ECR, and its build must run on the current schema.
+        required: false
+        default: ""
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -21,7 +28,7 @@ jobs:
   deploy:
     # Production deploys only from main — a manual run on another branch (the
     # default branch is develop) does nothing.
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.rollback_to == ''
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -82,38 +89,31 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Immutable tags only: the release version and the commit. Nothing runs a
+      # moving "latest" (the registry refuses to overwrite a tag, qeet-id-deploy).
+      # The build args stamp the version and commit that /version reports.
       - name: Build & push image
         env:
           REPO: ${{ vars.ECR_REPOSITORY_URL }}
           VERSION: ${{ steps.version.outputs.tag }}
         run: |
-          docker build -t "${REPO}:${VERSION}" -t "${REPO}:${{ github.sha }}" -t "${REPO}:latest" .
+          docker build \
+            --build-arg VERSION="$VERSION" \
+            --build-arg COMMIT="$GITHUB_SHA" \
+            --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t "${REPO}:${VERSION}" -t "${REPO}:${GITHUB_SHA}" .
           docker push "${REPO}:${VERSION}"
-          docker push "${REPO}:${{ github.sha }}"
-          docker push "${REPO}:latest"
+          docker push "${REPO}:${GITHUB_SHA}"
 
+      # The host switches to exactly this tag (redeploy.sh <version>), records
+      # the version it replaces, and refuses a build that can't run on the
+      # schema; the job then confirms GET /version serves it.
       - name: Roll the host (SSM)
         env:
           SSM_PREFIX: /qeet-id/prod
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: |
-          INSTANCE_ID=$(aws ssm get-parameter --name "$SSM_PREFIX/INSTANCE_ID" --query Parameter.Value --output text)
-          echo "Deploying $VERSION to $INSTANCE_ID"
-          cmd_id=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "deploy ${VERSION}" \
-            --parameters commands='["/opt/qeet-id/redeploy.sh"]' \
-            --query Command.CommandId --output text)
-          echo "SSM command: $cmd_id"
-          aws ssm wait command-executed --command-id "$cmd_id" --instance-id "$INSTANCE_ID" || true
-          status=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query Status --output text)
-          echo "----- stdout -----"
-          aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
-          echo "----- stderr -----"
-          aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query StandardErrorContent --output text
-          echo "status: $status"
-          [ "$status" = "Success" ]
+          API_URL: ${{ vars.API_URL || 'https://api.id.qeet.in' }}
+          ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+        run: scripts/deploy/roll-host.sh "${{ steps.version.outputs.tag }}"
 
       # Tag + release AFTER a successful deploy so every tag == a live deployed version.
       - name: Push version tag and create GitHub release
@@ -129,3 +129,31 @@ jobs:
             --title "$VERSION" \
             --generate-notes \
             --repo "${{ github.repository }}"
+
+  # Manual rollback: Actions → deploy → Run workflow on main, with rollback_to.
+  # Builds nothing and tags nothing; switches the host to a version already in
+  # ECR. It stops before touching production when the version isn't retained
+  # or its build can't run on the current schema (restore or roll forward
+  # instead: operations/runbooks/deployment.md in qeet-id-files).
+  rollback:
+    if: github.ref == 'refs/heads/main' && inputs.rollback_to != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://api.id.qeet.in
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Roll the host back (SSM)
+        env:
+          SSM_PREFIX: /qeet-id/prod
+          API_URL: ${{ vars.API_URL || 'https://api.id.qeet.in' }}
+          ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+          ROLLBACK_TO: ${{ inputs.rollback_to }}
+        run: scripts/deploy/roll-host.sh "$ROLLBACK_TO"

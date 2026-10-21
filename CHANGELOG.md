@@ -418,6 +418,24 @@ The changes below are the work staged for that first release.
   own author changing policies is refused with 409 `abac.policy_locks_out`, so no tenant can lock itself
   out of undoing it.
 
+**Rolling back to a named version (2026-10-21)**
+
+* **deploy:** the pipeline now hands the host the exact tag it built (`redeploy.sh <version>` over SSM)
+  and confirms `GET /version` serves it, failing the job otherwise; the host's script records the
+  version it replaces. A manual `workflow_dispatch` run on `main` with `rollback_to` (a release tag or
+  commit sha) rolls production back without building: it stops before touching the host when the image
+  is no longer in ECR. Images are stamped with `VERSION`/`COMMIT`/`DATE` (they reported `dev`) and pushed
+  under their immutable version and commit tags only; nothing pushes or runs `latest`. The steps live in
+  `scripts/deploy/roll-host.sh`. Needs the host part in qeet-id-deploy.
+* **ops:** `GET /version` answers what's running: version, commit, build date, and the database
+  migration next to the newest the build carries (read at start, nothing per request).
+* **db:** a build refuses to start on a database a later release migrated past its newest migration,
+  and on a half-applied migration, with what to do (roll forward, or restore to before the migration;
+  migrations never run down automatically), instead of golang-migrate's "file does not exist". The
+  scheduler and worker refuse it too. `qeet-id-server schema-check` reports the same and changes
+  nothing (exit 0 compatible, 1 not, 2 can't tell), so the host can check the target image before it
+  stops anything.
+
 **Dependencies and toolchain (2026-10-16)**
 
 * **GO-2026-6617** (HTTP/2 server crash, HPACK encoder race; in `golang.org/x/net` and the Go standard
