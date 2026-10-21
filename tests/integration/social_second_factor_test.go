@@ -21,7 +21,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 )
 
-// TestSocialSignInTakesTheSecondFactorDecision (QTID-801): a social sign-in
+// TestSocialSignInTakesTheSecondFactorDecision: a social sign-in
 // issued its session on the provider's word alone — no challenge for a factor
 // the account holds, no enrolment where the organisation requires one, no risk
 // check — in the token flow, the hosted flow and the console's own. Each now

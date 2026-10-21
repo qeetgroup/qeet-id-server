@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestIntrospectionReportsRevocation (QTID-52, ADR-0017): introspection is the
+// TestIntrospectionReportsRevocation (ADR-0017): introspection is the
 // authoritative answer on revocation. A signature-valid access token is
 // reported inactive once its account is suspended or deleted, or its
 // membership of the organisation ends, and active again when the account is

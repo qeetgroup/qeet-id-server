@@ -633,7 +633,7 @@ func (h *Handler) deviceDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Approving hands the device tokens for the application's organisation,
-	// so its second-factor requirement applies (QTID-800); denying needs none.
+	// so its second-factor requirement applies; denying needs none.
 	if in.Approve {
 		dc, err := h.Service.LookupDeviceByUserCode(r.Context(), in.UserCode)
 		if err != nil {

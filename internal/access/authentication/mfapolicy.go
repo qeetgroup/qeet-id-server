@@ -94,7 +94,7 @@ func (s *Service) mfaRequirementFor(ctx context.Context, userID, tenantID uuid.U
 }
 
 // The requirement belongs to the organisation being entered, not only to the
-// one the account calls home (QTID-800). Signing in reads the home
+// one the account calls home. Signing in reads the home
 // organisation's; everything that issues a session or a code for another
 // organisation — switching into it, accepting its invitation, signing in to one
 // of its applications, approving a device for one — asks tenantFactorShortfall

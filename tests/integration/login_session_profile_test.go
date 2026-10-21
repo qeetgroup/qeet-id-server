@@ -19,7 +19,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 )
 
-// TestHostedLoginSessionReadsItsOwnProfile (QTID-532): a browser holding only
+// TestHostedLoginSessionReadsItsOwnProfile: a browser holding only
 // the hosted login's session cookie, as the React SDK does, reads who it is
 // (GET /v1/auth/me, GET /v1/me) and the organisations it belongs to, by name
 // (GET /v1/me/organizations). Before, every one answered 401, so useUser had

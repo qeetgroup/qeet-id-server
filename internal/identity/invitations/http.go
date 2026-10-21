@@ -15,7 +15,7 @@ import (
 
 // tokenIssuer is the slice of auth.Service this handler needs (mockable).
 // Entering the organisation an invitation joins is gated on its second-factor
-// requirement (QTID-800): an account the invitation created is signed in as at
+// requirement: an account the invitation created is signed in as at
 // sign-up, which may answer the enrolment challenge; one already signed in
 // carries its session's factor, and is refused while the organisation
 // requires one it didn't meet.

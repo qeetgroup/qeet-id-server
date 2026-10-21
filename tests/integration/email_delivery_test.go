@@ -112,14 +112,14 @@ func bounce(id, kind, address string) map[string]any {
 			"bouncedRecipients": []map[string]any{{"emailAddress": address, "diagnosticCode": "550 5.1.1 user unknown"}}}}
 }
 
-// TestEmailDeliveryIsRecordedAndBouncesSuppress walks QTID-336: every send is
+// TestEmailDeliveryIsRecordedAndBouncesSuppress: every send is
 // recorded; SES's signed reports update it; a hard bounce or a complaint
 // suppresses the address, so the next send is refused (email.suppressed) and
 // never reaches the provider; a soft bounce only records; a forged report
 // changes nothing; the organisation sees what happened and may clear a
 // suppression its mail caused (audited), another organisation may not; an
 // invitation to a suppressed address says so; and with no provider a send
-// fails instead of reporting success (QTID-115). Before the fix nothing was
+// fails instead of reporting success. Before the fix nothing was
 // recorded and a send to a dead address reported success every time.
 func TestEmailDeliveryIsRecordedAndBouncesSuppress(t *testing.T) {
 	requireDB(t)

@@ -22,7 +22,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
-// TestOrganisationMFARequirementAppliesWhereverItIsEntered (QTID-800): an
+// TestOrganisationMFARequirementAppliesWhereverItIsEntered: an
 // organisation's second-factor requirement was read only for the account's
 // own organisation, at sign-in. Anyone at home elsewhere signed in there with a
 // password and then switched in, accepted the organisation's invitation, or

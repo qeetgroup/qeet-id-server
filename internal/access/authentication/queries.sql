@@ -445,7 +445,7 @@ WHERE id = @session_id AND revoked_at IS NULL
 -- name: MFARequirement :one
 -- joined_at is when the account joined the organisation, which the grace
 -- period is judged by: its creation for its own organisation, its first role
--- there for any other (QTID-800).
+-- there for any other.
 SELECT u.mfa_required,
        (CASE WHEN u.tenant_id = @tenant_id::uuid THEN u.created_at
              ELSE COALESCE((SELECT MIN(ur.granted_at) FROM rbac.user_roles ur
