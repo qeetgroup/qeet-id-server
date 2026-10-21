@@ -63,6 +63,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/health"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/metrics"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/tracing"
@@ -84,6 +85,8 @@ type Deps struct {
 	Invite        *invite.Handler
 	Branding      *branding.Handler
 	EmailTemplate *email.Handler
+	EmailDelivery *email.DeliveryHandler
+	SESWebhook    *delivery.Webhook
 	APIKey        *apikey.Handler
 	APIKeyService *apikey.Service
 	Principal     *principal.Handler
@@ -299,7 +302,7 @@ func NewRouter(d Deps) http.Handler {
 			// RBAC permission enforcement for end-user principals. Gates the
 			// routes listed in permissionMap(); API-key/service actors and
 			// unmapped (self-service / public) routes pass through.
-			r.Use(rbac.Enforce(d.RBACChecker, routePolicyMap()))
+			r.Use(rbac.Enforce(d.RBACChecker, RoutePolicies()))
 			// Sensitive actions also need a step-up of the calling session
 			// (stepUpRoutes); asked only of a caller already authorized.
 			r.Use(d.MFA.Service.StepUpGate(stepUpRoutes()))
@@ -322,6 +325,7 @@ func NewRouter(d Deps) http.Handler {
 func mountRootPublicRoutes(r chi.Router, d Deps, credentialLimiter, protocolLimiter *ratelimit.Limiter) {
 	r.Get("/healthz", d.Health.Liveness)
 	r.Get("/readyz", d.Health.Readiness)
+	r.Get("/version", d.Health.Version)
 	r.Get("/metrics", metrics.Handler().ServeHTTP)
 
 	// Directory credential verification — same throttle as /v1 login.
@@ -357,6 +361,7 @@ func mountV1PublicRoutes(r chi.Router, d Deps) {
 	d.OIDC.MountBrowser(r)
 	d.TokenVault.MountPublic(r)
 	d.MFA.MountPublic(r)
+	d.SESWebhook.Mount(r)
 }
 
 // mountAuthenticatedRoutes is the single production registration point for
@@ -372,6 +377,7 @@ func mountAuthenticatedRoutes(r chi.Router, d Deps) {
 	d.Invite.MountAuthed(r)
 	d.Branding.Mount(r)
 	d.EmailTemplate.Mount(r)
+	d.EmailDelivery.Mount(r)
 	d.APIKey.Mount(r)
 	d.Principal.Mount(r)
 	d.MFA.Mount(r)
@@ -440,9 +446,14 @@ func ApplicationTokenRoutes() []string {
 // login act through that route. All must be user-only self-service routes and
 // none may be CSRF-exempt (TestLoginSessionRoutesStayNarrow). Removing a
 // passkey is deliberately not here: it stays token-only until removal checks
-// that the user keeps a way to sign in.
+// that the user keeps a way to sign in. The three reads tell a signed-in page
+// (and the React SDK's useUser and organisation switcher, which hold only the
+// cookie) who the person is and which organisations they belong to.
 func LoginSessionRoutes() []string {
 	return []string{
+		"GET /v1/auth/me",
+		"GET /v1/me",
+		"GET /v1/me/organizations",
 		"GET /v1/passkeys",
 		"PATCH /v1/passkeys/{id}",
 		"POST /v1/passkeys/register/begin",
@@ -469,6 +480,7 @@ func csrfExemptPaths() []string {
 		"/v1/invites/accept/passkey/",   // the same, accepting with a passkey
 		"/v1/invites/lookup",            // read-only preview by invitation token
 		"/v1/billing/webhooks/",         // provider-signed (Stripe/Razorpay), no cookie session
+		"/v1/webhooks/ses",              // SNS-signed SES events, no cookie session
 		"/v1/billing/sandbox/",          // dev-only mock hosted-checkout page + pay (no cookie session)
 		"/v1/agents/token",              // agent-credential auth (no cookie session)
 		"/v1/credentials/verify",        // public JWT-VC verification (no cookie session)

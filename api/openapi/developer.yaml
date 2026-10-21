@@ -1638,7 +1638,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application''s token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge).'
       content:
         application/json:
           schema:

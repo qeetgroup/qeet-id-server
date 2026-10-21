@@ -295,6 +295,25 @@ The changes below are the work staged for that first release.
   backchannel flows refuse a `resource` instead of dropping it. `tokens.Issuer.VerifyAccessFor`
   checks a token for a given audience, as a downstream service does.
 
+**Scheduled maintenance actually runs (2026-10-20)**
+
+* **audit / ops:** audit-chain verification and the session, MFA, sign-in-history and dead-letter
+  cleanups had never run: they lived only in `cmd/scheduler`, which the image didn't include and
+  nothing started. The API now runs them as its embedded `scheduler` worker (`EMBEDDED_WORKERS`),
+  and the image also ships `/qeet-id-scheduler`; `cmd/worker` runs them too. Each job is claimed in
+  `platform.scheduled_job_runs` before it runs (migration 0147), so it runs once per interval however
+  many instances run the scheduler (the old advisory lock let each replica run it on its own tick),
+  and at start when it is due. A failing or panicking job is recorded and the others still run.
+* **audit:** the verification walked only the platform chain (`Verify(nil)`), never an
+  organisation's, so a tampered organisation chain read as intact with 0 rows checked. It now walks
+  every organisation's chain, stores each run in `platform.audit_verification_runs` (outcome,
+  organisations walked, rows, first broken organisation and row), and logs each broken chain at
+  ERROR with its organisation and row.
+* **metrics:** `scheduled_job_last_success_timestamp_seconds{job}` and
+  `audit_verify_last_success_timestamp_seconds`, read from the database at scrape time so they hold
+  whichever instance ran the job; `scheduled_job_failures_total{job}`,
+  `scheduled_job_duration_seconds{job}` and `audit_verify_failures_total`.
+
 **Revocation ends the whole grant (2026-10-20)**
 
 * **oidc:** revoking a refresh token at `/oauth/revoke` now ends every rotation of its grant. Each
@@ -303,7 +322,8 @@ The changes below are the work staged for that first release.
   refresh token now records its grant (`grant_id`, migration 0143, backfilled for existing chains);
   revocation ends them all and is audited as `oidc.grant_revoked`. An access token presented for
   revocation is refused with `unsupported_token_type` instead of a 200 that revoked nothing; an
-  unknown or another client's token is still a 200 no-op.
+  unknown or another client's token is still a 200 no-op. This holds for an access token issued for
+  a registered resource too, which first slipped through as a 200 no-op.
 
 **Application secret lockout (2026-10-20)**
 
@@ -366,6 +386,102 @@ The changes below are the work staged for that first release.
   redemption issued, every renewal of it included (RFC 6749 §4.1.2), and is audited as
   `oidc.authorization_code_reused`; other grants of the application stay. Migration 0141 records
   the code a grant came from.
+
+**Applications act within the scope they were given (2026-10-21)**
+
+* **rbac:** every authenticated route now names the OAuth scope an application's token needs on it
+  (`RoutePolicy.ApplicationScope`): the route's permission on an administrative route (`user.read`,
+  `role.write` …, the names API keys already carry), `account.read`/`account.write` on the user's own
+  account, `openid` on userinfo. A token issued to an application (it carries `client_id`) passes only
+  with that scope **and** the user's role granting the permission, so it holds the overlap of the two; a
+  token without the scope gets 403 `auth.insufficient_scope` with an RFC 6750 challenge naming it. The
+  user's own tokens are unchanged. Which routes accept application tokens at all is unchanged too
+  (userinfo only, `auth.application_token` elsewhere); opening another is a product decision, and now
+  safe to make. `TestEveryRouteNamesAnApplicationScope` fails a route added without a scope. The unused
+  `httpx.RequireScope`, which implied a scope check that never ran, is removed.
+
+**A deny policy binds everywhere (2026-10-21)**
+
+* **authz:** an attribute (ABAC) deny policy now refuses at every enforcement point, not only at
+  `POST /v1/tenants/{tenantID}/abac/evaluate`. A tenant that wrote a deny to block someone found them still
+  allowed by `GET /v1/check`, the relationship check, AuthZEN and the platform's own route guard, each of
+  which consulted one engine. One composed decision (`internal/access/authorization/decide`) now answers all
+  four: the tenant first, then any ABAC deny refuses and stops, then a role, a relationship tuple or an ABAC
+  allow policy permits; an engine error refuses. ABAC reads a permission as resource type and action
+  (`doc:write` → `doc`, `write`) and the subject as the platform knows it (`subject.id`, `subject.type`,
+  `subject.tenant_id`). A role granting `type:relation` (or `type.relation`) now allows at the relationship
+  check without a tuple; roles and relationships were either-or by resource kind. On Qeet ID's own
+  management API only a role allows: an ABAC allow can't widen it, a deny narrows it. Tenants with no
+  policy of the kind that matters skip ABAC (a per-tenant flag cached 5 s, cleared on every change).
+  The check responses add `decided_by` (`model`, `rule`, `policy_id`) and, with `explain=true`, a `trace`;
+  the policy is named only to a caller holding `policy.read`. Saving an enabled deny that would stop its
+  own author changing policies is refused with 409 `abac.policy_locks_out`, so no tenant can lock itself
+  out of undoing it.
+
+**Rolling back to a named version (2026-10-21)**
+
+* **deploy:** the pipeline now hands the host the exact tag it built (`redeploy.sh <version>` over SSM)
+  and confirms `GET /version` serves it, failing the job otherwise; the host's script records the
+  version it replaces. A manual `workflow_dispatch` run on `main` with `rollback_to` (a release tag or
+  commit sha) rolls production back without building: it stops before touching the host when the image
+  is no longer in ECR. Images are stamped with `VERSION`/`COMMIT`/`DATE` (they reported `dev`) and pushed
+  under their immutable version and commit tags only; nothing pushes or runs `latest`. The steps live in
+  `scripts/deploy/roll-host.sh`. Needs the host part in qeet-id-deploy.
+* **ops:** `GET /version` answers what's running: version, commit, build date, and the database
+  migration next to the newest the build carries (read at start, nothing per request).
+* **db:** a build refuses to start on a database a later release migrated past its newest migration,
+  and on a half-applied migration, with what to do (roll forward, or restore to before the migration;
+  migrations never run down automatically), instead of golang-migrate's "file does not exist". The
+  scheduler and worker refuse it too. `qeet-id-server schema-check` reports the same and changes
+  nothing (exit 0 compatible, 1 not, 2 can't tell), so the host can check the target image before it
+  stops anything.
+
+**Email that says whether it arrived (2026-10-21)**
+
+* **email:** every email is recorded (`platform.email_messages`, migration 0148) with what happened to it:
+  sent, delivered, bounced, complained, suppressed or failed, and the provider's reason. Amazon SES reports
+  arrive at a new public `POST /v1/webhooks/ses` through SNS: each message's signature (SignatureVersion 2,
+  SHA256withRSA only) is verified against a
+  certificate served by `sns.<region>.amazonaws.com`, messages older than an hour are refused, and only the
+  topics in `SES_EVENTS_TOPIC_ARN` are accepted (anyone can create an SNS topic; with none set the endpoint
+  is off); the subscription is confirmed by visiting its `SubscribeURL`. Emails name
+  `SES_CONFIGURATION_SET` so SES publishes the events. A hard bounce or a complaint suppresses the address
+  platform-wide (`platform.email_suppressions`); a soft bounce is only recorded. A send to a suppressed
+  address never reaches the provider and fails with 422 `email.suppressed`. Addresses are stored as a
+  SHA-256 plus a masked hint, never in plain text. `email_messages_total{template,status}` counts them.
+* **email:** `GET /v1/tenants/{tenantID}/email/messages?to=` (`user.read`) shows an organisation its mail to
+  an address and the address's suppression; `GET …/email/suppressions` lists those its mail caused, and
+  `DELETE …/email/suppressions/{id}` (`user.write`, audited `email.suppression_cleared`) clears one; another
+  organisation's suppression is neither identified nor clearable. Records are kept 90 days
+  (`email-delivery-cleanup`).
+* **email:** with no provider configured outside development, a send now fails with 503
+  `email.provider_unavailable` instead of reporting success while the message reached nobody (QTID-115). An
+  invitation is still created (its link can be shared), and its response now says whether the email went:
+  `invite.delivery` is `sent`, or `not_sent` with the code (`email.suppressed`, `email.provider_unavailable`).
+
+**Introspection knows about revocation (2026-10-21)**
+
+* **oidc:** `POST /oauth/introspect` now answers `{"active": false}` for a signature-valid access token whose
+  account is suspended or deleted, whose membership of the organisation has ended, or whose agent is no longer
+  active; it said active for any token that verified, so a relying party following the specification was told
+  a revoked token was live. The contract (ADR-0017 in qeet-id-files): offline verification stays bounded by
+  `ACCESS_TOKEN_TTL` (10 minutes), introspection is authoritative, and relying parties that need immediate
+  revocation introspect. Tying an application's access token to its grant, so revoking the grant also shows
+  here, needs a token claim and is QTID-41.
+
+**The hosted-login session can say who is signed in (2026-10-21)**
+
+* **auth:** the hosted login's session cookie (`qe_ls`) now also reads `GET /v1/auth/me`, `GET /v1/me` and
+  `GET /v1/me/organizations`, the caller's own identity, profile and organisations. A browser app signed in
+  through the hosted login, which holds only that cookie, got 401 on all three, so the React SDK's `useUser`
+  had no profile and its organisation switcher showed a bare id. The cookie still opens nothing else
+  (`LoginSessionRoutes`, pinned by `TestLoginSessionRoutesStayNarrow`); every other route still needs a token.
+
+**Toolchain (2026-10-21)**
+
+* **deps:** Go 1.27.3 (go.mod `toolchain`, the build image `golang:1.27.3-alpine`) for GO-2026-6809:
+  `crypto/x509` in 1.27.2 trusts compromised intermediate certificates, reached through token
+  verification (govulncheck).
 
 **Dependencies and toolchain (2026-10-16)**
 

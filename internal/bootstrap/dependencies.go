@@ -25,6 +25,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/abac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authpolicy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/authzen"
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/policy"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rebac"
@@ -81,6 +82,7 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/delivery"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/emailtmpl"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/messaging/notifier"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
@@ -213,20 +215,29 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	policyRepo.SetSessionDefaults(cfg.SessionMaxAge, cfg.SessionIdleTimeout)
 
 	sender := notifier.New(notifier.Config{
-		EmailProvider:    cfg.EmailProvider,
-		AWSRegion:        cfg.AWSRegion,
-		SMTPHost:         cfg.SMTPHost,
-		SMTPPort:         cfg.SMTPPort,
-		SMTPUsername:     cfg.SMTPUsername,
-		SMTPPassword:     cfg.SMTPPassword,
-		SMTPFrom:         cfg.SMTPFrom,
-		TwilioAccountSID: cfg.TwilioAccountSID,
-		TwilioAuthToken:  cfg.TwilioAuthToken,
-		TwilioFrom:       cfg.TwilioFrom,
-		Dev:              cfg.IsDev(),
+		EmailProvider:       cfg.EmailProvider,
+		AWSRegion:           cfg.AWSRegion,
+		SMTPHost:            cfg.SMTPHost,
+		SMTPPort:            cfg.SMTPPort,
+		SMTPUsername:        cfg.SMTPUsername,
+		SMTPPassword:        cfg.SMTPPassword,
+		SMTPFrom:            cfg.SMTPFrom,
+		SESConfigurationSet: cfg.SESConfigurationSet,
+		TwilioAccountSID:    cfg.TwilioAccountSID,
+		TwilioAuthToken:     cfg.TwilioAuthToken,
+		TwilioFrom:          cfg.TwilioFrom,
+		Dev:                 cfg.IsDev(),
 	})
 	emailTransport, emailRouter := sender.(notifier.Router)
 	emailTestEnabled := emailRouter && emailTransport.Email != nil
+	// Every email is checked against the suppression list and recorded, right
+	// in front of the transport (after templating and branding).
+	deliveryStore := delivery.NewStore(pool)
+	emailProvider := "none"
+	if emailRouter {
+		emailProvider = emailTransport.EmailProvider()
+	}
+	sender = delivery.Tracker{Next: sender, Store: deliveryStore, Provider: emailProvider}
 	sender = branding.Sender{Source: brandingRepo, Next: sender}
 	sender = email.TemplateSender{Templates: emailTemplateService, Appearance: brandingRepo, Next: sender}
 	// PNG fallback for the email logo (served at the app root): shown in clients
@@ -310,11 +321,14 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	botService := bot.NewService(pool)
 	siemService := siem.NewService(pool, outboundPolicy) // forwards audit events to configured log sinks
 	siemService.SetCipher(sharedCipher)
-	rebacService := rebac.NewService(pool)                       // fine-grained (relationship) authorization
-	abacService := abac.NewService(pool)                         // attribute-based access control (policy store + PDP)
-	authzenService := authzen.NewService(rbacRepo, rebacService) // OpenID AuthZEN PDP facade over RBAC/ReBAC
-	agentService := agent.NewService(pool, issuer)               // AI-agent identities (ephemeral scoped tokens)
-	vcService := vc.NewService(pool, issuer)                     // W3C verifiable credentials (JWT-VC)
+	rebacService := rebac.NewService(pool) // fine-grained (relationship) authorization
+	abacService := abac.NewService(pool)   // attribute-based access control (policy store + PDP)
+	// One decision across the three engines (an ABAC deny refuses, then any
+	// allow): the route guard, /v1/check, the relationship check and AuthZEN.
+	decider := decide.New(rbacRepo, rebacService, abacService)
+	authzenService := authzen.NewService(rbacRepo, rebacService, decider) // OpenID AuthZEN PDP facade
+	agentService := agent.NewService(pool, issuer)                        // AI-agent identities (ephemeral scoped tokens)
+	vcService := vc.NewService(pool, issuer)                              // W3C verifiable credentials (JWT-VC)
 
 	// Qeet AI assistant: the conversation store is created here; the per-tenant
 	// BYOK provider-config service + orchestrator + handler are wired below,
@@ -380,6 +394,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 	healthHandler.AddReadiness("jwt-keyring", signingKeyRegistry.Ready) // not ready after repeated keyring refresh failures
 	inFlight := httpx.NewInFlight()
 	oidcService := oidc.NewService(pool, issuer)
+	oidcService.SetAgentStatus(agentService.AgentStatus)            // a suspended agent's tokens introspect inactive
 	oidcService.SetGrantMaxAge(cfg.SessionMaxAge)                   // grant bound where the organisation sets none
 	oidcService.SetTokenExchangeMaxDepth(cfg.TokenExchangeMaxDepth) // bound a chain of exchanges
 	oidcService.SetClientLockout(oidc.ClientLockout{                // wrong application secrets
@@ -619,14 +634,16 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		User:          &user.Handler{Repo: userRepo, Validate: v, PasswordPolicy: authPolicyService.ValidateForTenant, MFA: mfaService, SignIns: authService, Signals: sessionSignals},
 		AuthPolicy:    &authpolicy.Handler{Service: authPolicyService},
 		Auth:          &auth.Handler{Service: authService, Validate: v, CookieSecure: !cfg.IsDev(), Bot: botService, GeoCountryHeader: cfg.GeoCountryHeader},
-		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v},
-		RBACChecker:   rbacRepo,
+		RBAC:          &rbac.Handler{Repo: rbacRepo, Service: rbacService, Validate: v, Decider: decider},
+		RBACChecker:   decider,
 		Verification:  &verification.Handler{Service: verifyService},
 		Recovery:      &recovery.Handler{Service: recoveryService, AuthService: authService, DevMode: cfg.IsDev(), CookieSecure: !cfg.IsDev()},
 		Retention:     &retention.Handler{Service: retentionService},
 		Invite:        &invite.Handler{Service: inviteService, AuthService: authService, Validate: v},
 		Branding:      &branding.Handler{Repo: brandingRepo},
 		EmailTemplate: &email.Handler{Service: emailTemplateService, Sender: sender, Appearance: brandingRepo, TestEmailEnabled: emailTestEnabled},
+		EmailDelivery: &email.DeliveryHandler{Store: deliveryStore},
+		SESWebhook:    &delivery.Webhook{Store: deliveryStore, TopicARNs: cfg.SESEventsTopicARNs},
 		APIKey:        &apikey.Handler{Service: apikeyService},
 		APIKeyService: apikeyService,
 		Principal:     &principal.Handler{Service: principalService},
@@ -662,7 +679,7 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		SIEM:          &siem.Handler{Service: siemService},
 		AuthHook:      &authhook.Handler{Service: authHookService},
 		ABAC:          &abac.Handler{Service: abacService},
-		ReBAC:         &rebac.Handler{Service: rebacService},
+		ReBAC:         &rebac.Handler{Service: rebacService, Decider: decider},
 		AuthZEN:       &authzen.Handler{Service: authzenService},
 		Agent:         &agent.Handler{Service: agentService},
 		VC:            &vc.Handler{Service: vcService},
@@ -692,7 +709,13 @@ func buildDeps(rootCtx context.Context, cfg *config.Config, pool *pgxpool.Pool, 
 		{name: "retention", run: retentionService.Run},
 		{name: "siem", run: siemService.Run},
 		{name: "audit-anomaly", run: auditAnomalyService.Run},
+		// Audit-chain verification and the cleanups, once per interval across
+		// instances (QTID-326).
+		{name: "scheduler", run: func(ctx context.Context) {
+			worker.RunScheduled(ctx, pool, MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+		}},
 	}
+	RegisterMaintenanceMetrics(pool)
 	return deps, workers
 }
 

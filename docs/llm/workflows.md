@@ -61,7 +61,10 @@ path or body, and carry `WHERE tenant_id = $1` into every query.
 
 A new authenticated route **refuses access tokens issued to applications** (they carry `client_id`)
 by default: they are for the application's own use, not account or organisation management. Only routes
-meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test).
+meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by a test). Its policy in
+`bootstrap.RoutePolicies()` also names the scope an application's token needs there
+(`ApplicationScope`: the permission on an administrative route, `account.read`/`account.write` on the
+user's own account); a route without one fails `TestEveryRouteNamesAnApplicationScope`.
 
 ---
 
@@ -69,7 +72,7 @@ meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by
 
 ```text
 1  read the existing schema        internal/platform/database/migrations/  (+ subsystems.md)
-2  new pair, next number           NNNN_description.{up,down}.sql   (highest is 0105; 0082 is absent)
+2  new pair, next number           NNNN_description.{up,down}.sql   (read the highest with ls; 0082 is absent)
 3  additive first                  add columns/tables; do not drop in the same release
 4  queries.sql                     update the affected domain
 5  regenerate                      sqlc → dbgen/
@@ -82,6 +85,12 @@ meant for applications belong in `bootstrap.ApplicationTokenRoutes()` (pinned by
 
 **Expand → migrate → contract.** A migration that drops or renames a column ships **at least one
 release after** the code that stopped using it, or a rollback breaks.
+
+**A build refuses a database newer than itself.** Start (`migrations.Run`), the scheduler, the worker
+and `qeet-id-server schema-check` (run by the host before it switches versions) refuse a database a
+later release has migrated past the build's newest migration, and a half-applied one, with the
+recovery step (`migrations.SchemaError`). So rolling back to a release from before a migration means a
+restore or a roll forward, never an automatic down-migration.
 
 **New tenant-scoped table?** It needs a `tenant_id` column and every query needs the predicate.
 There is no RLS to catch a mistake.
@@ -161,7 +170,7 @@ its own decision.
 2  existing pattern                internal/platform/jobs/worker.go
 3  event-driven?                   write to the outbox in the SAME transaction as the state change
 4  register it                     cmd/worker/main.go and/or embedded in the API
-5  scheduled instead?              cmd/scheduler — advisory-lock coordinated, safe on N replicas
+5  scheduled instead?              add it to bootstrap.MaintenanceJobs — once per interval across instances
 6  retry + dead-letter             follow internal/developer/webhooks/
 7  observability                   metrics and structured logs — no PII
 8  tests

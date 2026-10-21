@@ -91,6 +91,7 @@ rbac/enforce.go       router middleware — consumes bootstrap/permissions.go
 rbac/http.go          /check, /roles, /permissions
 abac/abac.go          13 operators, deny-overrides, fail-closed
 rebac/rebac.go        Zanzibar relation tuples, recursive check
+decide/decide.go      one decision across all three: tenant, ABAC deny, then any allow
 authzen/authzen.go    OpenID AuthZEN PDP/PEP facade
 policy/policy.go      tenant security policy
 authpolicy/authpolicy.go   password rules, permitted login methods

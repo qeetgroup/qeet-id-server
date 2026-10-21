@@ -25,7 +25,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 |---|---|
 | API server | `cmd/api/main.go` → `bootstrap.Run()` |
 | Background workers | `cmd/worker/main.go` |
-| Scheduled maintenance | `cmd/scheduler/main.go` |
+| Scheduled maintenance | `internal/bootstrap/maintenance.go` (jobs) · `internal/platform/jobs/scheduled.go` (runner) |
 | Migration runner | `cmd/migrate/main.go` |
 | Demo data (dev only) | `cmd/seed/main.go` |
 
@@ -174,7 +174,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | NATS publishing | `internal/platform/events/outbox/nats.go` |
 | Worker pool | `internal/platform/jobs/worker.go` |
 | Standalone worker | `cmd/worker/main.go` — webhooks, anomaly, gdpr, retention, siem, outbox |
-| Scheduler | `cmd/scheduler/main.go` — audit maintenance, advisory-lock coordinated |
+| Scheduler | `cmd/scheduler/main.go` — runs `bootstrap.MaintenanceJobs` standalone; the API embeds the same |
 
 ## Configuration & observability
 
@@ -189,6 +189,7 @@ A navigation index. "Where is X?" answered in one hop. For *how* things work, re
 | Build info | `internal/platform/observability/buildinfo/` |
 | Rate limiting | `internal/platform/cache/ratelimit/` |
 | Email templates / notifier | `internal/platform/messaging/` |
+| Email delivery records, suppression list, SES webhook | `internal/platform/messaging/delivery/` (tenant API: `internal/operations/email/delivery.go`) |
 
 ## Contracts
 

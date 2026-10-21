@@ -87,10 +87,12 @@ type Config struct {
 	JWTIssuer   string `envconfig:"JWT_ISSUER" default:"qeet-id"`
 	JWTAudience string `envconfig:"JWT_AUDIENCE" default:"qeet-id"`
 	// AccessTokenTTL bounds how long a revoked-but-not-yet-expired access token
-	// stays usable: access tokens are stateless JWTs verified by signature alone
-	// (no per-request DB revocation check), so this TTL is the hard ceiling on
-	// that exposure window. Real mitigation is the session.revoked /
-	// token.claims_change webhook signals that let a relying party react at once.
+	// stays usable to a verifier that checks it offline (signature and expiry
+	// only): this TTL is the ceiling on that exposure window. Introspection
+	// (POST /oauth/introspect) is the authoritative answer and reports a token
+	// inactive as soon as its account, membership or agent is revoked; the
+	// session.revoked / token.claims_change webhook signals let a relying party
+	// react at once. The contract is ADR-0017 (qeet-id-files).
 	AccessTokenTTL  time.Duration `envconfig:"ACCESS_TOKEN_TTL" default:"10m"`
 	RefreshTokenTTL time.Duration `envconfig:"REFRESH_TOKEN_TTL" default:"720h"`
 	// SessionMaxAge and SessionIdleTimeout bound the API and console sessions
@@ -218,6 +220,14 @@ type Config struct {
 	SMTPUsername string `envconfig:"SMTP_USERNAME" default:""`
 	SMTPPassword string `envconfig:"SMTP_PASSWORD" default:""`
 	SMTPFrom     string `envconfig:"SMTP_FROM" default:""`
+	// SESConfigurationSet names the SES configuration set every email is sent
+	// with (ses-api), whose event destination publishes deliveries, bounces
+	// and complaints to SNS and on to POST /v1/webhooks/ses.
+	SESConfigurationSet string `envconfig:"SES_CONFIGURATION_SET" default:""`
+	// SESEventsTopicARNs are the SNS topics POST /v1/webhooks/ses accepts
+	// (comma-separated). Anyone can create an SNS topic, so a message from any
+	// other is refused; with none set the endpoint is off.
+	SESEventsTopicARNs []string `envconfig:"SES_EVENTS_TOPIC_ARN" default:""`
 
 	// SMS (Twilio). Empty credentials leave SMS on the log-only fallback.
 	TwilioAccountSID string `envconfig:"TWILIO_ACCOUNT_SID" default:""`

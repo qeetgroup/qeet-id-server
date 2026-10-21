@@ -49,3 +49,25 @@ FROM audit.events
 WHERE tenant_id IS NOT DISTINCT FROM @tenant_id
   AND row_hash IS NOT NULL
 ORDER BY created_at ASC, id ASC;
+
+-- name: ListAuditChainTenants :many
+-- Every organisation with a hash chain, for the scheduled verification of all
+-- of them (the platform chain, NULL tenant_id, is verified separately).
+SELECT DISTINCT tenant_id FROM audit.events
+WHERE tenant_id IS NOT NULL AND row_hash IS NOT NULL
+ORDER BY tenant_id;
+
+-- name: InsertAuditVerificationRun :exec
+-- Store one scheduled verification of every chain, as evidence.
+INSERT INTO platform.audit_verification_runs (
+    id, started_at, finished_at, tenants_walked, rows_checked, outcome,
+    broken_tenant_id, first_broken_link, broken_reason, error
+) VALUES (
+    @id, @started_at, @finished_at, @tenants_walked, @rows_checked, @outcome,
+    sqlc.narg(broken_tenant_id), sqlc.narg(first_broken_link), sqlc.narg(broken_reason), sqlc.narg(error)
+);
+
+-- name: LastIntactAuditVerification :one
+-- When a scheduled verification last found every chain intact (0: never).
+SELECT COALESCE(extract(epoch FROM max(finished_at)), 0)::float8 AS at
+FROM platform.audit_verification_runs WHERE outcome = 'intact';

@@ -19,8 +19,10 @@ import (
 	"github.com/qeetgroup/qeet-id-server/internal/operations/siem"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/config"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/crypto/envelope"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	db "github.com/qeetgroup/qeet-id-server/internal/platform/database/postgres"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/events/outbox"
+	"github.com/qeetgroup/qeet-id-server/internal/platform/events/sessionsignal"
 	worker "github.com/qeetgroup/qeet-id-server/internal/platform/jobs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/network/egress"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
@@ -52,6 +54,12 @@ func main() {
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// The API migrates; this only refuses a database a later release has
+	// migrated past this build, or a half-applied migration.
+	if _, err := migrations.CheckCompatible(cfg.DBURL); err != nil {
+		slog.Error("refusing to start: " + err.Error())
+		os.Exit(1)
+	}
 	pool, err := db.NewPool(rootCtx, cfg.DBURL, cfg.DBMinConns, cfg.DBMaxConns)
 	if err != nil {
 		slog.Error("connect db", "err", err)
@@ -103,6 +111,11 @@ func main() {
 	sup.Register("retention", retentionService.Run)
 	sup.Register("siem", siemService.Run)
 	sup.Register("audit-anomaly", auditAnomalyService.Run)
+	// Once per interval across instances, beside the API's own (QTID-326).
+	sessionSignals := sessionsignal.New(webhookService.EnqueueTx)
+	sup.Register("scheduler", func(ctx context.Context) {
+		worker.RunScheduled(ctx, pool, bootstrap.MaintenanceJobs(pool, sessionSignals), worker.SchedulerTick)
+	})
 
 	wait := sup.Start(rootCtx)
 

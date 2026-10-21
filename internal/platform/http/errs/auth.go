@@ -16,6 +16,7 @@ const (
 	CodeAuthSelfRegistrationDisabled    = "auth.self_registration_disabled"
 	CodeAuthMethodDisabled              = "auth.method_disabled"
 	CodeAuthApplicationToken            = "auth.application_token"
+	CodeAuthInsufficientScope           = "auth.insufficient_scope"
 	CodeAuthPasswordWeak                = "auth.password_weak"
 	CodeAuthMFAChallengeExpired         = "auth.mfa_challenge_expired"
 	CodeAuthRiskVerificationUnavailable = "auth.risk_verification_unavailable"
@@ -44,6 +45,9 @@ var (
 	// ErrAuthApplicationToken: the token was issued to an application, which
 	// may read who the user is but not manage their account or organisation.
 	ErrAuthApplicationToken = New(CodeAuthApplicationToken, "This token was issued to an application and can't be used here. Sign in to Qeet ID to manage your account.")
+	// ErrAuthInsufficientScope: an application's token reached a route it may
+	// use, but the user didn't approve the scope the route needs.
+	ErrAuthInsufficientScope = New(CodeAuthInsufficientScope, "This application wasn't given permission for this. Sign in to the application again and approve the access it asks for.")
 	// ErrAuthMethodDisabled: the organisation has switched this sign-in method
 	// off. An access decision, not a wrong credential; it says nothing about
 	// whether an account exists.

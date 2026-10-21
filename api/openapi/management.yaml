@@ -56,7 +56,8 @@ paths:
       security:
         - bearerAuth: []
         - apiKeyAuth: []
-      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection.
+        - ssoCookie: []
+      description: Caller-scoped user-only list of active, non-deleted organizations with valid role membership. No user or tenant identity is taken from query parameters. last_used_at excludes the current session so automatic sign-in scope is not labeled as a prior selection. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token, so a browser app signed in through the hosted login can list the caller's organizations by name.
       parameters:
         - name: limit
           in: query
@@ -1595,12 +1596,13 @@ paths:
   /v1/me:
     get:
       operationId: get_v1_me
-      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details.'
+      description: 'Returns the profile of the authenticated caller, resolved from the presented token rather than any path parameter. Use it to render the signed-in user''s own account details. Also accepts the hosted-login session cookie (qe_ls) in place of a bearer token.'
       summary: Get the authenticated user's profile
       tags: [Users]
       security:
         - bearerAuth: []
         - apiKeyAuth: []
+        - ssoCookie: []
       responses:
         '200':
           description: User profile
@@ -2374,7 +2376,7 @@ paths:
               type: object
               additionalProperties: true
         description: Request body summarized; see the handler for exact fields.
-      description: Response body summarized; accurate path/method/params/security. Enrich the body later.
+      description: 'Creates an invitation and emails its accept link. The response carries the invitation, its raw token (so the link can be shared by hand) and invite.delivery: status sent when a provider accepted the email, or not_sent with code and message when it did not (email.suppressed: the address bounced or reported spam before; email.provider_unavailable: no provider is configured). The invitation is created either way.'
       responses:
         '201':
           description: Created
@@ -2383,6 +2385,15 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+                properties:
+                  invite:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      delivery:
+                        $ref: '#/components/schemas/InviteDelivery'
+                  token:
+                    type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2748,7 +2759,7 @@ paths:
   /v1/invites/{id}/resend:
     post:
       operationId: post_v1_invites_ById_resend
-      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation.'
+      description: 'Rotates the invitation token, extends its expiry, and re-sends the invitation email. Only pending or expired invites belonging to the caller''s tenant qualify; already-accepted or revoked invites are rejected. The recipient completes the flow through the accept-invite call, as with the original invitation. invite.delivery says whether the email went out (as on create): a suppressed address reports not_sent with email.suppressed rather than success.'
       summary: Resend an invitation
       tags: [Invites]
       parameters:
@@ -2938,7 +2949,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo.'
+      description: 'Authenticated but not permitted. auth.application_token: the access token was issued to an application (it carries client_id) and this route accepts only the user''s own tokens; applications may call GET /v1/oauth/userinfo. auth.insufficient_scope: an application''s token reached a route open to applications without the scope the route needs (named in the WWW-Authenticate challenge).'
       content:
         application/json:
           schema:
@@ -2968,6 +2979,18 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
   schemas:
+    InviteDelivery:
+      type: object
+      description: Whether the invitation's email went out. The invitation exists either way.
+      properties:
+        status:
+          type: string
+          enum: [sent, not_sent]
+        code:
+          type: string
+          description: 'Why not, when not_sent: email.suppressed, email.provider_unavailable or email.send_failed.'
+        message:
+          type: string
     TenantBranding:
       type: object
       properties:

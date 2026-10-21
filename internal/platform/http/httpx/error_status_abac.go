@@ -17,5 +17,6 @@ func init() {
 		errs.CodeABACActionRequired:       http.StatusUnprocessableEntity,
 		errs.CodeABACConditionInvalid:     http.StatusUnprocessableEntity,
 		errs.CodeABACPolicyNameExists:     http.StatusConflict,
+		errs.CodeABACPolicyLocksOut:       http.StatusConflict,
 	})
 }

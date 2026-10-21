@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/qeetgroup/qeet-id-server/internal/platform/database/migrations"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/observability/buildinfo"
 )
@@ -38,6 +39,9 @@ type Handler struct {
 	ServiceProfile string
 	StartedAt      time.Time
 	Build          buildinfo.Info
+	// Schema is the database's migration as this process found it at start
+	// (after migrating), reported by /version; nil omits it.
+	Schema *migrations.Status
 
 	checks []namedCheck
 }
@@ -67,6 +71,22 @@ func (h *Handler) Liveness(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.ServiceProfile != "" {
 		body["profile"] = h.ServiceProfile
+	}
+	httpx.WriteJSON(w, http.StatusOK, body)
+}
+
+// Version answers "what's running here": the build's version, commit and date,
+// and the database migration it runs on next to the newest this build carries.
+// It reads nothing at request time.
+func (h *Handler) Version(w http.ResponseWriter, r *http.Request) {
+	body := map[string]any{
+		"version":    h.Build.Version,
+		"commit":     h.Build.Commit,
+		"date":       h.Build.Date,
+		"go_version": h.Build.GoVersion,
+	}
+	if h.Schema != nil {
+		body["schema"] = map[string]any{"migration": h.Schema.Database, "latest": h.Schema.Latest}
 	}
 	httpx.WriteJSON(w, http.StatusOK, body)
 }

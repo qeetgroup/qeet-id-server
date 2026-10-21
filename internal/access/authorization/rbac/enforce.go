@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -32,32 +33,50 @@ type compiledRoute struct {
 // opt in with UserOnlyPolicy. Absence from the policy table always denies.
 type RoutePolicy struct {
 	UserPermission string
-	MachineScopes  []string
-	AllowUser      bool
-	AllowAPIKey    bool
-	AllowService   bool
-	AllowAgent     bool
+	// ApplicationScope is the OAuth scope a token issued to an application
+	// (Principal.ClientID set) must carry to act on this route for its user,
+	// on top of the user's own UserPermission: an application holds the
+	// overlap of what the user may do and what the user approved. Every policy
+	// names one; a token without it is refused with 403 insufficient_scope.
+	// Whether a route accepts application tokens at all is decided before this
+	// (httpx.RefuseApplicationTokens).
+	ApplicationScope string
+	MachineScopes    []string
+	AllowUser        bool
+	AllowAPIKey      bool
+	AllowService     bool
+	AllowAgent       bool
 	// HandlerAuthorizedMachine is reserved for routes whose machine scope is
 	// resource-derived (for example vault:<name>) and is checked by the handler.
 	HandlerAuthorizedMachine bool
 }
 
+// PermissionPolicy gates a route on one permission: a user's role must grant
+// it, and a machine credential or an application's token must carry it as a
+// scope, so an application approved for user.read can read users only where
+// its user may.
 func PermissionPolicy(permission string) RoutePolicy {
 	return RoutePolicy{
-		UserPermission: permission,
-		MachineScopes:  []string{permission},
-		AllowUser:      true,
-		AllowAPIKey:    true,
-		AllowService:   true,
-		AllowAgent:     true,
+		UserPermission:   permission,
+		ApplicationScope: permission,
+		MachineScopes:    []string{permission},
+		AllowUser:        true,
+		AllowAPIKey:      true,
+		AllowService:     true,
+		AllowAgent:       true,
 	}
 }
 
-func UserOnlyPolicy() RoutePolicy { return RoutePolicy{AllowUser: true} }
+// UserOnlyPolicy is a self-service route: a user's own resource, closed to
+// machine credentials, reachable by an application's token only with scope.
+func UserOnlyPolicy(scope string) RoutePolicy {
+	return RoutePolicy{AllowUser: true, ApplicationScope: scope}
+}
 
-func HandlerAuthorizedPolicy(allowUser bool) RoutePolicy {
+func HandlerAuthorizedPolicy(allowUser bool, scope string) RoutePolicy {
 	return RoutePolicy{
 		AllowUser:                allowUser,
+		ApplicationScope:         scope,
 		AllowAPIKey:              true,
 		AllowService:             true,
 		AllowAgent:               true,
@@ -144,6 +163,18 @@ func Enforce(c Checker, policies map[string]RoutePolicy) func(http.Handler) http
 			case "", "user":
 				if !policy.AllowUser || p.UserID == nil {
 					httpx.WriteError(w, r, errs.ErrRBACPermissionDenied)
+					return
+				}
+				// A token issued to an application acts for its user only as far
+				// as the user approved: it needs the route's scope, and then the
+				// user's permission below like any other request.
+				if p.ClientID != "" && (policy.ApplicationScope == "" || !slices.Contains(p.Scopes, policy.ApplicationScope)) {
+					challenge := `Bearer realm="qeet", error="insufficient_scope"`
+					if policy.ApplicationScope != "" {
+						challenge += `, scope="` + policy.ApplicationScope + `"`
+					}
+					w.Header().Set("WWW-Authenticate", challenge)
+					httpx.WriteError(w, r, errs.ErrAuthInsufficientScope.WithDetail("this request needs the "+policy.ApplicationScope+" scope"))
 					return
 				}
 				if policy.UserPermission != "" {

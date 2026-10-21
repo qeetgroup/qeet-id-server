@@ -7,6 +7,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 
+	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/decide"
 	"github.com/qeetgroup/qeet-id-server/internal/operations/audit"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 	"github.com/qeetgroup/qeet-id-server/internal/platform/http/httpx"
@@ -16,6 +17,9 @@ type Handler struct {
 	Repo     *Repository
 	Service  *Service
 	Validate *validator.Validate
+	// Decider answers GET /v1/check across every engine, so an attribute
+	// (ABAC) deny refuses there as at every other enforcement point.
+	Decider *decide.Decider
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -263,10 +267,11 @@ func (h *Handler) effective(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"permissions": keys})
 }
 
-// check authorizes an action. By default it returns {"allowed": bool}. With the
-// opt-in query flag explain=true it returns the full Explanation (allowed, the
-// grant path(s), and a reason on denial) computed by the same resolver — the
-// default contract is untouched so existing callers/tests keep working.
+// check authorizes an action through the composed decision (decide.Decider):
+// an attribute (ABAC) deny refuses, a role or an attribute allow permits. It
+// returns {"allowed": bool, "decided_by": {"model", "rule"}}. With the opt-in
+// query flag explain=true it adds the role grant paths, a reason on denial and
+// the decision's trace.
 func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	uid, err := uuid.Parse(q.Get("user_id"))
@@ -294,21 +299,29 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, errs.ErrRBACPermissionRequired)
 		return
 	}
+	dec, err := h.Decider.Permission(r.Context(), tid, uid, perm)
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	dec = h.Decider.ForViewer(r.Context(), httpx.PrincipalFromCtx(r.Context()), tid, dec)
+	out := map[string]any{"allowed": dec.Allow, "decided_by": dec.DecidedBy()}
 	if q.Get("explain") == "true" {
 		exp, err := h.Repo.Explain(r.Context(), uid, tid, perm)
 		if err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusOK, exp)
-		return
+		out["paths"] = exp.Paths
+		if !dec.Allow {
+			out["reason"] = exp.Reason
+			if dec.Model == decide.ModelABAC {
+				out["reason"] = "refused by " + dec.Rule
+			}
+		}
+		out["trace"] = dec.Trace
 	}
-	ok, err := h.Repo.Check(r.Context(), uid, tid, perm)
-	if err != nil {
-		httpx.WriteError(w, r, err)
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"allowed": ok})
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) listGroupRoles(w http.ResponseWriter, r *http.Request) {

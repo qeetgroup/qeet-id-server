@@ -14,6 +14,30 @@ type Router struct {
 	Email   Sender
 	SMS     Sender
 	Default Sender
+	// EmailProviderName names the email transport in delivery records ("ses",
+	// "smtp"); empty when there is none.
+	EmailProviderName string
+}
+
+// EmailProvider names the email transport, "none" when there is none.
+func (r Router) EmailProvider() string {
+	if r.Email == nil || r.EmailProviderName == "" {
+		return "none"
+	}
+	return r.EmailProviderName
+}
+
+// SendID is Send, also returning the email provider's id for the message when
+// it gives one (SES does; SMTP doesn't).
+func (r Router) SendID(ctx context.Context, m Message) (string, error) {
+	if (m.Channel == "email" || m.Channel == "") && r.Email != nil {
+		if s, ok := r.Email.(interface {
+			SendID(context.Context, Message) (string, error)
+		}); ok {
+			return s.SendID(ctx, m)
+		}
+	}
+	return "", r.Send(ctx, m)
 }
 
 func (r Router) Send(ctx context.Context, m Message) error {
@@ -41,6 +65,9 @@ type Config struct {
 	// with no SMTP endpoint); anything else uses SMTP when SMTPHost is set.
 	EmailProvider string
 	AWSRegion     string
+	// SESConfigurationSet is the SES configuration set every email names, so
+	// its events reach the server (ses-api only; empty for none).
+	SESConfigurationSet string
 
 	SMTPHost     string
 	SMTPPort     string
@@ -69,25 +96,25 @@ func New(c Config) Sender {
 	case c.EmailProvider == "ses-api" && c.SMTPFrom != "":
 		// SES v2 API — for regions without an SMTP endpoint. Init failure falls
 		// back to log-only rather than blocking boot (secure-by-default posture).
-		s, err := NewSESv2Sender(context.Background(), c.AWSRegion, c.SMTPFrom)
+		s, err := NewSESv2Sender(context.Background(), c.AWSRegion, c.SMTPFrom, c.SESConfigurationSet)
 		if err != nil {
 			slog.Error("notifier: SES API sender init failed — emails will only be logged", "err", err)
 		} else {
-			r.Email = s
-			slog.Info("notifier: email via SES API", "region", c.AWSRegion)
+			r.Email, r.EmailProviderName = s, "ses"
+			slog.Info("notifier: email via SES API", "region", c.AWSRegion, "configuration_set", c.SESConfigurationSet)
 		}
 	case c.SMTPHost != "" && c.SMTPFrom != "":
 		port := c.SMTPPort
 		if port == "" {
 			port = "587"
 		}
-		r.Email = SMTPSender{
+		r.Email, r.EmailProviderName = SMTPSender{
 			Addr:     net.JoinHostPort(c.SMTPHost, port),
 			Host:     c.SMTPHost,
 			Username: c.SMTPUsername,
 			Password: c.SMTPPassword,
 			From:     c.SMTPFrom,
-		}
+		}, "smtp"
 		slog.Info("notifier: email via SMTP", "host", c.SMTPHost)
 	default:
 		slog.Warn("notifier: no email provider configured — emails will only be logged")

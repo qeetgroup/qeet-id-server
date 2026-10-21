@@ -3,6 +3,7 @@ package notifier
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+
+	"github.com/qeetgroup/qeet-id-server/internal/platform/http/errs"
 )
 
 type recordSender struct{ last *Message }
@@ -204,10 +207,16 @@ func TestLogSenderDoesNotLeakCredentialsOutsideDev(t *testing.T) {
 		prev := slog.Default()
 		slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
 		t.Cleanup(func() { slog.SetDefault(prev) })
-		if err := s.Send(context.Background(), Message{
+		err := s.Send(context.Background(), Message{
 			Channel: "sms", To: "+15550000000", Subject: "Your code", Body: secret,
-		}); err != nil {
-			t.Fatalf("Send: %v", err)
+		})
+		// The message reached nobody outside development, so it is never a
+		// success there (QTID-115); in development the log is the delivery.
+		if s.Reveal && err != nil {
+			t.Fatalf("Send in development: %v", err)
+		}
+		if !s.Reveal && !errors.Is(err, errs.ErrEmailProviderUnavailable) {
+			t.Fatalf("Send outside development = %v, want email.provider_unavailable", err)
 		}
 		return buf.String()
 	}

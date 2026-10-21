@@ -1,11 +1,13 @@
 package bootstrap
 
 import (
+	"strings"
+
 	"github.com/qeetgroup/qeet-id-server/internal/access/authorization/rbac"
 )
 
 // userPermissionMap is the user-permission portion of the authorization policy
-// table consumed by rbac.Enforce. routePolicyMap adds explicit self-service and
+// table consumed by rbac.Enforce. RoutePolicies adds explicit self-service and
 // handler-authorized routes; anything absent from the combined table is denied.
 //
 // Convention: reads → <resource>.read, mutations → <resource>.write. Built-in
@@ -330,6 +332,12 @@ func userPermissionMap() map[string]string {
 		// Analytics.
 		"GET /v1/tenants/{tenantID}/analytics/overview": "analytics.read",
 
+		// Email delivery: whether the organisation's mail arrived (support),
+		// and lifting a suppression its mail caused (administrators).
+		"GET /v1/tenants/{tenantID}/email/messages":             "user.read",
+		"GET /v1/tenants/{tenantID}/email/suppressions":         "user.read",
+		"DELETE /v1/tenants/{tenantID}/email/suppressions/{id}": "user.write",
+
 		// SIEM/log streaming contains tenant audit data.
 		"GET /v1/tenants/{tenantID}/log-sinks":         "audit.read",
 		"POST /v1/tenants/{tenantID}/log-sinks":        "audit.write",
@@ -338,7 +346,15 @@ func userPermissionMap() map[string]string {
 	}
 }
 
-func routePolicyMap() map[string]rbac.RoutePolicy {
+// RoutePolicies is the authorization policy of every authenticated route,
+// keyed "METHOD /v1/pattern", as rbac.Enforce applies it.
+//
+// Each policy names the scope an application's token needs on the route
+// (rbac.RoutePolicy.ApplicationScope; TestEveryRouteNamesAnApplicationScope):
+// the permission itself on an administrative route, account.read or
+// account.write on the user's own account, openid on userinfo. Only the routes
+// in ApplicationTokenRoutes accept an application's token in the first place.
+func RoutePolicies() map[string]rbac.RoutePolicy {
 	policies := make(map[string]rbac.RoutePolicy)
 	for route, permission := range userPermissionMap() {
 		policies[route] = rbac.PermissionPolicy(permission)
@@ -427,16 +443,29 @@ func routePolicyMap() map[string]rbac.RoutePolicy {
 		"POST /v1/qeetai/conversations/{conversationID}/messages",
 		"POST /v1/sales/leads",
 	} {
-		policies[route] = rbac.UserOnlyPolicy()
+		policies[route] = rbac.UserOnlyPolicy(accountScope(route))
 	}
+	// Userinfo is the one route made for applications (ApplicationTokenRoutes),
+	// and OpenID Connect needs openid of a token reading it.
+	policies["GET /v1/oauth/userinfo"] = rbac.UserOnlyPolicy("openid")
+	policies["POST /v1/oauth/userinfo"] = rbac.UserOnlyPolicy("openid")
 
 	// These routes derive a vault:<resource> scope from the path and enforce it
 	// in the handler; the central catalogue still classifies the actor surface.
-	policies["GET /v1/vault/{name}"] = rbac.HandlerAuthorizedPolicy(true)
-	policies["GET /v1/vault/tokens/{provider}/access-token"] = rbac.HandlerAuthorizedPolicy(true)
+	policies["GET /v1/vault/{name}"] = rbac.HandlerAuthorizedPolicy(true, "vault:read")
+	policies["GET /v1/vault/tokens/{provider}/access-token"] = rbac.HandlerAuthorizedPolicy(true, "vault:read")
 
 	// Search performs per-result-type RBAC checks in its service. Keep it user
 	// only until an equivalent per-type machine-scope evaluator is implemented.
-	policies["GET /v1/search"] = rbac.UserOnlyPolicy()
+	policies["GET /v1/search"] = rbac.UserOnlyPolicy("user.read")
 	return policies
+}
+
+// accountScope is the scope an application's token needs on a route of the
+// user's own account: account.read to read it, account.write to change it.
+func accountScope(route string) string {
+	if strings.HasPrefix(route, "GET ") {
+		return "account.read"
+	}
+	return "account.write"
 }
